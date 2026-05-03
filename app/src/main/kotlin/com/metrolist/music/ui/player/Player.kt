@@ -318,11 +318,33 @@ fun BottomSheetPlayer(
     val playbackState by playerConnection.playbackState.collectAsStateWithLifecycle()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
     val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
+    val currentFormat by playerConnection.currentFormat.collectAsStateWithLifecycle(initialValue = null)
     val automix by playerConnection.service.automixItems.collectAsStateWithLifecycle()
     val repeatMode by playerConnection.repeatMode.collectAsStateWithLifecycle()
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsStateWithLifecycle()
     val canSkipNext by playerConnection.canSkipNext.collectAsStateWithLifecycle()
     val isMuted by playerConnection.isMuted.collectAsStateWithLifecycle()
+    val playerQualityLabel =
+        remember(currentFormat) {
+            currentFormat
+                ?.let { format ->
+                    val codec = when {
+                        format.codecs.contains("alac", ignoreCase = true) -> "ALAC"
+                        format.codecs.contains("flac", ignoreCase = true) -> "FLAC"
+                        format.codecs.contains("mp3", ignoreCase = true) ||
+                            format.mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
+                        format.codecs.contains("mp4a", ignoreCase = true) -> "AAC"
+                        else -> return@let null
+                    }
+                    val bitrate = format.bitrate
+                        .takeIf { it > 0 }
+                        ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
+                    val sampleRate = format.sampleRate
+                        ?.takeIf { it > 0 }
+                        ?.let { "$it Hz" }
+                    listOfNotNull(codec, bitrate, sampleRate).joinToString(" \u2022 ")
+                }
+        }
 
     val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
     val squigglySlider by rememberPreference(SquigglySliderKey, defaultValue = false)
@@ -1565,13 +1587,13 @@ fun BottomSheetPlayer(
                                     ),
                                 modifier =
                                     Modifier
-                                        .height(68.dp)
+                                        .height(60.dp)
                                         .weight(backButtonWeight),
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.skip_previous),
                                     contentDescription = null,
-                                    modifier = Modifier.size(32.dp),
+                                    modifier = Modifier.size(28.dp),
                                 )
                             }
 
@@ -1605,7 +1627,7 @@ fun BottomSheetPlayer(
                                     ),
                                 modifier =
                                     Modifier
-                                        .height(68.dp)
+                                        .height(60.dp)
                                         .weight(playPauseWeight)
                                         .focusRequester(focusRequester),
                             ) {
@@ -1628,17 +1650,17 @@ fun BottomSheetPlayer(
                                             } else {
                                                 if (effectiveIsPlaying) stringResource(R.string.pause) else stringResource(R.string.play)
                                             },
-                                        modifier = Modifier.size(32.dp),
+                                        modifier = Modifier.size(28.dp),
                                     )
-                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text =
                                             if (isListenTogetherGuest) {
                                                 if (isMuted) stringResource(R.string.unmute) else stringResource(R.string.mute)
                                             } else {
-                                                if (effectiveIsPlaying) stringResource(R.string.pause) else stringResource(R.string.play)
-                                            },
-                                        style = MaterialTheme.typography.titleMedium,
+                                                    if (effectiveIsPlaying) stringResource(R.string.pause) else stringResource(R.string.play)
+                                                },
+                                        style = MaterialTheme.typography.labelLarge,
                                     )
                                 }
                             }
@@ -1657,13 +1679,13 @@ fun BottomSheetPlayer(
                                     ),
                                 modifier =
                                     Modifier
-                                        .height(68.dp)
+                                        .height(60.dp)
                                         .weight(nextButtonWeight),
                             ) {
                                 Icon(
                                     painter = painterResource(R.drawable.skip_next),
                                     contentDescription = null,
-                                    modifier = Modifier.size(32.dp),
+                                    modifier = Modifier.size(28.dp),
                                 )
                             }
                         }
@@ -1716,7 +1738,7 @@ fun BottomSheetPlayer(
                             Box(
                                 modifier =
                                     Modifier
-                                        .size(72.dp)
+                                        .size(64.dp)
                                         .clip(RoundedCornerShape(playPauseRoundness))
                                         .background(textButtonColor)
                                         .clickable {
@@ -1759,7 +1781,7 @@ fun BottomSheetPlayer(
                                     modifier =
                                         Modifier
                                             .align(Alignment.Center)
-                                            .size(36.dp),
+                                            .size(32.dp),
                                 )
                             }
 
@@ -1795,6 +1817,19 @@ fun BottomSheetPlayer(
                                 )
                             }
                         }
+                    }
+                    playerQualityLabel?.let { label ->
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = label,
+                            color = TextBackgroundColor,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }

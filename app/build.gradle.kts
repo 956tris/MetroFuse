@@ -96,7 +96,7 @@ android {
         targetSdk = 36
         versionCode = 146
         versionName = "13.4.2"
-        resValue("string", "app_name", appNameOverride ?: "Metrolist")
+        resValue("string", "app_name", appNameOverride ?: "MetroApple")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
@@ -179,7 +179,7 @@ android {
             }
             isDebuggable = true
             if (appNameOverride == null) {
-                resValue("string", "app_name", "Metrolist Debug")
+                resValue("string", "app_name", "MetroApple")
             }
             signingConfig =
                 if (workflowDebugKeystoreFile != null) {
@@ -358,6 +358,8 @@ dependencies {
     implementation(libs.media3)
     implementation(libs.media3.session)
     implementation(libs.media3.okhttp)
+    implementation(libs.media3.hls)
+    implementation(libs.media3.ffmpeg.decoder)
 
     // Google Cast - only included in GMS flavor (not available in F-Droid/FOSS builds)
     "gmsImplementation"(libs.media3.cast)

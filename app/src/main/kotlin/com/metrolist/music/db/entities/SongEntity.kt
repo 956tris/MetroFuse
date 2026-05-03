@@ -64,6 +64,12 @@ data class SongEntity(
     val uploadEntityId: String? = null,
     @ColumnInfo(name = "isCached", defaultValue = "0")
     val isCached: Boolean = false,
+    @ColumnInfo(name = "mixInStartMs", defaultValue = "NULL")
+    val mixInStartMs: Long? = null,
+    @ColumnInfo(name = "mixOutStartMs", defaultValue = "NULL")
+    val mixOutStartMs: Long? = null,
+    @ColumnInfo(name = "mixTransitionStyleOverride", defaultValue = "NULL")
+    val mixTransitionStyleOverride: String? = null,
 ) {
     fun localToggleLike() =
         copy(

@@ -32,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.BuildConfig
@@ -58,6 +59,11 @@ import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
+import com.metrolist.music.constants.PreferQobuzKey
+import com.metrolist.music.constants.QobuzBackend
+import com.metrolist.music.constants.QobuzBackendKey
+import com.metrolist.music.constants.QobuzCountryKey
+import com.metrolist.music.constants.QobuzFallbackEnabledKey
 import com.metrolist.music.constants.RememberShuffleAndRepeatKey
 import com.metrolist.music.constants.ResumeOnBluetoothConnectKey
 import com.metrolist.music.constants.SeekExtraSeconds
@@ -72,9 +78,11 @@ import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
+import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
+import java.util.Locale
 import kotlin.math.roundToInt
 import com.metrolist.music.ui.component.SleepTimerDialog
 import com.metrolist.music.constants.SleepTimerEnabledKey
@@ -125,6 +133,22 @@ fun PlayerSettings(
     val (audioNormalization, onAudioNormalizationChange) = rememberPreference(
         AudioNormalizationKey,
         defaultValue = true
+    )
+    val (qobuzFallbackEnabled, onQobuzFallbackEnabledChange) = rememberPreference(
+        QobuzFallbackEnabledKey,
+        defaultValue = true
+    )
+    val (preferQobuz, onPreferQobuzChange) = rememberPreference(
+        PreferQobuzKey,
+        defaultValue = false
+    )
+    val (qobuzBackend, onQobuzBackendChange) = rememberEnumPreference(
+        QobuzBackendKey,
+        defaultValue = QobuzBackend.JUMO
+    )
+    val (qobuzCountry, onQobuzCountryChange) = rememberPreference(
+        QobuzCountryKey,
+        defaultValue = "US"
     )
 
     val (loudnessLevel, onLoudnessLevelChange) = rememberEnumPreference(
@@ -216,6 +240,12 @@ fun PlayerSettings(
     var showAudioQualityDialog by remember {
         mutableStateOf(false)
     }
+    var showQobuzBackendDialog by remember {
+        mutableStateOf(false)
+    }
+    var showQobuzCountryDialog by remember {
+        mutableStateOf(false)
+    }
 
     var showLoudnessLevelDialog by remember {
         mutableStateOf(false)
@@ -239,6 +269,39 @@ fun PlayerSettings(
                     AudioQuality.VERY_HIGH -> stringResource(R.string.audio_quality_very_high)
                 }
             }
+        )
+    }
+
+    if (showQobuzBackendDialog) {
+        EnumDialog(
+            onDismiss = { showQobuzBackendDialog = false },
+            onSelect = {
+                onQobuzBackendChange(it)
+                showQobuzBackendDialog = false
+            },
+            title = stringResource(R.string.qobuz_backend),
+            current = qobuzBackend,
+            values = QobuzBackend.values().toList(),
+            valueText = {
+                when (it) {
+                    QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
+                    QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
+                }
+            }
+        )
+    }
+
+    if (showQobuzCountryDialog) {
+        TextFieldDialog(
+            title = { Text(stringResource(R.string.qobuz_country)) },
+            icon = { Icon(painterResource(R.drawable.language), null) },
+            initialTextFieldValue = TextFieldValue(qobuzCountry),
+            isInputValid = { it.trim().matches(Regex("[A-Za-z]{2}")) },
+            onDone = {
+                onQobuzCountryChange(it.trim().uppercase(Locale.US))
+                showQobuzCountryDialog = false
+            },
+            onDismiss = { showQobuzCountryDialog = false },
         )
     }
 
@@ -314,6 +377,69 @@ fun PlayerSettings(
                     },
                     onClick = { showAudioQualityDialog = true }
                 ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.cloud),
+                    title = { Text(stringResource(R.string.qobuz_fallback)) },
+                    description = { Text(stringResource(R.string.qobuz_fallback_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = qobuzFallbackEnabled,
+                            onCheckedChange = onQobuzFallbackEnabledChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (qobuzFallbackEnabled) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onQobuzFallbackEnabledChange(!qobuzFallbackEnabled) }
+                ))
+                if (qobuzFallbackEnabled) {
+                    add(Material3SettingsItem(
+                        icon = painterResource(R.drawable.library_music),
+                        title = { Text(stringResource(R.string.prefer_qobuz)) },
+                        description = { Text(stringResource(R.string.prefer_qobuz_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = preferQobuz,
+                                onCheckedChange = onPreferQobuzChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter = painterResource(
+                                            id = if (preferQobuz) R.drawable.check else R.drawable.close
+                                        ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize)
+                                    )
+                                }
+                            )
+                        },
+                        onClick = { onPreferQobuzChange(!preferQobuz) }
+                    ))
+                    add(Material3SettingsItem(
+                        icon = painterResource(R.drawable.settings),
+                        title = { Text(stringResource(R.string.qobuz_backend)) },
+                        description = {
+                            Text(
+                                when (qobuzBackend) {
+                                    QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
+                                    QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
+                                }
+                            )
+                        },
+                        onClick = { showQobuzBackendDialog = true }
+                    ))
+                    add(Material3SettingsItem(
+                        icon = painterResource(R.drawable.language),
+                        title = { Text(stringResource(R.string.qobuz_country)) },
+                        description = { Text(stringResource(R.string.qobuz_country_desc, qobuzCountry.uppercase(Locale.US))) },
+                        onClick = { showQobuzCountryDialog = true }
+                    ))
+                }
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.linear_scale),
                     title = { Text(stringResource(R.string.crossfade)) },

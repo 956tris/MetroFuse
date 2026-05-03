@@ -6,17 +6,12 @@
 package com.metrolist.music.ui.screens.wrapped
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.net.Uri
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.metrolist.music.R
-import com.metrolist.music.constants.AudioQuality
-import com.metrolist.music.utils.YTPlayerUtils
-import com.metrolist.music.utils.dataStore
-import com.metrolist.music.utils.get
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,7 +26,6 @@ class WrappedAudioService(
     private val context: Context,
 ) {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-    private val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private var player: ExoPlayer? = null
     private var playbackJob: Job? = null
 
@@ -99,32 +93,9 @@ class WrappedAudioService(
         val fallbackUri = "android.resource://${context.packageName}/${R.raw.wrapped_theme}".toUri()
         if (songId == null) {
             Timber.tag("WrappedAudio").i("No song ID provided, using fallback audio.")
-            return fallbackUri
         }
-
-        return try {
-            val audioQuality = context.dataStore.get(com.metrolist.music.constants.AudioQualityKey).let {
-                AudioQuality.valueOf(it ?: AudioQuality.AUTO.name)
-            }
-            val playbackData = withContext(Dispatchers.IO) {
-                YTPlayerUtils.playerResponseForPlayback(
-                    videoId = songId,
-                    audioQuality = audioQuality,
-                    connectivityManager = connectivityManager,
-                ).getOrNull()
-            }
-            val streamUrl = playbackData?.streamUrl
-            if (streamUrl.isNullOrBlank()) {
-                Timber.tag("WrappedAudio")
-                    .w("Resolved URL for $songId is null or blank. Using fallback.")
-                fallbackUri
-            } else {
-                streamUrl.toUri()
-            }
-        } catch (e: Exception) {
-            Timber.tag("WrappedAudio").e(e, "Failed to resolve URL for $songId. Using fallback.")
-            fallbackUri
-        }
+        Timber.tag("WrappedAudio").i("Remote wrapped audio is disabled for the Apple-only audio backend.")
+        return fallbackUri
     }
 
     fun pause() {

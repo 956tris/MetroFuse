@@ -84,6 +84,10 @@ object YTPlayerUtils {
      * Metadata like audioConfig and videoDetails are from [MAIN_CLIENT].
      * Format & stream can be from [MAIN_CLIENT] or [STREAM_FALLBACK_CLIENTS].
      */
+    @Deprecated(
+        message = "YouTube/Opus playback is disabled in this Apple Music wrapper build.",
+        level = DeprecationLevel.ERROR,
+    )
     suspend fun playerResponseForPlayback(
         videoId: String,
         playlistId: String? = null,

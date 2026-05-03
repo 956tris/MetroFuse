@@ -70,9 +70,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
-import androidx.media3.extractor.ExtractorsFactory
-import androidx.media3.extractor.mkv.MatroskaExtractor
-import androidx.media3.extractor.mp4.FragmentedMp4Extractor
+import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.session.CommandButton
 import androidx.media3.session.DefaultMediaNotificationProvider
 import androidx.media3.session.MediaController
@@ -89,6 +87,11 @@ import com.metrolist.innertube.models.WatchEndpoint
 import com.metrolist.lastfm.LastFM
 import com.metrolist.music.MainActivity
 import com.metrolist.music.R
+import com.metrolist.music.apple.AppleMusicAwareDataSourceFactory
+import com.metrolist.music.apple.AppleMusicCanvasProvider
+import com.metrolist.music.apple.AppleMusicDecryptPipeline
+import com.metrolist.music.apple.AppleMusicSongResolver
+import com.metrolist.music.apple.AppleMusicWrapperDataSource
 import com.metrolist.music.constants.AndroidAutoTargetPlaylistKey
 import com.metrolist.music.constants.AudioNormalizationKey
 import com.metrolist.music.constants.AudioOffload
@@ -131,6 +134,11 @@ import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PlayerVolumeKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
+import com.metrolist.music.constants.PreferQobuzKey
+import com.metrolist.music.constants.QobuzBackend
+import com.metrolist.music.constants.QobuzBackendKey
+import com.metrolist.music.constants.QobuzCountryKey
+import com.metrolist.music.constants.QobuzFallbackEnabledKey
 import com.metrolist.music.constants.RememberShuffleAndRepeatKey
 import com.metrolist.music.constants.RepeatModeKey
 import com.metrolist.music.constants.ResumeOnBluetoothConnectKey
@@ -181,6 +189,7 @@ import com.metrolist.music.playback.queues.Queue
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.playback.queues.filterExplicit
 import com.metrolist.music.playback.queues.filterVideoSongs
+import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.utils.CoilBitmapLoader
@@ -188,7 +197,6 @@ import com.metrolist.music.utils.DiscordRPC
 import com.metrolist.music.utils.NetworkConnectivityObserver
 import com.metrolist.music.utils.ScrobbleManager
 import com.metrolist.music.utils.SyncUtils
-import com.metrolist.music.utils.YTPlayerUtils
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.utils.reportException
@@ -222,11 +230,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.plus
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.time.LocalDateTime
+import java.util.Locale
 import javax.inject.Inject
 import kotlin.random.Random
 
@@ -308,6 +318,7 @@ class MusicService :
     var queueTitle: String? = null
 
     val currentMediaMetadata = MutableStateFlow<com.metrolist.music.models.MediaMetadata?>(null)
+    val currentAppleCanvasUrl = MutableStateFlow<String?>(null)
     private val currentSong =
         currentMediaMetadata
             .flatMapLatest { mediaMetadata ->
@@ -415,8 +426,21 @@ class MusicService :
     private var retryCount = 0
     private var silenceSkipJob: Job? = null
 
+    private data class CachedSongStream(
+        val uri: String,
+        val expiresAtMs: Long,
+        val cacheKey: String,
+    )
+
+    private data class PlaybackStreamResolution(
+        val uri: String,
+        val expiresAtMs: Long,
+        val cacheKey: String,
+        val format: FormatEntity,
+    )
+
     // URL cache for stream URLs - class-level so it can be invalidated on errors
-    private val songUrlCache = HashMap<String, Pair<String, Long>>()
+    private val songUrlCache = HashMap<String, CachedSongStream>()
 
     // Flag to bypass cache when quality changes - forces fresh stream fetch
     private val bypassCacheForQualityChange = mutableSetOf<String>()
@@ -627,6 +651,13 @@ class MusicService :
         // Collecting this flow activates the internal map that updates lyricsProviders in LyricsHelper
         lyricsHelper.preferred.collectLatest(scope) {}
 
+        currentMediaMetadata
+            .distinctUntilChangedBy { it?.id }
+            .collectLatest(scope) { metadata ->
+                markAppleWrapperFormat(metadata)
+                updateAppleCanvas(metadata)
+            }
+
         // 4. Watch for EQ profile changes
         scope.launch {
             eqProfileRepository.activeProfile.collect { profile ->
@@ -698,12 +729,19 @@ class MusicService :
 
                     // Clear cached URL to force fresh fetch
                     songUrlCache.remove(mediaId)
+                    AppleMusicSongResolver.invalidate(mediaId)
+                    QobuzAudioProvider.invalidate(mediaId)
+                    AppleMusicDecryptPipeline.clearMemoryCaches()
 
                     // CRITICAL: Clear caches synchronously to prevent format parsing errors
                     runBlocking(Dispatchers.IO) {
                         try {
                             playerCache.removeResource(mediaId)
+                            playerCache.removeResource(appleWrapperCacheKey(mediaId))
+                            playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
                             downloadCache.removeResource(mediaId)
+                            downloadCache.removeResource(appleWrapperCacheKey(mediaId))
+                            downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
                             Timber.tag("MusicService").d("Cleared player and download cache for $mediaId")
                         } catch (e: Exception) {
                             Timber.tag("MusicService").e(e, "Failed to clear cache for $mediaId")
@@ -1346,7 +1384,6 @@ class MusicService :
 
     private suspend fun recoverSong(
         mediaId: String,
-        playbackData: YTPlayerUtils.PlaybackData? = null,
     ) {
         val song = database.song(mediaId).first()
         val mediaMetadata =
@@ -1356,12 +1393,6 @@ class MusicService :
         val duration =
             song?.song?.duration?.takeIf { it != -1 }
                 ?: mediaMetadata.duration.takeIf { it != -1 }
-                ?: (
-                    playbackData?.videoDetails ?: YTPlayerUtils
-                        .playerResponseForMetadata(mediaId)
-                        .getOrNull()
-                        ?.videoDetails
-                )?.lengthSeconds?.toInt()
                 ?: -1
         database.query {
             if (song == null) {
@@ -2756,22 +2787,24 @@ class MusicService :
 
         // Clear URL cache
         songUrlCache.remove(mediaId)
+        AppleMusicSongResolver.invalidate(mediaId)
+        QobuzAudioProvider.invalidate(mediaId)
+        AppleMusicDecryptPipeline.clearMemoryCaches()
 
         // Clear player cache
         try {
             playerCache.removeResource(mediaId)
+            playerCache.removeResource(appleWrapperCacheKey(mediaId))
+            playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
+            downloadCache.removeResource(mediaId)
+            downloadCache.removeResource(appleWrapperCacheKey(mediaId))
+            downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
             Timber.tag(TAG).d("Cleared player cache for $mediaId")
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Failed to clear player cache for $mediaId")
         }
 
-        // Clear decryption caches
-        try {
-            YTPlayerUtils.forceRefreshForVideo(mediaId)
-            Timber.tag(TAG).d("Cleared decryption caches for $mediaId")
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to clear decryption caches for $mediaId")
-        }
+        Timber.tag(TAG).d("Cleared Apple wrapper resolver and decrypt caches for $mediaId")
     }
 
     /**
@@ -2951,14 +2984,10 @@ class MusicService :
 
         // Clear the cached URL
         songUrlCache.remove(mediaId)
+        AppleMusicSongResolver.invalidate(mediaId)
+        QobuzAudioProvider.invalidate(mediaId)
+        AppleMusicDecryptPipeline.clearMemoryCaches()
         Timber.tag(TAG).d("Cleared cached URL for $mediaId")
-
-        // Clear decryption caches
-        try {
-            YTPlayerUtils.forceRefreshForVideo(mediaId)
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Failed to clear decryption caches")
-        }
 
         retryJob?.cancel()
         retryJob =
@@ -3216,44 +3245,68 @@ class MusicService :
             }
     }
 
-    private fun createDataSourceFactory(): DataSource.Factory {
-        return ResolvingDataSource.Factory(createCacheDataSource()) { dataSpec ->
-            val mediaId = dataSpec.key ?: error("No media id")
-
-            // Check if we need to bypass cache for quality change
-            val shouldBypassCache = bypassCacheForQualityChange.contains(mediaId)
-
-            if (!shouldBypassCache) {
-                val usePlayerCache = dataStore.get(EnableSongCacheKey, true)
-                if (downloadCache.isCached(
-                        mediaId,
-                        dataSpec.position,
-                        if (dataSpec.length >= 0) dataSpec.length else 1,
-                    ) ||
-                    (usePlayerCache && playerCache.isCached(mediaId, dataSpec.position, CHUNK_LENGTH))
-                ) {
-                    scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
-                    return@Factory dataSpec
-                }
-
-                songUrlCache[mediaId]?.takeIf { it.second > System.currentTimeMillis() }?.let {
-                    scope.launch(Dispatchers.IO) { recoverSong(mediaId) }
-                    return@Factory dataSpec.withUri(it.first.toUri())
-                }
+    private fun upsertAppleWrapperFormat(mediaId: String) {
+        database.query {
+            val existing = getFormatByIdBlocking(mediaId)
+            if (existing != null && existing.codecs.equals("alac", ignoreCase = true)) {
+                if (existing.bitrate != 0 || existing.sampleRate != null) return@query
+                upsert(appleWrapperFormat(mediaId, existing.bitrate, existing.sampleRate))
             } else {
-                Timber.tag("MusicService").i("BYPASSING CACHE for $mediaId due to quality change")
+                upsert(appleWrapperFormat(mediaId))
+            }
+        }
+    }
+
+    private fun markAppleWrapperFormat(metadata: com.metrolist.music.models.MediaMetadata?) {
+        if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
+        scope.launch(Dispatchers.IO) {
+            val song = database.getSongByIdBlocking(metadata.id)
+            if (song?.song?.isLocal == true || song?.song?.isEpisode == true) return@launch
+            upsertAppleWrapperFormat(metadata.id)
+        }
+    }
+
+    private fun createDataSourceFactory(): DataSource.Factory {
+        return ResolvingDataSource.Factory(AppleMusicAwareDataSourceFactory(createCacheDataSource())) { dataSpec ->
+            val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey) ?: error("No media id")
+            val song = database.getSongByIdBlocking(mediaId)
+
+            if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
+                return@Factory dataSpec
             }
 
-            Timber.tag("MusicService").i("FETCHING STREAM: $mediaId | quality=$audioQuality")
-            val isUploaded = database.getSongByIdBlocking(mediaId)?.song?.isUploaded == true
-            val playbackData =
-                runBlocking(Dispatchers.IO) {
-                    YTPlayerUtils.playerResponseForPlayback(
-                        mediaId,
-                        isUploadedHint = isUploaded,
-                        audioQuality = audioQuality,
-                        connectivityManager = connectivityManager,
-                    )
+            if (AppleMusicWrapperDataSource.isAppleUri(dataSpec.uri)) {
+                return@Factory dataSpec
+                    .buildUpon()
+                    .setKey(appleWrapperCacheKey(mediaId))
+                    .build()
+            }
+
+            upsertAppleWrapperFormat(mediaId)
+
+            songUrlCache[mediaId]?.takeIf { it.expiresAtMs > System.currentTimeMillis() }?.let { cached ->
+                return@Factory dataSpec
+                    .buildUpon()
+                    .setUri(cached.uri.toUri())
+                    .setKey(cached.cacheKey)
+                    .build()
+            } ?: run {
+                if (songUrlCache.remove(mediaId) != null) {
+                    playerCache.removeResource(mediaId)
+                    playerCache.removeResource(appleWrapperCacheKey(mediaId))
+                    playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
+                    downloadCache.removeResource(mediaId)
+                    downloadCache.removeResource(appleWrapperCacheKey(mediaId))
+                    downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
+                }
+            }
+
+            Timber.tag("MusicService").i("FETCHING APPLE MUSIC STREAM: $mediaId")
+            val resolved =
+                runCatching {
+                    runBlocking(Dispatchers.IO) {
+                        resolveOnlineStream(mediaId, song)
+                    }
                 }.getOrElse { throwable ->
                     when (throwable) {
                         is PlaybackException -> {
@@ -3286,76 +3339,242 @@ class MusicService :
                     }
                 }
 
-            val nonNullPlayback =
-                requireNotNull(playbackData) {
-                    getString(R.string.error_unknown)
-                }
-            run {
-                val format = nonNullPlayback.format
-                val loudnessDb = nonNullPlayback.audioConfig?.loudnessDb
-                val perceptualLoudnessDb = nonNullPlayback.audioConfig?.perceptualLoudnessDb
-
-                Timber
-                    .tag(TAG)
-                    .d("Storing format for $mediaId with loudnessDb: $loudnessDb, perceptualLoudnessDb: $perceptualLoudnessDb")
-                if (loudnessDb == null && perceptualLoudnessDb == null) {
-                    Timber.tag(TAG).w("No loudness data available from YouTube for video: $mediaId")
-                }
-
-                database.query {
-                    upsert(
-                        FormatEntity(
-                            id = mediaId,
-                            itag = format.itag,
-                            mimeType = format.mimeType.split(";")[0],
-                            codecs = format.mimeType.split("codecs=")[1].removeSurrounding("\""),
-                            bitrate = format.bitrate,
-                            sampleRate = format.audioSampleRate,
-                            contentLength = format.contentLength!!,
-                            loudnessDb = loudnessDb,
-                            perceptualLoudnessDb = perceptualLoudnessDb,
-                            playbackUrl = nonNullPlayback.playbackTracking?.videostatsPlaybackUrl?.baseUrl,
-                        ),
-                    )
-                }
-                scope.launch(Dispatchers.IO) { recoverSong(mediaId, nonNullPlayback) }
-
-                // Clear bypass flag now that we've fetched fresh stream
-                if (bypassCacheForQualityChange.remove(mediaId)) {
-                    Timber.tag("MusicService").d("Cleared bypass cache flag for $mediaId after fresh fetch")
-                }
-
-                val streamUrl = nonNullPlayback.streamUrl
-
-                // For privately-owned tracks, mark the URL so the interceptor attaches auth cookies
-                val finalUrl =
-                    if (nonNullPlayback.isPrivatelyOwned) {
-                        val sep = if ("?" in streamUrl) "&" else "?"
-                        "${streamUrl}${sep}${PRIVATE_STREAM_MARKER}=1"
-                    } else {
-                        streamUrl
-                    }
-
-                songUrlCache[mediaId] =
-                    finalUrl to System.currentTimeMillis() + (nonNullPlayback.streamExpiresInSeconds * 1000L)
-
-                return@Factory dataSpec.withUri(finalUrl.toUri()).subrange(dataSpec.uriPositionOffset, CHUNK_LENGTH)
+            database.query {
+                upsert(resolved.format)
             }
+
+            if (bypassCacheForQualityChange.remove(mediaId)) {
+                Timber.tag("MusicService").d("Cleared bypass cache flag for $mediaId after Apple Music fetch")
+            }
+
+            songUrlCache[mediaId] = CachedSongStream(
+                uri = resolved.uri,
+                expiresAtMs = resolved.expiresAtMs,
+                cacheKey = resolved.cacheKey,
+            )
+            return@Factory dataSpec
+                .buildUpon()
+                .setUri(resolved.uri.toUri())
+                .setKey(resolved.cacheKey)
+                .build()
+        }
+    }
+
+    private fun resolveOnlineStream(
+        mediaId: String,
+        song: Song?,
+    ): PlaybackStreamResolution {
+        val qobuzEnabled = dataStore.get(QobuzFallbackEnabledKey, true)
+        if (qobuzEnabled && dataStore.get(PreferQobuzKey, false)) {
+            val qobuzAttempt = runCatching {
+                QobuzAudioProvider.resolve(buildQobuzQuery(mediaId, song))
+            }
+            qobuzAttempt.getOrNull()?.let { resolved ->
+                Timber.tag("MusicService").i("Using preferred Qobuz stream for $mediaId: ${resolved.label}")
+                return PlaybackStreamResolution(
+                    uri = resolved.mediaUri,
+                    expiresAtMs = resolved.expiresAtMs,
+                    cacheKey = qobuzFallbackCacheKey(mediaId),
+                    format = qobuzFallbackFormat(mediaId, resolved),
+                )
+            }
+
+            val qobuzError = qobuzAttempt.exceptionOrNull()
+                ?: IllegalStateException("Qobuz preferred stream failed")
+            val appleAttempt = runCatching {
+                AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
+            }
+            appleAttempt.getOrNull()?.let { resolved ->
+                Timber.tag("MusicService").i("Qobuz preferred stream missed for $mediaId; using Apple Music")
+                return PlaybackStreamResolution(
+                    uri = resolved.mediaUri,
+                    expiresAtMs = resolved.expiresAtMs,
+                    cacheKey = appleWrapperCacheKey(mediaId),
+                    format = appleWrapperFormat(mediaId, resolved.bitrate, resolved.sampleRate),
+                )
+            }
+
+            val appleError = appleAttempt.exceptionOrNull()
+                ?: IllegalStateException("Apple Music failed")
+            throw PlaybackException(
+                "Qobuz failed: ${qobuzError.readableMessage()}; Apple Music failed: ${appleError.readableMessage()}",
+                appleError,
+                PlaybackException.ERROR_CODE_REMOTE_ERROR,
+            )
+        }
+
+        val appleAttempt = runCatching {
+            AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
+        }
+        appleAttempt.getOrNull()?.let { resolved ->
+            return PlaybackStreamResolution(
+                uri = resolved.mediaUri,
+                expiresAtMs = resolved.expiresAtMs,
+                cacheKey = appleWrapperCacheKey(mediaId),
+                format = appleWrapperFormat(mediaId, resolved.bitrate, resolved.sampleRate),
+            )
+        }
+
+        val appleError = appleAttempt.exceptionOrNull()
+            ?: IllegalStateException("Apple Music failed")
+
+        if (!qobuzEnabled) {
+            throw appleError
+        }
+
+        val qobuzAttempt = runCatching {
+            QobuzAudioProvider.resolve(buildQobuzQuery(mediaId, song))
+        }
+        qobuzAttempt.getOrNull()?.let { resolved ->
+            Timber.tag("MusicService").i("Using Qobuz fallback for $mediaId: ${resolved.label}")
+            return PlaybackStreamResolution(
+                uri = resolved.mediaUri,
+                expiresAtMs = resolved.expiresAtMs,
+                cacheKey = qobuzFallbackCacheKey(mediaId),
+                format = qobuzFallbackFormat(mediaId, resolved),
+            )
+        }
+
+        val qobuzError = qobuzAttempt.exceptionOrNull()
+            ?: IllegalStateException("Qobuz fallback failed")
+        throw PlaybackException(
+            "Apple Music failed: ${appleError.readableMessage()}; Qobuz fallback failed: ${qobuzError.readableMessage()}",
+            qobuzError,
+            PlaybackException.ERROR_CODE_REMOTE_ERROR,
+        )
+    }
+
+    private fun buildQobuzQuery(
+        mediaId: String,
+        song: Song?,
+    ): QobuzAudioProvider.Query {
+        val queuedMetadata = if (song == null) currentQueueMetadata(mediaId) else null
+        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
+        val artists = song?.orderedArtists?.map { it.name }
+            ?.takeIf { it.isNotEmpty() }
+            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
+        val album = song?.song?.albumName
+            ?: song?.album?.title
+            ?: queuedMetadata?.album?.title
+        val durationMs = song?.song?.duration
+            ?.takeIf { it > 0 }
+            ?.toLong()
+            ?.times(1000L)
+            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
+        val backend = dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
+        val country = dataStore.get(QobuzCountryKey, "US")
+            .trim()
+            .uppercase(Locale.US)
+            .takeIf { it.matches(Regex("[A-Z]{2}")) }
+            ?: "US"
+
+        return QobuzAudioProvider.Query(
+            mediaId = mediaId,
+            title = title,
+            artists = artists,
+            album = album,
+            isrc = null,
+            durationMs = durationMs,
+            countryCode = country,
+            backend = backend.toQobuzProviderBackend(),
+        )
+    }
+
+    private fun QobuzBackend.toQobuzProviderBackend(): QobuzAudioProvider.ResolverBackend {
+        return when (this) {
+            QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
+            QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
+        }
+    }
+
+    private fun Throwable.readableMessage(): String {
+        return message?.takeIf { it.isNotBlank() } ?: javaClass.simpleName
+    }
+
+    private suspend fun updateAppleCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {
+        currentAppleCanvasUrl.value = null
+        if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
+
+        val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return
+        val album = metadata.album?.title
+        val cached = AppleMusicCanvasProvider.getCached(
+            song = metadata.title,
+            artist = artist,
+            album = album,
+        )?.animated?.takeIf { it.isNotBlank() }
+        if (cached != null) {
+            currentAppleCanvasUrl.value = cached
+            return
+        }
+
+        val resolved = withTimeoutOrNull(2_500L) {
+            AppleMusicCanvasProvider.getBySongArtist(
+                song = metadata.title,
+                artist = artist,
+                album = album,
+            )?.animated?.takeIf { it.isNotBlank() }
+        }
+
+        if (currentMediaMetadata.value?.id == metadata.id) {
+            currentAppleCanvasUrl.value = resolved
+        }
+    }
+
+    private fun buildAppleMusicQuery(
+        mediaId: String,
+        song: Song?,
+    ): AppleMusicSongResolver.Query {
+        val queuedMetadata = if (song == null) currentQueueMetadata(mediaId) else null
+        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
+        val artists = song?.orderedArtists?.map { it.name }
+            ?.takeIf { it.isNotEmpty() }
+            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
+        val album = song?.song?.albumName
+            ?: song?.album?.title
+            ?: queuedMetadata?.album?.title
+        val durationMs = song?.song?.duration
+            ?.takeIf { it > 0 }
+            ?.toLong()
+            ?.times(1000L)
+            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
+        val explicit = song?.song?.explicit ?: queuedMetadata?.explicit
+
+        return AppleMusicSongResolver.Query(
+            mediaId = mediaId,
+            title = title,
+            artists = artists,
+            album = album,
+            durationMs = durationMs,
+            explicit = explicit,
+        )
+    }
+
+    private fun currentQueueMetadata(mediaId: String): com.metrolist.music.models.MediaMetadata? {
+        return if (Looper.myLooper() == Looper.getMainLooper()) {
+            player.findNextMediaItemById(mediaId)?.metadata
+        } else {
+            runCatching {
+                runBlocking(Dispatchers.Main) {
+                    player.findNextMediaItemById(mediaId)?.metadata
+                }
+            }.getOrNull()
         }
     }
 
     private fun createMediaSourceFactory() =
         DefaultMediaSourceFactory(
             createDataSourceFactory(),
-            ExtractorsFactory {
-                arrayOf(MatroskaExtractor(), FragmentedMp4Extractor())
-            },
+            DefaultExtractorsFactory(),
         )
 
     private fun createRenderersFactory(
         eqProcessor: CustomEqualizerAudioProcessor,
         silenceProcessor: SilenceDetectorAudioProcessor,
     ) = object : DefaultRenderersFactory(this) {
+        init {
+            setExtensionRendererMode(EXTENSION_RENDERER_MODE_PREFER)
+        }
+
         override fun buildAudioSink(
             context: Context,
             enableFloatOutput: Boolean,
@@ -3402,25 +3621,7 @@ class MusicService :
             }
         }
 
-        if (playbackStats.totalPlayTimeMs >= historyDurationMs) {
-            CoroutineScope(Dispatchers.IO).launch {
-                val playbackUrl =
-                    database.format(mediaItem.mediaId).first()?.playbackUrl
-                        ?: YTPlayerUtils
-                            .playerResponseForMetadata(mediaItem.mediaId, null)
-                            .getOrNull()
-                            ?.playbackTracking
-                            ?.videostatsPlaybackUrl
-                            ?.baseUrl
-                playbackUrl?.let {
-                    YouTube
-                        .registerPlayback(null, playbackUrl)
-                        .onFailure {
-                            reportException(it)
-                        }
-                }
-            }
-        }
+        // Apple wrapper playback does not use YouTube/Opus stream tracking.
     }
 
     private fun saveQueueToDisk() {
@@ -3939,14 +4140,11 @@ class MusicService :
     suspend fun getStreamUrl(mediaId: String): String? =
         withContext(Dispatchers.IO) {
             try {
-                val playbackData =
-                    YTPlayerUtils
-                        .playerResponseForPlayback(
-                            videoId = mediaId,
-                            audioQuality = audioQuality,
-                            connectivityManager = connectivityManager,
-                        ).getOrNull()
-                playbackData?.streamUrl
+                val song = database.getSongByIdBlocking(mediaId)
+                if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
+                    return@withContext null
+                }
+                resolveOnlineStream(mediaId, song).uri
             } catch (e: Exception) {
                 timber.log.Timber.e(e, "Failed to get stream URL for Cast")
                 null
@@ -4191,6 +4389,51 @@ class MusicService :
 
         private const val TAG = "MusicService"
         private const val PRIVATE_STREAM_MARKER = "_metrolist_private"
+        private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
+        private const val QOBUZ_FALLBACK_ITAG = 100_027
+        private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
+        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
+
+        private fun appleWrapperCacheKey(mediaId: String) = "$APPLE_WRAPPER_CACHE_PREFIX$mediaId"
+
+        private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
+
+        private fun mediaIdFromDataSpecKey(key: String) = key
+            .removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
+            .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
+
+        private fun appleWrapperFormat(
+            mediaId: String,
+            bitrate: Int = 0,
+            sampleRate: Int? = null,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = APPLE_MUSIC_WRAPPER_ITAG,
+            mimeType = "audio/mp4",
+            codecs = "alac",
+            bitrate = bitrate,
+            sampleRate = sampleRate,
+            contentLength = 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun qobuzFallbackFormat(
+            mediaId: String,
+            resolved: QobuzAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = QOBUZ_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
 
         @Volatile
         var isRunning = false

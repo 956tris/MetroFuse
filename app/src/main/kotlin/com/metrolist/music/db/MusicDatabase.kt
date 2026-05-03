@@ -40,6 +40,7 @@ import com.metrolist.music.db.entities.SetVideoIdEntity
 import com.metrolist.music.db.entities.SongAlbumMap
 import com.metrolist.music.db.entities.SongArtistMap
 import com.metrolist.music.db.entities.SongEntity
+import com.metrolist.music.db.entities.SongTransitionEntity
 import com.metrolist.music.db.entities.SortedSongAlbumMap
 import com.metrolist.music.db.entities.SortedSongArtistMap
 import com.metrolist.music.db.entities.SpeedDialItem
@@ -112,13 +113,14 @@ class MusicDatabase(
         RecognitionHistory::class,
         SpeedDialItem::class,
         PodcastEntity::class,
+        SongTransitionEntity::class,
     ],
     views = [
         SortedSongArtistMap::class,
         SortedSongAlbumMap::class,
         PlaylistSongMapPreview::class,
     ],
-    version = 37,
+    version = 39,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3),
@@ -156,6 +158,7 @@ class MusicDatabase(
         AutoMigration(from = 34, to = 35),
         AutoMigration(from = 35, to = 36, spec = Migration35To36::class),
         AutoMigration(from = 36, to = 37),
+        AutoMigration(from = 37, to = 38),
     ],
 )
 @TypeConverters(Converters::class)
@@ -167,45 +170,48 @@ abstract class InternalDatabase : RoomDatabase() {
         const val DB_NAME = "song.db"
 
         fun newInstance(context: Context): MusicDatabase =
-            MusicDatabase(
-                delegate =
-                    Room
-                        .databaseBuilder(context, InternalDatabase::class.java, DB_NAME)
-                        .openHelperFactory(BackupBeforeMigrationFactory(context, DB_NAME))
-                        .addMigrations(
-                            MIGRATION_1_2,
-                            MIGRATION_21_24,
-                            MIGRATION_22_24,
-                            MIGRATION_24_25,
-                        ).fallbackToDestructiveMigration(dropAllTables = true)
-                        .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
-                        .setTransactionExecutor(
-                            java.util.concurrent.Executors
-                                .newFixedThreadPool(4),
-                        ).setQueryExecutor(
-                            java.util.concurrent.Executors
-                                .newFixedThreadPool(4),
-                        ).addCallback(
-                            object : RoomDatabase.Callback() {
-                                override fun onOpen(db: SupportSQLiteDatabase) {
-                                    super.onOpen(db)
-                                    try {
-                                        db.query("PRAGMA busy_timeout = 60000").close()
-                                        db.query("PRAGMA cache_size = -16000").close()
-                                        db.query("PRAGMA wal_autocheckpoint = 1000").close()
-                                        db.query("PRAGMA synchronous = NORMAL").close()
-                                    } catch (e: Exception) {
-                                        Timber.tag("MusicDatabase").e(e, "Failed to set PRAGMA settings")
-                                    }
-                                }
+            MusicDatabase(newInternalInstance(context))
 
-                                override fun onDestructiveMigration(db: SupportSQLiteDatabase) {
-                                    super.onDestructiveMigration(db)
-                                    backupDatabase(context, DB_NAME)
-                                }
-                            },
-                        ).build(),
-            )
+        fun newInternalInstance(context: Context): InternalDatabase =
+            Room
+                .databaseBuilder(context, InternalDatabase::class.java, DB_NAME)
+                .openHelperFactory(BackupBeforeMigrationFactory(context, DB_NAME))
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_21_24,
+                    MIGRATION_22_24,
+                    MIGRATION_24_25,
+                    MIGRATION_37_39,
+                    MIGRATION_38_39,
+                ).fallbackToDestructiveMigration(dropAllTables = true)
+                .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+                .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+                .setTransactionExecutor(
+                    java.util.concurrent.Executors
+                        .newFixedThreadPool(4),
+                ).setQueryExecutor(
+                    java.util.concurrent.Executors
+                        .newFixedThreadPool(4),
+                ).addCallback(
+                    object : RoomDatabase.Callback() {
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            try {
+                                db.query("PRAGMA busy_timeout = 60000").close()
+                                db.query("PRAGMA cache_size = -16000").close()
+                                db.query("PRAGMA wal_autocheckpoint = 1000").close()
+                                db.query("PRAGMA synchronous = NORMAL").close()
+                            } catch (e: Exception) {
+                                Timber.tag("MusicDatabase").e(e, "Failed to set PRAGMA settings")
+                            }
+                        }
+
+                        override fun onDestructiveMigration(db: SupportSQLiteDatabase) {
+                            super.onDestructiveMigration(db)
+                            backupDatabase(context, DB_NAME)
+                        }
+                    },
+                ).build()
     }
 }
 
@@ -258,33 +264,14 @@ private class BackupBeforeMigrationFactory(
 ) : SupportSQLiteOpenHelper.Factory {
     override fun create(configuration: SupportSQLiteOpenHelper.Configuration): SupportSQLiteOpenHelper {
         val wrappedCallback = BackupCallback(context, configuration.callback, dbName)
-        val configClass = SupportSQLiteOpenHelper.Configuration::class.java
-        val constructor = configClass.constructors.first()
         val wrappedConfig =
-            when (constructor.parameterCount) {
-                4 -> {
-                    constructor.newInstance(
-                        configuration.context,
-                        configuration.name,
-                        wrappedCallback,
-                        configuration.useNoBackupDirectory,
-                    )
-                }
-
-                5 -> {
-                    constructor.newInstance(
-                        configuration.context,
-                        configuration.name,
-                        wrappedCallback,
-                        configuration.useNoBackupDirectory,
-                        configClass.getField("allowDataLossOnRecovery").get(configuration),
-                    )
-                }
-
-                else -> {
-                    throw IllegalStateException("Unexpected Configuration constructor")
-                }
-            } as SupportSQLiteOpenHelper.Configuration
+            SupportSQLiteOpenHelper.Configuration
+                .builder(configuration.context)
+                .name(configuration.name)
+                .callback(wrappedCallback)
+                .noBackupDirectory(configuration.useNoBackupDirectory)
+                .allowDataLossOnRecovery(configuration.allowDataLossOnRecovery)
+                .build()
         return delegate.create(wrappedConfig)
     }
 }
@@ -316,8 +303,148 @@ private class BackupCallback(
         delegate.onDowngrade(db, oldVersion, newVersion)
     }
 
-    override fun onOpen(db: SupportSQLiteDatabase) = delegate.onOpen(db)
+    override fun onOpen(db: SupportSQLiteDatabase) {
+        repairRoomIdentityIfSafe(db)
+        delegate.onOpen(db)
+    }
 }
+
+private const val CURRENT_ROOM_IDENTITY_HASH = "1d2103bea6643bee922ca6c0bccf21a7"
+
+private fun repairRoomIdentityIfSafe(db: SupportSQLiteDatabase) {
+    try {
+        if (!hasSchema39Shape(db)) return
+        val currentHash =
+            db.query("SELECT identity_hash FROM room_master_table WHERE id = 42").use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        if (currentHash == CURRENT_ROOM_IDENTITY_HASH) return
+
+        db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
+        db.execSQL(
+            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '$CURRENT_ROOM_IDENTITY_HASH')",
+        )
+        Timber.tag("MusicDatabase").w("Repaired Room identity hash from $currentHash")
+    } catch (e: Exception) {
+        Timber.tag("MusicDatabase").w(e, "Skipped Room identity repair")
+    }
+}
+
+private fun hasSchema39Shape(db: SupportSQLiteDatabase): Boolean =
+    tableExists(db, "song") &&
+        columnExists(db, "song", "mixInStartMs") &&
+        columnExists(db, "song", "mixOutStartMs") &&
+        columnExists(db, "song", "mixTransitionStyleOverride") &&
+        tableExists(db, "song_transition") &&
+        columnExists(db, "song_transition", "overlapBars") &&
+        columnExists(db, "song_transition", "effectType") &&
+        tableExists(db, "speed_dial_item") &&
+        columnExists(db, "speed_dial_item", "subtitleIds") &&
+        columnExists(db, "speed_dial_item", "albumId") &&
+        columnExists(db, "speed_dial_item", "albumName") &&
+        tableExists(db, "format") &&
+        columnExists(db, "format", "perceptualLoudnessDb")
+
+private fun ensureSchema39Shape(db: SupportSQLiteDatabase) {
+    ensureColumn(db, "song", "mixInStartMs", "ALTER TABLE song ADD COLUMN mixInStartMs INTEGER DEFAULT NULL")
+    ensureColumn(db, "song", "mixOutStartMs", "ALTER TABLE song ADD COLUMN mixOutStartMs INTEGER DEFAULT NULL")
+    ensureColumn(
+        db,
+        "song",
+        "mixTransitionStyleOverride",
+        "ALTER TABLE song ADD COLUMN mixTransitionStyleOverride TEXT DEFAULT NULL",
+    )
+    ensureColumn(
+        db,
+        "format",
+        "perceptualLoudnessDb",
+        "ALTER TABLE format ADD COLUMN perceptualLoudnessDb REAL DEFAULT NULL",
+    )
+    if (!tableExists(db, "song_transition")) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `song_transition` (`outgoingSongId` TEXT NOT NULL, `incomingSongId` TEXT NOT NULL, `mixInStartMs` INTEGER DEFAULT NULL, `mixOutStartMs` INTEGER DEFAULT NULL, `mixTransitionStyleOverride` TEXT DEFAULT NULL, `overlapBars` INTEGER NOT NULL DEFAULT 8, `bpmA` REAL DEFAULT NULL, `bpmB` REAL DEFAULT NULL, `keySignature` TEXT DEFAULT NULL, `volumeCurve` TEXT NOT NULL DEFAULT 'CROSSFADE', `eqTemplate` TEXT NOT NULL DEFAULT 'QUICK_BASS_CUT', `effectType` TEXT NOT NULL DEFAULT 'LOW_PASS', PRIMARY KEY(`outgoingSongId`, `incomingSongId`))",
+        )
+    }
+    ensureColumn(
+        db,
+        "song_transition",
+        "overlapBars",
+        "ALTER TABLE song_transition ADD COLUMN overlapBars INTEGER NOT NULL DEFAULT 8",
+    )
+    ensureColumn(db, "song_transition", "bpmA", "ALTER TABLE song_transition ADD COLUMN bpmA REAL DEFAULT NULL")
+    ensureColumn(db, "song_transition", "bpmB", "ALTER TABLE song_transition ADD COLUMN bpmB REAL DEFAULT NULL")
+    ensureColumn(
+        db,
+        "song_transition",
+        "keySignature",
+        "ALTER TABLE song_transition ADD COLUMN keySignature TEXT DEFAULT NULL",
+    )
+    ensureColumn(
+        db,
+        "song_transition",
+        "volumeCurve",
+        "ALTER TABLE song_transition ADD COLUMN volumeCurve TEXT NOT NULL DEFAULT 'CROSSFADE'",
+    )
+    ensureColumn(
+        db,
+        "song_transition",
+        "eqTemplate",
+        "ALTER TABLE song_transition ADD COLUMN eqTemplate TEXT NOT NULL DEFAULT 'QUICK_BASS_CUT'",
+    )
+    ensureColumn(
+        db,
+        "song_transition",
+        "effectType",
+        "ALTER TABLE song_transition ADD COLUMN effectType TEXT NOT NULL DEFAULT 'LOW_PASS'",
+    )
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_song_transition_outgoingSongId` ON `song_transition` (`outgoingSongId`)")
+    db.execSQL("CREATE INDEX IF NOT EXISTS `index_song_transition_incomingSongId` ON `song_transition` (`incomingSongId`)")
+    ensureSpeedDialItemShape(db)
+}
+
+private fun ensureSpeedDialItemShape(db: SupportSQLiteDatabase) {
+    if (!tableExists(db, "speed_dial_item")) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `speed_dial_item` (`id` TEXT NOT NULL, `secondaryId` TEXT, `title` TEXT NOT NULL, `subtitle` TEXT, `subtitleIds` TEXT, `thumbnailUrl` TEXT, `type` TEXT NOT NULL, `explicit` INTEGER NOT NULL, `createDate` INTEGER NOT NULL, `albumId` TEXT, `albumName` TEXT, PRIMARY KEY(`id`))",
+        )
+        return
+    }
+    ensureColumn(db, "speed_dial_item", "subtitleIds", "ALTER TABLE speed_dial_item ADD COLUMN subtitleIds TEXT")
+    ensureColumn(db, "speed_dial_item", "albumId", "ALTER TABLE speed_dial_item ADD COLUMN albumId TEXT")
+    ensureColumn(db, "speed_dial_item", "albumName", "ALTER TABLE speed_dial_item ADD COLUMN albumName TEXT")
+}
+
+private fun ensureColumn(
+    db: SupportSQLiteDatabase,
+    table: String,
+    column: String,
+    alterSql: String,
+) {
+    if (!columnExists(db, table, column)) {
+        db.execSQL(alterSql)
+    }
+}
+
+private fun tableExists(
+    db: SupportSQLiteDatabase,
+    table: String,
+): Boolean =
+    db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='$table'").use { cursor ->
+        cursor.moveToFirst()
+    }
+
+private fun columnExists(
+    db: SupportSQLiteDatabase,
+    table: String,
+    column: String,
+): Boolean =
+    db.query("PRAGMA table_info('$table')").use { cursor ->
+        val nameIndex = cursor.getColumnIndex("name")
+        while (cursor.moveToNext()) {
+            if (nameIndex >= 0 && cursor.getString(nameIndex) == column) return@use true
+        }
+        false
+    }
 
 // ===== Migrations =====
 
@@ -810,6 +937,20 @@ val MIGRATION_24_25 =
                 // Add the column allowing NULL values (since existing rows won't have this data)
                 db.execSQL("ALTER TABLE format ADD COLUMN perceptualLoudnessDb REAL DEFAULT NULL")
             }
+        }
+    }
+
+val MIGRATION_37_39 =
+    object : Migration(37, 39) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureSchema39Shape(db)
+        }
+    }
+
+val MIGRATION_38_39 =
+    object : Migration(38, 39) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            ensureSchema39Shape(db)
         }
     }
 

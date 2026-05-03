@@ -6,8 +6,6 @@
 package com.metrolist.music.playback
 
 import android.content.Context
-import android.net.ConnectivityManager
-import androidx.core.content.getSystemService
 import androidx.core.net.toUri
 import androidx.media3.database.DatabaseProvider
 import androidx.media3.datasource.ResolvingDataSource
@@ -17,16 +15,23 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadNotificationHelper
-import com.metrolist.innertube.YouTube
-import com.metrolist.music.constants.AudioQuality
-import com.metrolist.music.constants.AudioQualityKey
+import com.metrolist.music.apple.AppleMusicAwareDataSourceFactory
+import com.metrolist.music.apple.AppleMusicSongResolver
+import com.metrolist.music.apple.AppleMusicWrapperDataSource
+import com.metrolist.music.constants.QobuzBackend
+import com.metrolist.music.constants.QobuzBackendKey
+import com.metrolist.music.constants.QobuzCountryKey
+import com.metrolist.music.constants.QobuzFallbackEnabledKey
+import com.metrolist.music.constants.PreferQobuzKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.FormatEntity
-import com.metrolist.music.db.entities.SongEntity
+import com.metrolist.music.db.entities.Song
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
-import com.metrolist.music.utils.YTPlayerUtils
-import com.metrolist.music.utils.enumPreference
+import com.metrolist.music.extensions.toEnum
+import com.metrolist.music.qobuz.QobuzAudioProvider
+import com.metrolist.music.utils.dataStore
+import com.metrolist.music.utils.get
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -43,6 +48,7 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.time.LocalDateTime
+import java.util.Locale
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -58,9 +64,20 @@ constructor(
     @PlayerCache val playerCache: SimpleCache,
 ) {
     private val TAG = "DownloadUtil"
-    private val connectivityManager = context.getSystemService<ConnectivityManager>()!!
-    private val audioQuality by enumPreference(context, AudioQualityKey, AudioQuality.AUTO)
-    private val songUrlCache = HashMap<String, Pair<String, Long>>()
+    private data class CachedSongStream(
+        val uri: String,
+        val expiresAtMs: Long,
+        val cacheKey: String,
+    )
+
+    private data class DownloadStreamResolution(
+        val uri: String,
+        val expiresAtMs: Long,
+        val cacheKey: String,
+        val format: FormatEntity,
+    )
+
+    private val songUrlCache = HashMap<String, CachedSongStream>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -68,90 +85,184 @@ constructor(
 
     private val dataSourceFactory =
         ResolvingDataSource.Factory(
-            CacheDataSource
-                .Factory()
-                .setCache(playerCache)
-                .setUpstreamDataSourceFactory(
-                    OkHttpDataSource.Factory(
-                        OkHttpClient.Builder()
-                            .proxy(YouTube.proxy)
-                            .proxyAuthenticator { _, response ->
-                                YouTube.proxyAuth?.let { auth ->
-                                    response.request.newBuilder()
-                                        .header("Proxy-Authorization", auth)
-                                        .build()
-                                } ?: response.request
-                            }
-                            .build(),
+            AppleMusicAwareDataSourceFactory(
+                CacheDataSource
+                    .Factory()
+                    .setCache(playerCache)
+                    .setUpstreamDataSourceFactory(
+                        OkHttpDataSource.Factory(
+                            OkHttpClient.Builder().build(),
+                        ),
                     ),
-                ),
+            ),
         ) { dataSpec ->
-            val mediaId = dataSpec.key ?: error("No media id")
-            val length = if (dataSpec.length >= 0) dataSpec.length else 1
+            val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey) ?: error("No media id")
 
-            if (playerCache.isCached(mediaId, dataSpec.position, length)) {
+            if (AppleMusicWrapperDataSource.isAppleUri(dataSpec.uri)) {
+                return@Factory dataSpec
+                    .buildUpon()
+                    .setKey(appleWrapperCacheKey(mediaId))
+                    .build()
+            }
+
+            val song = database.getSongByIdBlocking(mediaId)
+            if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
                 return@Factory dataSpec
             }
 
-            songUrlCache[mediaId]?.takeIf { it.second < System.currentTimeMillis() }?.let {
-                return@Factory dataSpec.withUri(it.first.toUri())
+            songUrlCache[mediaId]?.takeIf { it.expiresAtMs > System.currentTimeMillis() }?.let { cached ->
+                return@Factory dataSpec
+                    .buildUpon()
+                    .setUri(cached.uri.toUri())
+                    .setKey(cached.cacheKey)
+                    .build()
+            } ?: run {
+                songUrlCache.remove(mediaId)
             }
 
-            val playbackData = runBlocking(Dispatchers.IO) {
-                YTPlayerUtils.playerResponseForPlayback(
-                    mediaId,
-                    audioQuality = audioQuality,
-                    connectivityManager = connectivityManager,
-                )
-            }.getOrThrow()
-            val format = playbackData.format
+            val resolved = runBlocking(Dispatchers.IO) {
+                resolveDownloadStream(context, mediaId, song)
+            }
 
             database.query {
-                upsert(
-                    FormatEntity(
-                        id = mediaId,
-                        itag = format.itag,
-                        mimeType = format.mimeType.split(";")[0],
-                        codecs = format.mimeType.split("codecs=")[1].removeSurrounding("\""),
-                        bitrate = format.bitrate,
-                        sampleRate = format.audioSampleRate,
-                        contentLength = format.contentLength!!,
-                        loudnessDb = playbackData.audioConfig?.loudnessDb,
-                        perceptualLoudnessDb = playbackData.audioConfig?.perceptualLoudnessDb,
-                        playbackUrl = playbackData.playbackTracking?.videostatsPlaybackUrl?.baseUrl
-                    ),
-                )
-
-                val now = LocalDateTime.now()
-                val existing = getSongByIdBlocking(mediaId)?.song
-
-                val updatedSong = if (existing != null) {
-                    if (existing.dateDownload == null) {
-                        existing.copy(dateDownload = now)
-                    } else {
-                        existing
-                    }
-                } else {
-                    SongEntity(
-                        id = mediaId,
-                        title = playbackData.videoDetails?.title ?: "Unknown",
-                        duration = playbackData.videoDetails?.lengthSeconds?.toIntOrNull() ?: 0,
-                        thumbnailUrl = playbackData.videoDetails?.thumbnail?.thumbnails?.lastOrNull()?.url,
-                        dateDownload = now,
-                        isDownloaded = false
-                    )
+                upsert(resolved.format)
+                getSongByIdBlocking(mediaId)?.song?.let { existing ->
+                    upsert(existing.copy(dateDownload = existing.dateDownload ?: LocalDateTime.now()))
                 }
-
-                upsert(updatedSong)
             }
 
-            val streamUrl = playbackData.streamUrl.let {
-                "${it}&range=0-${format.contentLength ?: 10000000}"
-            }
-
-            songUrlCache[mediaId] = streamUrl to playbackData.streamExpiresInSeconds * 1000L
-            dataSpec.withUri(streamUrl.toUri())
+            songUrlCache[mediaId] = CachedSongStream(
+                uri = resolved.uri,
+                expiresAtMs = resolved.expiresAtMs,
+                cacheKey = resolved.cacheKey,
+            )
+            dataSpec
+                .buildUpon()
+                .setUri(resolved.uri.toUri())
+                .setKey(resolved.cacheKey)
+                .build()
         }
+
+    private fun resolveDownloadStream(
+        context: Context,
+        mediaId: String,
+        song: Song?,
+    ): DownloadStreamResolution {
+        val qobuzEnabled = context.dataStore.get(QobuzFallbackEnabledKey, true)
+        if (qobuzEnabled && context.dataStore.get(PreferQobuzKey, false)) {
+            val qobuzAttempt = runCatching {
+                QobuzAudioProvider.resolve(buildQobuzQuery(context, mediaId, song))
+            }
+            qobuzAttempt.getOrNull()?.let { resolved ->
+                return DownloadStreamResolution(
+                    uri = resolved.mediaUri,
+                    expiresAtMs = resolved.expiresAtMs,
+                    cacheKey = qobuzFallbackCacheKey(mediaId),
+                    format = qobuzFallbackFormat(mediaId, resolved),
+                )
+            }
+
+            val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz preferred stream failed")
+            val appleAttempt = runCatching {
+                AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
+            }
+            appleAttempt.getOrNull()?.let { resolved ->
+                return DownloadStreamResolution(
+                    uri = resolved.mediaUri,
+                    expiresAtMs = resolved.expiresAtMs,
+                    cacheKey = appleWrapperCacheKey(mediaId),
+                    format = appleWrapperFormat(mediaId, resolved.bitrate, resolved.sampleRate),
+                )
+            }
+
+            val appleError = appleAttempt.exceptionOrNull() ?: IllegalStateException("Apple Music failed")
+            throw QobuzAudioProvider.QobuzResolutionException(
+                "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}",
+                appleError,
+            )
+        }
+
+        val appleAttempt = runCatching {
+            AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
+        }
+        appleAttempt.getOrNull()?.let { resolved ->
+            return DownloadStreamResolution(
+                uri = resolved.mediaUri,
+                expiresAtMs = resolved.expiresAtMs,
+                cacheKey = appleWrapperCacheKey(mediaId),
+                format = appleWrapperFormat(mediaId, resolved.bitrate, resolved.sampleRate),
+            )
+        }
+
+        val appleError = appleAttempt.exceptionOrNull() ?: IllegalStateException("Apple Music failed")
+        if (!qobuzEnabled) {
+            throw appleError
+        }
+
+        val qobuzAttempt = runCatching {
+            QobuzAudioProvider.resolve(buildQobuzQuery(context, mediaId, song))
+        }
+        qobuzAttempt.getOrNull()?.let { resolved ->
+            return DownloadStreamResolution(
+                uri = resolved.mediaUri,
+                expiresAtMs = resolved.expiresAtMs,
+                cacheKey = qobuzFallbackCacheKey(mediaId),
+                format = qobuzFallbackFormat(mediaId, resolved),
+            )
+        }
+
+        val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz fallback failed")
+        throw QobuzAudioProvider.QobuzResolutionException(
+            "Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; Qobuz fallback failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}",
+            qobuzError,
+        )
+    }
+
+    private fun buildAppleMusicQuery(
+        mediaId: String,
+        song: Song?,
+    ): AppleMusicSongResolver.Query {
+        return AppleMusicSongResolver.Query(
+            mediaId = mediaId,
+            title = song?.song?.title ?: mediaId,
+            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
+            album = song?.song?.albumName ?: song?.album?.title,
+            durationMs = song?.song?.duration
+                ?.takeIf { it > 0 }
+                ?.toLong()
+                ?.times(1000L),
+            explicit = song?.song?.explicit,
+        )
+    }
+
+    private fun buildQobuzQuery(
+        context: Context,
+        mediaId: String,
+        song: Song?,
+    ): QobuzAudioProvider.Query {
+        val backend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
+        val country = context.dataStore.get(QobuzCountryKey, "US")
+            .trim()
+            .uppercase(Locale.US)
+            .takeIf { it.matches(Regex("[A-Z]{2}")) }
+            ?: "US"
+        return QobuzAudioProvider.Query(
+            mediaId = mediaId,
+            title = song?.song?.title ?: mediaId,
+            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
+            album = song?.song?.albumName ?: song?.album?.title,
+            isrc = null,
+            durationMs = song?.song?.duration
+                ?.takeIf { it > 0 }
+                ?.toLong()
+                ?.times(1000L),
+            countryCode = country,
+            backend = when (backend) {
+                QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
+                QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
+            },
+        )
+    }
 
     val downloadNotificationHelper =
         DownloadNotificationHelper(context, ExoDownloadService.CHANNEL_ID)
@@ -231,5 +342,53 @@ constructor(
 
     fun release() {
         scope.cancel()
+    }
+
+    private companion object {
+        private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
+        private const val QOBUZ_FALLBACK_ITAG = 100_027
+        private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
+        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
+
+        private fun appleWrapperCacheKey(mediaId: String) = "$APPLE_WRAPPER_CACHE_PREFIX$mediaId"
+
+        private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
+
+        private fun mediaIdFromDataSpecKey(key: String) = key
+            .removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
+            .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
+
+        private fun appleWrapperFormat(
+            mediaId: String,
+            bitrate: Int = 0,
+            sampleRate: Int? = null,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = APPLE_MUSIC_WRAPPER_ITAG,
+            mimeType = "audio/mp4",
+            codecs = "alac",
+            bitrate = bitrate,
+            sampleRate = sampleRate,
+            contentLength = 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun qobuzFallbackFormat(
+            mediaId: String,
+            resolved: QobuzAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = QOBUZ_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
     }
 }

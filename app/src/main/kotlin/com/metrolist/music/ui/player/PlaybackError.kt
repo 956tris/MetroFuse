@@ -5,8 +5,13 @@
 
 package com.metrolist.music.ui.player
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,10 +23,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
@@ -37,6 +45,9 @@ fun PlaybackError(
     error: PlaybackException,
     retry: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val diagnosticText = remember(error) { buildPlaybackDiagnostic(error) }
+
     // Build detailed error info for debugging
     val rawErrorMessage = error.cause?.cause?.message 
         ?: error.cause?.message 
@@ -111,24 +122,65 @@ fun PlaybackError(
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Retry button
-        Button(
-            onClick = retry,
-            shape = RoundedCornerShape(20.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.primary
-            )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                painter = painterResource(R.drawable.replay),
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(text = stringResource(R.string.retry))
+            OutlinedButton(
+                onClick = {
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("Metrolist playback error", diagnosticText))
+                    Toast.makeText(context, R.string.playback_error_copied, Toast.LENGTH_SHORT).show()
+                },
+                shape = RoundedCornerShape(20.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.content_copy),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = stringResource(R.string.copy_error))
+            }
+
+            // Retry button
+            Button(
+                onClick = retry,
+                shape = RoundedCornerShape(20.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.replay),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = stringResource(R.string.retry))
+            }
         }
     }
 }
+
+private fun buildPlaybackDiagnostic(error: PlaybackException): String =
+    buildString {
+        appendLine("Metrolist playback error")
+        appendLine("Error code: ${getErrorCodeName(error.errorCode)} (${error.errorCode})")
+        appendLine("Message: ${error.message ?: "null"}")
+        appendLine()
+        appendLine("Cause chain:")
+        var current: Throwable? = error
+        var depth = 0
+        while (current != null && depth < 12) {
+            appendLine("[$depth] ${current::class.java.name}: ${current.message ?: "null"}")
+            current = current.cause
+            depth++
+        }
+        appendLine()
+        appendLine("Stack trace:")
+        appendLine(error.stackTraceToString())
+    }
 
 /**
  * Get human-readable error code name from PlaybackException error code
