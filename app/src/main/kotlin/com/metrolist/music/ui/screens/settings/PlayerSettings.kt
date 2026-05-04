@@ -61,6 +61,7 @@ import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
 import com.metrolist.music.constants.PreferQobuzKey
 import com.metrolist.music.constants.QobuzBackend
+import com.metrolist.music.constants.QobuzBackendOptions
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
 import com.metrolist.music.constants.QobuzFallbackEnabledKey
@@ -281,7 +282,7 @@ fun PlayerSettings(
             },
             title = stringResource(R.string.qobuz_backend),
             current = qobuzBackend,
-            values = QobuzBackend.values().toList(),
+            values = QobuzBackendOptions,
             valueText = {
                 when (it) {
                     QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)

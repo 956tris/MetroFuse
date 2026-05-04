@@ -69,6 +69,7 @@ constructor(
         val uri: String,
         val expiresAtMs: Long,
         val cacheKey: String,
+        val selectionKey: String,
     )
 
     private data class DownloadStreamResolution(
@@ -117,6 +118,7 @@ constructor(
             ),
         ) { dataSpec ->
             val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey) ?: error("No media id")
+            val streamSelectionKey = currentStreamSelectionKey(context)
 
             if (AppleMusicWrapperDataSource.isAppleUri(dataSpec.uri)) {
                 return@Factory dataSpec
@@ -130,7 +132,12 @@ constructor(
                 return@Factory dataSpec
             }
 
-            songUrlCache[mediaId]?.takeIf { it.expiresAtMs > System.currentTimeMillis() }?.let { cached ->
+            songUrlCache[mediaId]
+                ?.takeIf {
+                    it.expiresAtMs > System.currentTimeMillis() &&
+                        it.selectionKey == streamSelectionKey
+                }
+                ?.let { cached ->
                 return@Factory dataSpec
                     .buildUpon()
                     .setUri(cached.uri.toUri())
@@ -155,6 +162,7 @@ constructor(
                 uri = resolved.uri,
                 expiresAtMs = resolved.expiresAtMs,
                 cacheKey = resolved.cacheKey,
+                selectionKey = streamSelectionKey,
             )
             dataSpec
                 .buildUpon()
@@ -162,6 +170,23 @@ constructor(
                 .setKey(resolved.cacheKey)
                 .build()
         }
+
+    private fun currentStreamSelectionKey(context: Context): String {
+        val qobuzEnabled = context.dataStore.get(QobuzFallbackEnabledKey, true)
+        val preferQobuz = context.dataStore.get(PreferQobuzKey, false)
+        val qobuzBackend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
+        val qobuzCountry = context.dataStore.get(QobuzCountryKey, "US")
+            .trim()
+            .uppercase(Locale.US)
+            .takeIf { it.matches(Regex("[A-Z]{2}")) }
+            ?: "US"
+        return listOf(
+            "qobuz=$qobuzEnabled",
+            "prefer=$preferQobuz",
+            "backend=${qobuzBackend.name}",
+            "country=$qobuzCountry",
+        ).joinToString(";")
+    }
 
     private suspend fun resolveDownloadStream(
         context: Context,
@@ -403,7 +428,8 @@ constructor(
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
         private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
-        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
+        private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
+        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
 
         private fun appleWrapperCacheKey(mediaId: String) = "$APPLE_WRAPPER_CACHE_PREFIX$mediaId"
@@ -414,6 +440,7 @@ constructor(
 
         private fun mediaIdFromDataSpecKey(key: String) = key
             .removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
+            .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 

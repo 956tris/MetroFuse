@@ -432,6 +432,7 @@ class MusicService :
         val uri: String,
         val expiresAtMs: Long,
         val cacheKey: String,
+        val selectionKey: String,
     )
 
     private data class PlaybackStreamResolution(
@@ -3356,10 +3357,28 @@ class MusicService :
         }
     }
 
+    private fun currentStreamSelectionKey(): String {
+        val qobuzEnabled = dataStore.get(QobuzFallbackEnabledKey, true)
+        val preferQobuz = dataStore.get(PreferQobuzKey, false)
+        val qobuzBackend = dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
+        val qobuzCountry = dataStore.get(QobuzCountryKey, "US")
+            .trim()
+            .uppercase(Locale.US)
+            .takeIf { it.matches(Regex("[A-Z]{2}")) }
+            ?: "US"
+        return listOf(
+            "qobuz=$qobuzEnabled",
+            "prefer=$preferQobuz",
+            "backend=${qobuzBackend.name}",
+            "country=$qobuzCountry",
+        ).joinToString(";")
+    }
+
     private fun createDataSourceFactory(): DataSource.Factory {
         return ResolvingDataSource.Factory(AppleMusicAwareDataSourceFactory(createCacheDataSource())) { dataSpec ->
             val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey) ?: error("No media id")
             val song = database.getSongByIdBlocking(mediaId)
+            val streamSelectionKey = currentStreamSelectionKey()
 
             if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
                 return@Factory dataSpec
@@ -3374,7 +3393,15 @@ class MusicService :
 
             upsertAppleWrapperFormat(mediaId)
 
-            songUrlCache[mediaId]?.takeIf { it.expiresAtMs > System.currentTimeMillis() }?.let { cached ->
+            val shouldBypassUrlCache =
+                bypassCacheForQualityChange.contains(mediaId) || skipAppleOnceMediaIds.contains(mediaId)
+            songUrlCache[mediaId]
+                ?.takeIf {
+                    !shouldBypassUrlCache &&
+                        it.expiresAtMs > System.currentTimeMillis() &&
+                        it.selectionKey == streamSelectionKey
+                }
+                ?.let { cached ->
                 return@Factory dataSpec
                     .buildUpon()
                     .setUri(cached.uri.toUri())
@@ -3443,6 +3470,7 @@ class MusicService :
                 uri = resolved.uri,
                 expiresAtMs = resolved.expiresAtMs,
                 cacheKey = resolved.cacheKey,
+                selectionKey = streamSelectionKey,
             )
             return@Factory dataSpec
                 .buildUpon()
@@ -4534,7 +4562,8 @@ class MusicService :
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
         private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v2:"
-        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
+        private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
+        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
 
         private fun appleWrapperCacheKey(mediaId: String) = "$APPLE_WRAPPER_CACHE_PREFIX$mediaId"
@@ -4545,6 +4574,7 @@ class MusicService :
 
         private fun mediaIdFromDataSpecKey(key: String) = key
             .removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
+            .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 

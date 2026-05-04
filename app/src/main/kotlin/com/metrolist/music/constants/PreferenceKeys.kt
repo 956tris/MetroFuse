@@ -126,6 +126,13 @@ enum class QobuzBackend {
     SQUID,
 }
 
+val QobuzBackendOptions =
+    listOf(
+        QobuzBackend.JUMO,
+        QobuzBackend.KENNY,
+        QobuzBackend.SQUID,
+    )
+
 val AudioOffload = booleanPreferencesKey("enableOffload")
 
 val VarispeedKey = booleanPreferencesKey("varispeed")
