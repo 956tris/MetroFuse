@@ -966,6 +966,7 @@
     <string name="prefer_qobuz_desc">Use Qobuz first, then fall back to Apple Music if Qobuz misses</string>
     <string name="qobuz_backend">Qobuz backend</string>
     <string name="qobuz_backend_jumo">JUMO-DL</string>
+    <string name="qobuz_backend_kenny">Mono Kenny</string>
     <string name="qobuz_backend_squid">Squid</string>
     <string name="qobuz_country">Qobuz country</string>
     <string name="qobuz_country_desc">Current region: %1$s. JUMO falls back to FR when needed.</string>

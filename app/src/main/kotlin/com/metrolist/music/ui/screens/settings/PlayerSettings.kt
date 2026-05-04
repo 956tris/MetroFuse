@@ -285,6 +285,7 @@ fun PlayerSettings(
             valueText = {
                 when (it) {
                     QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
+                    QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
                     QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
                 }
             }
@@ -427,6 +428,7 @@ fun PlayerSettings(
                             Text(
                                 when (qobuzBackend) {
                                     QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
+                                    QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
                                     QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
                                 }
                             )

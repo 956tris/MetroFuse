@@ -23,6 +23,7 @@ object QobuzAudioProvider {
 
     private const val SQUID_BASE_URL = "https://qobuz.squid.wtf"
     private const val JUMO_BASE_URL = "https://jumo-dl.pages.dev"
+    private const val KENNY_BASE_URL = "https://qobuz.kennyy.com.br"
     private const val STREAM_CACHE_MS = 5 * 60 * 1000L
     private const val REJECT_SCORE = -1_000_000
 
@@ -30,6 +31,12 @@ object QobuzAudioProvider {
 
     enum class ResolverBackend {
         JUMO,
+        KENNY,
+        SQUID,
+    }
+
+    private enum class SearchBackend {
+        KENNY,
         SQUID,
     }
 
@@ -63,6 +70,7 @@ object QobuzAudioProvider {
         val hires: Boolean,
         val bitDepth: Int?,
         val samplingRateKhz: Double?,
+        val durationMs: Long?,
     )
 
     private data class StreamAttempt(
@@ -85,6 +93,7 @@ object QobuzAudioProvider {
         val normalized = countryCode.trim().uppercase(Locale.US)
         return when (backend) {
             ResolverBackend.JUMO -> normalized.takeIf { it in JUMO_SUPPORTED_REGIONS } ?: "FR"
+            ResolverBackend.KENNY -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
             ResolverBackend.SQUID -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
         }
     }
@@ -105,17 +114,24 @@ object QobuzAudioProvider {
 
         var lastError: String? = null
         for (quality in buildQualityFallbackOrder(query.qualityCode)) {
-            val attempt = when (query.backend) {
-                ResolverBackend.JUMO -> requestJumoStream(track, quality, resolverRegion, query.durationMs)
-                ResolverBackend.SQUID -> requestSquidStream(track, query.countryCode, quality, query.durationMs)
-            }
-            attempt.resolved?.let { resolved ->
-                streamCache[streamCacheKey] = resolved
-                return resolved
-            }
-            if (!attempt.error.isNullOrBlank()) {
-                lastError = attempt.error
-                if (attempt.error.contains("captcha", ignoreCase = true)) break
+            for (backend in streamBackendOrder(query.backend)) {
+                val attempt = when (backend) {
+                    ResolverBackend.JUMO -> requestJumoStream(
+                        track = track,
+                        qualityCode = quality,
+                        region = normalizeResolverRegion(query.countryCode, ResolverBackend.JUMO),
+                        durationMs = query.durationMs,
+                    )
+                    ResolverBackend.KENNY -> requestKennyStream(track, quality, query.durationMs)
+                    ResolverBackend.SQUID -> requestSquidStream(track, query.countryCode, quality, query.durationMs)
+                }
+                attempt.resolved?.let { resolved ->
+                    streamCache[streamCacheKey] = resolved
+                    return resolved
+                }
+                if (!attempt.error.isNullOrBlank()) {
+                    lastError = attempt.error
+                }
             }
         }
 
@@ -128,10 +144,28 @@ object QobuzAudioProvider {
             .forEach { streamCache.remove(it) }
     }
 
+    private fun streamBackendOrder(preferred: ResolverBackend): List<ResolverBackend> {
+        return when (preferred) {
+            ResolverBackend.JUMO -> listOf(ResolverBackend.JUMO, ResolverBackend.KENNY, ResolverBackend.SQUID)
+            ResolverBackend.KENNY -> listOf(ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
+            ResolverBackend.SQUID -> listOf(ResolverBackend.SQUID, ResolverBackend.KENNY, ResolverBackend.JUMO)
+        }
+    }
+
+    private fun searchBackendOrder(preferred: ResolverBackend): List<SearchBackend> {
+        return when (preferred) {
+            ResolverBackend.SQUID -> listOf(SearchBackend.SQUID, SearchBackend.KENNY)
+            ResolverBackend.JUMO,
+            ResolverBackend.KENNY -> listOf(SearchBackend.KENNY, SearchBackend.SQUID)
+        }
+    }
+
     private fun findBestTrack(query: Query): MatchedTrack? {
         for (term in searchTerms(query)) {
-            val results = searchTracks(term, query.countryCode) ?: continue
-            selectBestTrack(results, query)?.let { return it }
+            for (backend in searchBackendOrder(query.backend)) {
+                val results = searchTracks(term, query.countryCode, backend) ?: continue
+                selectBestTrack(results, query)?.let { return it }
+            }
         }
         return null
     }
@@ -139,27 +173,34 @@ object QobuzAudioProvider {
     private fun searchTracks(
         term: String,
         countryCode: String,
+        backend: SearchBackend,
     ): JSONArray? {
-        val url = "$SQUID_BASE_URL/api/get-music".toHttpUrlOrNull()
+        val baseUrl = when (backend) {
+            SearchBackend.KENNY -> KENNY_BASE_URL
+            SearchBackend.SQUID -> SQUID_BASE_URL
+        }
+        val url = "$baseUrl/api/get-music".toHttpUrlOrNull()
             ?.newBuilder()
             ?.addQueryParameter("q", term)
             ?.addQueryParameter("offset", "0")
             ?.build()
             ?: return null
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(url)
             .get()
             .header("Accept", "application/json")
-            .header("Token-Country", countryCode)
-            .header("Referer", "$SQUID_BASE_URL/")
+            .header("Referer", "$baseUrl/")
             .header("User-Agent", "Mozilla/5.0")
-            .build()
+        if (backend == SearchBackend.SQUID) {
+            requestBuilder.header("Token-Country", countryCode)
+        }
+        val request = requestBuilder.build()
 
         return runCatching {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
-                val payload = response.body?.string()?.takeIf { it.isNotBlank() } ?: return@use null
+                val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
                 val root = JSONObject(payload)
                 if (!root.optBoolean("success", false)) return@use null
                 root.optJSONObject("data")
@@ -189,7 +230,7 @@ object QobuzAudioProvider {
         val candidates = mutableListOf<Candidate>()
         for (index in 0 until results.length()) {
             val obj = results.optJSONObject(index) ?: continue
-            if (!obj.optBoolean("downloadable", false)) continue
+            if (!obj.optBoolean("downloadable", false) && !obj.optBoolean("streamable", false)) continue
 
             val trackId = obj.stringOrNull("id") ?: continue
             val candidateTitle = obj.stringOrNull("title").normalized()
@@ -275,6 +316,7 @@ object QobuzAudioProvider {
                         hires = hires,
                         bitDepth = bitDepth,
                         samplingRateKhz = samplingRate,
+                        durationMs = candidateDuration?.toLong()?.times(1000L),
                     ),
                     score = score,
                 )
@@ -310,7 +352,7 @@ object QobuzAudioProvider {
 
         return runCatching {
             client.newCall(request).execute().use { response ->
-                val payload = response.body?.string().orEmpty()
+                val payload = response.body.string()
                 if (!response.isSuccessful) {
                     return@use StreamAttempt(error = "Qobuz HTTP ${response.code}: ${payload.take(160)}")
                 }
@@ -337,7 +379,8 @@ object QobuzAudioProvider {
                     ?: data.intOrNull("bit_rate")
                     ?: root.intOrNull("bitrate")
                     ?: root.intOrNull("bit_rate")
-                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, durationMs)
+                val effectiveDurationMs = durationMs ?: track.durationMs
+                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
                     ?: normalizeBitrate(
                         data.intOrNull("average_bitrate")
                             ?: root.intOrNull("average_bitrate")
@@ -383,7 +426,7 @@ object QobuzAudioProvider {
 
         return runCatching {
             client.newCall(request).execute().use { response ->
-                val payload = response.body?.string().orEmpty()
+                val payload = response.body.string()
                 if (!response.isSuccessful) {
                     return@use StreamAttempt(error = "JUMO HTTP ${response.code}: ${payload.take(160)}")
                 }
@@ -401,15 +444,21 @@ object QobuzAudioProvider {
                 val streamUrl = root.stringOrNull("directUrl")
                     ?: root.stringOrNull("url")
                     ?: return@use StreamAttempt(error = "JUMO did not return a stream URL for quality $qualityCode")
+                val actualQualityCode = root.intOrNull("format_id")
+                    ?: streamFormatId(streamUrl)
+                    ?: qualityCode
+                val effectiveDurationMs = root.intOrNull("duration")?.toLong()?.times(1000L)
+                    ?: durationMs
+                    ?: track.durationMs
                 val bitDepth = root.intOrNull("bit_depth") ?: track.bitDepth
                 val samplingRate = root.doubleOrNull("sampling_rate") ?: track.samplingRateKhz
                 val mimeType = root.stringOrNull("mime_type")
-                    ?: if (qualityCode == 5) "audio/mpeg" else "audio/flac"
+                    ?: if (actualQualityCode == 5) "audio/mpeg" else "audio/flac"
                 val lossyBitrate = root.intOrNull("bitrate")
                     ?: root.intOrNull("bit_rate")
-                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, durationMs)
+                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
                     ?: normalizeBitrate(root.intOrNull("average_bitrate")).takeIf { it > 0 }
-                val hires = (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || qualityCode >= 7
+                val hires = (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || actualQualityCode >= 7
                 val format = formatFrom(
                     mimeType = mimeType,
                     bitDepth = bitDepth,
@@ -427,6 +476,84 @@ object QobuzAudioProvider {
             }
         }.getOrElse { error ->
             StreamAttempt(error = "JUMO request failed: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun requestKennyStream(
+        track: MatchedTrack,
+        qualityCode: Int,
+        durationMs: Long?,
+    ): StreamAttempt {
+        val url = "$KENNY_BASE_URL/api/download-music".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("track_id", track.trackId)
+            ?.addQueryParameter("quality", qualityCode.toString())
+            ?.build()
+            ?: return StreamAttempt(error = "Kenny request URL could not be built")
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Accept", "application/json,text/plain,*/*")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Origin", KENNY_BASE_URL)
+            .header("Referer", "$KENNY_BASE_URL/")
+            .header("User-Agent", BROWSER_USER_AGENT)
+            .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    return@use StreamAttempt(error = "Kenny HTTP ${response.code}: ${payload.take(160)}")
+                }
+                if (payload.isBlank()) {
+                    return@use StreamAttempt(error = "Kenny returned an empty response")
+                }
+                val root = JSONObject(payload)
+                if (!root.optBoolean("success", false)) {
+                    val apiError = root.stringOrNull("error")
+                        ?: root.stringOrNull("message")
+                    return@use StreamAttempt(
+                        error = "Kenny rejected quality $qualityCode: ${apiError ?: "unknown error"}"
+                    )
+                }
+
+                val data = root.optJSONObject("data")
+                val streamUrl = data?.stringOrNull("url")
+                    ?: root.stringOrNull("url")
+                    ?: return@use StreamAttempt(error = "Kenny did not return a stream URL for quality $qualityCode")
+                val actualQualityCode = data?.intOrNull("format_id")
+                    ?: root.intOrNull("format_id")
+                    ?: streamFormatId(streamUrl)
+                    ?: qualityCode
+                val bitDepth = data?.intOrNull("bit_depth") ?: track.bitDepth
+                val samplingRate = data?.doubleOrNull("sampling_rate") ?: track.samplingRateKhz
+                val mimeType = data?.stringOrNull("mime_type")
+                    ?: if (actualQualityCode == 5) "audio/mpeg" else "audio/flac"
+                val lossyBitrate = data?.intOrNull("bitrate")
+                    ?: data?.intOrNull("bit_rate")
+                val effectiveDurationMs = durationMs ?: track.durationMs
+                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
+                    ?: normalizeBitrate(data?.intOrNull("average_bitrate")).takeIf { it > 0 }
+                val hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || actualQualityCode >= 7
+                val format = formatFrom(
+                    mimeType = mimeType,
+                    bitDepth = bitDepth,
+                    samplingRateKhz = samplingRate,
+                    bitrate = lossyBitrate,
+                    losslessBitrate = losslessBitrate,
+                    hires = hires,
+                )
+                StreamAttempt(
+                    resolved = format.toResolved(
+                        url = streamUrl,
+                        trackId = track.trackId,
+                    )
+                )
+            }
+        }.getOrElse { error ->
+            StreamAttempt(error = "Kenny request failed: ${error.message ?: error.javaClass.simpleName}")
         }
     }
 
@@ -544,6 +671,12 @@ object QobuzAudioProvider {
                     ?: response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0L && response.code == 206 }
             }
         }.getOrNull()
+    }
+
+    private fun streamFormatId(url: String): Int? {
+        return url.toHttpUrlOrNull()
+            ?.queryParameter("fmt")
+            ?.toIntOrNull()
     }
 
     private fun buildFlacLabel(

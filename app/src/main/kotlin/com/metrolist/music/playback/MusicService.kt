@@ -3624,6 +3624,7 @@ class MusicService :
     private fun QobuzBackend.toQobuzProviderBackend(): QobuzAudioProvider.ResolverBackend {
         return when (this) {
             QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
+            QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
             QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
         }
     }

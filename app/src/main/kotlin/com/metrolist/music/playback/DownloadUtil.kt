@@ -313,6 +313,7 @@ constructor(
             countryCode = country,
             backend = when (backend) {
                 QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
+                QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
                 QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
             },
         )
