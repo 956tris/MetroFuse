@@ -4532,7 +4532,7 @@ class MusicService :
         private const val PRIVATE_STREAM_MARKER = "_metrolist_private"
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
-        private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
+        private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v2:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
 

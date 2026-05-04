@@ -121,14 +121,13 @@ object AppleMusicDecryptPipeline {
             parseMediaPlaylist(mediaDocument.url, mediaDocument.text)
         }
         trace.mark("duration_known", mediaPlaylist.durationMs ?: durationMs)
-        val segmentLengths =
-            if (start > 0L) {
-                trace.measure("seek_segment_lengths") {
-                    resolveSegmentLengths(client, mediaPlaylist.segments)
-                }
-            } else {
-                null
+        val segmentLengths = trace.measure("seek_segment_lengths") {
+            resolveSegmentLengths(client, mediaPlaylist.segments)
+        }.also { lengths ->
+            if (lengths == null) {
+                trace.mark("seek_segment_lengths_unavailable")
             }
+        }
         val averageBitrate = estimateAverageBandwidth(mediaPlaylist, segmentLengths)
         val rawInitBytes = trace.measure("init_segment_fetch") {
             downloadBytes(client, mediaPlaylist.init.url, mediaPlaylist.init.range)
@@ -381,9 +380,9 @@ object AppleMusicDecryptPipeline {
 
             val lengths = segmentLengths
             if (lengths == null) {
-                current = ByteArrayInputStream(initBytes)
-                skip(offset)
-                return
+                throw AppleMusicWrapperManagerProvider.WrapperManagerException(
+                    "ALAC seek requested but segment lengths are unavailable"
+                )
             }
 
             if (offset < initBytes.size) {
@@ -1036,7 +1035,6 @@ object AppleMusicDecryptPipeline {
         for (segment in segments) {
             val length = segment.range?.length
                 ?: getSegmentContentLength(client, segment)
-                ?: getEncryptedSegmentBytes(client, segment, consumeCached = false).size.toLong().takeIf { it > 0L }
                 ?: return null
             lengths += length
         }
