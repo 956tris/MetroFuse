@@ -7,6 +7,7 @@ package com.metrolist.music.utils
 
 import com.metrolist.music.BuildConfig
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +32,7 @@ data class ReleaseAsset(
 )
 
 object Updater {
-    private val client = HttpClient()
+    private val client = HttpClient(OkHttp)
     var lastCheckTime = -1L
         private set
     

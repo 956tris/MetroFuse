@@ -16,6 +16,7 @@ import com.my.kizzy.gateway.entities.op.OpCode.RECONNECT
 import com.my.kizzy.gateway.entities.op.OpCode.RESUME
 import com.my.kizzy.gateway.entities.presence.Presence
 import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.request.header
 import io.ktor.client.plugins.websocket.DefaultClientWebSocketSession
 import io.ktor.client.plugins.websocket.WebSockets
@@ -64,7 +65,7 @@ open class DiscordWebSocket(
     private var resumeGatewayUrl: String? = null
     private var heartbeatJob: Job? = null
     private var connected = false
-    private var client: HttpClient = HttpClient {
+    private var client: HttpClient = HttpClient(OkHttp) {
         install(WebSockets)
     }
     private val json = Json {
