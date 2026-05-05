@@ -18,11 +18,11 @@ import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import com.metrolist.music.apple.AppleMusicAwareDataSourceFactory
 import com.metrolist.music.apple.AppleMusicSongResolver
 import com.metrolist.music.apple.AppleMusicWrapperDataSource
+import com.metrolist.music.constants.AppleMusicFallbackEnabledKey
+import com.metrolist.music.constants.PreferAppleMusicKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
-import com.metrolist.music.constants.QobuzFallbackEnabledKey
-import com.metrolist.music.constants.PreferQobuzKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.FormatEntity
 import com.metrolist.music.db.entities.Song
@@ -172,8 +172,8 @@ constructor(
         }
 
     private fun currentStreamSelectionKey(context: Context): String {
-        val qobuzEnabled = context.dataStore.get(QobuzFallbackEnabledKey, true)
-        val preferQobuz = context.dataStore.get(PreferQobuzKey, false)
+        val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
+        val preferAppleMusic = context.dataStore.get(PreferAppleMusicKey, false)
         val qobuzBackend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
         val qobuzCountry = context.dataStore.get(QobuzCountryKey, "US")
             .trim()
@@ -181,8 +181,8 @@ constructor(
             .takeIf { it.matches(Regex("[A-Z]{2}")) }
             ?: "US"
         return listOf(
-            "qobuz=$qobuzEnabled",
-            "prefer=$preferQobuz",
+            "appleFallback=$appleMusicFallbackEnabled",
+            "preferApple=$preferAppleMusic",
             "backend=${qobuzBackend.name}",
             "country=$qobuzCountry",
         ).joinToString(";")
@@ -193,83 +193,55 @@ constructor(
         mediaId: String,
         song: Song?,
     ): DownloadStreamResolution {
-        val qobuzEnabled = context.dataStore.get(QobuzFallbackEnabledKey, true)
-        if (qobuzEnabled && context.dataStore.get(PreferQobuzKey, false)) {
-            val qobuzAttempt = runCatching {
-                QobuzAudioProvider.resolve(buildQobuzQuery(context, mediaId, song))
-            }
-            qobuzAttempt.getOrNull()?.let { resolved ->
-                return DownloadStreamResolution(
-                    uri = resolved.mediaUri,
-                    expiresAtMs = resolved.expiresAtMs,
-                    cacheKey = qobuzFallbackCacheKey(mediaId),
-                    format = qobuzFallbackFormat(mediaId, resolved),
-                )
+        val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
+        val preferAppleMusic = appleMusicFallbackEnabled && context.dataStore.get(PreferAppleMusicKey, false)
+
+        fun AppleMusicSongResolver.Resolved.toDownloadResolution(): DownloadStreamResolution =
+            DownloadStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = appleWrapperCacheKey(mediaId),
+                format = appleWrapperFormat(mediaId, bitrate, sampleRate),
+            )
+
+        fun QobuzAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
+            DownloadStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = qobuzFallbackCacheKey(mediaId),
+                format = qobuzFallbackFormat(mediaId, this),
+            )
+
+        var appleAttempt: Result<AppleMusicSongResolver.Resolved> =
+            if (appleMusicFallbackEnabled) {
+                Result.failure(IllegalStateException("Apple Music not attempted yet"))
+            } else {
+                Result.failure(IllegalStateException("Apple Music fallback disabled"))
             }
 
-            val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz preferred stream failed")
-            val appleAttempt = runCatching {
+        if (preferAppleMusic) {
+            appleAttempt = runCatching {
                 AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
             }
             appleAttempt.getOrNull()?.let { resolved ->
-                return DownloadStreamResolution(
-                    uri = resolved.mediaUri,
-                    expiresAtMs = resolved.expiresAtMs,
-                    cacheKey = appleWrapperCacheKey(mediaId),
-                    format = appleWrapperFormat(mediaId, resolved.bitrate, resolved.sampleRate),
-                )
+                return resolved.toDownloadResolution()
             }
-
-            val appleError = appleAttempt.exceptionOrNull() ?: IllegalStateException("Apple Music failed")
-            val youtubeAttempt = runCatching {
-                resolveYouTubeFallback(mediaId)
-            }
-            youtubeAttempt.getOrNull()?.let { return it }
-
-            val youtubeError = youtubeAttempt.exceptionOrNull() ?: IllegalStateException("YouTube fallback failed")
-            throw QobuzAudioProvider.QobuzResolutionException(
-                "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
-                youtubeError,
-            )
         }
 
-        val appleAttempt = runCatching {
-            AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
+        val qobuzAttempt = runCatching {
+            QobuzAudioProvider.resolve(buildQobuzQuery(context, mediaId, song))
         }
-        appleAttempt.getOrNull()?.let { resolved ->
-            return DownloadStreamResolution(
-                uri = resolved.mediaUri,
-                expiresAtMs = resolved.expiresAtMs,
-                cacheKey = appleWrapperCacheKey(mediaId),
-                format = appleWrapperFormat(mediaId, resolved.bitrate, resolved.sampleRate),
-            )
+        qobuzAttempt.getOrNull()?.let { resolved ->
+            return resolved.toDownloadResolution()
         }
 
-        val appleError = appleAttempt.exceptionOrNull() ?: IllegalStateException("Apple Music failed")
-        if (qobuzEnabled) {
-            val qobuzAttempt = runCatching {
-                QobuzAudioProvider.resolve(buildQobuzQuery(context, mediaId, song))
+        if (appleMusicFallbackEnabled && !preferAppleMusic) {
+            appleAttempt = runCatching {
+                AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
             }
-            qobuzAttempt.getOrNull()?.let { resolved ->
-                return DownloadStreamResolution(
-                    uri = resolved.mediaUri,
-                    expiresAtMs = resolved.expiresAtMs,
-                    cacheKey = qobuzFallbackCacheKey(mediaId),
-                    format = qobuzFallbackFormat(mediaId, resolved),
-                )
+            appleAttempt.getOrNull()?.let { resolved ->
+                return resolved.toDownloadResolution()
             }
-
-            val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz fallback failed")
-            val youtubeAttempt = runCatching {
-                resolveYouTubeFallback(mediaId)
-            }
-            youtubeAttempt.getOrNull()?.let { return it }
-
-            val youtubeError = youtubeAttempt.exceptionOrNull() ?: IllegalStateException("YouTube fallback failed")
-            throw QobuzAudioProvider.QobuzResolutionException(
-                "Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; Qobuz fallback failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
-                youtubeError,
-            )
         }
 
         val youtubeAttempt = runCatching {
@@ -278,8 +250,10 @@ constructor(
         youtubeAttempt.getOrNull()?.let { return it }
 
         val youtubeError = youtubeAttempt.exceptionOrNull() ?: IllegalStateException("YouTube fallback failed")
+        val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
+        val appleError = appleAttempt.exceptionOrNull() ?: IllegalStateException("Apple Music failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
             youtubeError,
         )
     }

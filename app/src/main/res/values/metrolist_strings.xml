@@ -975,10 +975,10 @@
     <string name="audio_quality_very_high">Highest possible</string>
     <string name="autoplay">Autoplay</string>
     <string name="autoplay_desc">Automatically play the next song when the current one ends</string>
-    <string name="qobuz_fallback">Qobuz audio source</string>
-    <string name="qobuz_fallback_desc">Try Qobuz first for playback when available</string>
-    <string name="prefer_qobuz">Qobuz first</string>
-    <string name="prefer_qobuz_desc">Use Qobuz before other playback providers</string>
+    <string name="apple_music_fallback">Apple Music fallback</string>
+    <string name="apple_music_fallback_desc">Try Apple Music when Qobuz cannot resolve a playable stream</string>
+    <string name="prefer_apple_music">Prefer Apple Music</string>
+    <string name="prefer_apple_music_desc">Try Apple Music before Qobuz when the Apple Music fallback is enabled</string>
     <string name="qobuz_backend">Qobuz backend</string>
     <string name="qobuz_backend_jumo">JUMO-DL</string>
     <string name="qobuz_backend_kenny">Mono Kenny</string>

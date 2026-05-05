@@ -10,6 +10,7 @@
 
 [![Latest release](https://img.shields.io/badge/releases-GitHub-181717?style=for-the-badge&logo=github&labelColor=0d1117)](releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge&labelColor=0d1117)](LICENSE)
+[![Downloads](https://img.shields.io/github/downloads/956tris/MetroFuse/total?style=for-the-badge&labelColor=0d1117)](releases)
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white&labelColor=0d1117)](#download)
 
 <br/>

@@ -100,6 +100,7 @@ import com.metrolist.music.apple.AppleMusicDecryptPipeline
 import com.metrolist.music.apple.AppleMusicSongResolver
 import com.metrolist.music.apple.AppleMusicWrapperDataSource
 import com.metrolist.music.constants.AndroidAutoTargetPlaylistKey
+import com.metrolist.music.constants.AppleMusicFallbackEnabledKey
 import com.metrolist.music.constants.AudioNormalizationKey
 import com.metrolist.music.constants.AudioOffload
 import com.metrolist.music.constants.AudioQualityKey
@@ -139,12 +140,12 @@ import com.metrolist.music.constants.PauseListenHistoryKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
+import com.metrolist.music.constants.PreferAppleMusicKey
 import com.metrolist.music.constants.PlayerVolumeKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
-import com.metrolist.music.constants.QobuzFallbackEnabledKey
 import com.metrolist.music.constants.RememberShuffleAndRepeatKey
 import com.metrolist.music.constants.RepeatModeKey
 import com.metrolist.music.constants.ResumeOnBluetoothConnectKey
@@ -3461,7 +3462,8 @@ class MusicService :
     }
 
     private fun currentStreamSelectionKey(): String {
-        val qobuzEnabled = dataStore.get(QobuzFallbackEnabledKey, true)
+        val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
+        val preferAppleMusic = dataStore.get(PreferAppleMusicKey, false)
         val qobuzBackend = dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
         val qobuzCountry = dataStore.get(QobuzCountryKey, "US")
             .trim()
@@ -3469,8 +3471,8 @@ class MusicService :
             .takeIf { it.matches(Regex("[A-Z]{2}")) }
             ?: "US"
         return listOf(
-            "qobuz=$qobuzEnabled",
-            "qobuzPrimary=$qobuzEnabled",
+            "appleFallback=$appleMusicFallbackEnabled",
+            "preferApple=$preferAppleMusic",
             "backend=${qobuzBackend.name}",
             "country=$qobuzCountry",
         ).joinToString(";")
@@ -3496,7 +3498,12 @@ class MusicService :
                 return@Factory dataSpec
             }
 
-            val qobuzPrimary = dataStore.get(QobuzFallbackEnabledKey, true)
+            val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
+            val preferAppleMusic = dataStore.get(PreferAppleMusicKey, false)
+            val applePrimary =
+                appleMusicFallbackEnabled &&
+                    preferAppleMusic &&
+                    !skipAppleOnceMediaIds.contains(mediaId)
             val shouldBypassUrlCache =
                 bypassCacheForQualityChange.contains(mediaId) || skipAppleOnceMediaIds.contains(mediaId)
             songUrlCache[mediaId]?.takeIf {
@@ -3512,7 +3519,7 @@ class MusicService :
                 if (
                     cached.isFallbackStream(mediaId) &&
                     !appleSkippedForCachedAttempt &&
-                    !qobuzPrimary &&
+                    applePrimary &&
                     !currentDataSpecIsFallback
                 ) {
                     Timber.tag("AppleALAC").d("Dropping one-shot fallback cache before fresh Apple attempt for $mediaId")
@@ -3537,7 +3544,7 @@ class MusicService :
                 clearResolvedStreamCache(mediaId)
             }
 
-            if (!qobuzPrimary) {
+            if (applePrimary) {
                 upsertAppleWrapperFormat(mediaId)
             }
             val resolved = resolvePlaybackStreamBlocking(mediaId, song)
@@ -3628,43 +3635,60 @@ class MusicService :
         song: Song?,
         queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
     ): PlaybackStreamResolution {
-        val qobuzEnabled = dataStore.get(QobuzFallbackEnabledKey, true)
+        val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
+        val preferAppleMusic = appleMusicFallbackEnabled && dataStore.get(PreferAppleMusicKey, false)
         val skipAppleForThisAttempt = skipAppleOnceMediaIds.remove(mediaId)
-        val qobuzAttempt = if (qobuzEnabled) {
-            val qobuzAttempt = runCatching {
-                QobuzAudioProvider.resolve(buildQobuzQuery(mediaId, song, queuedMetadata))
+
+        fun AppleMusicSongResolver.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
+            PlaybackStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = appleWrapperCacheKey(mediaId),
+                format = appleWrapperFormat(mediaId, bitrate, sampleRate),
+            )
+
+        fun QobuzAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
+            PlaybackStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = qobuzFallbackCacheKey(mediaId),
+                format = qobuzFallbackFormat(mediaId, this),
+            )
+
+        var appleAttempt: Result<AppleMusicSongResolver.Resolved> =
+            if (skipAppleForThisAttempt) {
+                Result.failure(IllegalStateException("Apple Music skipped after slow ALAC startup"))
+            } else if (!appleMusicFallbackEnabled) {
+                Result.failure(IllegalStateException("Apple Music fallback disabled"))
+            } else {
+                Result.failure(IllegalStateException("Apple Music not attempted yet"))
             }
-            qobuzAttempt.getOrNull()?.let { resolved ->
-                Timber.tag("MusicService").i("Using primary Qobuz stream for $mediaId: ${resolved.label}")
-                return PlaybackStreamResolution(
-                    uri = resolved.mediaUri,
-                    expiresAtMs = resolved.expiresAtMs,
-                    cacheKey = qobuzFallbackCacheKey(mediaId),
-                    format = qobuzFallbackFormat(mediaId, resolved),
-                )
+
+        if (preferAppleMusic && !skipAppleForThisAttempt) {
+            appleAttempt = runCatching {
+                AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song, queuedMetadata))
             }
-            qobuzAttempt
-        } else {
-            null
+            appleAttempt.getOrNull()?.let { resolved ->
+                Timber.tag("MusicService").i("Using preferred Apple Music stream for $mediaId")
+                return resolved.toPlaybackResolution()
+            }
         }
 
-        val appleAttempt = if (skipAppleForThisAttempt) {
-            Result.failure(IllegalStateException("Apple Music skipped after slow ALAC startup"))
-        } else {
-            runCatching {
+        val qobuzAttempt = runCatching {
+            QobuzAudioProvider.resolve(buildQobuzQuery(mediaId, song, queuedMetadata))
+        }
+        qobuzAttempt.getOrNull()?.let { resolved ->
+            Timber.tag("MusicService").i("Using primary Qobuz stream for $mediaId: ${resolved.label}")
+            return resolved.toPlaybackResolution()
+        }
+
+        if (appleMusicFallbackEnabled && !preferAppleMusic && !skipAppleForThisAttempt) {
+            appleAttempt = runCatching {
                 AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song, queuedMetadata))
-            }.also { attempt ->
-                attempt.getOrNull()?.let { resolved ->
-                    if (qobuzEnabled) {
-                        Timber.tag("MusicService").i("Qobuz primary stream missed for $mediaId; using Apple Music fallback")
-                    }
-                    return PlaybackStreamResolution(
-                        uri = resolved.mediaUri,
-                        expiresAtMs = resolved.expiresAtMs,
-                        cacheKey = appleWrapperCacheKey(mediaId),
-                        format = appleWrapperFormat(mediaId, resolved.bitrate, resolved.sampleRate),
-                    )
-                }
+            }
+            appleAttempt.getOrNull()?.let { resolved ->
+                Timber.tag("MusicService").i("Qobuz primary stream missed for $mediaId; using Apple Music fallback")
+                return resolved.toPlaybackResolution()
             }
         }
 
@@ -3685,7 +3709,7 @@ class MusicService :
 
         val youtubeError = youtubeAttempt.exceptionOrNull()
             ?: IllegalStateException("YouTube fallback failed")
-        val qobuzDetail = qobuzAttempt?.exceptionOrNull()?.readableMessage()
+        val qobuzDetail = qobuzAttempt.exceptionOrNull()?.readableMessage()
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
         throw PlaybackException(
@@ -3925,10 +3949,13 @@ class MusicService :
         val mediaId = mediaItem.mediaIdForPlaybackSource()
             ?: return mediaItem
         val appleSkippedForAttempt = skipAppleOnceMediaIds.contains(mediaId)
-        val qobuzPrimary = dataStore.get(QobuzFallbackEnabledKey, true)
+        val applePrimary =
+            dataStore.get(AppleMusicFallbackEnabledKey, true) &&
+                dataStore.get(PreferAppleMusicKey, false) &&
+                !appleSkippedForAttempt
 
         if (AppleMusicWrapperDataSource.isAppleUri(localConfiguration.uri)) {
-            if (appleSkippedForAttempt || qobuzPrimary) {
+            if (!applePrimary) {
                 return mediaItem.withResolvedPlaybackStream(mediaId, mediaId)
             }
             return mediaItem.withResolvedPlaybackStream(
@@ -3938,14 +3965,14 @@ class MusicService :
         }
 
         songUrlCache[mediaId]?.takeIf { it.expiresAtMs > System.currentTimeMillis() }?.let { cached ->
-            if (cached.isFallbackStream(mediaId) && !appleSkippedForAttempt && !qobuzPrimary) {
+            if (cached.isFallbackStream(mediaId) && applePrimary) {
                 Timber.tag("AppleALAC").d("Ignoring cached fallback stream before fresh Apple source selection for $mediaId")
                 clearResolvedStreamCache(mediaId)
                 return@let
             }
             val cachedUri = cached.uri.toUri()
             return if (AppleMusicWrapperDataSource.isAppleUri(cachedUri)) {
-                if (appleSkippedForAttempt || qobuzPrimary) {
+                if (!applePrimary) {
                     mediaItem.withResolvedPlaybackStream(mediaId, mediaId)
                 } else {
                     mediaItem.withResolvedPlaybackStream(cached.uri, cached.cacheKey)
@@ -3955,7 +3982,7 @@ class MusicService :
             }
         } ?: clearResolvedStreamCache(mediaId)
 
-        if (!appleSkippedForAttempt && !qobuzPrimary) {
+        if (applePrimary) {
             mediaItem.buildPendingAppleRoute(mediaId)?.let { pendingAppleItem ->
                 return pendingAppleItem
             }
@@ -4003,8 +4030,12 @@ class MusicService :
             } else {
                 val mediaId = mediaItem.mediaIdForPlaybackSource()
                 val appleSkippedForAttempt = mediaId?.let(skipAppleOnceMediaIds::contains) == true
-                val qobuzPrimary = dataStore.get(QobuzFallbackEnabledKey, true)
-                if (mediaId != null && !appleSkippedForAttempt && !qobuzPrimary) {
+                val applePrimary =
+                    mediaId != null &&
+                        dataStore.get(AppleMusicFallbackEnabledKey, true) &&
+                        dataStore.get(PreferAppleMusicKey, false) &&
+                        !appleSkippedForAttempt
+                if (mediaId != null && applePrimary) {
                     mediaItem.buildPendingAppleRoute(mediaId)?.also {
                         Timber.tag("AppleALAC").d(
                             "Forced pending HLS source before progressive selection for $mediaId",

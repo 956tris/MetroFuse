@@ -115,8 +115,8 @@ enum class AudioQuality {
     VERY_HIGH,
 }
 
-val QobuzFallbackEnabledKey = booleanPreferencesKey("qobuzFallbackEnabled")
-val PreferQobuzKey = booleanPreferencesKey("preferQobuz")
+val AppleMusicFallbackEnabledKey = booleanPreferencesKey("appleMusicFallbackEnabled")
+val PreferAppleMusicKey = booleanPreferencesKey("preferAppleMusic")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
 
