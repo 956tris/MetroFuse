@@ -91,8 +91,11 @@ import com.metrolist.music.constants.MiniPlayerHeight
 import com.metrolist.music.constants.NavigationBarHeight
 import com.metrolist.music.constants.PauseSearchHistoryKey
 import com.metrolist.music.db.entities.SearchHistory
+import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.toMediaMetadata
+import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.YouTubeQueue
+import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.ui.component.ChipsRow
 import com.metrolist.music.ui.component.EmptyPlaceholder
 import com.metrolist.music.ui.component.HideOnScrollFAB
@@ -156,6 +159,7 @@ fun OnlineSearchResult(
 
     val pauseSearchHistory by rememberPreference(PauseSearchHistoryKey, defaultValue = false)
     val hideVideoSongs by rememberPreference(HideVideoSongsKey, defaultValue = false)
+    val isSoundCloudSearch = viewModel.isSoundCloudSearch
 
     BackHandler(enabled = isSearchFocused) {
         isSearchFocused = false
@@ -229,6 +233,29 @@ fun OnlineSearchResult(
         }.collect { shouldLoadMore ->
             if (!shouldLoadMore) return@collect
             viewModel.loadMore()
+        }
+    }
+
+    fun playSong(item: SongItem) {
+        if (item.id == mediaMetadata?.id) {
+            playerConnection.togglePlayPause()
+            return
+        }
+
+        if (SoundCloudAudioProvider.isSoundCloudUrl(item.id)) {
+            playerConnection.playQueue(
+                ListQueue(
+                    title = item.title,
+                    items = listOf(item.toMediaMetadata().toMediaItem()),
+                ),
+            )
+        } else {
+            playerConnection.playQueue(
+                YouTubeQueue(
+                    WatchEndpoint(videoId = item.id),
+                    item.toMediaMetadata(),
+                ),
+            )
         }
     }
 
@@ -312,16 +339,7 @@ fun OnlineSearchResult(
                         onClick = {
                             when (item) {
                                 is SongItem -> {
-                                    if (item.id == mediaMetadata?.id) {
-                                        playerConnection.togglePlayPause()
-                                    } else {
-                                        playerConnection.playQueue(
-                                            YouTubeQueue(
-                                                WatchEndpoint(videoId = item.id),
-                                                item.toMediaMetadata(),
-                                            ),
-                                        )
-                                    }
+                                    playSong(item)
                                 }
 
                                 is AlbumItem -> {
@@ -374,7 +392,14 @@ fun OnlineSearchResult(
             },
             placeholder = {
                 Text(
-                    text = stringResource(R.string.search_yt_music),
+                    text =
+                        stringResource(
+                            if (isSoundCloudSearch) {
+                                R.string.search_soundcloud
+                            } else {
+                                R.string.search_yt_music
+                            },
+                        ),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -452,25 +477,34 @@ fun OnlineSearchResult(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 val visibleChips =
-                    listOf(
-                        null to stringResource(R.string.filter_all),
-                        FILTER_SONG to stringResource(R.string.filter_songs),
-                    ).let { baseChips ->
-                        if (!hideVideoSongs) {
-                            baseChips + (FILTER_VIDEO to stringResource(R.string.filter_videos))
-                        } else {
-                            baseChips
-                        }
-                    } +
+                    if (isSoundCloudSearch) {
                         listOf(
+                            null to stringResource(R.string.filter_all),
+                            FILTER_SONG to stringResource(R.string.filter_songs),
                             FILTER_ALBUM to stringResource(R.string.filter_albums),
-                            FILTER_ARTIST to stringResource(R.string.filter_artists),
                             FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_community_playlists),
-                            FILTER_FEATURED_PLAYLIST to stringResource(R.string.filter_featured_playlists),
-                            FILTER_PODCAST to stringResource(R.string.filter_podcasts),
-                            FILTER_EPISODE to stringResource(R.string.filter_episodes),
-                            FILTER_PROFILE to stringResource(R.string.filter_profiles),
                         )
+                    } else {
+                        listOf(
+                            null to stringResource(R.string.filter_all),
+                            FILTER_SONG to stringResource(R.string.filter_songs),
+                        ).let { baseChips ->
+                            if (!hideVideoSongs) {
+                                baseChips + (FILTER_VIDEO to stringResource(R.string.filter_videos))
+                            } else {
+                                baseChips
+                            }
+                        } +
+                            listOf(
+                                FILTER_ALBUM to stringResource(R.string.filter_albums),
+                                FILTER_ARTIST to stringResource(R.string.filter_artists),
+                                FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_community_playlists),
+                                FILTER_FEATURED_PLAYLIST to stringResource(R.string.filter_featured_playlists),
+                                FILTER_PODCAST to stringResource(R.string.filter_podcasts),
+                                FILTER_EPISODE to stringResource(R.string.filter_episodes),
+                                FILTER_PROFILE to stringResource(R.string.filter_profiles),
+                            )
+                    }
 
                 ChipsRow(
                     chips = visibleChips,

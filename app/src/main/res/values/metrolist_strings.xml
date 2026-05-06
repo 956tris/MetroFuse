@@ -13,6 +13,8 @@
     <string name="home_source_youtube_music">YouTube Music</string>
     <string name="home_source_tidal">TIDAL</string>
     <string name="home_source_spotify">Spotify</string>
+    <string name="home_source_soundcloud">SoundCloud</string>
+    <string name="search_soundcloud">Search SoundCloud</string>
 
     <string name="weeks">Weeks</string>
     <string name="months">Months</string>
@@ -406,6 +408,18 @@
     <string name="integrations">Integrations</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
+    <string name="prefer_soundcloud_audio">Prefer SoundCloud audio</string>
+    <string name="prefer_soundcloud_audio_desc">Try SoundCloud before Qobuz, Apple Music, and YouTube for playable audio.</string>
+    <string name="soundcloud_integration">SoundCloud</string>
+    <string name="soundcloud_web_login">SoundCloud Web login</string>
+    <string name="soundcloud_web_login_desc">Log in with SoundCloud in the WebView. MetroFuse saves the OAuth token used for personalized SoundCloud home and your own account streams.</string>
+    <string name="soundcloud_auth_token_title">SoundCloud OAuth token</string>
+    <string name="soundcloud_auth_token_placeholder">Paste oauth_token, access token, or a SoundCloud cookie header</string>
+    <string name="soundcloud_auth_token_helper">Use Web login, or paste the oauth_token value from your SoundCloud browser session.</string>
+    <string name="soundcloud_auth_configured">SoundCloud auth configured</string>
+    <string name="soundcloud_auth_not_configured">No SoundCloud auth configured</string>
+    <string name="soundcloud_clear_auth">Clear SoundCloud auth</string>
+    <string name="soundcloud_auth_saved">SoundCloud auth saved.</string>
 
     <!-- Last.fm -->
     <string name="lastfm_integration">Last.fm integration</string>

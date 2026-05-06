@@ -135,6 +135,7 @@ import com.metrolist.music.playback.queues.LocalAlbumRadio
 import com.metrolist.music.playback.queues.YouTubeAlbumRadio
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.providers.ExternalHomeItemIds
+import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.ui.component.AlbumGridItem
 import com.metrolist.music.ui.component.ArtistGridItem
 import com.metrolist.music.ui.component.ChipsRow
@@ -1126,6 +1127,18 @@ fun HomeScreen(
     }
 
     fun navigateExternalHomeItem(item: YTItem) {
+        if (item is SongItem && SoundCloudAudioProvider.isSoundCloudUrl(item.id)) {
+            if (!isListenTogetherGuest) {
+                playerConnection.playQueue(
+                    ListQueue(
+                        title = item.title,
+                        items = listOf(item.toMediaMetadata().toMediaItem()),
+                    ),
+                )
+            }
+            return
+        }
+
         ExternalHomeItemIds.externalMetroRoute(item)?.let { route ->
             navController.navigate(route)
             return
@@ -1398,6 +1411,7 @@ fun HomeScreen(
                                 HomeFeedSource.YOUTUBE_MUSIC to stringResource(R.string.home_source_youtube_music),
                                 HomeFeedSource.TIDAL to stringResource(R.string.home_source_tidal),
                                 HomeFeedSource.SPOTIFY to stringResource(R.string.home_source_spotify),
+                                HomeFeedSource.SOUNDCLOUD to stringResource(R.string.home_source_soundcloud),
                             ),
                         currentValue = homeFeedSource,
                         onValueUpdate = onHomeFeedSourceChange,
@@ -2499,6 +2513,88 @@ fun HomeScreen(
                                 return@forEach
                             }
                             val sectionData = homePage?.sections?.getOrNull(section.index)
+                            if (homeFeedSource == HomeFeedSource.SOUNDCLOUD) {
+                                if (sectionData != null && sectionData.items.isNotEmpty()) {
+                                    val distinctItems = sectionData.items.distinctBy { it.id }
+
+                                    item(key = "soundcloud_home_section_title_${section.index}") {
+                                        NavigationTitle(
+                                            title = sectionData.title,
+                                            label = sectionData.label,
+                                            modifier = Modifier.animateItem(),
+                                        )
+                                    }
+
+                                    if (section.index == 0) {
+                                        item(key = "soundcloud_home_section_grid_${section.index}") {
+                                            LazyHorizontalGrid(
+                                                state = rememberLazyGridState(),
+                                                rows = GridCells.Fixed(2),
+                                                contentPadding =
+                                                    WindowInsets.systemBars
+                                                        .only(WindowInsetsSides.Horizontal)
+                                                        .asPaddingValues(),
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth()
+                                                        .height(76.dp * 2)
+                                                        .animateItem(),
+                                            ) {
+                                                items(
+                                                    items = distinctItems,
+                                                    key = { "soundcloud_compact_${it.id}" },
+                                                ) { item ->
+                                                    SpotifyCompactHomeItem(
+                                                        item = item,
+                                                        isActive = item.id in listOf(mediaMetadata?.album?.id, mediaMetadata?.id),
+                                                        isPlaying = isPlaying,
+                                                        modifier =
+                                                            Modifier
+                                                                .width(horizontalLazyGridItemWidth)
+                                                                .combinedClickable(
+                                                                    onClick = { navigateExternalHomeItem(item) },
+                                                                    onLongClick = {
+                                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                        navigateExternalHomeItem(item)
+                                                                    },
+                                                                ),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        item(key = "soundcloud_home_section_shelf_${section.index}") {
+                                            LazyRow(
+                                                contentPadding =
+                                                    WindowInsets.systemBars
+                                                        .only(WindowInsetsSides.Horizontal)
+                                                        .asPaddingValues(),
+                                                modifier = Modifier.animateItem(),
+                                            ) {
+                                                items(
+                                                    items = distinctItems,
+                                                    key = { "soundcloud_shelf_${it.id}" },
+                                                ) { item ->
+                                                    SpotifyShelfItem(
+                                                        item = item,
+                                                        isActive = item.id in listOf(mediaMetadata?.album?.id, mediaMetadata?.id),
+                                                        isPlaying = isPlaying,
+                                                        modifier =
+                                                            Modifier.combinedClickable(
+                                                                onClick = { navigateExternalHomeItem(item) },
+                                                                onLongClick = {
+                                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                                    navigateExternalHomeItem(item)
+                                                                },
+                                                            ),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                return@forEach
+                            }
                             if (homeFeedSource == HomeFeedSource.SPOTIFY) {
                                 if (sectionData != null && shouldShowSpotifySection(sectionData)) {
                                     val spotifyDisplayIndex =

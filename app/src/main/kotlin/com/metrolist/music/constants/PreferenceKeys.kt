@@ -223,6 +223,8 @@ val LastFMUseSendLikes = booleanPreferencesKey("lastfmUseSendLikes")
 val SpotifyCanvasEnabledKey = booleanPreferencesKey("spotifyCanvasEnabled")
 val SpotifyCookieKey = stringPreferencesKey("spotifyCanvasCookie")
 val TidalCookieKey = stringPreferencesKey("tidalCookie")
+val SoundCloudAuthTokenKey = stringPreferencesKey("soundCloudAuthToken")
+val PreferSoundCloudAudioKey = booleanPreferencesKey("preferSoundCloudAudio")
 
 val ScrobbleDelayPercentKey = floatPreferencesKey("scrobbleDelayPercent")
 val ScrobbleMinSongDurationKey = intPreferencesKey("scrobbleMinSongDuration")
@@ -285,6 +287,7 @@ enum class HomeFeedSource {
     YOUTUBE_MUSIC,
     TIDAL,
     SPOTIFY,
+    SOUNDCLOUD,
 }
 
 val ShowLikedPlaylistKey = booleanPreferencesKey("show_liked_playlist")

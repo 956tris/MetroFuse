@@ -64,8 +64,11 @@ import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.constants.SuggestionItemHeight
+import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.toMediaMetadata
+import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.YouTubeQueue
+import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.ui.component.LocalMenuState
 import com.metrolist.music.ui.component.YouTubeListItem
 import com.metrolist.music.ui.menu.YouTubeAlbumMenu
@@ -102,6 +105,26 @@ fun OnlineSearchScreen(
     val viewState by viewModel.viewState.collectAsStateWithLifecycle()
 
     val lazyListState = rememberLazyListState()
+
+    fun playSong(item: SongItem) {
+        if (item.id == mediaMetadata?.id) {
+            playerConnection.togglePlayPause()
+            return
+        }
+
+        if (SoundCloudAudioProvider.isSoundCloudUrl(item.id)) {
+            playerConnection.playQueue(
+                ListQueue(
+                    title = item.title,
+                    items = listOf(item.toMediaMetadata().toMediaItem()),
+                ),
+            )
+        } else {
+            playerConnection.playQueue(
+                YouTubeQueue.radio(item.toMediaMetadata()),
+            )
+        }
+    }
 
     LaunchedEffect(Unit) {
         snapshotFlow { lazyListState.firstVisibleItemScrollOffset }
@@ -240,14 +263,8 @@ fun OnlineSearchScreen(
                                 onClick = {
                                     when (item) {
                                         is SongItem -> {
-                                            if (item.id == mediaMetadata?.id) {
-                                                playerConnection.togglePlayPause()
-                                            } else {
-                                                playerConnection.playQueue(
-                                                    YouTubeQueue.radio(item.toMediaMetadata()),
-                                                )
-                                                onDismiss()
-                                            }
+                                            playSong(item)
+                                            onDismiss()
                                         }
 
                                         is AlbumItem -> {
@@ -512,14 +529,8 @@ fun OnlineSearchScreen(
                             onClick = {
                                 when (item) {
                                     is SongItem -> {
-                                        if (item.id == mediaMetadata?.id) {
-                                            playerConnection.togglePlayPause()
-                                        } else {
-                                            playerConnection.playQueue(
-                                                YouTubeQueue.radio(item.toMediaMetadata()),
-                                            )
-                                            onDismiss()
-                                        }
+                                        playSong(item)
+                                        onDismiss()
                                     }
 
                                     is AlbumItem -> {

@@ -68,6 +68,14 @@ fun IntegrationScreen(
                     onClick = {
                         navController.navigate("settings/integrations/tidal")
                     }
+                ),
+                IntegrationCardItem(
+                    icon = painterResource(R.drawable.cloud),
+                    title = { Text(stringResource(R.string.soundcloud_integration)) },
+                    description = { Text(stringResource(R.string.soundcloud_web_login_desc)) },
+                    onClick = {
+                        navController.navigate("settings/integrations/soundcloud")
+                    }
                 )
             )
         )

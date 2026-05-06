@@ -17,11 +17,13 @@ import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.filterVideoSongs
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.SongSortType
+import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.providers.ExternalPlaylistPage
+import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
@@ -57,7 +59,8 @@ class OnlinePlaylistViewModel @Inject constructor(
             ?.takeIf { (provider, type, _) ->
                 type == "playlist" ||
                     (provider == "spotify" && type == "album") ||
-                    (provider == "tidal" && type in setOf("album", "mix"))
+                    (provider == "tidal" && type in setOf("album", "mix")) ||
+                    (provider == "soundcloud" && type in setOf("album", "mix"))
             }
     val isExternalPlaylist = externalCollectionIdParts != null
 
@@ -136,6 +139,18 @@ class OnlinePlaylistViewModel @Inject constructor(
                     .onSuccess(::setExternalPlaylist)
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load TIDAL $type"
+                        _isLoading.value = false
+                        reportException(throwable)
+                    }
+            }
+
+            "soundcloud" -> {
+                val token = context.dataStore.get(SoundCloudAuthTokenKey, "")
+                SoundCloudHomeFeedProvider
+                    .loadCollection(externalId, type, token)
+                    .onSuccess(::setExternalPlaylist)
+                    .onFailure { throwable ->
+                        _error.value = throwable.message ?: "Failed to load SoundCloud $type"
                         _isLoading.value = false
                         reportException(throwable)
                     }

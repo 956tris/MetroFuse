@@ -61,6 +61,8 @@ import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
 import com.metrolist.music.ui.screens.settings.integrations.IntegrationScreen
 import com.metrolist.music.ui.screens.settings.integrations.LastFMSettings
 import com.metrolist.music.ui.screens.settings.integrations.ListenTogetherSettings
+import com.metrolist.music.ui.screens.settings.integrations.SoundCloudLoginScreen
+import com.metrolist.music.ui.screens.settings.integrations.SoundCloudSettings
 import com.metrolist.music.ui.screens.settings.integrations.SpotifyCanvasLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.SpotifyCanvasSettings
 import com.metrolist.music.ui.screens.settings.integrations.TidalLoginScreen
@@ -417,6 +419,14 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/tidal/login") {
         TidalLoginScreen(navController)
+    }
+
+    composable("settings/integrations/soundcloud") {
+        SoundCloudSettings(navController)
+    }
+
+    composable("settings/integrations/soundcloud/login") {
+        SoundCloudLoginScreen(navController)
     }
 
     composable(route = "settings/integrations/listen_together") {

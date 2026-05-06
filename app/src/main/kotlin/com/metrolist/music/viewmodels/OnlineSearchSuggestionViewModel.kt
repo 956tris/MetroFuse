@@ -18,10 +18,14 @@ import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.filterExplicit
 import com.metrolist.innertube.models.filterVideoSongs
 import com.metrolist.innertube.utils.YouTubeUrlParser
+import com.metrolist.music.constants.HomeFeedSource
+import com.metrolist.music.constants.HomeFeedSourceKey
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
+import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.SearchHistory
+import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -59,7 +63,29 @@ class OnlineSearchSuggestionViewModel
                         } else {
                             // Check if query is a YouTube URL
                             val parsedUrl = YouTubeUrlParser.parse(query)
-                            if (parsedUrl != null) {
+                            if (selectedHomeFeedSource() == HomeFeedSource.SOUNDCLOUD && parsedUrl == null) {
+                                val authToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
+                                val items =
+                                    SoundCloudHomeFeedProvider
+                                        .search(query, authToken)
+                                        .getOrNull()
+                                        ?.summaries
+                                        ?.flatMap { it.items }
+                                        ?.distinctBy { it.id }
+                                        ?.take(12)
+                                        .orEmpty()
+
+                                database
+                                    .searchHistory(query)
+                                    .map { it.take(3) }
+                                    .map { history ->
+                                        SearchSuggestionViewState(
+                                            history = history,
+                                            suggestions = emptyList(),
+                                            items = items,
+                                        )
+                                    }
+                            } else if (parsedUrl != null) {
                                 // Fetch content from YouTube URL
                                 val parsedItem = fetchParsedUrlItem(parsedUrl)
                                 database
@@ -107,6 +133,11 @@ class OnlineSearchSuggestionViewModel
                     }
             }
         }
+
+        private suspend fun selectedHomeFeedSource(): HomeFeedSource =
+            runCatching {
+                HomeFeedSource.valueOf(context.dataStore.get(HomeFeedSourceKey, HomeFeedSource.YOUTUBE_MUSIC.name))
+            }.getOrDefault(HomeFeedSource.YOUTUBE_MUSIC)
 
         private suspend fun fetchParsedUrlItem(parsedUrl: YouTubeUrlParser.ParsedUrl): YTItem? =
             when (parsedUrl) {

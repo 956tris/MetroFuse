@@ -34,6 +34,7 @@ import com.metrolist.music.constants.InnerTubeCookieKey
 import com.metrolist.music.constants.QuickPicks
 import com.metrolist.music.constants.QuickPicksKey
 import com.metrolist.music.constants.ShowWrappedCardKey
+import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.constants.WrappedSeenKey
@@ -45,6 +46,7 @@ import com.metrolist.music.db.entities.SpeedDialItem
 import com.metrolist.music.extensions.filterVideoSongs
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.SimilarRecommendation
+import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.ui.screens.wrapped.WrappedAudioService
 import com.metrolist.music.ui.screens.wrapped.WrappedManager
@@ -676,6 +678,13 @@ class HomeViewModel @Inject constructor(
                         ?: HomePage(chips = null, sections = emptyList())
                 }.onFailure { reportException(it) }
             }
+
+            HomeFeedSource.SOUNDCLOUD -> {
+                val token = context.dataStore.get(SoundCloudAuthTokenKey, "")
+                SoundCloudHomeFeedProvider.load(token).onSuccess { page ->
+                    homePage.value = page.filtered(hideExplicit, hideVideoSongs, hideYoutubeShorts)
+                }.onFailure { reportException(it) }
+            }
         }
     }
 
@@ -821,6 +830,7 @@ class HomeViewModel @Inject constructor(
                         listOf(
                             it[SpotifyCookieKey],
                             it[TidalCookieKey],
+                            it[SoundCloudAuthTokenKey],
                         ),
                     )
                 }

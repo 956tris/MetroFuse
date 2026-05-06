@@ -141,11 +141,13 @@ import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PreferAppleMusicKey
+import com.metrolist.music.constants.PreferSoundCloudAudioKey
 import com.metrolist.music.constants.PlayerVolumeKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
+import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.constants.RememberShuffleAndRepeatKey
 import com.metrolist.music.constants.RepeatModeKey
 import com.metrolist.music.constants.ResumeOnBluetoothConnectKey
@@ -197,6 +199,7 @@ import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.playback.queues.filterExplicit
 import com.metrolist.music.playback.queues.filterVideoSongs
 import com.metrolist.music.qobuz.QobuzAudioProvider
+import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.utils.CoilBitmapLoader
@@ -742,6 +745,7 @@ class MusicService :
                     songUrlCache.remove(mediaId)
                     AppleMusicSongResolver.invalidate(mediaId)
                     QobuzAudioProvider.invalidate(mediaId)
+                    SoundCloudAudioProvider.invalidate(mediaId)
                     YouTubeAudioProvider.invalidate(mediaId)
                     AppleMusicDecryptPipeline.clearMemoryCaches()
 
@@ -751,10 +755,12 @@ class MusicService :
                             playerCache.removeResource(mediaId)
                             playerCache.removeResource(appleWrapperCacheKey(mediaId))
                             playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
+                            playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
                             playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
                             downloadCache.removeResource(mediaId)
                             downloadCache.removeResource(appleWrapperCacheKey(mediaId))
                             downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
+                            downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
                             downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
                             Timber.tag("MusicService").d("Cleared player and download cache for $mediaId")
                         } catch (e: Exception) {
@@ -2741,6 +2747,7 @@ class MusicService :
 
     private fun CachedSongStream.isFallbackStream(mediaId: String): Boolean =
         cacheKey == qobuzFallbackCacheKey(mediaId) ||
+            cacheKey == soundCloudFallbackCacheKey(mediaId) ||
             cacheKey == youtubeFallbackCacheKey(mediaId)
 
     private fun Throwable.containsInCauseChain(fragment: String): Boolean {
@@ -2938,6 +2945,7 @@ class MusicService :
         songUrlCache.remove(mediaId)
         AppleMusicSongResolver.invalidate(mediaId)
         QobuzAudioProvider.invalidate(mediaId)
+        SoundCloudAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
         AppleMusicDecryptPipeline.clearMemoryCaches()
 
@@ -2946,10 +2954,12 @@ class MusicService :
             playerCache.removeResource(mediaId)
             playerCache.removeResource(appleWrapperCacheKey(mediaId))
             playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
+            playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
             playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
             downloadCache.removeResource(mediaId)
             downloadCache.removeResource(appleWrapperCacheKey(mediaId))
             downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
+            downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
             downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
             Timber.tag(TAG).d("Cleared player cache for $mediaId")
         } catch (e: Exception) {
@@ -3166,6 +3176,7 @@ class MusicService :
         songUrlCache.remove(mediaId)
         AppleMusicSongResolver.invalidate(mediaId)
         QobuzAudioProvider.invalidate(mediaId)
+        SoundCloudAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
         AppleMusicDecryptPipeline.clearMemoryCaches()
         Timber.tag(TAG).d("Cleared cached URL for $mediaId")
@@ -3324,6 +3335,27 @@ class MusicService :
                                                     request.header("Range") != null,
                                                 ).build()
                                         }
+                                        if (request.url.queryParameter(SoundCloudAudioProvider.STREAM_MARKER_QUERY) != null) {
+                                            val isApiStream =
+                                                request.url.queryParameter(SoundCloudAudioProvider.STREAM_SOURCE_QUERY) ==
+                                                    SoundCloudAudioProvider.STREAM_SOURCE_API
+                                            val isHlsStream =
+                                                request.url.queryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) == "1"
+                                            val cleanUrl =
+                                                request.url
+                                                    .newBuilder()
+                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_MARKER_QUERY)
+                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY)
+                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_SOURCE_QUERY)
+                                                    .build()
+                                            request =
+                                                SoundCloudAudioProvider.addPlaybackHeaders(
+                                                    request.newBuilder().url(cleanUrl),
+                                                    request.header("Range") != null,
+                                                    isApiStream,
+                                                    isHlsStream,
+                                                ).build()
+                                        }
                                         if (request.url.queryParameter(PRIVATE_STREAM_MARKER) != null) {
                                             val cleanUrl =
                                                 request.url
@@ -3464,6 +3496,8 @@ class MusicService :
     private fun currentStreamSelectionKey(): String {
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = dataStore.get(PreferAppleMusicKey, false)
+        val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
+        val soundCloudAuthConfigured = dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
         val qobuzBackend = dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
         val qobuzCountry = dataStore.get(QobuzCountryKey, "US")
             .trim()
@@ -3473,6 +3507,8 @@ class MusicService :
         return listOf(
             "appleFallback=$appleMusicFallbackEnabled",
             "preferApple=$preferAppleMusic",
+            "preferSoundCloud=$preferSoundCloudAudio",
+            "soundCloudAuth=$soundCloudAuthConfigured",
             "backend=${qobuzBackend.name}",
             "country=$qobuzCountry",
         ).joinToString(";")
@@ -3514,6 +3550,7 @@ class MusicService :
                 val appleSkippedForCachedAttempt = skipAppleOnceMediaIds.contains(mediaId)
                 val currentDataSpecIsFallback = dataSpec.key?.let { key ->
                     key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
+                        key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
                         key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
                 } == true
                 if (
@@ -3585,10 +3622,12 @@ class MusicService :
         playerCache.removeResource(mediaId)
         playerCache.removeResource(appleWrapperCacheKey(mediaId))
         playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
+        playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
         playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
         downloadCache.removeResource(mediaId)
         downloadCache.removeResource(appleWrapperCacheKey(mediaId))
         downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
+        downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
         downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
     }
 
@@ -3637,6 +3676,9 @@ class MusicService :
     ): PlaybackStreamResolution {
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = appleMusicFallbackEnabled && dataStore.get(PreferAppleMusicKey, false)
+        val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
+        val soundCloudAuthToken = dataStore.get(SoundCloudAuthTokenKey, "")
+        val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
         val skipAppleForThisAttempt = skipAppleOnceMediaIds.remove(mediaId)
 
         fun AppleMusicSongResolver.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
@@ -3663,6 +3705,15 @@ class MusicService :
             } else {
                 Result.failure(IllegalStateException("Apple Music not attempted yet"))
             }
+        var soundCloudAttempt: Result<PlaybackStreamResolution> =
+            Result.failure(IllegalStateException("SoundCloud not attempted yet"))
+
+        if (preferSoundCloudAudio || directSoundCloudMediaId) {
+            soundCloudAttempt = runCatching {
+                resolveSoundCloudFallback(mediaId, song, queuedMetadata, soundCloudAuthToken)
+            }
+            soundCloudAttempt.getOrNull()?.let { return it }
+        }
 
         if (preferAppleMusic && !skipAppleForThisAttempt) {
             appleAttempt = runCatching {
@@ -3702,6 +3753,13 @@ class MusicService :
             )
         }
 
+        if (!preferSoundCloudAudio && !directSoundCloudMediaId) {
+            soundCloudAttempt = runCatching {
+                resolveSoundCloudFallback(mediaId, song, queuedMetadata, soundCloudAuthToken)
+            }
+            soundCloudAttempt.getOrNull()?.let { return it }
+        }
+
         val youtubeAttempt = runCatching {
             resolveYouTubeFallback(mediaId)
         }
@@ -3709,13 +3767,33 @@ class MusicService :
 
         val youtubeError = youtubeAttempt.exceptionOrNull()
             ?: IllegalStateException("YouTube fallback failed")
+        val soundCloudError = soundCloudAttempt.exceptionOrNull()
+            ?: IllegalStateException("SoundCloud fallback failed")
         val qobuzDetail = qobuzAttempt.exceptionOrNull()?.readableMessage()
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
         throw PlaybackException(
-            "${qobuzDetail}Apple Music failed: ${appleError.readableMessage()}; YouTube failed: ${youtubeError.readableMessage()}",
+            "${qobuzDetail}Apple Music failed: ${appleError.readableMessage()}; SoundCloud failed: ${soundCloudError.readableMessage()}; YouTube failed: ${youtubeError.readableMessage()}",
             youtubeError,
             PlaybackException.ERROR_CODE_REMOTE_ERROR,
+        )
+    }
+
+    private fun resolveSoundCloudFallback(
+        mediaId: String,
+        song: Song?,
+        queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
+        authToken: String = "",
+    ): PlaybackStreamResolution {
+        val resolved = SoundCloudAudioProvider.resolve(buildSoundCloudQuery(mediaId, song, queuedMetadata), authToken)
+        Timber.tag("MusicService").i(
+            "Using SoundCloud fallback for $mediaId: ${resolved.title} by ${resolved.artist}, bitrate=${resolved.bitrate}",
+        )
+        return PlaybackStreamResolution(
+            uri = resolved.mediaUri,
+            expiresAtMs = resolved.expiresAtMs,
+            cacheKey = soundCloudFallbackCacheKey(mediaId),
+            format = soundCloudFallbackFormat(mediaId, resolved),
         )
     }
 
@@ -3766,6 +3844,34 @@ class MusicService :
             durationMs = durationMs,
             countryCode = country,
             backend = backend.toQobuzProviderBackend(),
+        )
+    }
+
+    private fun buildSoundCloudQuery(
+        mediaId: String,
+        song: Song?,
+        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
+    ): SoundCloudAudioProvider.Query {
+        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
+        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
+        val artists = song?.orderedArtists?.map { it.name }
+            ?.takeIf { it.isNotEmpty() }
+            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
+        val album = song?.song?.albumName
+            ?: song?.album?.title
+            ?: queuedMetadata?.album?.title
+        val durationMs = song?.song?.duration
+            ?.takeIf { it > 0 }
+            ?.toLong()
+            ?.times(1000L)
+            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
+
+        return SoundCloudAudioProvider.Query(
+            mediaId = mediaId,
+            title = title,
+            artists = artists,
+            album = album,
+            durationMs = durationMs,
         )
     }
 
@@ -3996,11 +4102,13 @@ class MusicService :
         cacheKey: String,
     ): MediaItem {
         val resolvedUri = uri.toUri()
+        val isSoundCloudHls =
+            resolvedUri.getQueryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) == "1"
         return buildUpon()
             .setUri(resolvedUri)
             .setCustomCacheKey(cacheKey)
             .setMimeType(
-                if (AppleMusicWrapperDataSource.isAppleUri(resolvedUri)) {
+                if (AppleMusicWrapperDataSource.isAppleUri(resolvedUri) || isSoundCloudHls) {
                     MimeTypes.APPLICATION_M3U8
                 } else {
                     localConfiguration?.mimeType
@@ -4046,8 +4154,14 @@ class MusicService :
                 }
             }
             val uri = routedItem.localConfiguration?.uri
+            val isHlsSource =
+                uri != null &&
+                    (
+                        AppleMusicWrapperDataSource.isAppleUri(uri) ||
+                            routedItem.localConfiguration?.mimeType == MimeTypes.APPLICATION_M3U8
+                    )
 
-            return if (uri != null && AppleMusicWrapperDataSource.isAppleUri(uri)) {
+            return if (isHlsSource) {
                 Timber.tag("AppleALAC").d("Using HLS media source for ${routedItem.mediaId}")
                 hlsFactory.createMediaSource(
                     routedItem.buildUpon()
@@ -4929,9 +5043,11 @@ class MusicService :
         private const val PRIVATE_STREAM_MARKER = "_metrolist_private"
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
+        private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v2:"
         private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
+        private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
         private const val ALAC_MIN_BUFFER_MS = 18_000
         private const val ALAC_MAX_BUFFER_MS = 60_000
@@ -4943,12 +5059,15 @@ class MusicService :
 
         private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
 
+        private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
+
         private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun mediaIdFromDataSpecKey(key: String) = key
             .removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
+            .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
         private fun appleWrapperFormat(
@@ -4979,6 +5098,22 @@ class MusicService :
             bitrate = resolved.bitrate,
             sampleRate = resolved.sampleRate,
             contentLength = 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun soundCloudFallbackFormat(
+            mediaId: String,
+            resolved: SoundCloudAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = SOUNDCLOUD_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = resolved.contentLength ?: 0L,
             loudnessDb = null,
             perceptualLoudnessDb = null,
             playbackUrl = null,

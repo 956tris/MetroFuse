@@ -13,6 +13,7 @@ import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.Album as TubeAlbum
 import com.metrolist.innertube.models.Artist as TubeArtist
 import com.metrolist.innertube.pages.HomePage
+import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.utils.tidal.extractTidalAccessToken
 import com.metrolist.music.utils.tidal.extractTidalRefreshToken
 import kotlinx.coroutines.Dispatchers
@@ -1149,7 +1150,8 @@ object SpotifyHomeFeedParser {
 
 object ExternalHomeItemIds {
     fun isExternal(item: YTItem): Boolean =
-        externalProviderId(item.id) != null
+        externalProviderId(item.id) != null ||
+            (item is SongItem && SoundCloudAudioProvider.isSoundCloudUrl(item.id))
 
     fun isExternalPlaylistId(id: String): Boolean =
         externalProviderId(id)
@@ -1176,6 +1178,7 @@ object ExternalHomeItemIds {
             type == "playlist" -> "online_playlist/$provider:playlist:$id"
             provider == "spotify" && type == "album" -> "online_playlist/$provider:album:$id"
             provider == "tidal" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
+            provider == "soundcloud" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
             else -> null
         }
     }
@@ -1231,7 +1234,7 @@ object ExternalHomeItemIds {
             .substringBefore('/')
             .takeIf { it.isNotBlank() && it != "null" }
 
-    private val ExternalProviders = setOf("spotify", "tidal")
+    private val ExternalProviders = setOf("spotify", "tidal", "soundcloud")
     private val ExternalTypes = listOf("playlist", "track", "album", "artist", "mix")
 
     fun searchQuery(item: YTItem): String =
