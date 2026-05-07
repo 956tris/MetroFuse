@@ -58,6 +58,8 @@ import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
+import com.metrolist.music.ui.screens.settings.integrations.InstagramLoginScreen
+import com.metrolist.music.ui.screens.settings.integrations.InstagramSettings
 import com.metrolist.music.ui.screens.settings.integrations.IntegrationScreen
 import com.metrolist.music.ui.screens.settings.integrations.LastFMSettings
 import com.metrolist.music.ui.screens.settings.integrations.ListenTogetherSettings
@@ -427,6 +429,14 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/soundcloud/login") {
         SoundCloudLoginScreen(navController)
+    }
+
+    composable("settings/integrations/instagram") {
+        InstagramSettings(navController)
+    }
+
+    composable("settings/integrations/instagram/login") {
+        InstagramLoginScreen(navController)
     }
 
     composable(route = "settings/integrations/listen_together") {

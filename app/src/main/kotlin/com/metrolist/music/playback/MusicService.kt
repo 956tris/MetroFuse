@@ -41,6 +41,7 @@ import androidx.core.net.toUri
 import androidx.datastore.preferences.core.edit
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
@@ -53,6 +54,7 @@ import androidx.media3.common.Player.REPEAT_MODE_OFF
 import androidx.media3.common.Player.REPEAT_MODE_ONE
 import androidx.media3.common.Player.STATE_IDLE
 import androidx.media3.common.Timeline
+import androidx.media3.common.Tracks
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -142,6 +144,12 @@ import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PreferAppleMusicKey
 import com.metrolist.music.constants.PreferSoundCloudAudioKey
+import com.metrolist.music.constants.PreferInstagramAudioKey
+import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
+import com.metrolist.music.constants.InstagramCookieKey
+import com.metrolist.music.constants.InstagramAppIdKey
+import com.metrolist.music.constants.InstagramUserAgentKey
+import com.metrolist.music.constants.InstagramUuidKey
 import com.metrolist.music.constants.PlayerVolumeKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
 import com.metrolist.music.constants.QobuzBackend
@@ -200,6 +208,7 @@ import com.metrolist.music.playback.queues.filterExplicit
 import com.metrolist.music.playback.queues.filterVideoSongs
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
+import com.metrolist.music.instagram.InstagramAudioProvider
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.utils.CoilBitmapLoader
@@ -299,14 +308,13 @@ class MusicService :
     private var crossfadeDuration = 5000f
     private var crossfadeGapless = true
     private var crossfadeTriggerJob: Job? = null
+    private var crossfadePrepareJob: Job? = null
 
     private val secondaryPlayerListener =
         object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 Timber.tag(TAG).e(error, "Secondary player error")
-                secondaryPlayer?.stop()
-                secondaryPlayer?.clearMediaItems()
-                secondaryPlayer = null
+                cleanupSecondaryCrossfadePlayer()
             }
         }
 
@@ -418,6 +426,10 @@ class MusicService :
 
     private var cachedNormalizationGainMb: Int? = null
     private var cachedNormalizationEnabled: Boolean = false
+    @Volatile
+    private var cachedInstagramCookie: String = ""
+    @Volatile
+    private var cachedInstagramUserAgent: String = InstagramAudioProvider.DEFAULT_USER_AGENT
 
     private var discordRpc: DiscordRPC? = null
     private var lastPlaybackSpeed = 1.0f
@@ -539,6 +551,11 @@ class MusicService :
         // handled in createExoPlayer
 
         seedLoudnessCacheFromPrefs()
+        cachedInstagramCookie = dataStore.get(InstagramCookieKey, "")
+        cachedInstagramUserAgent =
+            dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
+                .takeIf { it.isNotBlank() }
+                ?: InstagramAudioProvider.DEFAULT_USER_AGENT
 
         if (!ensureStartedAsForegroundOrStop()) {
             return
@@ -657,6 +674,18 @@ class MusicService :
 
         audioQuality = dataStore.get(AudioQualityKey).toEnum(com.metrolist.music.constants.AudioQuality.AUTO)
         playerVolume = MutableStateFlow(dataStore.get(PlayerVolumeKey, 1f).coerceIn(0f, 1f))
+        dataStore.data
+            .map { it[InstagramCookieKey] ?: "" }
+            .distinctUntilChanged()
+            .collectLatest(scope) { cachedInstagramCookie = it }
+        dataStore.data
+            .map { prefs ->
+                prefs[InstagramUserAgentKey]
+                    ?.takeIf { it.isNotBlank() }
+                    ?: InstagramAudioProvider.DEFAULT_USER_AGENT
+            }
+            .distinctUntilChanged()
+            .collectLatest(scope) { cachedInstagramUserAgent = it }
 
         // Initialize Google Cast
         initializeCast()
@@ -746,6 +775,7 @@ class MusicService :
                     AppleMusicSongResolver.invalidate(mediaId)
                     QobuzAudioProvider.invalidate(mediaId)
                     SoundCloudAudioProvider.invalidate(mediaId)
+                    InstagramAudioProvider.invalidate(mediaId)
                     YouTubeAudioProvider.invalidate(mediaId)
                     AppleMusicDecryptPipeline.clearMemoryCaches()
 
@@ -756,11 +786,13 @@ class MusicService :
                             playerCache.removeResource(appleWrapperCacheKey(mediaId))
                             playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
                             playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+                            playerCache.removeResource(instagramFallbackCacheKey(mediaId))
                             playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
                             downloadCache.removeResource(mediaId)
                             downloadCache.removeResource(appleWrapperCacheKey(mediaId))
                             downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
                             downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+                            downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
                             downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
                             Timber.tag("MusicService").d("Cleared player and download cache for $mediaId")
                         } catch (e: Exception) {
@@ -990,6 +1022,7 @@ class MusicService :
                 crossfadeEnabled = enabled
                 crossfadeDuration = duration * 1000f // Convert to ms
                 crossfadeGapless = gapless
+                scheduleCrossfade()
             }
 
         if (dataStore.get(PersistentQueueKey, true)) {
@@ -2748,6 +2781,7 @@ class MusicService :
     private fun CachedSongStream.isFallbackStream(mediaId: String): Boolean =
         cacheKey == qobuzFallbackCacheKey(mediaId) ||
             cacheKey == soundCloudFallbackCacheKey(mediaId) ||
+            cacheKey == instagramFallbackCacheKey(mediaId) ||
             cacheKey == youtubeFallbackCacheKey(mediaId)
 
     private fun Throwable.containsInCauseChain(fragment: String): Boolean {
@@ -2946,6 +2980,7 @@ class MusicService :
         AppleMusicSongResolver.invalidate(mediaId)
         QobuzAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
+        InstagramAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
         AppleMusicDecryptPipeline.clearMemoryCaches()
 
@@ -2955,11 +2990,13 @@ class MusicService :
             playerCache.removeResource(appleWrapperCacheKey(mediaId))
             playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
             playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+            playerCache.removeResource(instagramFallbackCacheKey(mediaId))
             playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
             downloadCache.removeResource(mediaId)
             downloadCache.removeResource(appleWrapperCacheKey(mediaId))
             downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
             downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+            downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
             downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
             Timber.tag(TAG).d("Cleared player cache for $mediaId")
         } catch (e: Exception) {
@@ -3177,6 +3214,7 @@ class MusicService :
         AppleMusicSongResolver.invalidate(mediaId)
         QobuzAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
+        InstagramAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
         AppleMusicDecryptPipeline.clearMemoryCaches()
         Timber.tag(TAG).d("Cleared cached URL for $mediaId")
@@ -3354,6 +3392,22 @@ class MusicService :
                                                     request.header("Range") != null,
                                                     isApiStream,
                                                     isHlsStream,
+                                            ).build()
+                                        }
+                                        if (InstagramAudioProvider.isInstagramPlaybackUrl(request.url)) {
+                                            val instagramClient =
+                                                InstagramAudioProvider.playbackClientProfile(request.url)
+                                            val instagramUserAgent =
+                                                InstagramAudioProvider.playbackUserAgent(request.url)
+                                                    ?: cachedInstagramUserAgent
+                                            val cleanUrl = InstagramAudioProvider.cleanPlaybackUrl(request.url)
+                                            request =
+                                                InstagramAudioProvider.addPlaybackHeaders(
+                                                    request.newBuilder().url(cleanUrl),
+                                                    cachedInstagramCookie,
+                                                    request.header("Range") != null,
+                                                    instagramClient,
+                                                    instagramUserAgent,
                                                 ).build()
                                         }
                                         if (request.url.queryParameter(PRIVATE_STREAM_MARKER) != null) {
@@ -3497,6 +3551,17 @@ class MusicService :
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = dataStore.get(PreferAppleMusicKey, false)
         val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
+        val preferInstagramAudio = dataStore.get(PreferInstagramAudioKey, false)
+        val preferYouTubeMusicAudio = dataStore.get(PreferYouTubeMusicAudioKey, false)
+        val instagramCookie = dataStore.get(InstagramCookieKey, "")
+        val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
+        val instagramAppId = dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_APP_ID
+        val instagramUuid = dataStore.get(InstagramUuidKey, "")
+        val instagramCookieConfigured = instagramCookie.isNotBlank()
         val soundCloudAuthConfigured = dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
         val qobuzBackend = dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
         val qobuzCountry = dataStore.get(QobuzCountryKey, "US")
@@ -3508,6 +3573,13 @@ class MusicService :
             "appleFallback=$appleMusicFallbackEnabled",
             "preferApple=$preferAppleMusic",
             "preferSoundCloud=$preferSoundCloudAudio",
+            "preferInstagram=$preferInstagramAudio",
+            "preferYouTube=$preferYouTubeMusicAudio",
+            "instagramAuth=$instagramCookieConfigured",
+            "instagramCookie=${instagramCookie.hashCode()}",
+            "instagramUserAgent=${instagramUserAgent.hashCode()}",
+            "instagramAppId=${instagramAppId.hashCode()}",
+            "instagramUuid=${instagramUuid.hashCode()}",
             "soundCloudAuth=$soundCloudAuthConfigured",
             "backend=${qobuzBackend.name}",
             "country=$qobuzCountry",
@@ -3551,6 +3623,7 @@ class MusicService :
                 val currentDataSpecIsFallback = dataSpec.key?.let { key ->
                     key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
                         key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
+                        key.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) ||
                         key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
                 } == true
                 if (
@@ -3623,11 +3696,13 @@ class MusicService :
         playerCache.removeResource(appleWrapperCacheKey(mediaId))
         playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
         playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+        playerCache.removeResource(instagramFallbackCacheKey(mediaId))
         playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
         downloadCache.removeResource(mediaId)
         downloadCache.removeResource(appleWrapperCacheKey(mediaId))
         downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
         downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
+        downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
         downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
     }
 
@@ -3677,6 +3752,16 @@ class MusicService :
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = appleMusicFallbackEnabled && dataStore.get(PreferAppleMusicKey, false)
         val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
+        val preferInstagramAudio = dataStore.get(PreferInstagramAudioKey, false)
+        val preferYouTubeMusicAudio = dataStore.get(PreferYouTubeMusicAudioKey, false)
+        val instagramCookie = dataStore.get(InstagramCookieKey, "")
+        val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
+        val instagramAppId = dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_APP_ID
+        val instagramUuid = dataStore.get(InstagramUuidKey, "")
         val soundCloudAuthToken = dataStore.get(SoundCloudAuthTokenKey, "")
         val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
         val skipAppleForThisAttempt = skipAppleOnceMediaIds.remove(mediaId)
@@ -3697,6 +3782,14 @@ class MusicService :
                 format = qobuzFallbackFormat(mediaId, this),
             )
 
+        fun InstagramAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
+            PlaybackStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = instagramFallbackCacheKey(mediaId),
+                format = instagramFallbackFormat(mediaId, this),
+            )
+
         var appleAttempt: Result<AppleMusicSongResolver.Resolved> =
             if (skipAppleForThisAttempt) {
                 Result.failure(IllegalStateException("Apple Music skipped after slow ALAC startup"))
@@ -3707,12 +3800,42 @@ class MusicService :
             }
         var soundCloudAttempt: Result<PlaybackStreamResolution> =
             Result.failure(IllegalStateException("SoundCloud not attempted yet"))
+        var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Instagram audio not enabled"))
+        var youtubeAttempt: Result<PlaybackStreamResolution> =
+            Result.failure(IllegalStateException("YouTube Music not attempted yet"))
 
         if (preferSoundCloudAudio || directSoundCloudMediaId) {
             soundCloudAttempt = runCatching {
                 resolveSoundCloudFallback(mediaId, song, queuedMetadata, soundCloudAuthToken)
             }
             soundCloudAttempt.getOrNull()?.let { return it }
+        }
+
+        if (preferInstagramAudio) {
+            instagramAttempt = runCatching {
+                InstagramAudioProvider.resolve(
+                    buildInstagramQuery(mediaId, song, queuedMetadata),
+                    instagramCookie,
+                    instagramUuid,
+                    instagramUserAgent,
+                    instagramAppId,
+                )
+            }
+            instagramAttempt.getOrNull()?.let { resolved ->
+                Timber.tag("MusicService").i("Using preferred Instagram audio stream for $mediaId: ${resolved.title}")
+                return resolved.toPlaybackResolution()
+            }
+        }
+
+        if (preferYouTubeMusicAudio) {
+            youtubeAttempt = runCatching {
+                resolveYouTubeFallback(mediaId)
+            }
+            youtubeAttempt.getOrNull()?.let { resolved ->
+                Timber.tag("MusicService").i("Using preferred YouTube Music stream for $mediaId")
+                return resolved
+            }
         }
 
         if (preferAppleMusic && !skipAppleForThisAttempt) {
@@ -3760,8 +3883,10 @@ class MusicService :
             soundCloudAttempt.getOrNull()?.let { return it }
         }
 
-        val youtubeAttempt = runCatching {
-            resolveYouTubeFallback(mediaId)
+        if (!preferYouTubeMusicAudio) {
+            youtubeAttempt = runCatching {
+                resolveYouTubeFallback(mediaId)
+            }
         }
         youtubeAttempt.getOrNull()?.let { return it }
 
@@ -3769,11 +3894,18 @@ class MusicService :
             ?: IllegalStateException("YouTube fallback failed")
         val soundCloudError = soundCloudAttempt.exceptionOrNull()
             ?: IllegalStateException("SoundCloud fallback failed")
+        val instagramDetail = if (preferInstagramAudio) {
+            instagramAttempt.exceptionOrNull()?.readableMessage()
+                ?.let { "Instagram failed: $it; " }
+                .orEmpty()
+        } else {
+            ""
+        }
         val qobuzDetail = qobuzAttempt.exceptionOrNull()?.readableMessage()
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
         throw PlaybackException(
-            "${qobuzDetail}Apple Music failed: ${appleError.readableMessage()}; SoundCloud failed: ${soundCloudError.readableMessage()}; YouTube failed: ${youtubeError.readableMessage()}",
+            "${qobuzDetail}${instagramDetail}Apple Music failed: ${appleError.readableMessage()}; SoundCloud failed: ${soundCloudError.readableMessage()}; YouTube failed: ${youtubeError.readableMessage()}",
             youtubeError,
             PlaybackException.ERROR_CODE_REMOTE_ERROR,
         )
@@ -3872,6 +4004,36 @@ class MusicService :
             artists = artists,
             album = album,
             durationMs = durationMs,
+        )
+    }
+
+    private fun buildInstagramQuery(
+        mediaId: String,
+        song: Song?,
+        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
+    ): InstagramAudioProvider.Query {
+        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
+        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
+        val artists = song?.orderedArtists?.map { it.name }
+            ?.takeIf { it.isNotEmpty() }
+            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
+        val album = song?.song?.albumName
+            ?: song?.album?.title
+            ?: queuedMetadata?.album?.title
+        val durationMs = song?.song?.duration
+            ?.takeIf { it > 0 }
+            ?.toLong()
+            ?.times(1000L)
+            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
+
+        return InstagramAudioProvider.Query(
+            mediaId = mediaId,
+            title = title,
+            artists = artists,
+            album = album,
+            durationMs = durationMs,
+            isrc = InstagramAudioProvider.normalizeIsrc(mediaId)
+                ?: InstagramAudioProvider.normalizeIsrc(queuedMetadata?.id),
         )
     }
 
@@ -4246,6 +4408,51 @@ class MusicService :
                     SonicAudioProcessor(),
                 ),
             ).build()
+    }
+
+    override fun onTracksChanged(tracks: Tracks) {
+        super.onTracksChanged(tracks)
+        updateCurrentAudioFormatFromTracks(tracks)
+    }
+
+    private fun updateCurrentAudioFormatFromTracks(tracks: Tracks) {
+        val mediaId = player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() } ?: return
+        val audioFormat = tracks.selectedAudioFormat() ?: return
+        val rendererBitrate = audioFormat.averageBitrate
+            .takeIf { it > 0 }
+            ?: audioFormat.peakBitrate.takeIf { it > 0 }
+        val rendererSampleRate = audioFormat.sampleRate.takeIf { it > 0 }
+        if (rendererBitrate == null && rendererSampleRate == null) return
+
+        scope.launch(Dispatchers.IO) {
+            database.query {
+                val existing = getFormatByIdBlocking(mediaId) ?: return@query
+                val shouldUpdateBitrate =
+                    rendererBitrate != null &&
+                        (existing.bitrate <= 0 || existing.itag in setOf(SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
+                val shouldUpdateSampleRate =
+                    rendererSampleRate != null &&
+                        (existing.sampleRate == null || existing.sampleRate <= 0 || existing.itag in setOf(SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
+                if (!shouldUpdateBitrate && !shouldUpdateSampleRate) return@query
+
+                upsert(
+                    existing.copy(
+                        bitrate = if (shouldUpdateBitrate) rendererBitrate else existing.bitrate,
+                        sampleRate = if (shouldUpdateSampleRate) rendererSampleRate else existing.sampleRate,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun Tracks.selectedAudioFormat(): Format? {
+        groups.forEach { group ->
+            if (group.type != C.TRACK_TYPE_AUDIO || !group.isSelected) return@forEach
+            for (index in 0 until group.length) {
+                if (group.isTrackSelected(index)) return group.getTrackFormat(index)
+            }
+        }
+        return null
     }
 
     override fun onPlaybackStatsReady(
@@ -4831,13 +5038,17 @@ class MusicService :
     private fun scheduleCrossfade() {
         crossfadeTriggerJob?.cancel()
         crossfadeTriggerJob = null
+        if (isCrossfading || secondaryPlayer != null) return
         if (!crossfadeEnabled || player.duration == C.TIME_UNSET || player.duration <= crossfadeDuration) return
         if (crossfadeGapless && isNextItemGapless()) return
         if (!player.hasNextMediaItem() && player.repeatMode != REPEAT_MODE_ONE) return
 
         val triggerTime = player.duration - crossfadeDuration.toLong()
         val delayMs = triggerTime - player.currentPosition
-        if (delayMs <= 0) return
+        if (delayMs <= 250L) {
+            startCrossfade()
+            return
+        }
 
         val targetMediaId = player.currentMediaItem?.mediaId
 
@@ -4860,6 +5071,8 @@ class MusicService :
 
     private fun startCrossfade() {
         if (isCrossfading) return
+        if (secondaryPlayer != null) return
+        if (castConnectionHandler?.isCasting?.value == true) return
 
         // Preserve player state before creating the secondary player
         // Use runBlocking to ensure we get the correct state from DataStore
@@ -4878,6 +5091,29 @@ class MusicService :
         secondaryPlayer = createExoPlayer()
         val secPlayer = secondaryPlayer!!
         secPlayer.addListener(secondaryPlayerListener)
+        var swapped = false
+        val readinessListener =
+            object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState != Player.STATE_READY || swapped) return
+                    swapped = true
+                    secPlayer.removeListener(this)
+                    crossfadePrepareJob?.cancel()
+                    crossfadePrepareJob = null
+                    performCrossfadeSwap()
+                    if (savedShuffleEnabled) {
+                        val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
+                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
+                    }
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    swapped = true
+                    secPlayer.removeListener(this)
+                    cleanupSecondaryCrossfadePlayer()
+                }
+            }
+        secPlayer.addListener(readinessListener)
 
         val itemCount = player.mediaItemCount
         val items = mutableListOf<MediaItem>()
@@ -4898,18 +5134,20 @@ class MusicService :
         secPlayer.prepare()
         secPlayer.playWhenReady = true
 
-        performCrossfadeSwap()
-
-        // Rebuild shuffle order on the new primary player if shuffle was active
-        if (savedShuffleEnabled) {
-            val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-            applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-        }
+        crossfadePrepareJob =
+            scope.launch {
+                delay((crossfadeDuration.toLong() + 5_000L).coerceAtLeast(8_000L))
+                if (!swapped && secondaryPlayer === secPlayer) {
+                    Timber.tag(TAG).w("Crossfade secondary player did not become ready in time")
+                    secPlayer.removeListener(readinessListener)
+                    cleanupSecondaryCrossfadePlayer()
+                }
+            }
     }
 
     private fun performCrossfadeSwap() {
-        isCrossfading = true
         val nextPlayer = secondaryPlayer ?: return
+        isCrossfading = true
         val currentPlayer = player
 
         fadingPlayer = currentPlayer
@@ -4996,7 +5234,25 @@ class MusicService :
             }
     }
 
+    private fun cleanupSecondaryCrossfadePlayer() {
+        crossfadePrepareJob?.cancel()
+        crossfadePrepareJob = null
+        secondaryPlayer?.let { player ->
+            runCatching {
+                player.removeListener(secondaryPlayerListener)
+                player.stop()
+                player.clearMediaItems()
+                player.release()
+            }
+        }
+        secondaryPlayer = null
+        isCrossfading = false
+        scheduleCrossfade()
+    }
+
     private fun cleanupCrossfade(fadingPlayerSessionId: Int = C.AUDIO_SESSION_ID_UNSET) {
+        crossfadePrepareJob?.cancel()
+        crossfadePrepareJob = null
         fadingPlayer?.stop()
         fadingPlayer?.clearMediaItems()
         fadingPlayer?.release()
@@ -5044,10 +5300,12 @@ class MusicService :
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
+        private const val INSTAGRAM_FALLBACK_ITAG = 100_041
         private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v2:"
         private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
+        private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
         private const val ALAC_MIN_BUFFER_MS = 18_000
         private const val ALAC_MAX_BUFFER_MS = 60_000
@@ -5061,6 +5319,8 @@ class MusicService :
 
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
+        private fun instagramFallbackCacheKey(mediaId: String) = "$INSTAGRAM_FALLBACK_CACHE_PREFIX$mediaId"
+
         private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun mediaIdFromDataSpecKey(key: String) = key
@@ -5068,6 +5328,7 @@ class MusicService :
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
+            .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
         private fun appleWrapperFormat(
@@ -5109,6 +5370,22 @@ class MusicService :
         ) = FormatEntity(
             id = mediaId,
             itag = SOUNDCLOUD_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = resolved.contentLength ?: 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun instagramFallbackFormat(
+            mediaId: String,
+            resolved: InstagramAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = INSTAGRAM_FALLBACK_ITAG,
             mimeType = resolved.mimeType,
             codecs = resolved.codecs,
             bitrate = resolved.bitrate,

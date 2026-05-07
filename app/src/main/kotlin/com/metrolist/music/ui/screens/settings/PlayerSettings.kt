@@ -60,6 +60,7 @@ import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PreferAppleMusicKey
+import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendOptions
@@ -141,6 +142,10 @@ fun PlayerSettings(
     )
     val (preferAppleMusic, onPreferAppleMusicChange) = rememberPreference(
         PreferAppleMusicKey,
+        defaultValue = false
+    )
+    val (preferYouTubeMusicAudio, onPreferYouTubeMusicAudioChange) = rememberPreference(
+        PreferYouTubeMusicAudioKey,
         defaultValue = false
     )
     val (qobuzBackend, onQobuzBackendChange) = rememberEnumPreference(
@@ -423,6 +428,27 @@ fun PlayerSettings(
                         onClick = { onPreferAppleMusicChange(!preferAppleMusic) }
                     ))
                 }
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.music_note),
+                    title = { Text(stringResource(R.string.prefer_youtube_music_audio)) },
+                    description = { Text(stringResource(R.string.prefer_youtube_music_audio_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = preferYouTubeMusicAudio,
+                            onCheckedChange = onPreferYouTubeMusicAudioChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (preferYouTubeMusicAudio) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onPreferYouTubeMusicAudioChange(!preferYouTubeMusicAudio) }
+                ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.settings),
                     title = { Text(stringResource(R.string.qobuz_backend)) },

@@ -19,8 +19,14 @@ import com.metrolist.music.apple.AppleMusicAwareDataSourceFactory
 import com.metrolist.music.apple.AppleMusicSongResolver
 import com.metrolist.music.apple.AppleMusicWrapperDataSource
 import com.metrolist.music.constants.AppleMusicFallbackEnabledKey
+import com.metrolist.music.constants.InstagramCookieKey
+import com.metrolist.music.constants.InstagramAppIdKey
+import com.metrolist.music.constants.InstagramUserAgentKey
+import com.metrolist.music.constants.InstagramUuidKey
 import com.metrolist.music.constants.PreferAppleMusicKey
 import com.metrolist.music.constants.PreferSoundCloudAudioKey
+import com.metrolist.music.constants.PreferInstagramAudioKey
+import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
@@ -33,6 +39,7 @@ import com.metrolist.music.di.PlayerCache
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
+import com.metrolist.music.instagram.InstagramAudioProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.youtube.YouTubeAudioProvider
@@ -43,6 +50,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -85,8 +93,34 @@ constructor(
     private val songUrlCache = HashMap<String, CachedSongStream>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile
+    private var cachedInstagramCookie: String = context.dataStore.get(InstagramCookieKey, "")
+    @Volatile
+    private var cachedInstagramUserAgent: String =
+        context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
 
     val downloads = MutableStateFlow<Map<String, Download>>(emptyMap())
+
+    init {
+        scope.launch {
+            context.dataStore.data
+                .map { it[InstagramCookieKey] ?: "" }
+                .distinctUntilChanged()
+                .collect { cachedInstagramCookie = it }
+        }
+        scope.launch {
+            context.dataStore.data
+                .map { prefs ->
+                    prefs[InstagramUserAgentKey]
+                        ?.takeIf { it.isNotBlank() }
+                        ?: InstagramAudioProvider.DEFAULT_USER_AGENT
+                }
+                .distinctUntilChanged()
+                .collect { cachedInstagramUserAgent = it }
+        }
+    }
 
     private val dataSourceFactory =
         ResolvingDataSource.Factory(
@@ -133,6 +167,22 @@ constructor(
                                                 request.header("Range") != null,
                                                 isApiStream,
                                                 isHlsStream,
+                                            ).build()
+                                    }
+                                    if (InstagramAudioProvider.isInstagramPlaybackUrl(request.url)) {
+                                        val instagramClient =
+                                            InstagramAudioProvider.playbackClientProfile(request.url)
+                                        val instagramUserAgent =
+                                            InstagramAudioProvider.playbackUserAgent(request.url)
+                                                ?: cachedInstagramUserAgent
+                                        val cleanUrl = InstagramAudioProvider.cleanPlaybackUrl(request.url)
+                                        request =
+                                            InstagramAudioProvider.addPlaybackHeaders(
+                                                request.newBuilder().url(cleanUrl),
+                                                cachedInstagramCookie,
+                                                request.header("Range") != null,
+                                                instagramClient,
+                                                instagramUserAgent,
                                             ).build()
                                     }
                                     chain.proceed(request)
@@ -199,6 +249,17 @@ constructor(
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = context.dataStore.get(PreferAppleMusicKey, false)
         val preferSoundCloudAudio = context.dataStore.get(PreferSoundCloudAudioKey, false)
+        val preferInstagramAudio = context.dataStore.get(PreferInstagramAudioKey, false)
+        val preferYouTubeMusicAudio = context.dataStore.get(PreferYouTubeMusicAudioKey, false)
+        val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
+        val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
+        val instagramAppId = context.dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_APP_ID
+        val instagramUuid = context.dataStore.get(InstagramUuidKey, "")
+        val instagramCookieConfigured = instagramCookie.isNotBlank()
         val soundCloudAuthConfigured = context.dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
         val qobuzBackend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
         val qobuzCountry = context.dataStore.get(QobuzCountryKey, "US")
@@ -210,6 +271,13 @@ constructor(
             "appleFallback=$appleMusicFallbackEnabled",
             "preferApple=$preferAppleMusic",
             "preferSoundCloud=$preferSoundCloudAudio",
+            "preferInstagram=$preferInstagramAudio",
+            "preferYouTube=$preferYouTubeMusicAudio",
+            "instagramAuth=$instagramCookieConfigured",
+            "instagramCookie=${instagramCookie.hashCode()}",
+            "instagramUserAgent=${instagramUserAgent.hashCode()}",
+            "instagramAppId=${instagramAppId.hashCode()}",
+            "instagramUuid=${instagramUuid.hashCode()}",
             "soundCloudAuth=$soundCloudAuthConfigured",
             "backend=${qobuzBackend.name}",
             "country=$qobuzCountry",
@@ -224,6 +292,16 @@ constructor(
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = appleMusicFallbackEnabled && context.dataStore.get(PreferAppleMusicKey, false)
         val preferSoundCloudAudio = context.dataStore.get(PreferSoundCloudAudioKey, false)
+        val preferInstagramAudio = context.dataStore.get(PreferInstagramAudioKey, false)
+        val preferYouTubeMusicAudio = context.dataStore.get(PreferYouTubeMusicAudioKey, false)
+        val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
+        val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
+        val instagramAppId = context.dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
+            .takeIf { it.isNotBlank() }
+            ?: InstagramAudioProvider.DEFAULT_APP_ID
+        val instagramUuid = context.dataStore.get(InstagramUuidKey, "")
         val soundCloudAuthToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
         val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
 
@@ -251,6 +329,14 @@ constructor(
                 format = soundCloudFallbackFormat(mediaId, this),
             )
 
+        fun InstagramAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
+            DownloadStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = instagramFallbackCacheKey(mediaId),
+                format = instagramFallbackFormat(mediaId, this),
+            )
+
         var appleAttempt: Result<AppleMusicSongResolver.Resolved> =
             if (appleMusicFallbackEnabled) {
                 Result.failure(IllegalStateException("Apple Music not attempted yet"))
@@ -259,6 +345,10 @@ constructor(
             }
         var soundCloudAttempt: Result<SoundCloudAudioProvider.Resolved> =
             Result.failure(IllegalStateException("SoundCloud not attempted yet"))
+        var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Instagram audio not enabled"))
+        var youtubeAttempt: Result<DownloadStreamResolution> =
+            Result.failure(IllegalStateException("YouTube Music not attempted yet"))
 
         if (preferSoundCloudAudio || directSoundCloudMediaId) {
             soundCloudAttempt = runCatching {
@@ -267,6 +357,32 @@ constructor(
             soundCloudAttempt.getOrNull()?.let { resolved ->
                 Timber.tag(TAG).i("Using preferred SoundCloud stream for download $mediaId: ${resolved.title}")
                 return resolved.toDownloadResolution()
+            }
+        }
+
+        if (preferInstagramAudio) {
+            instagramAttempt = runCatching {
+                InstagramAudioProvider.resolve(
+                    buildInstagramQuery(mediaId, song),
+                    instagramCookie,
+                    instagramUuid,
+                    instagramUserAgent,
+                    instagramAppId,
+                )
+            }
+            instagramAttempt.getOrNull()?.let { resolved ->
+                Timber.tag(TAG).i("Using preferred Instagram audio stream for download $mediaId: ${resolved.title}")
+                return resolved.toDownloadResolution()
+            }
+        }
+
+        if (preferYouTubeMusicAudio) {
+            youtubeAttempt = runCatching {
+                resolveYouTubeFallback(mediaId)
+            }
+            youtubeAttempt.getOrNull()?.let { resolved ->
+                Timber.tag(TAG).i("Using preferred YouTube Music stream for download $mediaId")
+                return resolved
             }
         }
 
@@ -305,17 +421,26 @@ constructor(
             }
         }
 
-        val youtubeAttempt = runCatching {
-            resolveYouTubeFallback(mediaId)
+        if (!preferYouTubeMusicAudio) {
+            youtubeAttempt = runCatching {
+                resolveYouTubeFallback(mediaId)
+            }
         }
         youtubeAttempt.getOrNull()?.let { return it }
 
         val youtubeError = youtubeAttempt.exceptionOrNull() ?: IllegalStateException("YouTube fallback failed")
         val soundCloudError = soundCloudAttempt.exceptionOrNull() ?: IllegalStateException("SoundCloud fallback failed")
+        val instagramDetail = if (preferInstagramAudio) {
+            instagramAttempt.exceptionOrNull()?.message
+                ?.let { "Instagram failed: $it; " }
+                .orEmpty()
+        } else {
+            ""
+        }
         val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
         val appleError = appleAttempt.exceptionOrNull() ?: IllegalStateException("Apple Music failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; SoundCloud failed: ${soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${instagramDetail}Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; SoundCloud failed: ${soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
             youtubeError,
         )
     }
@@ -393,6 +518,24 @@ constructor(
                 ?.takeIf { it > 0 }
                 ?.toLong()
                 ?.times(1000L),
+        )
+    }
+
+    private fun buildInstagramQuery(
+        mediaId: String,
+        song: Song?,
+    ): InstagramAudioProvider.Query {
+        return InstagramAudioProvider.Query(
+            mediaId = mediaId,
+            title = song?.song?.title ?: mediaId,
+            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
+            album = song?.song?.albumName ?: song?.album?.title,
+            durationMs = song?.song?.duration
+                ?.takeIf { it > 0 }
+                ?.toLong()
+                ?.times(1000L),
+            isrc = InstagramAudioProvider.normalizeIsrc(mediaId)
+                ?: InstagramAudioProvider.normalizeIsrc(song?.song?.id),
         )
     }
 
@@ -480,10 +623,12 @@ constructor(
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
+        private const val INSTAGRAM_FALLBACK_ITAG = 100_041
         private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
         private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
+        private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
 
         private fun appleWrapperCacheKey(mediaId: String) = "$APPLE_WRAPPER_CACHE_PREFIX$mediaId"
@@ -492,6 +637,8 @@ constructor(
 
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
+        private fun instagramFallbackCacheKey(mediaId: String) = "$INSTAGRAM_FALLBACK_CACHE_PREFIX$mediaId"
+
         private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun mediaIdFromDataSpecKey(key: String) = key
@@ -499,6 +646,7 @@ constructor(
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
+            .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
         private fun appleWrapperFormat(
@@ -540,6 +688,22 @@ constructor(
         ) = FormatEntity(
             id = mediaId,
             itag = SOUNDCLOUD_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = resolved.contentLength ?: 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun instagramFallbackFormat(
+            mediaId: String,
+            resolved: InstagramAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = INSTAGRAM_FALLBACK_ITAG,
             mimeType = resolved.mimeType,
             codecs = resolved.codecs,
             bitrate = resolved.bitrate,

@@ -347,7 +347,7 @@ fun BottomSheetPlayer(
                         ?.takeIf { it > 0 }
                         ?.let { "$it Hz" }
                     val fallbackQuality =
-                        if (bitrate == null && sampleRate == null && codec == "ALAC") "Lossless" else null
+                        if (bitrate == null && sampleRate == null && codec == "ALAC") "Unknown" else null
                     listOfNotNull(codec, fallbackQuality, bitrate, sampleRate).joinToString(" \u2022 ")
                 }
         }

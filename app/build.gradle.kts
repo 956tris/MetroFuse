@@ -348,6 +348,7 @@ dependencies {
 
     implementation(libs.appcompat)
     implementation(libs.webkit)
+    implementation(libs.accompanist.webview)
 
     implementation(libs.coil)
     implementation(libs.coil.network.okhttp)

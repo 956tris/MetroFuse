@@ -34,6 +34,7 @@ object SoundCloudAudioProvider {
     private const val STREAM_CACHE_MS = 5 * 60 * 1000L
     private const val SEARCH_LIMIT = 20
     private const val DEFAULT_BITRATE = 128_000
+    private const val DEFAULT_SAMPLE_RATE = 44_100
 
     data class Query(
         val mediaId: String,
@@ -97,6 +98,8 @@ object SoundCloudAudioProvider {
         val mimeType: String,
         val preset: String,
         val isHls: Boolean,
+        val bitrate: Int?,
+        val sampleRate: Int?,
     )
 
     private val client = OkHttpClient.Builder()
@@ -346,6 +349,7 @@ object SoundCloudAudioProvider {
             }
         validateStreamIsPlayable(track, streamMetadata, expectedDurationMs)
         val bitrate = estimateBitrate(streamMetadata.contentLength, expectedDurationMs)
+            ?: candidate.bitrate
             ?: DEFAULT_BITRATE
 
         return Resolved(
@@ -362,7 +366,7 @@ object SoundCloudAudioProvider {
             mimeType = streamMetadata.mimeType,
             codecs = candidate.mimeType.toCodecs(),
             bitrate = bitrate,
-            sampleRate = null,
+            sampleRate = candidate.sampleRate ?: DEFAULT_SAMPLE_RATE,
             contentLength = streamMetadata.contentLength,
             expiresAtMs = now + STREAM_CACHE_MS,
         )
@@ -394,7 +398,7 @@ object SoundCloudAudioProvider {
             mimeType = streamMetadata.mimeType,
             codecs = streamMetadata.mimeType.toCodecs(),
             bitrate = bitrate,
-            sampleRate = null,
+            sampleRate = DEFAULT_SAMPLE_RATE,
             contentLength = streamMetadata.contentLength,
             expiresAtMs = now + STREAM_CACHE_MS,
         )
@@ -423,6 +427,11 @@ object SoundCloudAudioProvider {
                         mimeType = mimeType,
                         preset = transcoding.stringOrNull("preset").orEmpty(),
                         isHls = protocol == "hls",
+                        bitrate = transcoding.intOrNull("bitrate", "bit_rate")
+                            ?: format.intOrNull("bitrate", "bit_rate")
+                            ?: bitrateFromPreset(transcoding.stringOrNull("preset"), mimeType),
+                        sampleRate = transcoding.intOrNull("sample_rate", "sampleRate", "audio_sample_rate")
+                            ?: format.intOrNull("sample_rate", "sampleRate", "audio_sample_rate"),
                     ),
                 )
             }
@@ -793,6 +802,23 @@ object SoundCloudAudioProvider {
         }
     }
 
+    private fun bitrateFromPreset(
+        preset: String?,
+        mimeType: String,
+    ): Int? {
+        val lowerPreset = preset.orEmpty().lowercase(Locale.US)
+        val lowerMime = mimeType.lowercase(Locale.US)
+        return when {
+            lowerPreset.contains("256") -> 256_000
+            lowerPreset.contains("192") -> 192_000
+            lowerPreset.contains("128") -> 128_000
+            lowerPreset.contains("64") -> 64_000
+            lowerMime.contains("mpeg") || lowerPreset.contains("mp3") -> DEFAULT_BITRATE
+            lowerMime.contains("aac") || lowerMime.contains("mp4") -> DEFAULT_BITRATE
+            else -> null
+        }
+    }
+
     private fun hasVersionMismatch(
         query: String,
         candidateTitle: String,
@@ -879,6 +905,15 @@ object SoundCloudAudioProvider {
 
     private fun JSONObject.stringOrNull(name: String): String? {
         return optString(name).trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+    }
+
+    private fun JSONObject.intOrNull(vararg names: String): Int? {
+        names.forEach { name ->
+            if (!has(name) || isNull(name)) return@forEach
+            runCatching { getInt(name) }.getOrNull()?.let { return it }
+            optString(name).trim().toIntOrNull()?.let { return it }
+        }
+        return null
     }
 
     private fun JSONObject.longOrNull(name: String): Long? {

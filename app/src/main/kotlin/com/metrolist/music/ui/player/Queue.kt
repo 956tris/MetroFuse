@@ -671,8 +671,9 @@ fun Queue(
         var dragInfo by remember { mutableStateOf<Pair<Int, Int>?>(null) }
 
         val currentPlayingUid =
-            remember(currentWindowIndex, queueWindows) {
-                if (currentWindowIndex in queueWindows.indices) {
+            remember(currentWindowIndex, mediaMetadata?.id, queueWindows) {
+                queueWindows.firstOrNull { it.mediaItem.mediaId == mediaMetadata?.id }?.uid
+                    ?: if (currentWindowIndex in queueWindows.indices) {
                     queueWindows[currentWindowIndex].uid
                 } else {
                     null

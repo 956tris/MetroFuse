@@ -420,6 +420,30 @@
     <string name="soundcloud_auth_not_configured">No SoundCloud auth configured</string>
     <string name="soundcloud_clear_auth">Clear SoundCloud auth</string>
     <string name="soundcloud_auth_saved">SoundCloud auth saved.</string>
+    <string name="instagram_integration">Instagram</string>
+    <string name="instagram_web_login">Instagram Web login</string>
+    <string name="instagram_web_login_desc">Log in with Instagram in the WebView. MetroFuse saves the session cookies used for Instagram Music audio lookup.</string>
+    <string name="instagram_cookie_title">Instagram cookies</string>
+    <string name="instagram_cookie_placeholder">Paste an Instagram cookie header with sessionid and ds_user_id</string>
+    <string name="instagram_cookie_helper">Use Web login, or paste a full Instagram cookie header containing sessionid and ds_user_id.</string>
+    <string name="instagram_cookie_configured">Instagram auth configured</string>
+    <string name="instagram_cookie_not_configured">No Instagram auth configured</string>
+    <string name="instagram_clear_cookie">Clear Instagram auth</string>
+    <string name="instagram_cookie_saved">Instagram auth saved.</string>
+    <string name="instagram_webview_blank_title">Instagram did not render</string>
+    <string name="instagram_webview_blank_desc">Try reloading, switching the login profile, or clearing Instagram WebView cookies.</string>
+    <string name="instagram_webview_retry">Reload Instagram</string>
+    <string name="instagram_webview_try_next">Try next profile</string>
+    <string name="instagram_webview_clear_cookies">Clear cookies and reload</string>
+    <string name="instagram_user_agent_title">Instagram User-Agent</string>
+    <string name="instagram_user_agent_desc">Instagram mobile User-Agent used with the private music API.</string>
+    <string name="instagram_app_id_title">Instagram App ID</string>
+    <string name="instagram_app_id_desc">Instagram mobile app ID used by the private music API.</string>
+    <string name="instagram_uuid_title">Instagram UUID</string>
+    <string name="instagram_uuid_desc">Optional device/session UUID. Leave empty to generate one when resolving.</string>
+    <string name="instagram_uuid_placeholder">Paste a UUID, or leave empty</string>
+    <string name="instagram_setting_value">Value: %1$s</string>
+    <string name="instagram_not_set">Not set</string>
 
     <!-- Last.fm -->
     <string name="lastfm_integration">Last.fm integration</string>
@@ -993,6 +1017,10 @@
     <string name="apple_music_fallback_desc">Try Apple Music when Qobuz cannot resolve a playable stream</string>
     <string name="prefer_apple_music">Prefer Apple Music</string>
     <string name="prefer_apple_music_desc">Try Apple Music before Qobuz when the Apple Music fallback is enabled</string>
+    <string name="prefer_instagram_audio">Prefer Instagram audio</string>
+    <string name="prefer_instagram_audio_desc">Experimental. Try Instagram Music before the normal audio provider chain.</string>
+    <string name="prefer_youtube_music_audio">Prefer YouTube Music provider</string>
+    <string name="prefer_youtube_music_audio_desc">Try YouTube Music before Qobuz, Apple Music, and other fallback providers.</string>
     <string name="qobuz_backend">Qobuz backend</string>
     <string name="qobuz_backend_jumo">JUMO-DL</string>
     <string name="qobuz_backend_kenny">Mono Kenny</string>

@@ -7,6 +7,7 @@ lifecycle = "2.10.0"
 material3 = "1.5.0-alpha16"
 appcompat = "1.7.1"
 webkit = "1.14.0"
+accompanist = "0.36.0"
 media3 = "1.10.0"
 mediarouter = "1.8.1"
 castFramework = "22.3.0"
@@ -67,6 +68,7 @@ materialKolor = { module = "com.materialkolor:material-kolor", version.ref = "ma
 
 appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
+accompanist-webview = { module = "com.google.accompanist:accompanist-webview", version.ref = "accompanist" }
 
 coil = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
