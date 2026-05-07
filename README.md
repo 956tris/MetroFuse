@@ -20,7 +20,7 @@
 </div>
 
 > [!WARNING]
-> MetroFuse connects to third-party services selected by the user. Availability, quality, catalog coverage, login behavior, and regional access can change at any time and may require your own account, VPN, proxy, or provider access
+> MetroFuse connects to third-party services selected by the user. Availability, quality, catalog coverage, login behavior, and regional access can change at any time and may require your own account, VPN, proxy, or provider access.
 > MetroFuse also is not Responsible for any actions taken by these third-parties to the users accounts as this fork ovs dont have a ton of users to test how these services handle their policies :D 
 
 Additionally this unoffical fork of Metrolist is completely different backend and frontend wise dont ask the metrolist devs for help with this fork.
