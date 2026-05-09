@@ -1327,7 +1327,10 @@ object ExternalHomeItemIds {
     fun externalMetroRoute(item: YTItem): String? {
         val (provider, type, id) = externalProviderId(item.id) ?: return null
         return when {
-            provider == "metrofuse" && type == "playlist" && id in setOf("local", "downloaded") -> "auto_playlist/$id"
+            provider == "metrofuse" && type == "playlist" && id == "create_offline" -> "create_offline_playlist"
+            provider == "metrofuse" && type == "playlist" && id == "local" -> "auto_playlist/local"
+            provider == "metrofuse" && type == "playlist" && id == "downloaded" -> "auto_playlist/local"
+            provider == "metrofuse" && type == "playlist" && id.startsWith("LP") -> "local_playlist/$id"
             type == "playlist" -> "online_playlist/$provider:playlist:$id"
             provider == "spotify" && type == "album" -> "online_playlist/$provider:album:$id"
             provider == "tidal" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"

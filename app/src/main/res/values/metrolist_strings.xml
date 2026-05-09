@@ -466,6 +466,8 @@
     <string name="spotify_canvas">Spotify Canvas</string>
     <string name="enable_spotify_canvas">Enable Spotify Canvas</string>
     <string name="enable_spotify_canvas_desc">Shows Spotify looping Canvas video when one is available for the current song</string>
+    <string name="embed_animated_canvas">Embed Canvas in downloads</string>
+    <string name="embed_animated_canvas_desc">Embeds available Spotify or Apple Music Canvas video into downloaded tracks. Warning: most offline players cannot read it; MetroFuse can.</string>
     <string name="spotify_canvas_requires_cookie">Log in with Spotify before enabling Canvas videos</string>
     <string name="spotify_canvas_web_login">Spotify Web login</string>
     <string name="spotify_canvas_web_login_desc">Log in with Spotify in the WebView. MetroFuse saves the Spotify cookies needed for Canvas and personalized Spotify home.</string>
@@ -798,11 +800,11 @@
     <string name="ai_system_prompt_reset">Reset to default</string>
 
     <!-- Crash Handler -->
-    <string name="crash_title">App crashed</string>
+    <string name="crash_title">MetroFuse Crash report</string>
     <string name="crash_description">An unexpected error occurred. Please share the crash report to help us fix the issue</string>
     <string name="crash_share_logs">Share logs</string>
-    <string name="crash_share_title">Share crash report</string>
-    <string name="crash_report_subject">MetroFuse crash report</string>
+    <string name="crash_share_title">MetroFuse Crash report</string>
+    <string name="crash_report_subject">MetroFuse Crash report</string>
     <string name="crash_close">Close</string>
     <string name="crash_no_log">No crash log available</string>
 

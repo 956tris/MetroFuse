@@ -37,6 +37,7 @@ import com.metrolist.music.db.entities.Song
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
 import com.metrolist.music.extensions.toEnum
+import com.metrolist.music.lyrics.LyricsHelper
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.instagram.InstagramAudioProvider
@@ -61,6 +62,7 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import java.time.LocalDateTime
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -69,13 +71,16 @@ import javax.inject.Singleton
 class DownloadUtil
 @Inject
 constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
     val database: MusicDatabase,
     val databaseProvider: DatabaseProvider,
     @DownloadCache val downloadCache: SimpleCache,
     @PlayerCache val playerCache: SimpleCache,
+    private val lyricsHelper: LyricsHelper,
 ) {
     private val TAG = "DownloadUtil"
+    private val publicExportCleanupIds = ConcurrentHashMap.newKeySet<String>()
+
     private data class CachedSongStream(
         val uri: String,
         val expiresAtMs: Long,
@@ -569,6 +574,7 @@ constructor(
                             when (download.state) {
                                 Download.STATE_COMPLETED -> {
                                     database.updateDownloadedInfo(download.request.id, true, LocalDateTime.now())
+                                    exportAndRemoveInternalDownload(download.request.id, downloadManager)
                                 }
                                 Download.STATE_FAILED,
                                 Download.STATE_STOPPED,
@@ -586,18 +592,24 @@ constructor(
                         download: Download,
                     ) {
                         val downloadId = download.request.id
+                        val isPublicExportCleanup = publicExportCleanupIds.remove(downloadId)
 
-                        runCatching {
-                            database.updateDownloadedInfo(downloadId, false, null)
-                        }.onSuccess {
-                            downloads.update { map ->
-                                map.toMutableMap().apply {
-                                    remove(downloadId)
+                        scope.launch {
+                            runCatching {
+                                if (!isPublicExportCleanup) {
+                                    PublicDownloadExporter.deletePublicCopy(context, database, downloadId)
                                 }
+                                database.updateDownloadedInfo(downloadId, false, null)
+                            }.onSuccess {
+                                downloads.update { map ->
+                                    map.toMutableMap().apply {
+                                        remove(downloadId)
+                                    }
+                                }
+                                Timber.tag(TAG).d("Successfully removed download $downloadId from in-memory map")
+                            }.onFailure { error ->
+                                Timber.tag(TAG).e(error, "Failed to update database for removed download $downloadId, keeping in-memory entry")
                             }
-                            Timber.tag(TAG).d("Successfully removed download $downloadId from in-memory map")
-                        }.onFailure { error ->
-                            Timber.tag(TAG).e(error, "Failed to update database for removed download $downloadId, keeping in-memory entry")
                         }
                     }
                 }
@@ -611,12 +623,47 @@ constructor(
             result[cursor.download.request.id] = cursor.download
         }
         downloads.value = result
+
+        val completedDownloads = result.values
+            .filter { it.state == Download.STATE_COMPLETED }
+            .map { it.request.id }
+        if (completedDownloads.isNotEmpty()) {
+            scope.launch {
+                completedDownloads.forEach { downloadId ->
+                    exportAndRemoveInternalDownload(downloadId, downloadManager)
+                }
+            }
+        }
     }
 
     fun getDownload(songId: String): Flow<Download?> = downloads.map { it[songId] }
 
     fun release() {
         scope.cancel()
+    }
+
+    private suspend fun exportAndRemoveInternalDownload(
+        downloadId: String,
+        downloadManager: DownloadManager,
+    ) {
+        val exported = PublicDownloadExporter.export(
+            context = context,
+            database = database,
+            downloadCache = downloadCache,
+            lyricsHelper = lyricsHelper,
+            downloadId = downloadId,
+        )
+        if (exported) {
+            publicExportCleanupIds.add(downloadId)
+            runCatching {
+                downloadManager.removeDownload(downloadId)
+            }.onSuccess {
+                Timber.tag(TAG).i("Removed internal download cache after exporting $downloadId")
+            }.onFailure { error ->
+                publicExportCleanupIds.remove(downloadId)
+                Timber.tag(TAG).w(error, "Failed to remove internal download cache for $downloadId")
+            }
+        }
     }
 
     private companion object {

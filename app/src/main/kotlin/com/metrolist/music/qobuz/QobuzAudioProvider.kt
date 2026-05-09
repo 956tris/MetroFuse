@@ -154,10 +154,9 @@ object QobuzAudioProvider {
 
     private fun searchBackendOrder(preferred: ResolverBackend): List<SearchBackend> {
         return when (preferred) {
-            // Squid search is much less stable than Kenny search; backend preference still controls stream resolving.
-            ResolverBackend.SQUID -> listOf(SearchBackend.KENNY, SearchBackend.SQUID)
-            ResolverBackend.JUMO,
+            ResolverBackend.JUMO -> listOf(SearchBackend.SQUID, SearchBackend.KENNY)
             ResolverBackend.KENNY -> listOf(SearchBackend.KENNY, SearchBackend.SQUID)
+            ResolverBackend.SQUID -> listOf(SearchBackend.SQUID, SearchBackend.KENNY)
         }
     }
 

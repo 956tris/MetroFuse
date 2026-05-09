@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
+import com.metrolist.music.constants.EmbedAnimatedCanvasKey
 import com.metrolist.music.constants.SpotifyCanvasEnabledKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.ui.component.IconButton
@@ -53,6 +54,8 @@ fun SpotifyCanvasSettings(
 ) {
     val (spotifyCanvasEnabled, onSpotifyCanvasEnabledChange) =
         rememberPreference(SpotifyCanvasEnabledKey, false)
+    val (embedAnimatedCanvas, onEmbedAnimatedCanvasChange) =
+        rememberPreference(EmbedAnimatedCanvasKey, false)
     var spotifyCookie by rememberPreference(SpotifyCookieKey, "")
     val cookieConfigured = isSpotifyCookieConfigured(spotifyCookie)
 
@@ -139,6 +142,30 @@ fun SpotifyCanvasSettings(
                         icon = painterResource(R.drawable.slow_motion_video),
                         onClick = {
                             updateCanvasEnabled(!spotifyCanvasEnabled)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.embed_animated_canvas)) },
+                        description = { Text(stringResource(R.string.embed_animated_canvas_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = embedAnimatedCanvas,
+                                onCheckedChange = onEmbedAnimatedCanvasChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (embedAnimatedCanvas) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.slow_motion_video),
+                        onClick = {
+                            onEmbedAnimatedCanvasChange(!embedAnimatedCanvas)
                         },
                     ),
                     Material3SettingsItem(

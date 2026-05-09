@@ -208,14 +208,23 @@ private fun SpotifyCanvasVideoLayer(
         }
     val player =
         remember(media) {
-            val dataSourceFactory =
-                OkHttpDataSource
-                    .Factory(okHttpClient)
-                    .setDefaultRequestProperties(media.headers)
+            val isRemoteCanvas =
+                media.url.startsWith("http://", ignoreCase = true) ||
+                    media.url.startsWith("https://", ignoreCase = true)
+            val mediaSourceFactory =
+                if (isRemoteCanvas) {
+                    val dataSourceFactory =
+                        OkHttpDataSource
+                            .Factory(okHttpClient)
+                            .setDefaultRequestProperties(media.headers)
+                    DefaultMediaSourceFactory(dataSourceFactory)
+                } else {
+                    DefaultMediaSourceFactory(context)
+                }
 
             ExoPlayer
                 .Builder(context)
-                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+                .setMediaSourceFactory(mediaSourceFactory)
                 .build()
                 .apply {
                     setAudioAttributes(AudioAttributes.DEFAULT, false)

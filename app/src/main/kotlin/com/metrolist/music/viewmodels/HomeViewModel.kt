@@ -25,6 +25,7 @@ import com.metrolist.innertube.models.filterYoutubeShorts
 import com.metrolist.innertube.pages.ExplorePage
 import com.metrolist.innertube.pages.HomePage
 import com.metrolist.innertube.utils.completed
+import com.metrolist.music.R
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.HideYoutubeShortsKey
@@ -46,6 +47,7 @@ import com.metrolist.music.db.entities.SpeedDialItem
 import com.metrolist.music.extensions.filterVideoSongs
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.SimilarRecommendation
+import com.metrolist.music.playback.PublicDownloadExporter
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.ui.screens.wrapped.WrappedAudioService
@@ -129,66 +131,35 @@ class HomeViewModel @Inject constructor(
         combine(
             database.speedDialDao.getAll(),
             keepListening,
-            quickPicks
-        ) { pinned, keepListening, quick ->
-            val pinnedItems = pinned.map { it.toYTItem() }
+            quickPicks,
+            homePage,
+        ) { pinned, keepListening, quick, homePage ->
+            val pinnedItems = pinned.mapNotNull { item ->
+                runCatching { item.toYTItem() }.getOrNull()
+            }
             val filled = pinnedItems.toMutableList()
             val targetSize = 27
 
-            if (filled.size < targetSize) {
-                // Keep Listening (History/Heavy Rotation)
-                keepListening?.let { k ->
-                    val needed = targetSize - filled.size
-                    val available = k.filter { item ->
-                        filled.none { p -> p.id == item.id }
-                    }.mapNotNull { item ->
-                        when (item) {
-                            is Song -> SongItem(
-                                id = item.id,
-                                title = item.title,
-                                artists = item.artists.map { Artist(name = it.name, id = it.id) },
-                                thumbnail = item.thumbnailUrl ?: "",
-                                explicit = false
-                            )
-                            is Album -> AlbumItem(
-                                browseId = item.id,
-                                playlistId = item.album.playlistId ?: "",
-                                title = item.title,
-                                artists = item.artists.map { Artist(name = it.name, id = it.id) },
-                                year = item.album.year,
-                                thumbnail = item.thumbnailUrl ?: ""
-                            )
-                            is com.metrolist.music.db.entities.Artist -> ArtistItem(
-                                id = item.id,
-                                title = item.title,
-                                thumbnail = item.thumbnailUrl,
-                                shuffleEndpoint = null,
-                                radioEndpoint = null
-                            )
-                            else -> null
-                        }
-                    }
-                    filled.addAll(available.take(needed))
-                }
+            fun addCandidates(candidates: Iterable<YTItem>) {
+                val needed = targetSize - filled.size
+                if (needed <= 0) return
+                filled.addAll(
+                    candidates
+                        .filter { candidate -> filled.none { it.id == candidate.id } }
+                        .take(needed)
+                )
             }
 
             if (filled.size < targetSize) {
-                // Quick Picks
-                quick?.let { q ->
-                    val needed = targetSize - filled.size
-                    val available = q.filter { song ->
-                        filled.none { p -> p.id == song.id }
-                    }.map { song ->
-                        SongItem(
-                            id = song.id,
-                            title = song.title,
-                            artists = song.artists.map { Artist(name = it.name, id = it.id) },
-                            thumbnail = song.thumbnailUrl ?: "",
-                            explicit = false
-                        )
-                    }
-                    filled.addAll(available.take(needed))
-                }
+                addCandidates(keepListening.orEmpty().mapNotNull { it.toSpeedDialItem() })
+            }
+
+            if (filled.size < targetSize) {
+                addCandidates(quick.orEmpty().mapNotNull { it.toSpeedDialSongItem() })
+            }
+
+            if (filled.size < targetSize) {
+                addCandidates(homePage?.sections?.flatMap { it.items }.orEmpty())
             }
             
             filled.take(targetSize)
@@ -294,6 +265,51 @@ class HomeViewModel @Inject constructor(
             }
         }
     }
+
+    private fun Song.toSpeedDialSongItem(): SongItem? {
+        if (song.isLocal || song.isEpisode) return null
+        return SongItem(
+            id = id,
+            title = title,
+            artists = orderedArtists.map { Artist(name = it.name, id = it.id) },
+            thumbnail = thumbnailUrl ?: "",
+            explicit = song.explicit,
+        )
+    }
+
+    private fun LocalItem.toSpeedDialItem(): YTItem? =
+        when (this) {
+            is Song -> toSpeedDialSongItem()
+            is Album -> {
+                if (album.isLocal) {
+                    null
+                } else {
+                    AlbumItem(
+                        browseId = id,
+                        playlistId = album.playlistId ?: "",
+                        title = title,
+                        artists = artists.map { Artist(name = it.name, id = it.id) },
+                        year = album.year,
+                        thumbnail = thumbnailUrl ?: "",
+                    )
+                }
+            }
+            is com.metrolist.music.db.entities.Artist -> {
+                if (artist.isLocal) {
+                    null
+                } else {
+                    ArtistItem(
+                        id = id,
+                        title = title,
+                        thumbnail = thumbnailUrl,
+                        shuffleEndpoint = null,
+                        radioEndpoint = null,
+                    )
+                }
+            }
+            else -> null
+        }
+
     // Track last processed cookie to avoid unnecessary updates
     private var lastProcessedCookie: String? = null
     // Track if we're currently processing account data
@@ -687,31 +703,63 @@ class HomeViewModel @Inject constructor(
             }
 
             HomeFeedSource.OFFLINE -> {
+                val localSongs = database.localSongsByCreateDateAsc().first()
+                val localSongCountText =
+                    localSongs
+                        .size
+                        .takeIf { it > 0 }
+                        ?.let { count ->
+                            context.resources.getQuantityString(R.plurals.n_song, count, count)
+                        }
+                val localThumbnail = localSongs.firstOrNull { !it.song.thumbnailUrl.isNullOrBlank() }?.song?.thumbnailUrl
+                val offlinePlaylists =
+                    database
+                        .playlistsByCreateDateAsc()
+                        .first()
+                        .filter { playlist ->
+                            playlist.playlist.browseId == null &&
+                                playlist.playlist.id != PublicDownloadExporter.DOWNLOAD_PLAYLIST_ID
+                        }
+                val offlinePlaylistItems =
+                    offlinePlaylists.map { playlist ->
+                        val songCount = playlist.songCount
+                        PlaylistItem(
+                            id = "metrofuse:playlist:${playlist.playlist.id}",
+                            title = playlist.playlist.name,
+                            author = null,
+                            songCountText =
+                                context.resources.getQuantityString(R.plurals.n_song, songCount, songCount),
+                            thumbnail = playlist.thumbnails.firstOrNull(),
+                            playEndpoint = null,
+                            shuffleEndpoint = null,
+                            radioEndpoint = null,
+                        )
+                    }
                 homePage.value =
                     HomePage(
                         chips = null,
                         sections =
                             listOf(
                                 HomePage.Section(
-                                    title = "Offline",
+                                    title = context.getString(R.string.home_source_offline),
                                     label = null,
-                                    thumbnail = null,
+                                    thumbnail = localThumbnail,
                                     endpoint = null,
                                     items =
                                         listOf(
                                             PlaylistItem(
                                                 id = "metrofuse:playlist:local",
-                                                title = "Local files",
+                                                title = context.getString(R.string.local_files_playlist),
                                                 author = null,
-                                                songCountText = null,
-                                                thumbnail = null,
+                                                songCountText = localSongCountText,
+                                                thumbnail = localThumbnail,
                                                 playEndpoint = null,
                                                 shuffleEndpoint = null,
                                                 radioEndpoint = null,
                                             ),
                                             PlaylistItem(
-                                                id = "metrofuse:playlist:downloaded",
-                                                title = "Downloaded",
+                                                id = "metrofuse:playlist:create_offline",
+                                                title = context.getString(R.string.create_playlist),
                                                 author = null,
                                                 songCountText = null,
                                                 thumbnail = null,
@@ -719,7 +767,7 @@ class HomeViewModel @Inject constructor(
                                                 shuffleEndpoint = null,
                                                 radioEndpoint = null,
                                             ),
-                                        ),
+                                        ) + offlinePlaylistItems,
                                 ),
                             ),
                     )

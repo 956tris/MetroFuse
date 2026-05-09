@@ -183,6 +183,7 @@ import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.makeTimeString
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
+import com.metrolist.music.utils.spotify.SpotifyCanvasMedia
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -322,6 +323,7 @@ fun BottomSheetPlayer(
     val playbackState by playerConnection.playbackState.collectAsStateWithLifecycle()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
     val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
+    val embeddedCanvasUrl by playerConnection.service.currentEmbeddedCanvasUrl.collectAsStateWithLifecycle()
     val currentFormat by playerConnection.currentFormat.collectAsStateWithLifecycle(initialValue = null)
     val automix by playerConnection.service.automixItems.collectAsStateWithLifecycle()
     val repeatMode by playerConnection.repeatMode.collectAsStateWithLifecycle()
@@ -392,7 +394,18 @@ fun BottomSheetPlayer(
     // Use Cast state when casting, otherwise local player
     val effectiveIsPlaying = if (isCasting) castIsPlaying else isPlaying
 
-    val shouldResolveSpotifyCanvasBackground = spotifyCanvasEnabled && state.progress > 0.1f
+    val isLocalMedia =
+        currentSong?.song?.isLocal == true ||
+            mediaMetadata?.id?.startsWith("content://", ignoreCase = true) == true ||
+            mediaMetadata?.id?.startsWith("file://", ignoreCase = true) == true
+    val embeddedCanvasBackground =
+        remember(embeddedCanvasUrl) {
+            embeddedCanvasUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                SpotifyCanvasMedia(url = url, headers = emptyMap())
+            }
+        }
+    val shouldResolveSpotifyCanvasBackground =
+        spotifyCanvasEnabled && state.progress > 0.1f && !isLocalMedia && embeddedCanvasBackground == null
     val spotifyCanvasBackground =
         rememberSpotifyCanvasMedia(
             mediaMetadata = mediaMetadata,
@@ -400,9 +413,10 @@ fun BottomSheetPlayer(
             cookie = spotifyCookie,
             shouldLoad = shouldResolveSpotifyCanvasBackground,
         )
-    val hasSpotifyCanvasBackground = spotifyCanvasBackground != null
+    val canvasBackground = embeddedCanvasBackground ?: spotifyCanvasBackground
+    val shouldShowCanvasBackground = canvasBackground != null && state.progress > 0.1f
     val effectivePlayerBackground =
-        if (hasSpotifyCanvasBackground) {
+        if (shouldShowCanvasBackground) {
             PlayerBackgroundStyle.BLUR
         } else {
             playerBackground
@@ -927,7 +941,7 @@ fun BottomSheetPlayer(
                     }
                 }
 
-                spotifyCanvasBackground?.let { media ->
+                canvasBackground?.takeIf { shouldShowCanvasBackground }?.let { media ->
                     SpotifyCanvasVideoBackground(
                         media = media,
                         shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
@@ -973,7 +987,7 @@ fun BottomSheetPlayer(
                         .padding(horizontal = PlayerHorizontalPadding),
             ) {
                 AnimatedContent(
-                    targetState = showInlineLyrics || hasSpotifyCanvasBackground,
+                    targetState = showInlineLyrics || shouldShowCanvasBackground,
                     label = "ThumbnailAnimation",
                 ) { showCompactArtwork ->
                     if (showCompactArtwork) {
@@ -1912,7 +1926,7 @@ fun BottomSheetPlayer(
                                 showLyrics = showLyrics,
                                 positionProvider = { effectivePosition },
                             )
-                            } else if (hasSpotifyCanvasBackground) {
+                            } else if (shouldShowCanvasBackground) {
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
                                 Thumbnail(
@@ -1977,7 +1991,7 @@ fun BottomSheetPlayer(
                                 showLyrics = showLyrics,
                                 positionProvider = { effectivePosition },
                             )
-                            } else if (hasSpotifyCanvasBackground) {
+                            } else if (shouldShowCanvasBackground) {
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
                                 Thumbnail(

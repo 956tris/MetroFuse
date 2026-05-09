@@ -342,9 +342,11 @@ class MusicService :
 
     private var currentQueue: Queue = EmptyQueue
     var queueTitle: String? = null
+    private var queueSaveJob: Job? = null
 
     val currentMediaMetadata = MutableStateFlow<com.metrolist.music.models.MediaMetadata?>(null)
     val currentAppleCanvasUrl = MutableStateFlow<String?>(null)
+    val currentEmbeddedCanvasUrl = MutableStateFlow<String?>(null)
     val currentTidalArtworkUrl = MutableStateFlow<String?>(null)
     private val currentSong =
         currentMediaMetadata
@@ -417,6 +419,12 @@ class MusicService :
     private val playerSilenceProcessors = HashMap<Player, SilenceDetectorAudioProcessor>()
 
     private val instantSilenceSkipEnabled = MutableStateFlow(false)
+
+    private data class QueueSaveSnapshot(
+        val queue: PersistQueue,
+        val automix: PersistQueue,
+        val playerState: PersistPlayerState,
+    )
 
     private var isAudioEffectSessionOpened = false
     private var openedAudioEffectSessionId: Int = C.AUDIO_SESSION_ID_UNSET
@@ -4154,7 +4162,13 @@ class MusicService :
 
     private suspend fun updateAppleCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {
         currentAppleCanvasUrl.value = null
+        currentEmbeddedCanvasUrl.value = null
         if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
+
+        if (isLocalMedia(metadata)) {
+            loadEmbeddedCanvasInBackground(metadata.id)
+            return
+        }
 
         val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return
         val album = metadata.album?.title
@@ -4187,6 +4201,7 @@ class MusicService :
     ) {
         currentTidalArtworkUrl.value = null
         if (!enabled || metadata == null || metadata.isEpisode || metadata.isVideoSong) return
+        if (isLocalMedia(metadata)) return
         if (!currentAppleCanvasUrl.value.isNullOrBlank()) return
 
         val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() }
@@ -4202,6 +4217,25 @@ class MusicService :
 
         if (currentMediaMetadata.value?.id == metadata.id && currentAppleCanvasUrl.value.isNullOrBlank()) {
             currentTidalArtworkUrl.value = resolved
+        }
+    }
+
+    private suspend fun isLocalMedia(metadata: com.metrolist.music.models.MediaMetadata): Boolean =
+        metadata.id.startsWith("content://", ignoreCase = true) ||
+            metadata.id.startsWith("file://", ignoreCase = true) ||
+            withContext(Dispatchers.IO) {
+            database.getSongByIdBlocking(metadata.id)?.song?.isLocal == true
+            }
+
+    private fun loadEmbeddedCanvasInBackground(mediaId: String) {
+        scope.launch(Dispatchers.IO) {
+            val embeddedCanvas =
+                AudioTagWriter.extractEmbeddedCanvasToCache(applicationContext, mediaId)
+            withContext(Dispatchers.Main) {
+                if (currentMediaMetadata.value?.id == mediaId) {
+                    currentEmbeddedCanvasUrl.value = embeddedCanvas
+                }
+            }
         }
     }
 
@@ -4690,74 +4724,93 @@ class MusicService :
             return
         }
 
-        try {
-            // Save current queue with proper type information
-            val persistQueue =
-                currentQueue.toPersistQueue(
-                    title = queueTitle,
-                    items = player.mediaItems.mapNotNull { it.metadata },
-                    mediaItemIndex = player.currentMediaItemIndex,
-                    position = player.currentPosition,
+        val snapshot =
+            try {
+                QueueSaveSnapshot(
+                    queue =
+                        currentQueue.toPersistQueue(
+                            title = queueTitle,
+                            items = player.mediaItems.mapNotNull { it.metadata },
+                            mediaItemIndex = player.currentMediaItemIndex,
+                            position = player.currentPosition,
+                        ),
+                    automix =
+                        PersistQueue(
+                            title = "automix",
+                            items = automixItems.value.mapNotNull { it.metadata },
+                            mediaItemIndex = 0,
+                            position = 0,
+                        ),
+                    playerState =
+                        PersistPlayerState(
+                            playWhenReady = player.playWhenReady,
+                            repeatMode = player.repeatMode,
+                            shuffleModeEnabled = player.shuffleModeEnabled,
+                            volume = playerVolume.value,
+                            currentPosition = player.currentPosition,
+                            currentMediaItemIndex = player.currentMediaItemIndex,
+                            playbackState = player.playbackState,
+                        ),
                 )
-
-            val persistAutomix =
-                PersistQueue(
-                    title = "automix",
-                    items = automixItems.value.mapNotNull { it.metadata },
-                    mediaItemIndex = 0,
-                    position = 0,
-                )
-
-            // Save player state
-            val persistPlayerState =
-                PersistPlayerState(
-                    playWhenReady = player.playWhenReady,
-                    repeatMode = player.repeatMode,
-                    shuffleModeEnabled = player.shuffleModeEnabled,
-                    volume = playerVolume.value,
-                    currentPosition = player.currentPosition,
-                    currentMediaItemIndex = player.currentMediaItemIndex,
-                    playbackState = player.playbackState,
-                )
-
-            runCatching {
-                filesDir.resolve(PERSISTENT_QUEUE_FILE).outputStream().use { fos ->
-                    ObjectOutputStream(fos).use { oos ->
-                        oos.writeObject(persistQueue)
-                    }
-                }
-                Timber.tag(TAG).d("Queue saved successfully")
-            }.onFailure {
-                Timber.tag(TAG).e(it, "Failed to save queue")
-                reportException(it)
+            } catch (e: Exception) {
+                Timber.tag(TAG).e(e, "Error while snapshotting queue state")
+                reportException(e)
+                return
             }
 
-            runCatching {
-                filesDir.resolve(PERSISTENT_AUTOMIX_FILE).outputStream().use { fos ->
-                    ObjectOutputStream(fos).use { oos ->
-                        oos.writeObject(persistAutomix)
-                    }
-                }
-                Timber.tag(TAG).d("Automix saved successfully")
-            }.onFailure {
-                Timber.tag(TAG).e(it, "Failed to save automix")
-                reportException(it)
+        queueSaveJob?.cancel()
+        queueSaveJob =
+            scope.launch(Dispatchers.IO) {
+                delay(250)
+                writeQueueSnapshotToDisk(snapshot)
             }
+    }
 
-            runCatching {
-                filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE).outputStream().use { fos ->
-                    ObjectOutputStream(fos).use { oos ->
-                        oos.writeObject(persistPlayerState)
-                    }
+    private fun writeQueueSnapshotToDisk(snapshot: QueueSaveSnapshot) {
+        writeObjectAtomically(
+            file = filesDir.resolve(PERSISTENT_QUEUE_FILE),
+            value = snapshot.queue,
+            successMessage = "Queue saved successfully",
+            failureMessage = "Failed to save queue",
+        )
+        writeObjectAtomically(
+            file = filesDir.resolve(PERSISTENT_AUTOMIX_FILE),
+            value = snapshot.automix,
+            successMessage = "Automix saved successfully",
+            failureMessage = "Failed to save automix",
+        )
+        writeObjectAtomically(
+            file = filesDir.resolve(PERSISTENT_PLAYER_STATE_FILE),
+            value = snapshot.playerState,
+            successMessage = "Player state saved successfully",
+            failureMessage = "Failed to save player state",
+        )
+    }
+
+    private fun writeObjectAtomically(
+        file: File,
+        value: Any,
+        successMessage: String,
+        failureMessage: String,
+    ) {
+        runCatching {
+            val tempFile = File(file.parentFile, "${file.name}.tmp")
+            tempFile.outputStream().use { fos ->
+                ObjectOutputStream(fos).use { oos ->
+                    oos.writeObject(value)
                 }
-                Timber.tag(TAG).d("Player state saved successfully")
-            }.onFailure {
-                Timber.tag(TAG).e(it, "Failed to save player state")
-                reportException(it)
             }
-        } catch (e: Exception) {
-            Timber.tag(TAG).e(e, "Error during queue save operation")
-            reportException(e)
+            if (file.exists() && !file.delete()) {
+                Timber.tag(TAG).w("Could not delete old ${file.name} before queue state replace")
+            }
+            if (!tempFile.renameTo(file)) {
+                tempFile.copyTo(file, overwrite = true)
+                tempFile.delete()
+            }
+            Timber.tag(TAG).d(successMessage)
+        }.onFailure {
+            Timber.tag(TAG).e(it, failureMessage)
+            reportException(it)
         }
     }
 

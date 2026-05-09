@@ -66,6 +66,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -139,6 +140,7 @@ import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.ui.component.AlbumGridItem
 import com.metrolist.music.ui.component.ArtistGridItem
 import com.metrolist.music.ui.component.ChipsRow
+import com.metrolist.music.ui.component.CreatePlaylistDialog
 import com.metrolist.music.ui.component.HideOnScrollFAB
 import com.metrolist.music.ui.component.LocalBottomSheetPageState
 import com.metrolist.music.ui.component.LocalMenuState
@@ -906,6 +908,7 @@ fun HomeScreen(
     val speedDialItems by viewModel.speedDialItems.collectAsStateWithLifecycle()
     val pinnedSpeedDialItems by viewModel.pinnedSpeedDialItems.collectAsStateWithLifecycle()
     val selectedChip by viewModel.selectedChip.collectAsStateWithLifecycle()
+    val offlineSongs by database.localSongsByCreateDateAsc().collectAsStateWithLifecycle(initialValue = emptyList())
 
     // Official podcast API data
     val savedPodcastShows by viewModel.savedPodcastShows.collectAsStateWithLifecycle()
@@ -978,6 +981,31 @@ fun HomeScreen(
         }
 
     val scope = rememberCoroutineScope()
+    fun playOfflineQueue(
+        title: String,
+        startSongId: String? = null,
+    ) {
+        scope.launch {
+            val songs = offlineSongs
+            val items =
+                withContext(Dispatchers.Default) {
+                    songs.map { it.toMediaItem() }
+                }
+            if (items.isEmpty()) return@launch
+            val startIndex =
+                startSongId
+                    ?.let { id -> songs.indexOfFirst { it.id == id } }
+                    ?.coerceAtLeast(0)
+                    ?: 0
+            playerConnection.playQueue(
+                ListQueue(
+                    title = title,
+                    items = items,
+                    startIndex = startIndex,
+                ),
+            )
+        }
+    }
     // Track randomization job
     var randomizeJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
@@ -994,6 +1022,20 @@ fun HomeScreen(
         ?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(false) }
 
     val foundInSettings = stringResource(R.string.found_in_settings_content)
+    var showCreateOfflinePlaylistDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showCreateOfflinePlaylistDialog) {
+        CreatePlaylistDialog(
+            onDismiss = { showCreateOfflinePlaylistDialog = false },
+            allowSyncing = false,
+            createLocalPlaylist = true,
+            onPlaylistCreated = { playlistId ->
+                showCreateOfflinePlaylistDialog = false
+                navController.navigate("local_playlist/$playlistId")
+            },
+        )
+    }
+
     LaunchedEffect(wrappedDismissed) {
         if (wrappedDismissed) {
             viewModel.markWrappedAsSeen()
@@ -1140,6 +1182,10 @@ fun HomeScreen(
         }
 
         ExternalHomeItemIds.externalMetroRoute(item)?.let { route ->
+            if (route == "create_offline_playlist") {
+                showCreateOfflinePlaylistDialog = true
+                return
+            }
             navController.navigate(route)
             return
         }
@@ -1439,6 +1485,92 @@ fun HomeScreen(
                             currentValue = spotifyHomeFilter,
                             onValueUpdate = { spotifyHomeFilter = it },
                         )
+                    }
+                }
+
+                if (homeFeedSource == HomeFeedSource.OFFLINE && offlineSongs.isNotEmpty()) {
+                    item(key = "offline_songs_title") {
+                        val offlineTitle = stringResource(R.string.home_source_offline)
+                        NavigationTitle(
+                            title = stringResource(R.string.songs),
+                            onClick = { navController.navigate("auto_playlist/local") },
+                            onPlayAllClick =
+                                if (!isListenTogetherGuest) {
+                                    {
+                                        playOfflineQueue(offlineTitle)
+                                    }
+                                } else {
+                                    null
+                                },
+                            modifier = Modifier.animateItem(),
+                        )
+                    }
+                    item(key = "offline_songs_list") {
+                        LazyHorizontalGrid(
+                            rows = GridCells.Fixed(4),
+                            contentPadding =
+                                WindowInsets.systemBars
+                                    .only(WindowInsetsSides.Horizontal)
+                                    .asPaddingValues(),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(ListItemHeight * 4)
+                                    .animateItem(),
+                        ) {
+                            items(
+                                items = offlineSongs.take(24),
+                                key = { "offline_song_${it.id}" },
+                            ) { song ->
+                                SongListItem(
+                                    song = song,
+                                    isActive = song.id == mediaMetadata?.id,
+                                    isPlaying = isPlaying,
+                                    isSwipeable = false,
+                                    trailingContent = {
+                                        IconButton(
+                                            onClick = {
+                                                menuState.show {
+                                                    SongMenu(
+                                                        originalSong = song,
+                                                        navController = navController,
+                                                        onDismiss = menuState::dismiss,
+                                                    )
+                                                }
+                                            },
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.more_vert),
+                                                contentDescription = null,
+                                            )
+                                        }
+                                    },
+                                    modifier =
+                                        Modifier
+                                            .width(horizontalLazyGridItemWidth)
+                                            .combinedClickable(
+                                                onClick = {
+                                                    if (!isListenTogetherGuest) {
+                                                        playOfflineQueue(
+                                                            title = song.song.title,
+                                                            startSongId = song.id,
+                                                        )
+                                                    }
+                                                },
+                                                onLongClick = {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    menuState.show {
+                                                        SongMenu(
+                                                            originalSong = song,
+                                                            navController = navController,
+                                                            onDismiss = menuState::dismiss,
+                                                        )
+                                                    }
+                                                },
+                                            ),
+                                )
+                            }
+                        }
                     }
                 }
 

@@ -222,6 +222,7 @@ val LastFMUseNowPlaying = booleanPreferencesKey("lastfmUseNowPlaying")
 val LastFMUseSendLikes = booleanPreferencesKey("lastfmUseSendLikes")
 
 val SpotifyCanvasEnabledKey = booleanPreferencesKey("spotifyCanvasEnabled")
+val EmbedAnimatedCanvasKey = booleanPreferencesKey("embedAnimatedCanvas")
 val SpotifyCookieKey = stringPreferencesKey("spotifyCanvasCookie")
 val TidalCookieKey = stringPreferencesKey("tidalCookie")
 val TidalArtworkFallbackEnabledKey = booleanPreferencesKey("tidalArtworkFallbackEnabled")

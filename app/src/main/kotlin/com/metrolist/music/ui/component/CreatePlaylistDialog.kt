@@ -45,6 +45,7 @@ fun CreatePlaylistDialog(
     onDismiss: () -> Unit,
     initialTextFieldValue: String? = null,
     allowSyncing: Boolean = true,
+    createLocalPlaylist: Boolean = false,
     onPlaylistCreated: ((String) -> Unit)? = null,
 ) {
     val database = LocalDatabase.current
@@ -81,6 +82,7 @@ fun CreatePlaylistDialog(
                         browseId = browseId,
                         bookmarkedAt = LocalDateTime.now(),
                         isEditable = true,
+                        isLocal = createLocalPlaylist,
                     )
 
                 database.query {
