@@ -418,8 +418,10 @@ object PublicDownloadExporter {
                 itag = PUBLIC_DOWNLOAD_ITAG,
                 mimeType = mimeType,
                 codecs = publicCodecs(format),
-                bitrate = format?.bitrate?.takeIf { it > 0 }
-                    ?: exportedBitrate(contentLength, source.song.duration),
+                bitrate = exportedBitrate(contentLength, source.song.duration)
+                    .takeIf { it > 0 }
+                    ?: format?.bitrate?.takeIf { it > 0 }
+                    ?: 0,
                 sampleRate = format?.sampleRate,
                 contentLength = contentLength,
                 loudnessDb = format?.loudnessDb,

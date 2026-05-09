@@ -110,7 +110,7 @@ object AppleMusicSongResolver {
             artist = track.artist,
             album = track.album,
             durationMs = query.durationMs ?: track.durationMs,
-            bitrate = quality?.bitrate ?: 0,
+            bitrate = 0,
             sampleRate = quality?.sampleRate,
             expiresAtMs = now + STREAM_CACHE_MS,
         ).also { resolvedCache[cacheKey] = it }

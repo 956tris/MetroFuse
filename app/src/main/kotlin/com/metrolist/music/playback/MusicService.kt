@@ -3574,8 +3574,8 @@ class MusicService :
         database.query {
             val existing = getFormatByIdBlocking(mediaId)
             if (existing != null && existing.codecs.equals("alac", ignoreCase = true)) {
-                if (existing.bitrate != 0 || existing.sampleRate != null) return@query
-                upsert(appleWrapperFormat(mediaId, existing.bitrate, existing.sampleRate))
+                if (existing.bitrate == 0 && existing.sampleRate != null) return@query
+                upsert(appleWrapperFormat(mediaId, sampleRate = existing.sampleRate))
             } else {
                 upsert(appleWrapperFormat(mediaId))
             }
@@ -3777,7 +3777,8 @@ class MusicService :
                 if (
                     existing == null ||
                     existing.itag != format.itag ||
-                    existing.bitrate <= 0 ||
+                    (format.codecs.equals("alac", ignoreCase = true) && existing.bitrate != 0) ||
+                    (existing.bitrate <= 0 && !format.codecs.equals("alac", ignoreCase = true)) ||
                     existing.sampleRate == null ||
                     existing.sampleRate <= 0
                 ) {
@@ -3855,7 +3856,7 @@ class MusicService :
                 uri = mediaUri,
                 expiresAtMs = expiresAtMs,
                 cacheKey = appleWrapperCacheKey(mediaId),
-                format = appleWrapperFormat(mediaId, bitrate, sampleRate),
+                format = appleWrapperFormat(mediaId, sampleRate = sampleRate),
             )
 
         fun QobuzAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
@@ -4632,23 +4633,26 @@ class MusicService :
                     shouldRetry = true
                     return@query
                 }
+                val isAlac = existing.codecs.contains("alac", ignoreCase = true)
                 val shouldUpdateBitrate =
+                    !isAlac &&
                     rendererBitrate != null &&
                     (existing.bitrate <= 0 || existing.itag in setOf(SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
                 val shouldUpdateSampleRate =
                     rendererSampleRate != null &&
                     (existing.sampleRate == null || existing.sampleRate <= 0 || existing.itag in setOf(SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
-                if (!shouldUpdateBitrate && !shouldUpdateSampleRate) {
-                    shouldRetry = existing.bitrate <= 0
+                val shouldClearAlacBitrate = isAlac && existing.bitrate != 0
+                if (!shouldUpdateBitrate && !shouldUpdateSampleRate && !shouldClearAlacBitrate) {
+                    shouldRetry = !isAlac && existing.bitrate <= 0
                     return@query
                 }
 
                 val updated = existing.copy(
-                    bitrate = if (shouldUpdateBitrate) rendererBitrate else existing.bitrate,
+                    bitrate = if (shouldClearAlacBitrate) 0 else if (shouldUpdateBitrate) rendererBitrate else existing.bitrate,
                     sampleRate = if (shouldUpdateSampleRate) rendererSampleRate else existing.sampleRate,
                 )
                 upsert(updated)
-                shouldRetry = updated.bitrate <= 0
+                shouldRetry = !isAlac && updated.bitrate <= 0
             }
             if (retryIfUnknown && shouldRetry) {
                 scheduleAudioFormatRetry(mediaId)
@@ -4667,11 +4671,17 @@ class MusicService :
                     delay(AUDIO_FORMAT_RETRY_DELAY_MS)
                     if (player.currentMediaItem?.mediaId != mediaId) return@launch
 
-                    val hasBitrate =
+                    val hasResolvedAudioQuality =
                         withContext(Dispatchers.IO) {
-                            database.format(mediaId).first()?.bitrate?.let { it > 0 } == true
+                            database.format(mediaId).first()?.let { format ->
+                                if (format.codecs.contains("alac", ignoreCase = true)) {
+                                    format.sampleRate?.let { it > 0 } == true
+                                } else {
+                                    format.bitrate > 0
+                                }
+                            } == true
                         }
-                    if (hasBitrate) return@launch
+                    if (hasResolvedAudioQuality) return@launch
 
                     Timber.tag(TAG).d(
                         "Retrying audio format metadata for $mediaId (${attempt + 1}/$AUDIO_FORMAT_RETRY_ATTEMPTS)",

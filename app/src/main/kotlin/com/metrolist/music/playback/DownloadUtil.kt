@@ -315,7 +315,7 @@ constructor(
                 uri = AppleMusicWrapperDataSource.toProgressiveStreamUri(mediaUri.toUri()).toString(),
                 expiresAtMs = expiresAtMs,
                 cacheKey = appleWrapperCacheKey(mediaId),
-                format = appleWrapperFormat(mediaId, bitrate, sampleRate),
+                format = appleWrapperFormat(mediaId, sampleRate = sampleRate),
             )
 
         fun QobuzAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =

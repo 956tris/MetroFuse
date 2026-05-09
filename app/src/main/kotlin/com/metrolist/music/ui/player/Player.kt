@@ -345,6 +345,7 @@ fun BottomSheetPlayer(
                     }
                     val bitrate = format.bitrate
                         .takeIf { it > 0 }
+                        ?.takeUnless { codec == "ALAC" }
                         ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
                     val sampleRate = format.sampleRate
                         ?.takeIf { it > 0 }
