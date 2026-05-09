@@ -312,7 +312,7 @@ constructor(
 
         fun AppleMusicSongResolver.Resolved.toDownloadResolution(): DownloadStreamResolution =
             DownloadStreamResolution(
-                uri = mediaUri,
+                uri = AppleMusicWrapperDataSource.toProgressiveStreamUri(mediaUri.toUri()).toString(),
                 expiresAtMs = expiresAtMs,
                 cacheKey = appleWrapperCacheKey(mediaId),
                 format = appleWrapperFormat(mediaId, bitrate, sampleRate),
@@ -671,7 +671,9 @@ constructor(
         private const val QOBUZ_FALLBACK_ITAG = 100_027
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val INSTAGRAM_FALLBACK_ITAG = 100_041
-        private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
+        private const val OLD_APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
+        private const val OLD_APPLE_WRAPPER_CACHE_PREFIX_V2 = "apple-wrapper-alac-v2:"
+        private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v3:"
         private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
@@ -690,6 +692,8 @@ constructor(
 
         private fun mediaIdFromDataSpecKey(key: String) = key
             .removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
+            .removePrefix(OLD_APPLE_WRAPPER_CACHE_PREFIX_V2)
+            .removePrefix(OLD_APPLE_WRAPPER_CACHE_PREFIX)
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)

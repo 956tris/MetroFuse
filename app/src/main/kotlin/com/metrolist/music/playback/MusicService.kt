@@ -4233,7 +4233,13 @@ class MusicService :
                 AudioTagWriter.extractEmbeddedCanvasToCache(applicationContext, mediaId)
             withContext(Dispatchers.Main) {
                 if (currentMediaMetadata.value?.id == mediaId) {
-                    currentEmbeddedCanvasUrl.value = embeddedCanvas
+                    if (embeddedCanvas?.provider?.contains("apple", ignoreCase = true) == true) {
+                        currentAppleCanvasUrl.value = embeddedCanvas.uri
+                        currentEmbeddedCanvasUrl.value = null
+                    } else {
+                        currentAppleCanvasUrl.value = null
+                        currentEmbeddedCanvasUrl.value = embeddedCanvas?.uri
+                    }
                 }
             }
         }

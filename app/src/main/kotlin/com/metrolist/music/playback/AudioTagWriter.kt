@@ -35,6 +35,11 @@ internal data class EmbeddedCanvas(
     val provider: String,
 )
 
+internal data class CachedEmbeddedCanvas(
+    val uri: String,
+    val provider: String,
+)
+
 internal data class EmbeddedAudioMetadata(
     val title: String,
     val artists: List<String>,
@@ -64,7 +69,7 @@ internal object AudioTagWriter {
     fun extractEmbeddedCanvasToCache(
         context: Context,
         trackUri: String,
-    ): String? =
+    ): CachedEmbeddedCanvas? =
         runCatching {
             val uri = trackUri.toUri()
             val canvas =
@@ -73,7 +78,12 @@ internal object AudioTagWriter {
                 } ?: return@runCatching null
 
             if (canvas.mimeType == METROFUSE_HLS_CANVAS_MIME) {
-                return@runCatching extractHlsCanvasPackage(context, trackUri, canvas.bytes)
+                return@runCatching extractHlsCanvasPackage(context, trackUri, canvas.bytes)?.let { cachedUri ->
+                    CachedEmbeddedCanvas(
+                        uri = cachedUri,
+                        provider = canvas.provider,
+                    )
+                }
             }
 
             val file = cachedCanvasFile(context, trackUri, canvas.mimeType)
@@ -81,7 +91,10 @@ internal object AudioTagWriter {
                 file.parentFile?.mkdirs()
                 file.outputStream().use { it.write(canvas.bytes) }
             }
-            file.toUri().toString()
+            CachedEmbeddedCanvas(
+                uri = file.toUri().toString(),
+                provider = canvas.provider,
+            )
         }.getOrNull()
 
     private fun writeId3v23(
@@ -825,6 +838,7 @@ internal object AudioTagWriter {
         val tagEnd = id3TagSize(data.copyOfRange(0, ID3_HEADER_SIZE)).coerceAtMost(data.size)
         var offset = ID3_HEADER_SIZE
         var provider = "Embedded"
+        var canvas: EmbeddedCanvas? = null
 
         while (offset + ID3_FRAME_HEADER_SIZE <= tagEnd) {
             val id = data.copyOfRange(offset, offset + 4).toString(StandardCharsets.US_ASCII)
@@ -842,11 +856,11 @@ internal object AudioTagWriter {
                     }
                 }
             } else if (id == "GEOB") {
-                readId3GeobCanvas(payload, provider)?.let { return it }
+                canvas = canvas ?: readId3GeobCanvas(payload, provider)
             }
             offset = payloadEnd
         }
-        return null
+        return canvas?.copy(provider = provider)
     }
 
     private fun readId3GeobCanvas(

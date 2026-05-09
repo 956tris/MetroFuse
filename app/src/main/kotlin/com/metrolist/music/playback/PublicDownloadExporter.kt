@@ -49,6 +49,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.FileInputStream
 import java.io.OutputStream
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.time.LocalDateTime
 import java.util.Locale
@@ -65,7 +66,9 @@ object PublicDownloadExporter {
     private const val PUBLIC_FOLDER_NAME = "Metrolist"
     private const val DOWNLOAD_PLAYLIST_NAME = "Metrolist downloads"
     private const val PUBLIC_DOWNLOAD_ITAG = -2001
-    private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
+    private const val OLD_APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
+    private const val OLD_APPLE_WRAPPER_CACHE_PREFIX_V2 = "apple-wrapper-alac-v2:"
+    private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v3:"
     private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
     private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
     private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
@@ -163,6 +166,8 @@ object PublicDownloadExporter {
             listOf(
                 downloadId,
                 "$APPLE_WRAPPER_CACHE_PREFIX$downloadId",
+                "$OLD_APPLE_WRAPPER_CACHE_PREFIX_V2$downloadId",
+                "$OLD_APPLE_WRAPPER_CACHE_PREFIX$downloadId",
                 "$OLD_QOBUZ_FALLBACK_CACHE_PREFIX$downloadId",
                 "$QOBUZ_FALLBACK_CACHE_PREFIX$downloadId",
                 "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$downloadId",
@@ -179,6 +184,8 @@ object PublicDownloadExporter {
 
     private fun String.removeKnownCachePrefix(): String =
         removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
+            .removePrefix(OLD_APPLE_WRAPPER_CACHE_PREFIX_V2)
+            .removePrefix(OLD_APPLE_WRAPPER_CACHE_PREFIX)
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
@@ -193,6 +200,10 @@ object PublicDownloadExporter {
             .filter { it.isCached && it.length > 0L && it.file?.exists() == true }
             .sortedBy { it.position }
         if (spans.isEmpty() || spans.first().position != 0L) return null
+        if (spans.first().file?.startsWithHlsPlaylist() == true) {
+            Timber.tag(TAG).w("Ignoring cached Apple HLS playlist for $cacheKey; download must be refreshed")
+            return null
+        }
 
         var nextPosition = 0L
         spans.forEach { span ->
@@ -201,6 +212,15 @@ object PublicDownloadExporter {
         }
         return spans.takeIf { nextPosition > 0L }
     }
+
+    private fun File.startsWithHlsPlaylist(): Boolean =
+        runCatching {
+            inputStream().use { input ->
+                val marker = "#EXTM3U".toByteArray(StandardCharsets.US_ASCII)
+                val header = ByteArray(marker.size)
+                input.read(header) == marker.size && header.contentEquals(marker)
+            }
+        }.getOrDefault(false)
 
     private fun writePublicFile(
         context: Context,
@@ -397,8 +417,9 @@ object PublicDownloadExporter {
                 id = publicUri,
                 itag = PUBLIC_DOWNLOAD_ITAG,
                 mimeType = mimeType,
-                codecs = format?.codecs.orEmpty(),
-                bitrate = format?.bitrate ?: 0,
+                codecs = publicCodecs(format),
+                bitrate = format?.bitrate?.takeIf { it > 0 }
+                    ?: exportedBitrate(contentLength, source.song.duration),
                 sampleRate = format?.sampleRate,
                 contentLength = contentLength,
                 loudnessDb = format?.loudnessDb,
@@ -490,16 +511,38 @@ object PublicDownloadExporter {
     }
 
     private fun publicMimeType(format: FormatEntity?): String =
-        format?.mimeType
-            ?.takeIf { it.startsWith("audio/", ignoreCase = true) }
-            ?: when (publicExtension(format)) {
-                "flac" -> "audio/flac"
-                "mp3" -> "audio/mpeg"
-                "ogg" -> "audio/ogg"
-                "webm" -> "audio/webm"
-                "aac" -> "audio/aac"
-                else -> "audio/mp4"
-            }
+        when (publicExtension(format)) {
+            "flac" -> "audio/flac"
+            "mp3" -> "audio/mpeg"
+            "ogg" -> "audio/ogg"
+            "webm" -> "audio/webm"
+            "aac" -> "audio/aac"
+            else -> "audio/mp4"
+        }
+
+    private fun publicCodecs(format: FormatEntity?): String {
+        val sourceCodecs = format?.codecs.orEmpty()
+        return when (publicExtension(format)) {
+            "flac" -> "flac"
+            "mp3" -> "mp3"
+            "aac" -> "mp4a.40.2"
+            "ogg" -> sourceCodecs.takeIf { it.isNotBlank() && !it.contains("alac", ignoreCase = true) }
+                ?: "opus"
+            "webm" -> sourceCodecs.takeIf { it.isNotBlank() && !it.contains("alac", ignoreCase = true) }
+                ?: "opus"
+            else -> sourceCodecs.takeIf { it.isNotBlank() } ?: "mp4a.40.2"
+        }
+    }
+
+    private fun exportedBitrate(
+        contentLength: Long,
+        durationSeconds: Int,
+    ): Int =
+        if (contentLength > 0L && durationSeconds > 0) {
+            ((contentLength * 8L) / durationSeconds).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        } else {
+            0
+        }
 
     private fun String.sanitizeFileName(): String =
         replace(Regex("""[\\/:*?"<>|]+"""), "_")
@@ -643,35 +686,80 @@ object PublicDownloadExporter {
         thumbnailUrl: String?,
     ): EmbeddedArtwork? {
         val url = thumbnailUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: return null
-        return runCatching {
-            artworkClient.newCall(
-                Request.Builder()
-                    .url(url)
-                    .header("User-Agent", "Mozilla/5.0")
-                    .build(),
-            ).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val contentLength = response.body.contentLength()
-                if (contentLength > MAX_SOURCE_ARTWORK_BYTES) return@use null
-                val sourceBytes = response.body.bytes().takeIf { it.size <= MAX_SOURCE_ARTWORK_BYTES } ?: return@use null
-                val bitmap = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size) ?: return@use null
-                val normalized = normalizeArtwork(bitmap)
-                if (normalized.bytes.isEmpty()) return@use null
-                val localThumbnailUrl = saveArtwork(context, artworkKey, normalized.bytes)
-                EmbeddedArtwork(
-                    mimeType = "image/jpeg",
-                    bytes = normalized.bytes,
-                    width = normalized.width,
-                    height = normalized.height,
-                    colorDepth = 24,
-                    localThumbnailUrl = localThumbnailUrl,
-                )
+        var bestArtwork: NormalizedArtwork? = null
+
+        for (candidateUrl in artworkCandidates(url)) {
+            val normalized = runCatching {
+                fetchArtwork(candidateUrl)
+            }.getOrElse { error ->
+                Timber.tag(TAG).d(error, "Failed to fetch artwork candidate for exported download")
+                null
+            } ?: continue
+
+            val currentBest = bestArtwork
+            if (currentBest == null || normalized.pixelCount > currentBest.pixelCount) {
+                bestArtwork = normalized
             }
-        }.getOrElse { error ->
-            Timber.tag(TAG).d(error, "Failed to fetch artwork for exported download")
-            null
+            if (normalized.longestSide >= TARGET_EMBEDDED_ARTWORK_SIDE) {
+                break
+            }
         }
+
+        val normalized = bestArtwork ?: return null
+        val localThumbnailUrl = saveArtwork(context, artworkKey, normalized.bytes)
+        return EmbeddedArtwork(
+            mimeType = "image/jpeg",
+            bytes = normalized.bytes,
+            width = normalized.width,
+            height = normalized.height,
+            colorDepth = 24,
+            localThumbnailUrl = localThumbnailUrl,
+        )
     }
+
+    private fun fetchArtwork(url: String): NormalizedArtwork? =
+        artworkClient.newCall(
+            Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .build(),
+        ).execute().use { response ->
+            if (!response.isSuccessful) return@use null
+            val contentLength = response.body.contentLength()
+            if (contentLength > MAX_SOURCE_ARTWORK_BYTES) return@use null
+            val sourceBytes = response.body.bytes().takeIf { it.size <= MAX_SOURCE_ARTWORK_BYTES } ?: return@use null
+            val bitmap = BitmapFactory.decodeByteArray(sourceBytes, 0, sourceBytes.size) ?: return@use null
+            normalizeArtwork(bitmap).takeIf { it.bytes.isNotEmpty() }
+        }
+
+    private fun artworkCandidates(url: String): List<String> {
+        val cleanUrl = url.trim()
+        return buildList {
+            cleanUrl.youtubeArtworkFile("maxresdefault.jpg")?.let(::add)
+            cleanUrl.youtubeArtworkFile("sddefault.jpg")?.let(::add)
+            add(cleanUrl.highResolutionArtworkUrl(SOURCE_ARTWORK_SIDE))
+            add(cleanUrl.highResolutionArtworkUrl(MAX_EMBEDDED_ARTWORK_SIDE))
+            cleanUrl.youtubeArtworkFile("hqdefault.jpg")?.let(::add)
+            add(cleanUrl)
+        }.distinct()
+    }
+
+    private fun String.highResolutionArtworkUrl(size: Int): String =
+        replace(Regex("""=w\d+-h\d+[^&?]*"""), "=w$size-h$size-p-l90-rj")
+            .replace(Regex("""=s\d+[^&?]*"""), "=s$size")
+
+    private fun String.youtubeArtworkFile(fileName: String): String? {
+        val withoutQuery = substringBefore("?")
+        if (!withoutQuery.contains("i.ytimg.com/vi/", ignoreCase = true)) return null
+        val query = substringAfter("?", missingDelimiterValue = "").takeIf { it.isNotBlank() }?.let { "?$it" }.orEmpty()
+        return withoutQuery.substringBeforeLast('/', missingDelimiterValue = withoutQuery) + "/$fileName$query"
+    }
+
+    private val NormalizedArtwork.pixelCount: Long
+        get() = width.toLong() * height.toLong()
+
+    private val NormalizedArtwork.longestSide: Int
+        get() = max(width, height)
 
     private suspend fun canvasFor(
         context: Context,
@@ -994,6 +1082,8 @@ object PublicDownloadExporter {
 
     private const val MAX_SOURCE_ARTWORK_BYTES = 5 * 1024 * 1024
     private const val MAX_EMBEDDED_ARTWORK_BYTES = 2 * 1024 * 1024
+    private const val SOURCE_ARTWORK_SIDE = 1200
+    private const val TARGET_EMBEDDED_ARTWORK_SIDE = 900
     private const val MAX_EMBEDDED_ARTWORK_SIDE = 1024
     private const val EMBEDDED_ARTWORK_JPEG_QUALITY = 92
     private const val MAX_EMBEDDED_CANVAS_BYTES = 8 * 1024 * 1024

@@ -335,8 +335,9 @@ fun BottomSheetPlayer(
             currentFormat
                 ?.let { format ->
                     val codec = when {
+                        format.mimeType.contains("flac", ignoreCase = true) ||
+                            format.codecs.contains("flac", ignoreCase = true) -> "FLAC"
                         format.codecs.contains("alac", ignoreCase = true) -> "ALAC"
-                        format.codecs.contains("flac", ignoreCase = true) -> "FLAC"
                         format.codecs.contains("mp3", ignoreCase = true) ||
                             format.mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
                         format.codecs.contains("mp4a", ignoreCase = true) -> "AAC"
