@@ -73,6 +73,7 @@ import com.metrolist.music.constants.MixSortTypeKey
 import com.metrolist.music.constants.ShowCachedPlaylistKey
 import com.metrolist.music.constants.ShowDownloadedPlaylistKey
 import com.metrolist.music.constants.ShowLikedPlaylistKey
+import com.metrolist.music.constants.ShowLocalFilesPlaylistKey
 import com.metrolist.music.constants.ShowTopPlaylistKey
 import com.metrolist.music.constants.ShowUploadedPlaylistKey
 import com.metrolist.music.constants.YtmSyncKey
@@ -184,6 +185,17 @@ fun LibraryMixScreen(
             songThumbnails = emptyList(),
         )
 
+    val localFilesPlaylist =
+        Playlist(
+            playlist =
+                PlaylistEntity(
+                    id = UUID.randomUUID().toString(),
+                    name = stringResource(R.string.local_files_playlist),
+                ),
+            songCount = 0,
+            songThumbnails = emptyList(),
+        )
+
     val topPlaylist =
         Playlist(
             playlist =
@@ -219,6 +231,7 @@ fun LibraryMixScreen(
 
     val (showLiked) = rememberPreference(ShowLikedPlaylistKey, true)
     val (showDownloaded) = rememberPreference(ShowDownloadedPlaylistKey, true)
+    val (showLocalFiles) = rememberPreference(ShowLocalFilesPlaylistKey, true)
     val (showTop) = rememberPreference(ShowTopPlaylistKey, true)
     val (showCached) = rememberPreference(ShowCachedPlaylistKey, true)
     val (showUploaded) = rememberPreference(ShowUploadedPlaylistKey, true)
@@ -226,6 +239,8 @@ fun LibraryMixScreen(
     val showLikedPlaylist = showLiked && matchesNormalizedQuery(normalizedQuery, likedPlaylist.playlist.name)
     val showDownloadedPlaylist =
         showDownloaded && matchesNormalizedQuery(normalizedQuery, downloadPlaylist.playlist.name)
+    val showLocalFilesPlaylist =
+        showLocalFiles && matchesNormalizedQuery(normalizedQuery, localFilesPlaylist.playlist.name)
     val showTopPlaylists = showTop && matchesNormalizedQuery(normalizedQuery, topPlaylist.playlist.name)
     val showUploadedPlaylists =
         showUploaded && matchesNormalizedQuery(normalizedQuery, uploadedPlaylist.playlist.name)
@@ -505,6 +520,25 @@ fun LibraryMixScreen(
                                         .fillMaxWidth()
                                         .clickable {
                                             navController.navigate("auto_playlist/downloaded")
+                                        }
+                                        .animateItem(),
+                            )
+                        }
+                    }
+
+                    if (showLocalFilesPlaylist) {
+                        item(
+                            key = "localFilesPlaylist",
+                            contentType = { CONTENT_TYPE_PLAYLIST },
+                        ) {
+                            PlaylistListItem(
+                                playlist = localFilesPlaylist,
+                                autoPlaylist = true,
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            navController.navigate("auto_playlist/local")
                                         }
                                         .animateItem(),
                             )
@@ -844,6 +878,28 @@ fun LibraryMixScreen(
                                         .combinedClickable(
                                             onClick = {
                                                 navController.navigate("auto_playlist/downloaded")
+                                            },
+                                        )
+                                        .animateItem(),
+                            )
+                        }
+                    }
+
+                    if (showLocalFilesPlaylist) {
+                        item(
+                            key = "localFilesPlaylist",
+                            contentType = { CONTENT_TYPE_PLAYLIST },
+                        ) {
+                            PlaylistGridItem(
+                                playlist = localFilesPlaylist,
+                                fillMaxWidth = true,
+                                autoPlaylist = true,
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .combinedClickable(
+                                            onClick = {
+                                                navController.navigate("auto_playlist/local")
                                             },
                                         )
                                         .animateItem(),

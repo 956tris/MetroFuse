@@ -91,6 +91,7 @@ import com.metrolist.music.constants.SelectedThemeColorKey
 import com.metrolist.music.constants.ShowCachedPlaylistKey
 import com.metrolist.music.constants.ShowDownloadedPlaylistKey
 import com.metrolist.music.constants.ShowLikedPlaylistKey
+import com.metrolist.music.constants.ShowLocalFilesPlaylistKey
 import com.metrolist.music.constants.ShowTopPlaylistKey
 import com.metrolist.music.constants.ShowUploadedPlaylistKey
 import com.metrolist.music.constants.SliderStyle
@@ -332,6 +333,11 @@ fun AppearanceSettings(
     val (showDownloadedPlaylist, onShowDownloadedPlaylistChange) =
         rememberPreference(
             ShowDownloadedPlaylistKey,
+            defaultValue = true,
+        )
+    val (showLocalFilesPlaylist, onShowLocalFilesPlaylistChange) =
+        rememberPreference(
+            ShowLocalFilesPlaylistKey,
             defaultValue = true,
         )
     val (showTopPlaylist, onShowTopPlaylistChange) =
@@ -1788,6 +1794,27 @@ fun AppearanceSettings(
                             )
                         },
                         onClick = { onShowDownloadedPlaylistChange(!showDownloadedPlaylist) },
+                    ),
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.library_music),
+                        title = { Text(stringResource(R.string.show_local_files_playlist)) },
+                        trailingContent = {
+                            Switch(
+                                checked = showLocalFilesPlaylist,
+                                onCheckedChange = onShowLocalFilesPlaylistChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (showLocalFilesPlaylist) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        onClick = { onShowLocalFilesPlaylistChange(!showLocalFilesPlaylist) },
                     ),
                     Material3SettingsItem(
                         icon = painterResource(R.drawable.trending_up),

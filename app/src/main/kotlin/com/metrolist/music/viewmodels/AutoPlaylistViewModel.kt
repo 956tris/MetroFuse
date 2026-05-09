@@ -18,13 +18,16 @@ import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.extensions.filterExplicit
 import com.metrolist.music.extensions.filterVideoSongs
 import com.metrolist.music.extensions.toEnum
+import com.metrolist.music.local.LocalMusicScanner
 import com.metrolist.music.utils.SyncUtils
 import com.metrolist.music.utils.dataStore
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
@@ -38,7 +41,7 @@ import javax.inject.Inject
 class AutoPlaylistViewModel
 @Inject
 constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
     private val database: MusicDatabase,
     savedStateHandle: SavedStateHandle,
     private val syncUtils: SyncUtils,
@@ -47,6 +50,9 @@ constructor(
 
     private val _isRefreshing = MutableStateFlow(false)
     val isRefreshing = _isRefreshing.asStateFlow()
+
+    private val _localScanResult = MutableSharedFlow<Result<Int>>()
+    val localScanResult = _localScanResult.asSharedFlow()
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val likedSongs =
@@ -69,6 +75,9 @@ constructor(
                     "downloaded" -> database.downloadedSongs(sortType, descending)
                         .map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
 
+                    "local" -> database.localSongs(sortType, descending)
+                        .map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
+
                     "uploaded" -> database.uploadedSongs(sortType, descending)
                         .map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
 
@@ -85,12 +94,21 @@ constructor(
         viewModelScope.launch(Dispatchers.IO) { syncUtils.syncUploadedSongs() }
     }
 
+    fun scanLocalMusic() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isRefreshing.value = true
+            _localScanResult.emit(runCatching { LocalMusicScanner.scan(context, database) })
+            _isRefreshing.value = false
+        }
+    }
+
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
             _isRefreshing.value = true
             when (playlist) {
                 "liked" -> syncUtils.syncLikedSongsSuspend()
                 "uploaded" -> syncUtils.syncUploadedSongsSuspend()
+                "local" -> _localScanResult.emit(runCatching { LocalMusicScanner.scan(context, database) })
             }
             _isRefreshing.value = false
         }

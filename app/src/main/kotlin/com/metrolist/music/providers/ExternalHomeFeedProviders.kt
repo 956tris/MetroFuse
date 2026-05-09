@@ -1327,6 +1327,7 @@ object ExternalHomeItemIds {
     fun externalMetroRoute(item: YTItem): String? {
         val (provider, type, id) = externalProviderId(item.id) ?: return null
         return when {
+            provider == "metrofuse" && type == "playlist" && id in setOf("local", "downloaded") -> "auto_playlist/$id"
             type == "playlist" -> "online_playlist/$provider:playlist:$id"
             provider == "spotify" && type == "album" -> "online_playlist/$provider:album:$id"
             provider == "tidal" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
@@ -1386,7 +1387,7 @@ object ExternalHomeItemIds {
             .substringBefore('/')
             .takeIf { it.isNotBlank() && it != "null" }
 
-    private val ExternalProviders = setOf("spotify", "tidal", "soundcloud")
+    private val ExternalProviders = setOf("spotify", "tidal", "soundcloud", "metrofuse")
     private val ExternalTypes = listOf("playlist", "track", "album", "artist", "mix")
 
     fun searchQuery(item: YTItem): String =

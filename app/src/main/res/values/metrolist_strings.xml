@@ -14,6 +14,7 @@
     <string name="home_source_tidal">TIDAL</string>
     <string name="home_source_spotify">Spotify</string>
     <string name="home_source_soundcloud">SoundCloud</string>
+    <string name="home_source_offline">Offline</string>
     <string name="search_soundcloud">Search SoundCloud</string>
 
     <string name="weeks">Weeks</string>
@@ -28,6 +29,11 @@
     <string name="monthly_most_playlist_name">Monthly Most</string>
     <string name="cached_playlist">Cached</string>
     <string name="uploaded_playlist">Uploaded</string>
+    <string name="local_files_playlist">Local files</string>
+    <string name="scan_local_music">Scan local music</string>
+    <string name="local_music_scan_complete">Scanned %d local songs</string>
+    <string name="local_music_scan_failed">Local music scan failed</string>
+    <string name="local_music_permission_denied">Music permission denied</string>
     <string name="filter_uploaded">Uploaded</string>
     <string name="sync_playlist">Sync playlist</string>
     <string name="sync_disabled">Sync disabled</string>
@@ -150,6 +156,7 @@
     <string name="auto_playlists">Auto playlists</string>
     <string name="show_liked_playlist">Show Liked playlist</string>
     <string name="show_downloaded_playlist">Show Downloaded playlist</string>
+    <string name="show_local_files_playlist">Show Local files playlist</string>
     <string name="show_top_playlist">Show Top playlist</string>
     <string name="show_cached_playlist">Show Cached playlist</string>
     <string name="enable_song_cache">Enable song cache</string>
@@ -335,6 +342,8 @@
     <string name="alarm_battery_optimization_desc">Disable battery optimization for more reliable alarm behavior in the background</string>
 
     <!-- Player Settings -->
+    <string name="stop_on_provider_error">Stop on provider error</string>
+    <string name="stop_on_provider_error_desc">Debugging only: show the first provider error instead of falling back to another audio source</string>
     <string name="disable_load_more_when_repeat_all">Disable auto-load in repeat all mode</string>
     <string name="disable_load_more_when_repeat_all_desc">Don\'t automatically load more songs or similar content when repeat all is enabled</string>
     <string name="pause_music_when_media_is_muted">Pause music when media is muted</string>
@@ -481,8 +490,6 @@
     <string name="tidal_cookie_saved">TIDAL auth saved.</string>
     <string name="tidal_artwork_fallback">High quality album covers</string>
     <string name="tidal_artwork_fallback_desc">Use TIDAL album artwork in the player when no Spotify or Apple animated canvas is available</string>
-    <string name="prefer_tidal_audio">Prefer TIDAL FLAC audio</string>
-    <string name="prefer_tidal_audio_desc">Try direct TIDAL FLAC streams before Qobuz, Apple Music, and YouTube when available.</string>
 
     <string name="scrobbling_configuration">Scrobbling configuration</string>
     <string name="scrobble_min_track_duration">Scrobble songs longer than (seconds)</string>

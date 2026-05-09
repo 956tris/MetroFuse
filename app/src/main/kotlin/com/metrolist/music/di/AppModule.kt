@@ -6,6 +6,7 @@
 package com.metrolist.music.di
 
 import android.content.Context
+import android.os.Environment
 import androidx.media3.database.DatabaseProvider
 import androidx.media3.database.StandaloneDatabaseProvider
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
@@ -88,8 +89,13 @@ object AppModule {
         @ApplicationContext context: Context,
         databaseProvider: DatabaseProvider,
     ): SimpleCache {
+        val downloadDirectory =
+            context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+                ?.resolve("Metrolist Downloads")
+                ?: context.filesDir.resolve("download")
+        downloadDirectory.mkdirs()
         return SimpleCache(
-            context.filesDir.resolve("download"),
+            downloadDirectory,
             NoOpCacheEvictor(),
             databaseProvider
         )

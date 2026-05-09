@@ -74,6 +74,7 @@ import com.metrolist.music.constants.SimilarContent
 import com.metrolist.music.constants.SkipSilenceInstantKey
 import com.metrolist.music.constants.SkipSilenceKey
 import com.metrolist.music.constants.StopMusicOnTaskClearKey
+import com.metrolist.music.constants.StopOnProviderErrorKey
 import com.metrolist.music.constants.VarispeedKey
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.EnumDialog
@@ -107,6 +108,10 @@ fun PlayerSettings(
     val (audioQuality, onAudioQualityChange) = rememberEnumPreference(
         AudioQualityKey,
         defaultValue = AudioQuality.AUTO
+    )
+    val (stopOnProviderError, onStopOnProviderErrorChange) = rememberPreference(
+        StopOnProviderErrorKey,
+        defaultValue = false
     )
     val (crossfadeEnabled, onCrossfadeEnabledChange) = rememberPreference(
         CrossfadeEnabledKey,
@@ -383,6 +388,27 @@ fun PlayerSettings(
                         )
                     },
                     onClick = { showAudioQualityDialog = true }
+                ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.bug_report),
+                    title = { Text(stringResource(R.string.stop_on_provider_error)) },
+                    description = { Text(stringResource(R.string.stop_on_provider_error_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = stopOnProviderError,
+                            onCheckedChange = onStopOnProviderErrorChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (stopOnProviderError) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onStopOnProviderErrorChange(!stopOnProviderError) }
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.library_music),

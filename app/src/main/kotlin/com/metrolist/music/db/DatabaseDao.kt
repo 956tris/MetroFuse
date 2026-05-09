@@ -1212,6 +1212,46 @@ interface DatabaseDao {
     @Query("SELECT * FROM song WHERE isDownloaded = 1 AND (isEpisode = 0 OR isEpisode IS NULL) ORDER BY totalPlayTime")
     fun downloadedSongsByPlayTimeAsc(): Flow<List<Song>>
 
+    fun localSongs(
+        sortType: SongSortType,
+        descending: Boolean
+    ): Flow<List<Song>> = when (sortType) {
+        SongSortType.CREATE_DATE -> localSongsByCreateDateAsc()
+        SongSortType.NAME -> localSongsByNameAsc().map { songs ->
+            val collator = Collator.getInstance(Locale.getDefault())
+            collator.strength = Collator.PRIMARY
+            songs.sortedWith(compareBy(collator) { it.song.title })
+        }
+
+        SongSortType.ARTIST -> localSongsByNameAsc().map { songs ->
+            val collator = Collator.getInstance(Locale.getDefault())
+            collator.strength = Collator.PRIMARY
+            songs.sortedWith(compareBy(collator) { song ->
+                song.orderedArtists.joinToString("") { it.name }
+            })
+        }
+
+        SongSortType.PLAY_TIME -> localSongsByPlayTimeAsc()
+    }.map { it.reversed(descending) }
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isLocal = 1 AND (isEpisode = 0 OR isEpisode IS NULL) ORDER BY dateModified")
+    fun localSongsByCreateDateAsc(): Flow<List<Song>>
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isLocal = 1 AND (isEpisode = 0 OR isEpisode IS NULL) ORDER BY title")
+    fun localSongsByNameAsc(): Flow<List<Song>>
+
+    @Transaction
+    @Query("SELECT * FROM song WHERE isLocal = 1 AND (isEpisode = 0 OR isEpisode IS NULL) ORDER BY totalPlayTime")
+    fun localSongsByPlayTimeAsc(): Flow<List<Song>>
+
+    @Query("DELETE FROM song WHERE isLocal = 1 AND id NOT IN (:ids)")
+    fun deleteMissingLocalSongs(ids: List<String>)
+
+    @Query("DELETE FROM song WHERE isLocal = 1")
+    fun deleteAllLocalSongs()
+
     @Query("UPDATE song SET isDownloaded = :downloaded, dateDownload = :date WHERE id = :songId")
     fun updateDownloadedInfo(songId: String, downloaded: Boolean, date: LocalDateTime?)
 
@@ -1835,6 +1875,12 @@ interface DatabaseDao {
     fun upsert(map: SongAlbumMap)
 
     @Upsert
+    fun upsert(map: SongArtistMap)
+
+    @Upsert
+    fun upsert(map: AlbumArtistMap)
+
+    @Upsert
     fun upsert(lyrics: LyricsEntity)
 
     @Upsert
@@ -1842,6 +1888,12 @@ interface DatabaseDao {
 
     @Upsert
     fun upsert(song: SongEntity)
+
+    @Upsert
+    fun upsert(artist: ArtistEntity)
+
+    @Upsert
+    fun upsert(album: AlbumEntity)
 
     @Delete
     fun delete(song: SongEntity)

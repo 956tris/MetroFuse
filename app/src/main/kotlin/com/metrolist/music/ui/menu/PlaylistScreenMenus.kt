@@ -319,6 +319,7 @@ fun AutoPlaylistMenu(
     onDismiss: () -> Unit,
     songs: List<Song> = emptyList(),
     playlistName: String = "Playlist",
+    showDownloadItem: Boolean = true,
 ) {
     val listenTogetherManager = LocalListenTogetherManager.current
     val isGuest = listenTogetherManager?.isInRoom == true && !listenTogetherManager.isHost
@@ -416,7 +417,7 @@ fun AutoPlaylistMenu(
                 } else {
                     null
                 },
-                downloadMenuItem,
+                downloadMenuItem.takeIf { showDownloadItem },
             ),
     )
 

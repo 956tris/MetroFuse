@@ -70,6 +70,7 @@ import com.metrolist.music.constants.PlaylistViewTypeKey
 import com.metrolist.music.constants.ShowCachedPlaylistKey
 import com.metrolist.music.constants.ShowDownloadedPlaylistKey
 import com.metrolist.music.constants.ShowLikedPlaylistKey
+import com.metrolist.music.constants.ShowLocalFilesPlaylistKey
 import com.metrolist.music.constants.ShowTopPlaylistKey
 import com.metrolist.music.constants.ShowUploadedPlaylistKey
 import com.metrolist.music.constants.YtmSyncKey
@@ -163,6 +164,16 @@ fun LibraryPlaylistsScreen(
             songThumbnails = emptyList(),
         )
 
+    val localFilesPlaylist =
+        Playlist(
+            playlist = PlaylistEntity(
+                id = UUID.randomUUID().toString(),
+                name = stringResource(R.string.local_files_playlist)
+            ),
+            songCount = 0,
+            songThumbnails = emptyList(),
+        )
+
     val topPlaylist =
         Playlist(
             playlist = PlaylistEntity(
@@ -196,12 +207,15 @@ fun LibraryPlaylistsScreen(
 
     val (showLiked) = rememberPreference(ShowLikedPlaylistKey, true)
     val (showDownloaded) = rememberPreference(ShowDownloadedPlaylistKey, true)
+    val (showLocalFiles) = rememberPreference(ShowLocalFilesPlaylistKey, true)
     val (showTop) = rememberPreference(ShowTopPlaylistKey, true)
     val (showUploaded) = rememberPreference(ShowUploadedPlaylistKey, true)
     val (showCached) = rememberPreference(ShowCachedPlaylistKey, true)
     val showLikedPlaylist = showLiked && matchesNormalizedQuery(normalizedQuery, likedPlaylist.playlist.name)
     val showDownloadedPlaylist =
         showDownloaded && matchesNormalizedQuery(normalizedQuery, downloadPlaylist.playlist.name)
+    val showLocalFilesPlaylist =
+        showLocalFiles && matchesNormalizedQuery(normalizedQuery, localFilesPlaylist.playlist.name)
     val showCachedPlaylists = showCached && matchesNormalizedQuery(normalizedQuery, cachedPlaylist.playlist.name)
     val showTopPlaylists = showTop && matchesNormalizedQuery(normalizedQuery, topPlaylist.playlist.name)
     val showUploadedPlaylists =
@@ -211,6 +225,7 @@ fun LibraryPlaylistsScreen(
         filteredPlaylists,
         showLikedPlaylist,
         showDownloadedPlaylist,
+        showLocalFilesPlaylist,
         showCachedPlaylists,
         showTopPlaylists,
         showUploadedPlaylists,
@@ -234,6 +249,16 @@ fun LibraryPlaylistsScreen(
                         playlist = downloadPlaylist,
                         autoPlaylist = true,
                         route = "auto_playlist/downloaded",
+                    ),
+                )
+            }
+            if (showLocalFilesPlaylist) {
+                add(
+                    VisiblePlaylistItem(
+                        key = "localFilesPlaylist",
+                        playlist = localFilesPlaylist,
+                        autoPlaylist = true,
+                        route = "auto_playlist/local",
                     ),
                 )
             }

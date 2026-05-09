@@ -144,7 +144,6 @@ import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PreferAppleMusicKey
-import com.metrolist.music.constants.PreferTidalAudioKey
 import com.metrolist.music.constants.PreferSoundCloudAudioKey
 import com.metrolist.music.constants.PreferInstagramAudioKey
 import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
@@ -173,6 +172,7 @@ import com.metrolist.music.constants.SimilarContent
 import com.metrolist.music.constants.SkipSilenceInstantKey
 import com.metrolist.music.constants.SkipSilenceKey
 import com.metrolist.music.constants.StopMusicOnTaskClearKey
+import com.metrolist.music.constants.StopOnProviderErrorKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.Event
 import com.metrolist.music.db.entities.FormatEntity
@@ -214,7 +214,6 @@ import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.instagram.InstagramAudioProvider
-import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.utils.CoilBitmapLoader
@@ -259,6 +258,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import timber.log.Timber
+import java.io.File
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.time.LocalDateTime
@@ -470,6 +470,7 @@ class MusicService :
         val expiresAtMs: Long,
         val cacheKey: String,
         val format: FormatEntity,
+        val tempFilePath: String? = null,
     )
 
     // URL cache for stream URLs - class-level so it can be invalidated on errors
@@ -479,7 +480,6 @@ class MusicService :
     // Flag to bypass cache when quality changes - forces fresh stream fetch
     private val bypassCacheForQualityChange = mutableSetOf<String>()
     private val skipAppleOnceMediaIds = ConcurrentHashMap.newKeySet<String>()
-    private val skipTidalOnceMediaIds = ConcurrentHashMap.newKeySet<String>()
 
     // Enhanced error tracking for strict retry management
     private var currentMediaIdRetryCount = mutableMapOf<String, Int>()
@@ -790,7 +790,6 @@ class MusicService :
                     songUrlCache.remove(mediaId)
                     AppleMusicSongResolver.invalidate(mediaId)
                     QobuzAudioProvider.invalidate(mediaId)
-                    TidalAudioProvider.invalidate(mediaId)
                     SoundCloudAudioProvider.invalidate(mediaId)
                     InstagramAudioProvider.invalidate(mediaId)
                     YouTubeAudioProvider.invalidate(mediaId)
@@ -802,14 +801,12 @@ class MusicService :
                             playerCache.removeResource(mediaId)
                             playerCache.removeResource(appleWrapperCacheKey(mediaId))
                             playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
-                            playerCache.removeResource(tidalFallbackCacheKey(mediaId))
                             playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
                             playerCache.removeResource(instagramFallbackCacheKey(mediaId))
                             playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
                             downloadCache.removeResource(mediaId)
                             downloadCache.removeResource(appleWrapperCacheKey(mediaId))
                             downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
-                            downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
                             downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
                             downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
                             downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
@@ -1395,23 +1392,28 @@ class MusicService :
     }
 
     private fun updateNotification() {
+        val notificationMetadata = currentMediaMetadata.value ?: player.currentMetadata
+        val notificationSong = currentSong.value?.song
+        val notificationLiked = if (notificationSong?.isEpisode == true) {
+            notificationSong.inLibrary != null
+        } else {
+            notificationSong?.liked ?: notificationMetadata?.liked == true
+        }
         mediaSession.setCustomLayout(
             listOf(
                 CommandButton
                     .Builder()
                     .setDisplayName(
                         getString(
-                            if (currentSong.value?.song?.liked ==
-                                true
-                            ) {
+                            if (notificationLiked) {
                                 R.string.action_remove_like
                             } else {
                                 R.string.action_like
                             },
                         ),
-                    ).setIconResId(if (currentSong.value?.song?.liked == true) R.drawable.ic_heart else R.drawable.ic_heart_outline)
+                    ).setIconResId(if (notificationLiked) R.drawable.ic_heart else R.drawable.ic_heart_outline)
                     .setSessionCommand(CommandToggleLike)
-                    .setEnabled(currentSong.value != null)
+                    .setEnabled(notificationMetadata != null || notificationSong != null)
                     .build(),
                 CommandButton
                     .Builder()
@@ -1936,18 +1938,23 @@ class MusicService :
     fun toggleLike() {
         scope.launch {
             val songToToggle = currentSong.first()
-            songToToggle?.let { librarySong ->
-                val songEntity = librarySong.song
+            val metadata = player.currentMetadata ?: currentMediaMetadata.value
+            val songEntity = songToToggle?.song ?: metadata?.toSongEntity()
+            songEntity?.let { baseSong ->
 
                 // For podcast episodes, toggle save for later instead of like
-                if (songEntity.isEpisode) {
-                    toggleEpisodeSaveForLater(songEntity)
+                if (baseSong.isEpisode) {
+                    toggleEpisodeSaveForLater(baseSong)
                     return@let
                 }
 
-                val song = songEntity.toggleLike()
+                val song = baseSong.toggleLike()
                 database.query {
-                    update(song)
+                    if (songToToggle == null && metadata != null) {
+                        insert(metadata) { song }
+                    } else {
+                        update(song)
+                    }
                     syncUtils.likeSong(song)
 
                     // Check if auto-download on like is enabled and the song is now liked
@@ -2306,7 +2313,6 @@ class MusicService :
     ) {
         if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
             skipAppleOnceMediaIds.clear()
-            skipTidalOnceMediaIds.clear()
             AppleMusicDecryptPipeline.clearMemoryCaches()
         }
 
@@ -2800,22 +2806,8 @@ class MusicService :
             ?: false
     }
 
-    private fun isCurrentTidalPlayback(mediaId: String?): Boolean {
-        val currentConfig = player.currentMediaItem?.localConfiguration
-        if (currentConfig?.customCacheKey?.let(::isTidalFallbackCacheKey) == true) return true
-        if (currentConfig?.uri?.let(::tidalMediaIdFromPendingUri) != null) return true
-        if (mediaId == null) return false
-        return songUrlCache[mediaId]?.cacheKey == tidalFallbackCacheKey(mediaId)
-    }
-
-    private fun isTidalProviderError(error: PlaybackException): Boolean =
-        error.containsInCauseChain("TIDAL FLAC failed") ||
-            error.containsInCauseChain("TIDAL FLAC stream not found") ||
-            error.containsInCauseChain("TIDAL DASH")
-
     private fun CachedSongStream.isFallbackStream(mediaId: String): Boolean =
         cacheKey == qobuzFallbackCacheKey(mediaId) ||
-            cacheKey == tidalFallbackCacheKey(mediaId) ||
             cacheKey == soundCloudFallbackCacheKey(mediaId) ||
             cacheKey == instagramFallbackCacheKey(mediaId) ||
             cacheKey == youtubeFallbackCacheKey(mediaId)
@@ -2897,19 +2889,18 @@ class MusicService :
             .tag(TAG)
             .w(error, "Player error occurred for $mediaId: errorCode=${error.errorCode}, message=${error.message}")
 
+        if (dataStore.get(StopOnProviderErrorKey, false)) {
+            Timber.tag(TAG).w("Stop-on-provider-error is enabled; surfacing playback error without retry/fallback")
+            reportException(error)
+            stopOnError()
+            return
+        }
+
         // Check if this song has failed too many times
         if (mediaId != null && hasExceededRetryLimit(mediaId)) {
             Timber.tag(TAG).w("Song $mediaId has exceeded retry limit, skipping")
             markSongAsFailed(mediaId)
             handleFinalFailure()
-            return
-        }
-
-        if (isTidalProviderError(error) || isCurrentTidalPlayback(mediaId)) {
-            val detail = error.firstCauseMessageContaining("TIDAL", "ParserException", "XmlPullParserException")
-                ?: "errorCode=${error.errorCode}"
-            Timber.tag(TAG).d("TIDAL provider failure detected ($detail)")
-            handleTidalProviderFallback(mediaId, detail)
             return
         }
 
@@ -3024,7 +3015,6 @@ class MusicService :
         songUrlCache.remove(mediaId)
         AppleMusicSongResolver.invalidate(mediaId)
         QobuzAudioProvider.invalidate(mediaId)
-        TidalAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
         InstagramAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
@@ -3035,14 +3025,12 @@ class MusicService :
             playerCache.removeResource(mediaId)
             playerCache.removeResource(appleWrapperCacheKey(mediaId))
             playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
-            playerCache.removeResource(tidalFallbackCacheKey(mediaId))
             playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
             playerCache.removeResource(instagramFallbackCacheKey(mediaId))
             playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
             downloadCache.removeResource(mediaId)
             downloadCache.removeResource(appleWrapperCacheKey(mediaId))
             downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
-            downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
             downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
             downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
             downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
@@ -3081,36 +3069,6 @@ class MusicService :
             }
     }
 
-    private fun handleTidalProviderFallback(
-        mediaId: String?,
-        reason: String,
-    ) {
-        if (mediaId == null) {
-            handleFinalFailure()
-            return
-        }
-
-        performAggressiveCacheClear(mediaId)
-        incrementRetryCount(mediaId)
-        skipTidalOnceMediaIds.add(mediaId)
-        clearResolvedStreamCache(mediaId)
-        TidalAudioProvider.invalidate(mediaId)
-
-        retryJob?.cancel()
-        retryJob =
-            scope.launch {
-                val currentIndex = player.currentMediaItemIndex
-                if (currentIndex == C.INDEX_UNSET) {
-                    handleFinalFailure()
-                    return@launch
-                }
-                delay(150L)
-                player.seekTo(currentIndex, player.currentPosition.coerceAtLeast(0L))
-                player.prepare()
-                Timber.tag(TAG).d("Retrying $mediaId after TIDAL failure ($reason) using fallback providers")
-            }
-    }
-
     /**
      * Checks if a song has exceeded the retry limit.
      */
@@ -3135,7 +3093,6 @@ class MusicService :
         currentMediaIdRetryCount.remove(mediaId)
         recentlyFailedSongs.remove(mediaId)
         skipAppleOnceMediaIds.remove(mediaId)
-        skipTidalOnceMediaIds.remove(mediaId)
     }
 
     /**
@@ -3292,7 +3249,6 @@ class MusicService :
         songUrlCache.remove(mediaId)
         AppleMusicSongResolver.invalidate(mediaId)
         QobuzAudioProvider.invalidate(mediaId)
-        TidalAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
         InstagramAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
@@ -3630,10 +3586,10 @@ class MusicService :
     private fun currentStreamSelectionKey(): String {
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = dataStore.get(PreferAppleMusicKey, false)
-        val preferTidalAudio = dataStore.get(PreferTidalAudioKey, false)
         val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
         val preferInstagramAudio = dataStore.get(PreferInstagramAudioKey, false)
         val preferYouTubeMusicAudio = dataStore.get(PreferYouTubeMusicAudioKey, false)
+        val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val instagramCookie = dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
             .takeIf { it.isNotBlank() }
@@ -3653,10 +3609,10 @@ class MusicService :
         return listOf(
             "appleFallback=$appleMusicFallbackEnabled",
             "preferApple=$preferAppleMusic",
-            "preferTidal=$preferTidalAudio",
             "preferSoundCloud=$preferSoundCloudAudio",
             "preferInstagram=$preferInstagramAudio",
             "preferYouTube=$preferYouTubeMusicAudio",
+            "stopOnProviderError=$stopOnProviderError",
             "instagramAuth=$instagramCookieConfigured",
             "instagramCookie=${instagramCookie.hashCode()}",
             "instagramUserAgent=${instagramUserAgent.hashCode()}",
@@ -3670,9 +3626,18 @@ class MusicService :
 
     private fun createDataSourceFactory(): DataSource.Factory {
         return ResolvingDataSource.Factory(AppleMusicAwareDataSourceFactory(createCacheDataSource())) { dataSpec ->
-            val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey)
-                ?: AppleMusicWrapperDataSource.mediaIdFromUri(dataSpec.uri)
-                ?: tidalMediaIdFromPendingUri(dataSpec.uri)
+            val explicitProviderMediaId =
+                AppleMusicWrapperDataSource.mediaIdFromUri(dataSpec.uri)
+            if (
+                explicitProviderMediaId == null &&
+                dataSpec.key?.let(::isProviderFallbackCacheKey) == true &&
+                dataSpec.uri.isResolvedProviderPlaybackUri()
+            ) {
+                return@Factory dataSpec
+            }
+
+            val mediaId = explicitProviderMediaId
+                ?: dataSpec.key?.let(::mediaIdFromDataSpecKey)
                 ?: return@Factory dataSpec
 
             if (AppleMusicWrapperDataSource.isAppleUri(dataSpec.uri)) {
@@ -3696,9 +3661,8 @@ class MusicService :
                     preferAppleMusic &&
                     !skipAppleOnceMediaIds.contains(mediaId)
             val shouldBypassUrlCache =
-                bypassCacheForQualityChange.contains(mediaId) ||
-                    skipAppleOnceMediaIds.contains(mediaId) ||
-                    skipTidalOnceMediaIds.contains(mediaId)
+                    bypassCacheForQualityChange.contains(mediaId) ||
+                    skipAppleOnceMediaIds.contains(mediaId)
             val requestedFallbackKey = dataSpec.key?.takeIf(::isProviderFallbackCacheKey)
             songUrlCache[mediaId]?.takeIf {
                 !shouldBypassUrlCache &&
@@ -3709,7 +3673,6 @@ class MusicService :
                 val appleSkippedForCachedAttempt = skipAppleOnceMediaIds.contains(mediaId)
                 val currentDataSpecIsFallback = dataSpec.key?.let { key ->
                     key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
-                        isTidalFallbackCacheKey(key) ||
                         key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
                         key.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) ||
                         key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
@@ -3746,10 +3709,7 @@ class MusicService :
             if (applePrimary) {
                 upsertAppleWrapperFormat(mediaId)
             }
-            val forceTidalAudio =
-                dataSpec.key?.let(::isTidalFallbackCacheKey) == true ||
-                    tidalMediaIdFromPendingUri(dataSpec.uri) != null
-            val resolved = resolvePlaybackStreamBlocking(mediaId, song, forceTidalAudio = forceTidalAudio)
+            val resolved = resolvePlaybackStreamBlocking(mediaId, song)
 
             database.query {
                 upsert(resolved.format)
@@ -3784,18 +3744,16 @@ class MusicService :
     }
 
     private fun clearResolvedStreamCache(mediaId: String) {
-        if (songUrlCache.remove(mediaId) == null) return
+        songUrlCache.remove(mediaId)
         playerCache.removeResource(mediaId)
         playerCache.removeResource(appleWrapperCacheKey(mediaId))
         playerCache.removeResource(qobuzFallbackCacheKey(mediaId))
-        playerCache.removeResource(tidalFallbackCacheKey(mediaId))
         playerCache.removeResource(soundCloudFallbackCacheKey(mediaId))
         playerCache.removeResource(instagramFallbackCacheKey(mediaId))
         playerCache.removeResource(youtubeFallbackCacheKey(mediaId))
         downloadCache.removeResource(mediaId)
         downloadCache.removeResource(appleWrapperCacheKey(mediaId))
         downloadCache.removeResource(qobuzFallbackCacheKey(mediaId))
-        downloadCache.removeResource(tidalFallbackCacheKey(mediaId))
         downloadCache.removeResource(soundCloudFallbackCacheKey(mediaId))
         downloadCache.removeResource(instagramFallbackCacheKey(mediaId))
         downloadCache.removeResource(youtubeFallbackCacheKey(mediaId))
@@ -3827,12 +3785,11 @@ class MusicService :
         mediaId: String,
         song: Song?,
         queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
-        forceTidalAudio: Boolean = false,
     ): PlaybackStreamResolution {
         Timber.tag("MusicService").i("FETCHING PLAYBACK STREAM: $mediaId")
         return runCatching {
             runBlocking(Dispatchers.IO) {
-                resolveOnlineStream(mediaId, song, queuedMetadata, forceTidalAudio)
+                resolveOnlineStream(mediaId, song, queuedMetadata)
             }
         }.getOrElse { throwable ->
             when (throwable) {
@@ -3866,14 +3823,13 @@ class MusicService :
         mediaId: String,
         song: Song?,
         queuedMetadata: com.metrolist.music.models.MediaMetadata? = null,
-        forceTidalAudio: Boolean = false,
     ): PlaybackStreamResolution {
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = appleMusicFallbackEnabled && dataStore.get(PreferAppleMusicKey, false)
-        val preferTidalAudio = dataStore.get(PreferTidalAudioKey, false)
         val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
         val preferInstagramAudio = dataStore.get(PreferInstagramAudioKey, false)
         val preferYouTubeMusicAudio = dataStore.get(PreferYouTubeMusicAudioKey, false)
+        val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val instagramCookie = dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
             .takeIf { it.isNotBlank() }
@@ -3883,10 +3839,8 @@ class MusicService :
             ?: InstagramAudioProvider.DEFAULT_APP_ID
         val instagramUuid = dataStore.get(InstagramUuidKey, "")
         val soundCloudAuthToken = dataStore.get(SoundCloudAuthTokenKey, "")
-        val directTidalMediaId = TidalAudioProvider.isTidalTrackId(mediaId)
         val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
         val skipAppleForThisAttempt = skipAppleOnceMediaIds.remove(mediaId)
-        val skipTidalForThisAttempt = skipTidalOnceMediaIds.remove(mediaId)
 
         fun AppleMusicSongResolver.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
             PlaybackStreamResolution(
@@ -3904,14 +3858,6 @@ class MusicService :
                 format = qobuzFallbackFormat(mediaId, this),
             )
 
-        fun TidalAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = tidalFallbackCacheKey(mediaId),
-                format = tidalFallbackFormat(mediaId, this),
-            )
-
         fun InstagramAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
             PlaybackStreamResolution(
                 uri = mediaUri,
@@ -3919,6 +3865,18 @@ class MusicService :
                 cacheKey = instagramFallbackCacheKey(mediaId),
                 format = instagramFallbackFormat(mediaId, this),
             )
+
+        fun throwProviderFailure(
+            provider: String,
+            error: Throwable?,
+        ): Nothing {
+            val cause = error ?: IllegalStateException("$provider failed")
+            throw PlaybackException(
+                "$provider failed: ${cause.readableMessage()}",
+                cause,
+                PlaybackException.ERROR_CODE_REMOTE_ERROR,
+            )
+        }
 
         var appleAttempt: Result<AppleMusicSongResolver.Resolved> =
             if (skipAppleForThisAttempt) {
@@ -3930,8 +3888,6 @@ class MusicService :
             }
         var soundCloudAttempt: Result<PlaybackStreamResolution> =
             Result.failure(IllegalStateException("SoundCloud not attempted yet"))
-        var tidalAttempt: Result<TidalAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("TIDAL audio not enabled"))
         var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Instagram audio not enabled"))
         var youtubeAttempt: Result<PlaybackStreamResolution> =
@@ -3942,38 +3898,8 @@ class MusicService :
                 resolveSoundCloudFallback(mediaId, song, queuedMetadata, soundCloudAuthToken)
             }
             soundCloudAttempt.getOrNull()?.let { return it }
-        }
-
-        if ((forceTidalAudio || directTidalMediaId) && !skipTidalForThisAttempt) {
-            tidalAttempt = runCatching {
-                TidalAudioProvider.resolve(buildTidalQuery(mediaId, song, queuedMetadata))
-            }.onFailure { error ->
-                Timber.tag("MusicService").w(error, "Direct TIDAL FLAC failed for $mediaId")
-            }
-            tidalAttempt.getOrNull()?.let { resolved ->
-                Timber.tag("MusicService").i("Using direct TIDAL FLAC stream for $mediaId")
-                return resolved.toPlaybackResolution()
-            }
-            if (forceTidalAudio) {
-                val tidalError = tidalAttempt.exceptionOrNull()
-                    ?: IllegalStateException("TIDAL FLAC failed")
-                throw PlaybackException(
-                    "TIDAL FLAC failed: ${tidalError.readableMessage()}",
-                    tidalError,
-                    PlaybackException.ERROR_CODE_REMOTE_ERROR,
-                )
-            }
-        }
-
-        if (preferTidalAudio && !directTidalMediaId && !skipTidalForThisAttempt) {
-            tidalAttempt = runCatching {
-                TidalAudioProvider.resolve(buildTidalQuery(mediaId, song, queuedMetadata))
-            }.onFailure { error ->
-                Timber.tag("MusicService").w(error, "Preferred TIDAL FLAC failed for $mediaId")
-            }
-            tidalAttempt.getOrNull()?.let { resolved ->
-                Timber.tag("MusicService").i("Using preferred TIDAL FLAC stream for $mediaId: ${resolved.label}")
-                return resolved.toPlaybackResolution()
+            if (stopOnProviderError) {
+                throwProviderFailure("SoundCloud", soundCloudAttempt.exceptionOrNull())
             }
         }
 
@@ -3991,6 +3917,9 @@ class MusicService :
                 Timber.tag("MusicService").i("Using preferred Instagram audio stream for $mediaId: ${resolved.title}")
                 return resolved.toPlaybackResolution()
             }
+            if (stopOnProviderError) {
+                throwProviderFailure("Instagram", instagramAttempt.exceptionOrNull())
+            }
         }
 
         if (preferYouTubeMusicAudio) {
@@ -4000,6 +3929,9 @@ class MusicService :
             youtubeAttempt.getOrNull()?.let { resolved ->
                 Timber.tag("MusicService").i("Using preferred YouTube Music stream for $mediaId")
                 return resolved
+            }
+            if (stopOnProviderError) {
+                throwProviderFailure("YouTube Music", youtubeAttempt.exceptionOrNull())
             }
         }
 
@@ -4011,6 +3943,9 @@ class MusicService :
                 Timber.tag("MusicService").i("Using preferred Apple Music stream for $mediaId")
                 return resolved.toPlaybackResolution()
             }
+            if (stopOnProviderError) {
+                throwProviderFailure("Apple Music", appleAttempt.exceptionOrNull())
+            }
         }
 
         val qobuzAttempt = runCatching {
@@ -4019,6 +3954,9 @@ class MusicService :
         qobuzAttempt.getOrNull()?.let { resolved ->
             Timber.tag("MusicService").i("Using primary Qobuz stream for $mediaId: ${resolved.label}")
             return resolved.toPlaybackResolution()
+        }
+        if (stopOnProviderError) {
+            throwProviderFailure("Qobuz", qobuzAttempt.exceptionOrNull())
         }
 
         if (appleMusicFallbackEnabled && !preferAppleMusic && !skipAppleForThisAttempt) {
@@ -4059,13 +3997,6 @@ class MusicService :
             ?: IllegalStateException("YouTube fallback failed")
         val soundCloudError = soundCloudAttempt.exceptionOrNull()
             ?: IllegalStateException("SoundCloud fallback failed")
-        val tidalDetail = if (preferTidalAudio || directTidalMediaId) {
-            tidalAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "TIDAL failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
         val instagramDetail = if (preferInstagramAudio) {
             instagramAttempt.exceptionOrNull()?.readableMessage()
                 ?.let { "Instagram failed: $it; " }
@@ -4077,7 +4008,7 @@ class MusicService :
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
         throw PlaybackException(
-            "${qobuzDetail}${tidalDetail}${instagramDetail}Apple Music failed: ${appleError.readableMessage()}; SoundCloud failed: ${soundCloudError.readableMessage()}; YouTube failed: ${youtubeError.readableMessage()}",
+            "${qobuzDetail}${instagramDetail}Apple Music failed: ${appleError.readableMessage()}; SoundCloud failed: ${soundCloudError.readableMessage()}; YouTube failed: ${youtubeError.readableMessage()}",
             youtubeError,
             PlaybackException.ERROR_CODE_REMOTE_ERROR,
         )
@@ -4148,36 +4079,6 @@ class MusicService :
             durationMs = durationMs,
             countryCode = country,
             backend = backend.toQobuzProviderBackend(),
-        )
-    }
-
-    private fun buildTidalQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-    ): TidalAudioProvider.Query {
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-
-        return TidalAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            isrc = TidalAudioProvider.normalizeIsrc(mediaId)
-                ?: TidalAudioProvider.normalizeIsrc(queuedMetadata?.id),
-            durationMs = durationMs,
         )
     }
 
@@ -4443,15 +4344,10 @@ class MusicService :
         val mediaId = mediaItem.mediaIdForPlaybackSource()
             ?: return mediaItem
         val appleSkippedForAttempt = skipAppleOnceMediaIds.contains(mediaId)
-        val tidalSkippedForAttempt = skipTidalOnceMediaIds.contains(mediaId)
         val applePrimary =
             dataStore.get(AppleMusicFallbackEnabledKey, true) &&
                 dataStore.get(PreferAppleMusicKey, false) &&
                 !appleSkippedForAttempt
-        val preferTidalAudio = dataStore.get(PreferTidalAudioKey, false)
-        val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
-        val directTidalMediaId = TidalAudioProvider.isTidalTrackId(mediaId)
-        val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
 
         if (AppleMusicWrapperDataSource.isAppleUri(localConfiguration.uri)) {
             if (!applePrimary) {
@@ -4468,11 +4364,6 @@ class MusicService :
             it.expiresAtMs > System.currentTimeMillis() &&
                 it.selectionKey == streamSelectionKey
         }?.let { cached ->
-            if (cached.cacheKey == tidalFallbackCacheKey(mediaId) && tidalSkippedForAttempt) {
-                Timber.tag("MusicService").d("Ignoring cached TIDAL stream before fallback retry for $mediaId")
-                clearResolvedStreamCache(mediaId)
-                return@let
-            }
             if (cached.isFallbackStream(mediaId) && applePrimary) {
                 Timber.tag("AppleALAC").d("Ignoring cached fallback stream before fresh Apple source selection for $mediaId")
                 clearResolvedStreamCache(mediaId)
@@ -4490,15 +4381,6 @@ class MusicService :
             }
         } ?: clearResolvedStreamCache(mediaId)
 
-        if (!tidalSkippedForAttempt &&
-            (
-                directTidalMediaId ||
-                    (preferTidalAudio && !preferSoundCloudAudio && !directSoundCloudMediaId)
-            )
-        ) {
-            return mediaItem.buildPendingTidalRoute(mediaId)
-        }
-
         if (applePrimary) {
             mediaItem.buildPendingAppleRoute(mediaId)?.let { pendingAppleItem ->
                 return pendingAppleItem
@@ -4508,12 +4390,6 @@ class MusicService :
         return mediaItem
     }
 
-    private fun MediaItem.buildPendingTidalRoute(mediaId: String): MediaItem =
-        buildUpon()
-            .setUri(tidalPendingUri(mediaId))
-            .setCustomCacheKey(tidalFallbackCacheKey(mediaId))
-            .build()
-
     private fun MediaItem.withResolvedPlaybackStream(
         uri: String,
         cacheKey: String,
@@ -4522,16 +4398,12 @@ class MusicService :
         val isSoundCloudHls =
             resolvedUri.isHierarchical &&
                 resolvedUri.getQueryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) == "1"
-        val isTidalDash =
-            isTidalFallbackCacheKey(cacheKey) &&
-                resolvedUri.toString().startsWith("data:application/dash+xml", ignoreCase = true)
         return buildUpon()
             .setUri(resolvedUri)
             .setCustomCacheKey(cacheKey)
             .setMimeType(
                 when {
                     AppleMusicWrapperDataSource.isAppleUri(resolvedUri) || isSoundCloudHls -> MimeTypes.APPLICATION_M3U8
-                    isTidalDash -> MimeTypes.APPLICATION_MPD
                     else -> localConfiguration?.mimeType
                 },
             )
@@ -4569,10 +4441,7 @@ class MusicService :
                         dataStore.get(AppleMusicFallbackEnabledKey, true) &&
                         dataStore.get(PreferAppleMusicKey, false) &&
                         !appleSkippedForAttempt
-                val alreadyRoutedToTidal =
-                    resolvedItem.localConfiguration?.mimeType == MimeTypes.APPLICATION_MPD ||
-                        resolvedItem.localConfiguration?.uri?.let(::tidalMediaIdFromPendingUri) != null
-                if (mediaId != null && applePrimary && !alreadyRoutedToTidal) {
+                if (mediaId != null && applePrimary) {
                     mediaItem.buildPendingAppleRoute(mediaId)?.also {
                         Timber.tag("AppleALAC").d(
                             "Forced pending HLS source before progressive selection for $mediaId",
@@ -4725,10 +4594,10 @@ class MusicService :
                 }
                 val shouldUpdateBitrate =
                     rendererBitrate != null &&
-                        (existing.bitrate <= 0 || existing.itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
+                    (existing.bitrate <= 0 || existing.itag in setOf(SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
                 val shouldUpdateSampleRate =
                     rendererSampleRate != null &&
-                        (existing.sampleRate == null || existing.sampleRate <= 0 || existing.itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
+                    (existing.sampleRate == null || existing.sampleRate <= 0 || existing.itag in setOf(SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
                 if (!shouldUpdateBitrate && !shouldUpdateSampleRate) {
                     shouldRetry = existing.bitrate <= 0
                     return@query
@@ -5637,18 +5506,14 @@ class MusicService :
         private const val PRIVATE_STREAM_MARKER = "_metrolist_private"
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
-        private const val TIDAL_FALLBACK_ITAG = 100_029
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val INSTAGRAM_FALLBACK_ITAG = 100_041
         private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v2:"
         private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
-        private const val OLD_TIDAL_FALLBACK_CACHE_PREFIX = "tidal-flac-fallback:"
-        private const val TIDAL_FALLBACK_CACHE_PREFIX = "tidal-flac-fallback-v2:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
         private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
-        private const val TIDAL_PENDING_SCHEME = "metrofuse-tidal"
         private const val ALAC_MIN_BUFFER_MS = 18_000
         private const val ALAC_MAX_BUFFER_MS = 60_000
         private const val ALAC_BUFFER_FOR_PLAYBACK_MS = 1_200
@@ -5659,47 +5524,28 @@ class MusicService :
 
         private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
 
-        private fun tidalFallbackCacheKey(mediaId: String) = "$TIDAL_FALLBACK_CACHE_PREFIX$mediaId"
-
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun instagramFallbackCacheKey(mediaId: String) = "$INSTAGRAM_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
 
-        private fun isTidalFallbackCacheKey(key: String): Boolean =
-            key.startsWith(TIDAL_FALLBACK_CACHE_PREFIX) ||
-                key.startsWith(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
-
         private fun isProviderFallbackCacheKey(key: String): Boolean =
             key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
-                isTidalFallbackCacheKey(key) ||
                 key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
                 key.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) ||
                 key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
-        private fun tidalPendingUri(mediaId: String): String =
-            Uri
-                .Builder()
-                .scheme(TIDAL_PENDING_SCHEME)
-                .authority("resolve")
-                .appendQueryParameter("mediaId", mediaId)
-                .build()
-                .toString()
-
-        private fun tidalMediaIdFromPendingUri(uri: Uri): String? =
-            if (uri.scheme?.equals(TIDAL_PENDING_SCHEME, ignoreCase = true) == true) {
-                uri.getQueryParameter("mediaId")
-            } else {
-                null
+        private fun Uri.isResolvedProviderPlaybackUri(): Boolean =
+            when (scheme?.lowercase(Locale.US)) {
+                "http", "https", "data" -> true
+                else -> false
             }
 
         private fun mediaIdFromDataSpecKey(key: String) = key
             .removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
-            .removePrefix(TIDAL_FALLBACK_CACHE_PREFIX)
-            .removePrefix(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
             .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
@@ -5732,22 +5578,6 @@ class MusicService :
             bitrate = resolved.bitrate,
             sampleRate = resolved.sampleRate,
             contentLength = 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun tidalFallbackFormat(
-            mediaId: String,
-            resolved: TidalAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = TIDAL_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = resolved.contentLength ?: 0L,
             loudnessDb = null,
             perceptualLoudnessDb = null,
             playbackUrl = null,

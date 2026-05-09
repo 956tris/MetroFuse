@@ -1412,6 +1412,7 @@ fun HomeScreen(
                                 HomeFeedSource.TIDAL to stringResource(R.string.home_source_tidal),
                                 HomeFeedSource.SPOTIFY to stringResource(R.string.home_source_spotify),
                                 HomeFeedSource.SOUNDCLOUD to stringResource(R.string.home_source_soundcloud),
+                                HomeFeedSource.OFFLINE to stringResource(R.string.home_source_offline),
                             ),
                         currentValue = homeFeedSource,
                         onValueUpdate = onHomeFeedSourceChange,

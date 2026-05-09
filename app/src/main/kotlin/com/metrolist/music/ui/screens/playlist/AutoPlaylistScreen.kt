@@ -5,7 +5,10 @@
 
 package com.metrolist.music.ui.screens.playlist
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -86,6 +89,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastForEachReversed
 import androidx.compose.ui.util.fastSumBy
 import androidx.core.net.toUri
+import androidx.core.content.ContextCompat
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import timber.log.Timber
 import androidx.media3.exoplayer.offline.Download
@@ -125,6 +129,7 @@ import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.viewmodels.AutoPlaylistViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -141,6 +146,9 @@ fun AutoPlaylistScreen(
     val uploadFileTooLargeStr = stringResource(R.string.upload_file_too_large)
     val uploadFailedStr = stringResource(R.string.upload_failed)
     val uploadCompleteStr = stringResource(R.string.upload_complete)
+    val localScanPermissionDeniedStr = stringResource(R.string.local_music_permission_denied)
+    val localScanFailedStr = stringResource(R.string.local_music_scan_failed)
+    val localMusicScannedStr = stringResource(R.string.local_music_scan_complete)
     val focusManager = LocalFocusManager.current
     val playerConnection = LocalPlayerConnection.current ?: return
     val isPlaying by playerConnection.isEffectivelyPlaying.collectAsStateWithLifecycle()
@@ -148,6 +156,8 @@ fun AutoPlaylistScreen(
     val playlist =
         when (viewModel.playlist) {
             "liked" -> stringResource(R.string.liked)
+            "downloaded" -> stringResource(R.string.offline)
+            "local" -> stringResource(R.string.local_files_playlist)
             "uploaded" -> stringResource(R.string.uploaded_playlist)
             else -> stringResource(R.string.offline)
         }
@@ -182,6 +192,7 @@ fun AutoPlaylistScreen(
         when (playlistId) {
             "liked" -> PlaylistType.LIKE
             "downloaded" -> PlaylistType.DOWNLOAD
+            "local" -> PlaylistType.LOCAL
             "uploaded" -> PlaylistType.UPLOADED
             else -> PlaylistType.OTHER
         }
@@ -224,6 +235,36 @@ fun AutoPlaylistScreen(
     }
 
     val scope = rememberCoroutineScope()
+
+    val localMusicPermission =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+    fun hasLocalMusicPermission(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            ContextCompat.checkSelfPermission(context, localMusicPermission) == PackageManager.PERMISSION_GRANTED
+
+    val localMusicPermissionLauncher =
+        rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (granted) {
+                viewModel.scanLocalMusic()
+            } else {
+                Toast.makeText(context, localScanPermissionDeniedStr, Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    val requestLocalMusicScan = {
+        if (hasLocalMusicPermission()) {
+            viewModel.scanLocalMusic()
+        } else {
+            localMusicPermissionLauncher.launch(localMusicPermission)
+        }
+    }
 
     // Upload state
     var showUploadDialog by remember { mutableStateOf(false) }
@@ -359,6 +400,21 @@ fun AutoPlaylistScreen(
         }
 
     LaunchedEffect(Unit) {
+        viewModel.localScanResult.collectLatest { result ->
+            result
+                .onSuccess { count ->
+                    Toast.makeText(context, localMusicScannedStr.format(count), Toast.LENGTH_SHORT).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        "$localScanFailedStr: ${error.message ?: error.javaClass.simpleName}",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+        }
+    }
+
+    LaunchedEffect(Unit) {
         println("[UPLOAD_DEBUG] AutoPlaylistScreen LaunchedEffect: playlistId=$playlistId, playlistType=$playlistType, ytmSync=$ytmSync")
         if (ytmSync) {
             withContext(Dispatchers.IO) {
@@ -380,6 +436,10 @@ fun AutoPlaylistScreen(
         mutableSongs.apply {
             clear()
             songs?.let { addAll(it) }
+        }
+        if (playlistType == PlaylistType.LOCAL) {
+            downloadState = Download.STATE_COMPLETED
+            return@LaunchedEffect
         }
         if (songs?.isEmpty() == true) return@LaunchedEffect
         downloadUtil.downloads.collect { downloads ->
@@ -516,7 +576,7 @@ fun AutoPlaylistScreen(
 
     val isRefreshing by viewModel.isRefreshing.collectAsStateWithLifecycle()
     val pullRefreshState = rememberPullToRefreshState()
-    val canRefresh = playlistType == PlaylistType.LIKE || playlistType == PlaylistType.UPLOADED
+    val canRefresh = playlistType == PlaylistType.LIKE || playlistType == PlaylistType.UPLOADED || playlistType == PlaylistType.LOCAL
 
     Box(
         modifier =
@@ -556,6 +616,7 @@ fun AutoPlaylistScreen(
                                 downloadState = downloadState,
                                 onShowRemoveDownloadDialog = { showRemoveDownloadDialog = true },
                                 menuState = menuState,
+                                showDownloadItem = playlistType != PlaylistType.LOCAL,
                                 modifier = Modifier.animateItem(),
                             )
                         }
@@ -739,6 +800,28 @@ fun AutoPlaylistScreen(
             }
         }
 
+        if (playlistType == PlaylistType.LOCAL) {
+            androidx.compose.animation.AnimatedVisibility(
+                visible = state.isScrollingUp(),
+                enter = androidx.compose.animation.slideInVertically { it },
+                exit = androidx.compose.animation.slideOutVertically { it },
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .windowInsetsPadding(
+                            LocalPlayerAwareWindowInsets.current
+                                .only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal),
+                        ).padding(16.dp),
+            ) {
+                FloatingActionButton(onClick = requestLocalMusicScan) {
+                    Icon(
+                        painter = painterResource(R.drawable.sync),
+                        contentDescription = stringResource(R.string.scan_local_music),
+                    )
+                }
+            }
+        }
+
         TopAppBar(
             title = {
                 when {
@@ -851,6 +934,14 @@ fun AutoPlaylistScreen(
                         )
                     }
                 } else if (!isSearching) {
+                    if (playlistType == PlaylistType.LOCAL) {
+                        IconButton(onClick = requestLocalMusicScan) {
+                            Icon(
+                                painter = painterResource(R.drawable.sync),
+                                contentDescription = stringResource(R.string.scan_local_music),
+                            )
+                        }
+                    }
                     IconButton(
                         onClick = { isSearching = true },
                     ) {
@@ -873,6 +964,7 @@ private fun AutoPlaylistHeader(
     downloadState: Int,
     onShowRemoveDownloadDialog: () -> Unit,
     menuState: com.metrolist.music.ui.component.MenuState,
+    showDownloadItem: Boolean,
     modifier: Modifier = Modifier,
 ) {
     val playerConnection = LocalPlayerConnection.current ?: return
@@ -1049,6 +1141,7 @@ private fun AutoPlaylistHeader(
                             onDismiss = { menuState.dismiss() },
                             songs = songs,
                             playlistName = name,
+                            showDownloadItem = showDownloadItem,
                         )
                     }
                 },
@@ -1074,6 +1167,7 @@ private fun AutoPlaylistHeader(
 enum class PlaylistType {
     LIKE,
     DOWNLOAD,
+    LOCAL,
     UPLOADED,
     OTHER,
 }

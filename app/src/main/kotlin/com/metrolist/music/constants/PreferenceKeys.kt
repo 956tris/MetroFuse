@@ -107,6 +107,7 @@ val UpdateNotificationsEnabledKey = booleanPreferencesKey("updateNotifications")
 val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
 val AudioQualityKey = stringPreferencesKey("audioQuality")
+val StopOnProviderErrorKey = booleanPreferencesKey("stopOnProviderError")
 
 enum class AudioQuality {
     AUTO,
@@ -117,7 +118,6 @@ enum class AudioQuality {
 
 val AppleMusicFallbackEnabledKey = booleanPreferencesKey("appleMusicFallbackEnabled")
 val PreferAppleMusicKey = booleanPreferencesKey("preferAppleMusic")
-val PreferTidalAudioKey = booleanPreferencesKey("preferTidalAudio")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
 
@@ -296,10 +296,12 @@ enum class HomeFeedSource {
     TIDAL,
     SPOTIFY,
     SOUNDCLOUD,
+    OFFLINE,
 }
 
 val ShowLikedPlaylistKey = booleanPreferencesKey("show_liked_playlist")
 val ShowDownloadedPlaylistKey = booleanPreferencesKey("show_downloaded_playlist")
+val ShowLocalFilesPlaylistKey = booleanPreferencesKey("show_local_files_playlist")
 val ShowTopPlaylistKey = booleanPreferencesKey("show_top_playlist")
 val ShowCachedPlaylistKey = booleanPreferencesKey("show_cached_playlist")
 val ShowUploadedPlaylistKey = booleanPreferencesKey("show_uploaded_playlist")

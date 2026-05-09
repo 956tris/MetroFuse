@@ -34,7 +34,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
-import com.metrolist.music.constants.PreferTidalAudioKey
 import com.metrolist.music.constants.TidalArtworkFallbackEnabledKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.ui.component.IconButton
@@ -54,8 +53,6 @@ fun TidalSettings(
 ) {
     val (tidalArtworkFallbackEnabled, onTidalArtworkFallbackEnabledChange) =
         rememberPreference(TidalArtworkFallbackEnabledKey, false)
-    val (preferTidalAudio, onPreferTidalAudioChange) =
-        rememberPreference(PreferTidalAudioKey, false)
     var tidalCookie by rememberPreference(TidalCookieKey, "")
     val cookieConfigured = isTidalCookieConfigured(tidalCookie)
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
@@ -123,30 +120,6 @@ fun TidalSettings(
                         icon = painterResource(R.drawable.album),
                         onClick = {
                             onTidalArtworkFallbackEnabledChange(!tidalArtworkFallbackEnabled)
-                        },
-                    ),
-                    Material3SettingsItem(
-                        title = { Text(stringResource(R.string.prefer_tidal_audio)) },
-                        description = { Text(stringResource(R.string.prefer_tidal_audio_desc)) },
-                        trailingContent = {
-                            Switch(
-                                checked = preferTidalAudio,
-                                onCheckedChange = onPreferTidalAudioChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter =
-                                            painterResource(
-                                                id = if (preferTidalAudio) R.drawable.check else R.drawable.close,
-                                            ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                                    )
-                                },
-                            )
-                        },
-                        icon = painterResource(R.drawable.graphic_eq),
-                        onClick = {
-                            onPreferTidalAudioChange(!preferTidalAudio)
                         },
                     ),
                     Material3SettingsItem(

@@ -685,6 +685,45 @@ class HomeViewModel @Inject constructor(
                     homePage.value = page.filtered(hideExplicit, hideVideoSongs, hideYoutubeShorts)
                 }.onFailure { reportException(it) }
             }
+
+            HomeFeedSource.OFFLINE -> {
+                homePage.value =
+                    HomePage(
+                        chips = null,
+                        sections =
+                            listOf(
+                                HomePage.Section(
+                                    title = "Offline",
+                                    label = null,
+                                    thumbnail = null,
+                                    endpoint = null,
+                                    items =
+                                        listOf(
+                                            PlaylistItem(
+                                                id = "metrofuse:playlist:local",
+                                                title = "Local files",
+                                                author = null,
+                                                songCountText = null,
+                                                thumbnail = null,
+                                                playEndpoint = null,
+                                                shuffleEndpoint = null,
+                                                radioEndpoint = null,
+                                            ),
+                                            PlaylistItem(
+                                                id = "metrofuse:playlist:downloaded",
+                                                title = "Downloaded",
+                                                author = null,
+                                                songCountText = null,
+                                                thumbnail = null,
+                                                playEndpoint = null,
+                                                shuffleEndpoint = null,
+                                                radioEndpoint = null,
+                                            ),
+                                        ),
+                                ),
+                            ),
+                    )
+            }
         }
     }
 
