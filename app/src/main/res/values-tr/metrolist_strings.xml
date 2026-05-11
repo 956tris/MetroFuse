@@ -147,10 +147,10 @@
     <string name="lyrics_romanize_kyrgyz">Kırgızca sözleri Latinleştir</string>
     <string name="lyrics_romanize_serbian">Sırpça sözleri Latinleştir</string>
     <string name="lyrics_romanize_bulgarian">Bulgarca sözleri Latinleştir</string>
-    <string name="line_by_line_option_title">Dili satır satır algıla</string>
-    <string name="line_by_line_option_desc">Kiril alfabesi tüm şarkı yerine satır satır algılanacaktır</string>
+    <string name="line_by_line_option_title">Dili satırlarıyla algıla</string>
+    <string name="line_by_line_option_desc">Kiril alfabesinde şarkının tamamı yerine satırlara ayırılarak algılanacaktır</string>
     <string name="line_by_line_dialog_title">Emin misiniz?</string>
-    <string name="line_by_line_dialog_desc">Bu, başarılı veya başarısız olabilecek deneysel bir özelliktir.\n\nVarsayılan olarak dil tüm şarkı üzerinden belirlenir. Bu seçenek açık olduğunda, dil satır satır belirlenecektir. Bu sayede çok dilli şarkılar da çalışabilir ancak algılanan dil her zaman doğru olmayabilir. Örneğin, Ukraynaca bir satır Ukraynaca’ya özgü karakter içermiyorsa, yanlışlıkla Rusça olarak Latinleştirilebilir.\n\nSorun yaşamıyorsanız, bu seçeneği kapalı bırakmanız önerilir</string>
+    <string name="line_by_line_dialog_desc">Bu, başarılı veya başarısız olabilecek deneysel bir özelliktir.\n\nVarsayılan olarak dil tüm şarkı üzerinden belirlenir. Bu seçenek açık olduğunda, dil parçalara ayırılarak belirlenecektir. Bu sayede çok dilli şarkılar da çalışabilir ancak algılanan dil her zaman doğru olmayabilir. Örneğin, Ukraynaca bir satır Ukraynaca’ya özgü karakter içermiyorsa, yanlışlıkla Rusça olarak Latinleştirilebilir.\n\nSorun yaşamıyorsanız, bu seçeneği kapalı bırakmanız önerilir</string>
     <string name="romanize_current_track">Mevcut parçayı Latinleştir</string>
     <string name="audio_offload">Ses offload özelliğini etkinleştir</string>
     <string name="audio_offload_description">Oynatma için donanım ses offload yolunu kullanır. Bunu devre dışı bırakmak pil kullanımını artırabilir ancak oynatma veya ses işleme sorunları yaşıyorsanız yardımcı olabilir</string>
@@ -178,7 +178,7 @@
     <string name="scrobble_delay_minutes">Scrobble gecikmesi (dakika)</string>
     <string name="swipe_song_to_remove">Şarkıyı oynatma listesinden kaldırmak için kaydırın</string>
     <string name="last_fm_send_likes">Beğenilenleri ve beğenilmeyenleri eşitle</string>
-    <string name="last_fm_send_likes_description">Metrolist\'te bir şarkıyı beğendiğinizde veya beğenmediğinizde bunu Last.fm\'de de günceller</string>
+    <string name="last_fm_send_likes_description">Metrolist\'te bir şarkıyı beğendiğinizde veya beğenmediğinizde bu Last.fm\'de güncellenir</string>
     <string name="primary_color_style">Ana renk</string>
     <string name="auto_scroll">Yeniden eşitle</string>
     <string name="lyrics_romanize_chinese">Çince sözleri Latinleştir</string>
@@ -833,4 +833,9 @@
     <string name="wizard_multiple_variants">Çoklu modeller bulunmakta</string>
     <string name="wizard_select_eq_profiles">%s için EQ profili seç</string>
     <string name="wizard_save_profiles">Profili kaydet</string>
+    <string name="loudness_level">Ses seviyesi</string>
+    <string name="loudness_level_aggressive">Agresif (-7dB)</string>
+    <string name="loudness_level_loud">Yüksek (-11 dB)</string>
+    <string name="loudness_level_balanced">Dengeli (-14 dB)</string>
+    <string name="loudness_level_quiet">Sessiz (-19 dB)</string>
 </resources>

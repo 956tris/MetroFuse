@@ -354,7 +354,7 @@
     <string name="lyrics_provider_priority">Prioridade de provedor de letras de música</string>
     <string name="experimental_lyrics">Sistema experimental de leitor de letras de musicais</string>
     <string name="experimental_lyrics_desc">Abilitar o novo sistema de letras músicais com animações e performance melhorada.</string>
-    <string name="experimental_lyrics_beta_title">Opção Esperimental</string>
+    <string name="experimental_lyrics_beta_title">Opção Experimental</string>
     <string name="experimental_lyrics_beta_message">O novo sistema de letras de músicais está atualmente em desenvolvimento e pode conter \"bugs\". Tem a certeza que deseja abilitar-lo?</string>
     <string name="export_playlist">Exportar lista</string>
     <string name="export_as_csv">Exportar como \"CSV\"</string>
@@ -452,4 +452,10 @@
     <string name="crossfade_gapless">Desabilitar para álbuns sem espaço de intervalo entre musicas</string>
     <string name="crossfade_gapless_desc">Ignorar entrelaçamento entre musicas para álbuns desenhados para tocar sem espaços entre eles</string>
     <string name="crossfade_beta_title">Definição em estado Beta!</string>
+    <string name="mixes">Misturas</string>
+    <string name="crossfade_beta_message">A transição gradual entre músicas (Crossfade) é uma nova funcionalidade e pode ter muitos erros. Se experienciares problemas, reporta eles se faz favor. \n\nNOTA: Esta funcionalidade desativa descarregamento de áudio devido a limitações técnicas</string>
+    <string name="lyrics_romanize_hindi">Romanizar letras em Hindi</string>
+    <string name="lyrics_romanize_punjabi">Romanizar letras em Panjabi</string>
+    <string name="audio_offload_disabled_by_crossfade">Desativado porque o crossfade está ativo</string>
+    <string name="speed">Velocidade de Reprodução</string>
 </resources>

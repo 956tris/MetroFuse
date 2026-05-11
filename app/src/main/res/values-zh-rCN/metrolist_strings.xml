@@ -826,4 +826,14 @@
     <string name="wizard_multiple_variants">有多个变体版本可供选择</string>
     <string name="wizard_select_eq_profiles">为 %s 选择均衡器配置文件</string>
     <string name="wizard_save_profiles">保存配置文件</string>
+    <string name="loudness_level">响度级别</string>
+    <string name="loudness_level_aggressive">强劲（-7 分贝）</string>
+    <string name="loudness_level_loud">响亮（-11 分贝）</string>
+    <string name="loudness_level_balanced">均衡（-14 分贝）</string>
+    <string name="loudness_level_quiet">轻柔（-19 分贝）</string>
+    <string name="mixes">合辑</string>
+    <string name="show_most_stats_playlists">显示每周和每月最热门播放列表</string>
+    <string name="show_most_stats_playlists_desc">在统计和媒体库中创建并显示基于统计数据的热门播放列表</string>
+    <string name="pin">固定</string>
+    <string name="unpin">取消固定</string>
 </resources>

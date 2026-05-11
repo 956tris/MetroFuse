@@ -715,8 +715,8 @@
     <string name="export_option_save">Salvar nos Documentos</string>
     <string name="qs_tile_music_recognizer">Reconhecer música</string>
     <string name="ai_provider_mistral_help">Visite https://console.mistral.ai/api-keys</string>
-    <string name="weekly_most_playlist_name">Maioria Semanal</string>
-    <string name="monthly_most_playlist_name">Maioria Mensal</string>
+    <string name="weekly_most_playlist_name">Top semanal</string>
+    <string name="monthly_most_playlist_name">Top Mensal</string>
     <string name="enable_song_cache">Ativar cache de músicas</string>
     <string name="enable_song_cache_desc">Armazene músicas em cache automaticamente para reprodução futura mais rápida</string>
     <string name="sleep_timer_stop_after_current_song_title">Pare no final da música atual</string>
@@ -840,4 +840,14 @@
     <string name="wizard_multiple_variants">Várias variantes disponíveis</string>
     <string name="wizard_select_eq_profiles">Selecionar perfil de EQ para %s</string>
     <string name="wizard_save_profiles">Salvar Perfis</string>
+    <string name="loudness_level">Nível de intensidade sonora</string>
+    <string name="loudness_level_aggressive">Agressivo (-7dB)</string>
+    <string name="loudness_level_loud">Alto (-11 dB)</string>
+    <string name="loudness_level_balanced">Balanceado (-14 dB)</string>
+    <string name="loudness_level_quiet">Quieto (-19 dB)</string>
+    <string name="mixes">Coletâneas</string>
+    <string name="show_most_stats_playlists">Exibir playlists semanais e mensais</string>
+    <string name="show_most_stats_playlists_desc">Crie e mostre playlists das música mais tocadas com base em dados em Estatísticas e Biblioteca</string>
+    <string name="pin">Fixar</string>
+    <string name="unpin">Desfixar</string>
 </resources>

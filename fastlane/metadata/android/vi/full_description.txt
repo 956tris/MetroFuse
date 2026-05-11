@@ -20,4 +20,4 @@ Tính năng:
 - Giao diện Sáng - Tối - Đen - Màu động
 - Hẹn giờ ngủ
 - Thiết kế Material 3
-- Và nhiều tính năng khác
+- Và nhiều tính năng khác.

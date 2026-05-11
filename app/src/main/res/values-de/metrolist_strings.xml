@@ -833,4 +833,14 @@
     <string name="wizard_select_eq_profiles">Wählen Sie EQ-Profile für %s</string>
     <string name="wizard_save_profiles">Profile speichern</string>
     <string name="autoplay">Automatische Wiedergabe</string>
+    <string name="loudness_level">Lautstärkepegel</string>
+    <string name="loudness_level_aggressive">Aggressiv (-7 dB)</string>
+    <string name="loudness_level_loud">Laut (-11 dB)</string>
+    <string name="loudness_level_balanced">Ausgewogen (-14 dB)</string>
+    <string name="loudness_level_quiet">Leise (-19 dB)</string>
+    <string name="show_most_stats_playlists">Wöchentliche und monatliche Top-Playlists anzeigen</string>
+    <string name="show_most_stats_playlists_desc">Erstellen und Anzeigen von statistikbasierten „Top“-Playlists in „Statistiken“ und „Bibliothek“</string>
+    <string name="unpin">Abheften</string>
+    <string name="pin">Pin</string>
+    <string name="mixes">Mixe</string>
 </resources>

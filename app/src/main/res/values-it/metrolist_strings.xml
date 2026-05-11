@@ -653,7 +653,7 @@
     <string name="widget_recognizer_unknown_song">Brano sconosciuto</string>
     <string name="widget_recognizer_unknown_artist">Artista sconosciuto</string>
     <string name="widget_recognizer_mic_desc">Identifica un brano</string>
-    <string name="widget_recognizer_channel_name">Riconoscimento musicale</string>
+    <string name="widget_recognizer_channel_name">Riconoscimento Musicale</string>
     <string name="widget_recognizer_channel_desc">Mostra una notifica mentre stai identificando un brano dal widget</string>
     <string name="widget_recognizer_notification_text">Registrazione dell\'audio per identificare il brano…</string>
     <string name="filter_episodes">Episodi</string>
@@ -790,7 +790,7 @@
     <string name="mini_player_background_style">Stile dello sfondo del mini lettore</string>
     <string name="transparent">Trasparente</string>
     <string name="mini_player_background_not_available">Non disponibile quando il nuovo mini lettore è disabilitato</string>
-    <string name="your_daily_discover">La tua scoperta quotidiana</string>
+    <string name="your_daily_discover">La scoperta di oggi</string>
     <string name="time_transfer_warning">ATTENZIONE: non è possibile annullare questa azione una volta completata. Crea un file di backup prima di procedere. Puoi scegliere come destinazione solo brani con almeno una riproduzione</string>
     <string name="lyrics_from_provider">Testi da %s</string>
     <string name="parsed_from_link">Analizzato dal collegamento</string>
@@ -840,4 +840,14 @@
     <string name="eq_downloading">Download in corso…</string>
     <string name="eq_download_db">Scarica il database AutoEQ (17 MB)</string>
     <string name="eq_wizard">Procedura guidata di equalizzazione automatica</string>
+    <string name="loudness_level_aggressive">Aggressivo (-7 dB)</string>
+    <string name="loudness_level_balanced">Equilibrato (-14 dB)</string>
+    <string name="loudness_level_quiet">Silenzioso (-19 dB)</string>
+    <string name="loudness_level_loud">Forte (-11 dB)</string>
+    <string name="loudness_level">Intensità Sonora</string>
+    <string name="mixes">Compilation</string>
+    <string name="show_most_stats_playlists">Mostra la maggioranza delle playlist Settimanali e Mensili</string>
+    <string name="show_most_stats_playlists_desc">Crea e mostra le playlist basate maggiormente sulle Statistiche e Libreria</string>
+    <string name="pin">Fissa</string>
+    <string name="unpin">Sblocca</string>
 </resources>

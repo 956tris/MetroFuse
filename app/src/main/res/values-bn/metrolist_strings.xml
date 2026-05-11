@@ -833,4 +833,14 @@
     <string name="discord_connect_description">আপনি যা শুনছেন তা শেয়ার করতে ডিসকর্ডে সাইন ইন করুন</string>
     <string name="discord_playing_metrolist">মেট্রোলিস্ট বাজানো হচ্ছে</string>
     <string name="discord_watching_metrolist">মেট্রোলিস্ট দেখা হচ্ছে</string>
+    <string name="mixes">মিক্সসমূহ</string>
+    <string name="show_most_stats_playlists">সাপ্তাহিক এবং মাসিক সর্বাধিক প্লেলিস্টগুলি দেখান</string>
+    <string name="show_most_stats_playlists_desc">স্ট্যাটস এবং লাইব্রেরিতে পরিসংখ্যান-ভিত্তিক সর্বাধিক শোনা প্লেলিস্ট তৈরি করুন এবং দেখান</string>
+    <string name="pin">পিন করুন</string>
+    <string name="unpin">আনপিন করুন</string>
+    <string name="loudness_level">লাউডনেস লেভেল</string>
+    <string name="loudness_level_aggressive">Aggressive (-৭ dB)</string>
+    <string name="loudness_level_loud">লাউড (-11dB)</string>
+    <string name="loudness_level_balanced">ভারসাম্যপূর্ণ (-১৪ dB)</string>
+    <string name="loudness_level_quiet">শান্ত (-১৯ dB)</string>
 </resources>

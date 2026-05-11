@@ -19,7 +19,7 @@
     <string name="liked">Disukai</string>
     <string name="offline">Diunduh</string>
     <string name="sync_playlist">Sinkronkan playlist</string>
-    <string name="allows_for_sync_witch_youtube">CATATAN: Opsi ini mengaktifkan sinkronisasi dengan YouTube Music dan TIDAK DAPAT diubah nanti.</string>
+    <string name="allows_for_sync_witch_youtube">CATATAN: Ini memungkinkan sinkronisasi dengan YouTube Music. Pengaturan ini TIDAK dapat diubah di kemudian hari.</string>
     <string name="share_lyrics">Bagikan lirik</string>
     <string name="share_as_text">Bagikan sebagai teks</string>
     <string name="share_as_image">Bagikan sebagai gambar</string>
@@ -184,7 +184,7 @@
     <string name="primary_color_style">Warna primer</string>
     <string name="tertiary_color_style">Warna tersier</string>
     <string name="enable_better_lyrics">Aktifkan penyedia lirik Better Lyrics</string>
-    <string name="enable_better_lyrics_desc">Lirik tersinkron per suku kata untuk lagu apa pun, sempurna untuk karaoke</string>
+    <string name="enable_better_lyrics_desc">Lirik sinkron per suku kata untuk semua lagu, cocok untuk karaoke</string>
     <string name="auto_scroll">Sinkron Ulang</string>
     <string name="share_desc">Bagikan link ke item ini</string>
     <string name="delete_desc">Hapus item ini secara permanen</string>
@@ -461,7 +461,7 @@
     <string name="ai_error_unknown">Terjadi kesalahan yang tidak diketahui</string>
     <string name="ai_error_translation_failed">Terjemahan gagal</string>
     <string name="play_all">Putar semua</string>
-    <string name="crossfade">Crossfade</string>
+    <string name="crossfade">Transisi silang</string>
     <string name="crossfade_desc">Memudar keluar lagu saat ini seiring lagu berikutnya memudar masuk</string>
     <string name="crossfade_duration">Durasi crossfade</string>
     <string name="crossfade_gapless">Nonaktifkan untuk album tanpa jeda</string>
@@ -544,12 +544,12 @@
     <string name="lyrics_romanize_punjabi">Romanisasikan lirik Punjabi</string>
     <string name="lyrics_romanize_as_main">Tampilkan lirik yang diromanisasi sebagai utama</string>
     <string name="display_density">Skala tampilan</string>
-    <string name="restart">Nyalakan ulang</string>
+    <string name="restart">Mulai ulang</string>
     <string name="restart_required">Perlu dinyalakan ulang!</string>
     <string name="density_restart_message">Perubahan kepadatan tampilan akan berlaku setelah aplikasi di-restart. Restart sekarang?</string>
     <string name="enable_lrclib_desc">Database lirik sinkron dari komunitas</string>
     <string name="enable_kugou_desc">Mengambil lirik dari KuGou, platform musik populer asal Cina</string>
-    <string name="youtube_music_lyrics_note">CATATAN: Lirik dari YouTube Music akan otomatis ditampilkan jika lirik lain tidak tersedia. biasanya lirik tidak sinkron.</string>
+    <string name="youtube_music_lyrics_note">CATATAN: Lirik dari YouTube Music akan otomatis ditampilkan jika lirik lain tidak tersedia. Biasanya lirik tidak sinkron.</string>
     <string name="enable_lyricsplus">Aktifkan LyricsPlus</string>
     <string name="enable_lyricsplus_desc">Lirik sinkron dari berbagai sumber</string>
     <string name="lyrics_provider_selection">Pilih Penyedia</string>
@@ -705,9 +705,9 @@
     <string name="weekly_most_playlist_name">Pekanan Terpopuler</string>
     <string name="monthly_most_playlist_name">Bulanan Terpopuler</string>
     <string name="enable_song_cache">Aktifkan cache lagu</string>
-    <string name="enable_song_cache_desc">Simpan lagu secara otomatis untuk pemutaran yang lebih cepat di masa mendatang</string>
+    <string name="enable_song_cache_desc">Otomatis simpan cache lagu untuk diputar nanti</string>
     <string name="sleep_timer_stop_after_current_song_title">Berhenti di akhir lagu saat ini</string>
-    <string name="sort_ascending">Urutkan secara menaik</string>
+    <string name="sort_ascending">Urutkan naik</string>
     <string name="sort_descending">Urutkan menurun</string>
     <string name="sleep_timer_stop_after_current_song_description">Menunggu lagu yang sedang diputar selesai sebelum berhenti</string>
     <string name="hide_status_bar_fullscreen">Menyembunyikan garis status pada layar penuh</string>
@@ -742,7 +742,7 @@
     <string name="alarm_select_playlist">Pilih daftar putar</string>
     <string name="alarm_no_playlists">Daftar putar tidak di temukan</string>
     <plurals name="alarm_playlist_song_count">
-        <item quantity="other">"%d  Lagu"</item>
+        <item quantity="other">%d lagu</item>
     </plurals>
     <string name="alarm_selected">Dipilih</string>
     <string name="alarm_playlist_helper">Pilih daftar putar mana yang akan di putar alarm</string>
@@ -826,4 +826,14 @@
     <string name="wizard_save_profiles">Simpan Profil</string>
     <string name="eq_wizard">Pemandu AutoEQ</string>
     <string name="eq_download_db">Unduh database AutoEQ (17 MB)</string>
+    <string name="loudness_level">Tingkat kekerasan suara</string>
+    <string name="loudness_level_aggressive">Agresif (-7 dB)</string>
+    <string name="loudness_level_loud">Keras (-11 dB)</string>
+    <string name="loudness_level_balanced">Seimbang (-14 dB)</string>
+    <string name="loudness_level_quiet">Hening (-19 dB)</string>
+    <string name="mixes">Mix</string>
+    <string name="show_most_stats_playlists">Tampilkan playlist Terpopuler Mingguan dan Bulanan</string>
+    <string name="show_most_stats_playlists_desc">Buat dan tampilkan playlist berdasarkan statistik Paling Sering Diputar di bagian Statistik dan Pustaka</string>
+    <string name="pin">Pin</string>
+    <string name="unpin">Unpin</string>
 </resources>

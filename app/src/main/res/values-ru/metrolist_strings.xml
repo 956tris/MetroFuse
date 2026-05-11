@@ -78,7 +78,7 @@
     <string name="lyrics_auto_scroll">Автопрокрутка текста</string>
     <string name="lyrics_romanize_japanese">Романизировать тексты на японском</string>
     <string name="lyrics_romanize_korean">Романизировать тексты на корейском</string>
-    <string name="auto_playlists">Автоплейлисты</string>
+    <string name="auto_playlists">Автоматически созданные плейлисты</string>
     <string name="show_liked_playlist">Показывать плейлист «Понравившиеся»</string>
     <string name="show_downloaded_playlist">Показывать плейлист «Скачанные»</string>
     <string name="show_top_playlist">Показывать плейлист «Топ»</string>
@@ -195,7 +195,7 @@
     <string name="play_next_desc">Воспроизвести следующим в очереди</string>
     <string name="add_to_queue_desc">Добавить в конец очереди</string>
     <string name="add_to_library_desc">Сохранить в вашу библиотеку</string>
-    <string name="download_desc">Скачать для офлайн воспроизведения</string>
+    <string name="download_desc">Скачать для офлайн-прослушивания</string>
     <string name="add_to_playlist_desc">Добавить в плейлист</string>
     <string name="refetch_desc">Обновить метаданные из YouTube Music</string>
     <string name="share_desc">Поделиться ссылкой на этот элемент</string>
@@ -210,7 +210,7 @@
     <string name="cache_size_warning_confirm">Продолжить</string>
     <string name="tertiary_color_style">Третичный цвет</string>
     <string name="logging_in">Выполняется вход…</string>
-    <string name="download_playlist_desc">Скачать все треки для офлайн воспроизведения</string>
+    <string name="download_playlist_desc">Скачать все треки для офлайн-прослушивания</string>
     <string name="remove_download_playlist_desc">Удалить все скачанные треки из этого плейлиста</string>
     <string name="download_in_progress_desc">Идёт скачивание</string>
     <string name="share_playlist_desc">Поделиться этим плейлистом с другими</string>
@@ -530,7 +530,7 @@
     <string name="ai_provider_gemini_help">Откройте https://aistudio.google.com/apikey</string>
     <string name="ai_provider_perplexity_help">Откройте https://perplexity.ai/settings/api</string>
     <string name="ai_provider_xai_help">Откройте https://console.x.ai</string>
-    <string name="ai_provider_deepl_help">Откройте https://deepl.com/pro-api, чтобы получить бесплатные или платные ключи</string>
+    <string name="ai_provider_deepl_help">Откройте https://deepl.com/pro-api для получения бесплатных или платных ключей</string>
     <string name="ai_deepl_formality">Степень формальности</string>
     <string name="ai_deepl_formality_default">По умолчанию</string>
     <string name="ai_deepl_formality_more">Более формально</string>
@@ -603,7 +603,7 @@
     <string name="daily_discover_similar_to">Похоже на %1$s</string>
     <string name="daily_discover_based_on">На основе %1$s</string>
     <string name="daily_discover_for_fans_of">Для фанатов %1$s</string>
-    <string name="from_the_community">От сообщества</string>
+    <string name="from_the_community">Плейлисты других пользователей</string>
     <string name="logout_dialog_title">Сохранить данные библиотеки?</string>
     <string name="logout_dialog_message">Хотите сохранить свои плейлисты и данные библиотеки? Скачанные треки будут сохранены в любом случае</string>
     <string name="logout_keep">Сохранить</string>
@@ -667,7 +667,7 @@
     <string name="widget_recognizer_notification_text">Запись звука для распознавания трека…</string>
     <string name="filter_episodes">Выпуски</string>
     <string name="filter_channels">Каналы</string>
-    <string name="auto_playlist">Автоплейлист</string>
+    <string name="auto_playlist">Создан автоматически</string>
     <string name="downloaded_episodes">Скачанные выпуски</string>
     <string name="no_subscribed_channels">Нет подписанных каналов</string>
     <string name="no_downloaded_episodes">Нет скачанных выпусков</string>
@@ -681,7 +681,7 @@
     <string name="filter_profiles">Профили</string>
     <string name="enable_automatic_sleeptimer">Включить автоматический таймер сна</string>
     <string name="sleeptimer_description">Автоматически запускает таймер сна в заданное время со стандартной длительностью</string>
-    <string name="sleep_timer_repeat_description">Установите дни и время для автоматического включения таймера сна</string>
+    <string name="sleep_timer_repeat_description">Установите день и время для автоматического включения таймера сна</string>
     <string name="sleep_timer_repeat">Повтор</string>
     <string name="sleep_timer_daily">Ежедневно</string>
     <string name="sleep_timer_weekdays">Понедельник – Пятница</string>
@@ -847,4 +847,14 @@
     <string name="wizard_multiple_variants">Доступно несколько вариантов</string>
     <string name="wizard_select_eq_profiles">Выберите профили эквалайзера для %s</string>
     <string name="wizard_save_profiles">Сохранить профили</string>
+    <string name="loudness_level">Уровень громкости</string>
+    <string name="loudness_level_aggressive">Агрессивный (-7 дБ)</string>
+    <string name="loudness_level_loud">Громкий (-11 дБ)</string>
+    <string name="loudness_level_balanced">Сбалансированный (-14 дБ)</string>
+    <string name="loudness_level_quiet">Тихий (-19 дБ)</string>
+    <string name="mixes">Миксы</string>
+    <string name="show_most_stats_playlists">Еженедельные и ежемесячные выпуски плейлистов</string>
+    <string name="show_most_stats_playlists_desc">Создавать и показывать плейлисты «Самые прослушиваемые» на основе статистики в разделах «Статистика» и «Библиотека»</string>
+    <string name="pin">Закрепить</string>
+    <string name="unpin">Открепить</string>
 </resources>

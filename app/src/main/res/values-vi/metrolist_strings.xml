@@ -109,7 +109,7 @@
     <string name="disable">Vô hiệu hóa</string>
     <string name="subscribe">Đăng ký</string>
     <string name="subscribed">Đã đăng ký</string>
-    <string name="now_playing">Đang Phát</string>
+    <string name="now_playing">Đang phát</string>
     <string name="close">Đóng</string>
     <string name="seek_forward_dynamic">+%1$d giây tiến</string>
     <string name="seek_backward_dynamic">-%1$d giây lùi</string>
@@ -181,7 +181,7 @@
     <string name="update_available_title">Đã có cập nhật mới</string>
     <string name="update_channel_name">Cập nhật ứng dụng</string>
     <string name="update_channel_desc">Thông báo về phiên bản mới của ứng dụng</string>
-    <string name="google_cast">Google Cast</string>
+    <string name="google_cast">Google Phát</string>
     <string name="google_cast_description">Truyền âm thanh đến Chromecast và các thiết bị hỗ trợ Cast khác</string>
     <string name="lyrics_romanize_macedonian">Phiên âm chữ Ma-xê-đô-ni-a (Macedonia) sang chữ Latinh</string>
     <string name="integrations">Tích hợp tiện ích</string>
@@ -582,7 +582,7 @@
     <string name="transparent">Trong suốt</string>
     <string name="mini_player_background_not_available">Không khả dụng khi thiết kế trình phát thu nhỏ (mini-player) mới bị vô hiệu hóa</string>
     <string name="found_in_settings_content">Tìm ở Cài đặt &gt; Nội dung</string>
-    <string name="your_daily_discover">Hôm nay nghe gì?</string>
+    <string name="your_daily_discover">Hôm nay nghe gì</string>
     <string name="casting_to">Đang phát tới %s</string>
     <string name="listening_to_metrolist">Đang nghe Metrolist</string>
     <string name="open">Mở</string>
@@ -750,16 +750,16 @@
     <string name="discord_activity_name_description">Tên tùy chỉnh cho hoạt động. Để trống để sử dụng tên mặc định</string>
     <string name="discord_advanced_mode">Chế độ nâng cao</string>
     <string name="discord_advanced_mode_description">Hiển thị thêm các tùy chọn tùy chỉnh Rich Presence</string>
-    <string name="pin_to_speed_dial">Ghim vào mục Nghe nhanh</string>
-    <string name="unpin_from_speed_dial">Bỏ ghim khỏi mục Nghe nhanh</string>
+    <string name="pin_to_speed_dial">Ghim vào kệ Phát nhanh</string>
+    <string name="unpin_from_speed_dial">Bỏ ghim khỏi kệ Phát nhanh</string>
     <string name="randomize_home_order">Xáo trộn thứ tự trên màn hình chính</string>
-    <string name="speed_dial">Nghe nhanh</string>
+    <string name="speed_dial">Phát nhanh</string>
     <string name="randomize_home_order_desc">Sắp xếp lại ngẫu nhiên các phần trên màn hình chính dựa trên mức độ ưu tiên được gán trọng số</string>
     <string name="daily_discover_sounds_like">Nghe giống %1$s</string>
     <string name="daily_discover_because_you_listen_to">Vì bạn nghe %1$s</string>
     <string name="daily_discover_similar_to">Tương tự như %1$s</string>
     <string name="daily_discover_for_fans_of">Dành cho người hâm mộ của %1$s</string>
-    <string name="from_the_community">Từ cộng đồng</string>
+    <string name="from_the_community">Danh sách phát mọi người tạo</string>
     <string name="logout_dialog_title">Giữ dữ liệu thư viện?</string>
     <string name="logout_dialog_message">Bạn có muốn giữ danh sách phát và dữ liệu thư viện không? Các bài hát đã tải về sẽ luôn được giữ lại</string>
     <string name="credits_lead_developer">Trưởng nhóm phát triển</string>
@@ -826,4 +826,14 @@
     <string name="wizard_save_profiles">Lưu hồ sơ</string>
     <string name="discord_activity_competing">Cạnh tranh</string>
     <string name="discord_presence">Hiện diện</string>
+    <string name="loudness_level">Mức âm lượng</string>
+    <string name="loudness_level_aggressive">Mạnh (-7 dB)</string>
+    <string name="loudness_level_loud">Lớn (-11 dB)</string>
+    <string name="loudness_level_balanced">Cân bằng (-14 dB)</string>
+    <string name="loudness_level_quiet">Nhỏ (-19 dB)</string>
+    <string name="mixes">Tuyển tập</string>
+    <string name="show_most_stats_playlists">Hiển thị danh sách phát phổ biến theo tuần và tháng</string>
+    <string name="show_most_stats_playlists_desc">Tạo và hiển thị danh sách phát phổ biến nhất trong mục Thống kê và Thư viện</string>
+    <string name="pin">Ghim</string>
+    <string name="unpin">Bỏ ghim</string>
 </resources>

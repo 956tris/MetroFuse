@@ -847,4 +847,14 @@
     <string name="wizard_multiple_variants">Je dostupných několik variant</string>
     <string name="wizard_select_eq_profiles">Vybrat profily EQ pro %s</string>
     <string name="wizard_save_profiles">Uložit profily</string>
+    <string name="loudness_level">Úroveň hlasitosti</string>
+    <string name="loudness_level_aggressive">Agresivní (-7 dB)</string>
+    <string name="loudness_level_loud">Hlasitá (-11 dB)</string>
+    <string name="loudness_level_balanced">Vyvážená (-14 dB)</string>
+    <string name="loudness_level_quiet">Tichá (-19 dB)</string>
+    <string name="mixes">Mixy</string>
+    <string name="show_most_stats_playlists">Zobrazit playlisty Nejpřehrávanější za týden a měsíc</string>
+    <string name="show_most_stats_playlists_desc">Vytvářet a zobrazovat playlisty Nejpřehrávanější založené na statistice v Statistikách a Knihovně</string>
+    <string name="pin">Připnout</string>
+    <string name="unpin">Odepnout</string>
 </resources>

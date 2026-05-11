@@ -692,7 +692,7 @@
     <string name="sleep_timer_saturday">Samedi</string>
     <string name="sleep_timer_sunday">Dimanche</string>
     <string name="upload_songs">Télécharger des titres</string>
-    <string name="uploading">Téléchargement en cours…</string>
+    <string name="uploading">Envoi en cours…</string>
     <string name="upload_progress">%1$d de %2$d</string>
     <string name="upload_complete">Téléchargement terminé</string>
     <string name="upload_failed">Échec du téléchargement</string>
@@ -840,4 +840,14 @@
     <string name="wizard_multiple_variants">Plusieurs variantes disponibles</string>
     <string name="wizard_select_eq_profiles">Sélectionnez les profils d\'égalisation pour %s</string>
     <string name="wizard_save_profiles">Enregistrer les profils</string>
+    <string name="loudness_level">Niveau sonore</string>
+    <string name="loudness_level_aggressive">Agressif (-7 dB)</string>
+    <string name="loudness_level_loud">Fort (-11 dB)</string>
+    <string name="loudness_level_balanced">Équilibré (-14 dB)</string>
+    <string name="loudness_level_quiet">Silencieux (-19 dB)</string>
+    <string name="mixes">Mélanges</string>
+    <string name="show_most_stats_playlists">Afficher les playlists les plus écoutées chaque semaine et chaque mois</string>
+    <string name="show_most_stats_playlists_desc">Créez et affichez les playlists les plus écoutées dans la section « Statistiques » et la « Bibliothèque »</string>
+    <string name="pin">Épingler</string>
+    <string name="unpin">Détacher</string>
 </resources>
