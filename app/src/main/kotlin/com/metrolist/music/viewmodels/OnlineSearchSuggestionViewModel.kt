@@ -20,12 +20,16 @@ import com.metrolist.innertube.models.filterVideoSongs
 import com.metrolist.innertube.utils.YouTubeUrlParser
 import com.metrolist.music.constants.HomeFeedSource
 import com.metrolist.music.constants.HomeFeedSourceKey
+import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
+import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.SearchHistory
+import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
+import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -63,12 +67,27 @@ class OnlineSearchSuggestionViewModel
                         } else {
                             // Check if query is a YouTube URL
                             val parsedUrl = YouTubeUrlParser.parse(query)
-                            if (selectedHomeFeedSource() == HomeFeedSource.SOUNDCLOUD && parsedUrl == null) {
-                                val authToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
+                            val selectedSource = selectedHomeFeedSource()
+                            if (selectedSource in setOf(HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER) && parsedUrl == null) {
                                 val items =
-                                    SoundCloudHomeFeedProvider
-                                        .search(query, authToken)
-                                        .getOrNull()
+                                    when (selectedSource) {
+                                        HomeFeedSource.SOUNDCLOUD -> {
+                                            val authToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
+                                            SoundCloudHomeFeedProvider.search(query, authToken)
+                                        }
+
+                                        HomeFeedSource.TIDAL -> {
+                                            val cookie = context.dataStore.get(TidalCookieKey, "")
+                                            TidalHomeFeedProvider.search(query, cookie)
+                                        }
+
+                                        HomeFeedSource.DEEZER -> {
+                                            val cookie = context.dataStore.get(DeezerCookieKey, "")
+                                            DeezerHomeFeedProvider.search(query, cookie)
+                                        }
+
+                                        else -> Result.failure(IllegalStateException("Unsupported search source"))
+                                    }.getOrNull()
                                         ?.summaries
                                         ?.flatMap { it.items }
                                         ?.distinctBy { it.id }

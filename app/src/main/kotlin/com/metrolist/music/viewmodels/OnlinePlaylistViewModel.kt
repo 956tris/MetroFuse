@@ -15,12 +15,14 @@ import com.metrolist.innertube.models.Artist
 import com.metrolist.innertube.models.PlaylistItem
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.filterVideoSongs
+import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.SongSortType
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.db.MusicDatabase
+import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.providers.ExternalPlaylistPage
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
@@ -60,7 +62,8 @@ class OnlinePlaylistViewModel @Inject constructor(
                 type == "playlist" ||
                     (provider == "spotify" && type == "album") ||
                     (provider == "tidal" && type in setOf("album", "mix")) ||
-                    (provider == "soundcloud" && type in setOf("album", "mix"))
+                    (provider == "soundcloud" && type in setOf("album", "mix")) ||
+                    (provider == "deezer" && type in setOf("album", "artist"))
             }
     val isExternalPlaylist = externalCollectionIdParts != null
 
@@ -151,6 +154,18 @@ class OnlinePlaylistViewModel @Inject constructor(
                     .onSuccess(::setExternalPlaylist)
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load SoundCloud $type"
+                        _isLoading.value = false
+                        reportException(throwable)
+                    }
+            }
+
+            "deezer" -> {
+                val cookie = context.dataStore.get(DeezerCookieKey, "")
+                DeezerHomeFeedProvider
+                    .loadCollection(externalId, type, cookie)
+                    .onSuccess(::setExternalPlaylist)
+                    .onFailure { throwable ->
+                        _error.value = throwable.message ?: "Failed to load Deezer $type"
                         _isLoading.value = false
                         reportException(throwable)
                     }

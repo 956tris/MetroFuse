@@ -15,6 +15,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_ALBUM
+import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_ARTIST
 import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_COMMUNITY_PLAYLIST
 import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_FEATURED_PLAYLIST
 import com.metrolist.innertube.YouTube.SearchFilter.Companion.FILTER_SONG
@@ -25,12 +26,16 @@ import com.metrolist.innertube.models.filterYoutubeShorts
 import com.metrolist.innertube.pages.SearchSummaryPage
 import com.metrolist.music.constants.HomeFeedSource
 import com.metrolist.music.constants.HomeFeedSourceKey
+import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.HideYoutubeShortsKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
+import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.models.ItemsPage
+import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
+import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.utils.reportException
@@ -58,33 +63,66 @@ constructor(
         private set
     var isSoundCloudSearch by mutableStateOf(false)
         private set
+    var isTidalSearch by mutableStateOf(false)
+        private set
+    var isDeezerSearch by mutableStateOf(false)
+        private set
     val viewStateMap = mutableStateMapOf<String, ItemsPage?>()
 
     private suspend fun loadSummaryPage() {
         if (summaryPage == null) {
-            isSoundCloudSearch = selectedHomeFeedSource() == HomeFeedSource.SOUNDCLOUD
-            if (isSoundCloudSearch) {
-                val authToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
-                SoundCloudHomeFeedProvider
-                    .search(query, authToken)
-                    .onSuccess { page ->
-                        summaryPage = page
-                    }.onFailure {
-                        reportException(it)
-                    }
-            } else {
-                YouTube
-                    .searchSummary(query)
-                    .onSuccess {
-                        val hideExplicit = context.dataStore.get(HideExplicitKey, false)
-                        val hideVideoSongs = context.dataStore.get(HideVideoSongsKey, false)
-                        val hideYoutubeShorts = context.dataStore.get(HideYoutubeShortsKey, false)
-                        summaryPage =
-                            it.filterExplicit(hideExplicit)
-                              .filterVideoSongs(hideVideoSongs)
-                              .filterYoutubeShorts(hideYoutubeShorts)
-                    }.onFailure {
-                        reportException(it)
+            val source = selectedHomeFeedSource()
+            isSoundCloudSearch = source == HomeFeedSource.SOUNDCLOUD
+            isTidalSearch = source == HomeFeedSource.TIDAL
+            isDeezerSearch = source == HomeFeedSource.DEEZER
+            when {
+                isSoundCloudSearch -> {
+                    val authToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
+                    SoundCloudHomeFeedProvider
+                        .search(query, authToken)
+                        .onSuccess { page ->
+                            summaryPage = page
+                        }.onFailure {
+                            reportException(it)
+                        }
+                }
+
+                isTidalSearch -> {
+                    val cookie = context.dataStore.get(TidalCookieKey, "")
+                    TidalHomeFeedProvider
+                        .search(query, cookie)
+                        .onSuccess { page ->
+                            summaryPage = page
+                        }.onFailure {
+                            reportException(it)
+                        }
+                }
+
+                isDeezerSearch -> {
+                    val cookie = context.dataStore.get(DeezerCookieKey, "")
+                    DeezerHomeFeedProvider
+                        .search(query, cookie)
+                        .onSuccess { page ->
+                            summaryPage = page
+                        }.onFailure {
+                            reportException(it)
+                        }
+                }
+
+                else -> {
+                    YouTube
+                        .searchSummary(query)
+                        .onSuccess {
+                            val hideExplicit = context.dataStore.get(HideExplicitKey, false)
+                            val hideVideoSongs = context.dataStore.get(HideVideoSongsKey, false)
+                            val hideYoutubeShorts = context.dataStore.get(HideYoutubeShortsKey, false)
+                            summaryPage =
+                                it.filterExplicit(hideExplicit)
+                                  .filterVideoSongs(hideVideoSongs)
+                                  .filterYoutubeShorts(hideYoutubeShorts)
+                        }.onFailure {
+                            reportException(it)
+                        }
                     }
             }
         }
@@ -95,13 +133,16 @@ constructor(
             filter.collect { filter ->
                 if (filter == null) {
                     loadSummaryPage()
-                } else if (selectedHomeFeedSource() == HomeFeedSource.SOUNDCLOUD) {
+                } else if (selectedHomeFeedSource() in setOf(HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER)) {
                     if (viewStateMap[filter.value] == null) {
-                        isSoundCloudSearch = true
+                        val source = selectedHomeFeedSource()
+                        isSoundCloudSearch = source == HomeFeedSource.SOUNDCLOUD
+                        isTidalSearch = source == HomeFeedSource.TIDAL
+                        isDeezerSearch = source == HomeFeedSource.DEEZER
                         loadSummaryPage()
                         viewStateMap[filter.value] =
                             ItemsPage(
-                                soundCloudItemsForFilter(filter),
+                                externalItemsForFilter(filter),
                                 null,
                             )
                     }
@@ -153,7 +194,7 @@ constructor(
             HomeFeedSource.valueOf(context.dataStore.get(HomeFeedSourceKey, HomeFeedSource.YOUTUBE_MUSIC.name))
         }.getOrDefault(HomeFeedSource.YOUTUBE_MUSIC)
 
-    private fun soundCloudItemsForFilter(filter: YouTube.SearchFilter): List<YTItem> {
+    private fun externalItemsForFilter(filter: YouTube.SearchFilter): List<YTItem> {
         val summaries = summaryPage?.summaries.orEmpty()
         fun section(title: String): List<YTItem> =
             summaries.firstOrNull { it.title.equals(title, ignoreCase = true) }
@@ -163,6 +204,7 @@ constructor(
         return when (filter) {
             FILTER_SONG -> section("Songs")
             FILTER_ALBUM -> section("Albums")
+            FILTER_ARTIST -> section("Artists")
             FILTER_COMMUNITY_PLAYLIST,
             FILTER_FEATURED_PLAYLIST,
             -> (section("Playlists") + section("Mixes")).distinctBy { it.id }
@@ -171,7 +213,7 @@ constructor(
     }
 
     fun loadMore() {
-        if (isSoundCloudSearch) return
+        if (isSoundCloudSearch || isTidalSearch || isDeezerSearch) return
         val currentFilter = filter.value
         val filterValue = currentFilter?.value ?: return
         viewModelScope.launch {

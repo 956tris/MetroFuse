@@ -24,6 +24,7 @@ object QobuzAudioProvider {
     private const val SQUID_BASE_URL = "https://qobuz.squid.wtf"
     private const val JUMO_BASE_URL = "https://jumo-dl.pages.dev"
     private const val KENNY_BASE_URL = "https://qobuz.kennyy.com.br"
+    private const val TRYPT_BASE_URL = "https://trypt-hifi-dl-456461932686.us-west1.run.app"
     private const val STREAM_CACHE_MS = 5 * 60 * 1000L
     private const val REJECT_SCORE = -1_000_000
 
@@ -33,11 +34,13 @@ object QobuzAudioProvider {
         JUMO,
         KENNY,
         SQUID,
+        TRYPT,
     }
 
     private enum class SearchBackend {
         KENNY,
         SQUID,
+        TRYPT,
     }
 
     data class Query(
@@ -95,6 +98,7 @@ object QobuzAudioProvider {
             ResolverBackend.JUMO -> normalized.takeIf { it in JUMO_SUPPORTED_REGIONS } ?: "FR"
             ResolverBackend.KENNY -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
             ResolverBackend.SQUID -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
+            ResolverBackend.TRYPT -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
         }
     }
 
@@ -124,6 +128,12 @@ object QobuzAudioProvider {
                     )
                     ResolverBackend.KENNY -> requestKennyStream(track, quality, query.durationMs)
                     ResolverBackend.SQUID -> requestSquidStream(track, query.countryCode, quality, query.durationMs)
+                    ResolverBackend.TRYPT -> requestTrypTStream(
+                        track = track,
+                        qualityCode = quality,
+                        region = normalizeResolverRegion(query.countryCode, ResolverBackend.TRYPT),
+                        durationMs = query.durationMs,
+                    )
                 }
                 attempt.resolved?.let { resolved ->
                     streamCache[streamCacheKey] = resolved
@@ -146,17 +156,19 @@ object QobuzAudioProvider {
 
     private fun streamBackendOrder(preferred: ResolverBackend): List<ResolverBackend> {
         return when (preferred) {
-            ResolverBackend.JUMO -> listOf(ResolverBackend.JUMO, ResolverBackend.KENNY, ResolverBackend.SQUID)
-            ResolverBackend.KENNY -> listOf(ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
-            ResolverBackend.SQUID -> listOf(ResolverBackend.SQUID, ResolverBackend.KENNY, ResolverBackend.JUMO)
+            ResolverBackend.JUMO -> listOf(ResolverBackend.JUMO, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.SQUID)
+            ResolverBackend.KENNY -> listOf(ResolverBackend.KENNY, ResolverBackend.TRYPT, ResolverBackend.JUMO, ResolverBackend.SQUID)
+            ResolverBackend.SQUID -> listOf(ResolverBackend.SQUID, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO)
+            ResolverBackend.TRYPT -> listOf(ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
         }
     }
 
     private fun searchBackendOrder(preferred: ResolverBackend): List<SearchBackend> {
         return when (preferred) {
-            ResolverBackend.JUMO -> listOf(SearchBackend.SQUID, SearchBackend.KENNY)
-            ResolverBackend.KENNY -> listOf(SearchBackend.KENNY, SearchBackend.SQUID)
-            ResolverBackend.SQUID -> listOf(SearchBackend.SQUID, SearchBackend.KENNY)
+            ResolverBackend.JUMO -> listOf(SearchBackend.TRYPT, SearchBackend.SQUID, SearchBackend.KENNY)
+            ResolverBackend.KENNY -> listOf(SearchBackend.KENNY, SearchBackend.TRYPT, SearchBackend.SQUID)
+            ResolverBackend.SQUID -> listOf(SearchBackend.SQUID, SearchBackend.TRYPT, SearchBackend.KENNY)
+            ResolverBackend.TRYPT -> listOf(SearchBackend.TRYPT, SearchBackend.KENNY, SearchBackend.SQUID)
         }
     }
 
@@ -178,6 +190,7 @@ object QobuzAudioProvider {
         val baseUrl = when (backend) {
             SearchBackend.KENNY -> KENNY_BASE_URL
             SearchBackend.SQUID -> SQUID_BASE_URL
+            SearchBackend.TRYPT -> TRYPT_BASE_URL
         }
         val url = "$baseUrl/api/get-music".toHttpUrlOrNull()
             ?.newBuilder()
@@ -192,7 +205,7 @@ object QobuzAudioProvider {
             .header("Accept", "application/json")
             .header("Referer", "$baseUrl/")
             .header("User-Agent", "Mozilla/5.0")
-        if (backend == SearchBackend.SQUID) {
+        if (backend == SearchBackend.SQUID || backend == SearchBackend.TRYPT) {
             requestBuilder.header("Token-Country", countryCode)
         }
         val request = requestBuilder.build()
@@ -554,6 +567,92 @@ object QobuzAudioProvider {
             }
         }.getOrElse { error ->
             StreamAttempt(error = "Kenny request failed: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun requestTrypTStream(
+        track: MatchedTrack,
+        qualityCode: Int,
+        region: String,
+        durationMs: Long?,
+    ): StreamAttempt {
+        val url = "$TRYPT_BASE_URL/api/download-music".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("track_id", track.trackId)
+            ?.addQueryParameter("quality", qualityCode.toString())
+            ?.build()
+            ?: return StreamAttempt(error = "TrypT request URL could not be built")
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Accept", "application/json,text/plain,*/*")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Token-Country", region)
+            .header("Origin", TRYPT_BASE_URL)
+            .header("Referer", "$TRYPT_BASE_URL/")
+            .header("User-Agent", BROWSER_USER_AGENT)
+            .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    return@use StreamAttempt(error = "TrypT HTTP ${response.code}: ${payload.take(160)}")
+                }
+                if (payload.isBlank()) {
+                    return@use StreamAttempt(error = "TrypT returned an empty response")
+                }
+                val root = JSONObject(payload)
+                if (!root.optBoolean("success", false)) {
+                    val apiError = root.stringOrNull("error")
+                        ?: root.stringOrNull("message")
+                    return@use StreamAttempt(
+                        error = "TrypT rejected quality $qualityCode: ${apiError ?: "unknown error"}"
+                    )
+                }
+
+                val data = root.optJSONObject("data")
+                val streamUrl = data?.stringOrNull("url")
+                    ?: root.stringOrNull("url")
+                    ?: return@use StreamAttempt(error = "TrypT did not return a stream URL for quality $qualityCode")
+                val actualQualityCode = data?.intOrNull("format_id")
+                    ?: root.intOrNull("format_id")
+                    ?: streamFormatId(streamUrl)
+                    ?: qualityCode
+                val bitDepth = data?.intOrNull("bit_depth")
+                    ?: data?.intOrNull("bitDepth")
+                    ?: track.bitDepth
+                val samplingRate = data?.doubleOrNull("sampling_rate")
+                    ?: data?.doubleOrNull("sampleRate")
+                    ?: data?.doubleOrNull("samplingRate")
+                    ?: track.samplingRateKhz
+                val mimeType = data?.stringOrNull("mime_type")
+                    ?: data?.stringOrNull("mimeType")
+                    ?: if (actualQualityCode == 5) "audio/mpeg" else "audio/flac"
+                val lossyBitrate = data?.intOrNull("bitrate")
+                    ?: data?.intOrNull("bit_rate")
+                val effectiveDurationMs = durationMs ?: track.durationMs
+                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
+                    ?: normalizeBitrate(data?.intOrNull("average_bitrate")).takeIf { it > 0 }
+                val hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || actualQualityCode >= 7
+                val format = formatFrom(
+                    mimeType = mimeType,
+                    bitDepth = bitDepth,
+                    samplingRateKhz = samplingRate,
+                    bitrate = lossyBitrate,
+                    losslessBitrate = losslessBitrate,
+                    hires = hires,
+                )
+                StreamAttempt(
+                    resolved = format.toResolved(
+                        url = streamUrl,
+                        trackId = track.trackId,
+                    )
+                )
+            }
+        }.getOrElse { error ->
+            StreamAttempt(error = "TrypT request failed: ${error.message ?: error.javaClass.simpleName}")
         }
     }
 

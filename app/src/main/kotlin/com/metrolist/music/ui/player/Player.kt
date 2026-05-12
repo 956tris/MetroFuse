@@ -158,12 +158,14 @@ import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.SquigglySliderKey
 import com.metrolist.music.constants.ThumbnailCornerRadius
 import com.metrolist.music.constants.UseNewPlayerDesignKey
+import com.metrolist.music.db.entities.FormatEntity
 import com.metrolist.music.db.entities.LyricsEntity
 import com.metrolist.music.extensions.metadata
 import com.metrolist.music.extensions.togglePlayPause
 import com.metrolist.music.extensions.toggleRepeatMode
 import com.metrolist.music.listentogether.RoomRole
 import com.metrolist.music.models.MediaMetadata
+import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.ui.component.BottomSheet
 import com.metrolist.music.ui.component.BottomSheetState
 import com.metrolist.music.ui.component.LocalBottomSheetPageState
@@ -200,6 +202,94 @@ import com.metrolist.music.utils.dataStore
 import androidx.datastore.preferences.core.edit
 import com.metrolist.music.constants.SleepTimerFadeOutKey
 import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
+
+private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
+private const val QOBUZ_FALLBACK_ITAG = 100_027
+private const val TIDAL_FALLBACK_ITAG = 100_029
+private const val DEEZER_FALLBACK_ITAG = 100_033
+private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
+private const val INSTAGRAM_FALLBACK_ITAG = 100_041
+private const val LOCAL_FILE_ITAG = -2000
+
+private val YouTubeAudioItags = setOf(139, 140, 141, 249, 250, 251, 256, 258, 325, 328, 338, 599, 600, 774)
+
+@Suppress("DEPRECATION")
+private fun FormatEntity.audioSourceLabel(): String? =
+    when (itag) {
+        APPLE_MUSIC_WRAPPER_ITAG -> "Apple Music".takeIf { hasUsefulPlaybackDetails() }
+        QOBUZ_FALLBACK_ITAG -> "Qobuz"
+        TIDAL_FALLBACK_ITAG -> "TIDAL"
+        DEEZER_FALLBACK_ITAG -> "Deezer"
+        SOUNDCLOUD_FALLBACK_ITAG -> "SoundCloud"
+        INSTAGRAM_FALLBACK_ITAG -> "Instagram"
+        LOCAL_FILE_ITAG -> "Local"
+        in YouTubeAudioItags -> "YouTube Music"
+        else -> playbackUrl?.audioSourceLabelFromUrl()
+    }
+
+private fun String.audioSourceLabelFromUrl(): String? {
+    val value = lowercase()
+    return when {
+        value.contains("googlevideo.com") ||
+            value.contains("youtube.com") ||
+            value.contains("youtu.be") -> "YouTube Music"
+        value.contains("qobuz.com") ||
+            value.contains("jumo-dl") ||
+            value.contains("kennyy.com.br") ||
+            value.contains("squid.wtf") -> "Qobuz"
+        value.contains("tidal.com") ||
+            value.contains("zarz.moe") -> "TIDAL"
+        value.contains("deezer.com") ||
+            value.contains("dzcdn.net") ||
+            value.contains("dzmedia") -> "Deezer"
+        value.contains("soundcloud.com") ||
+            value.contains("sndcdn.com") -> "SoundCloud"
+        value.contains("instagram.com") ||
+            value.contains("cdninstagram.com") ||
+            value.contains("fbcdn.net") -> "Instagram"
+        else -> null
+    }
+}
+
+private fun String.audioSourceLabelFromMediaId(): String? {
+    val value = lowercase()
+    return when {
+        value.startsWith("deezer:") -> "Deezer"
+        value.startsWith("tidal:") -> "TIDAL"
+        value.startsWith("spotify:") -> "Spotify"
+        value.startsWith("soundcloud:") -> "SoundCloud"
+        else -> audioSourceLabelFromUrl()
+    }
+}
+
+private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
+    val hasBitrate = bitrate > 0
+    val hasSampleRate = sampleRate?.let { it > 0 } == true
+    return hasBitrate || hasSampleRate
+}
+
+private fun FormatEntity.playerQualityLabel(): String? {
+    val codec = when {
+        mimeType.contains("flac", ignoreCase = true) ||
+            codecs.contains("flac", ignoreCase = true) -> "FLAC"
+        codecs.contains("alac", ignoreCase = true) -> "ALAC"
+        codecs.contains("mp3", ignoreCase = true) ||
+            mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
+        codecs.contains("mp4a", ignoreCase = true) -> "AAC"
+        else -> null
+    }
+    val bitrate = bitrate
+        .takeIf { it > 0 }
+        ?.takeUnless { codec == "ALAC" }
+        ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
+    val sampleRate = sampleRate
+        ?.takeIf { it > 0 }
+        ?.let { "$it Hz" }
+
+    if (codec == null && bitrate == null && sampleRate == null) return null
+    if (codec == "ALAC" && bitrate == null && sampleRate == null) return null
+    return listOfNotNull(codec, bitrate, sampleRate).joinToString(" \u2022 ").takeIf { it.isNotBlank() }
+}
 
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -328,38 +418,60 @@ fun BottomSheetPlayer(
     val currentLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
     val embeddedCanvasUrl by playerConnection.service.currentEmbeddedCanvasUrl.collectAsStateWithLifecycle()
     val currentFormat by playerConnection.currentFormat.collectAsStateWithLifecycle(initialValue = null)
+    val displayFormat =
+        remember(currentFormat, mediaMetadata?.id) {
+            currentFormat?.takeIf { format ->
+                mediaMetadata?.id == null || format.id == mediaMetadata?.id
+            }
+        }
     val automix by playerConnection.service.automixItems.collectAsStateWithLifecycle()
     val repeatMode by playerConnection.repeatMode.collectAsStateWithLifecycle()
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsStateWithLifecycle()
     val canSkipNext by playerConnection.canSkipNext.collectAsStateWithLifecycle()
     val isMuted by playerConnection.isMuted.collectAsStateWithLifecycle()
     val playerQualityLabel =
-        remember(currentFormat) {
-            currentFormat
-                ?.let { format ->
-                    val codec = when {
-                        format.mimeType.contains("flac", ignoreCase = true) ||
-                            format.codecs.contains("flac", ignoreCase = true) -> "FLAC"
-                        format.codecs.contains("alac", ignoreCase = true) -> "ALAC"
-                        format.codecs.contains("mp3", ignoreCase = true) ||
-                            format.mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
-                        format.codecs.contains("mp4a", ignoreCase = true) -> "AAC"
-                        else -> return@let null
-                    }
-                    val bitrate = format.bitrate
-                        .takeIf { it > 0 }
-                        ?.takeUnless { codec == "ALAC" }
-                        ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
-                    val sampleRate = format.sampleRate
-                        ?.takeIf { it > 0 }
-                        ?.let { "$it Hz" }
-                    if (bitrate == null && sampleRate == null && codec == "ALAC") {
-                        "Unknown"
-                    } else {
-                        listOfNotNull(codec, bitrate, sampleRate).joinToString(" \u2022 ")
-                    }
-                }
+        remember(displayFormat) {
+            displayFormat?.playerQualityLabel()
         }
+    val playerSourceLabel =
+        remember(displayFormat) {
+            displayFormat?.takeIf { it.hasUsefulPlaybackDetails() }?.audioSourceLabel()
+        }
+    val fallbackPlayerSourceLabel =
+        remember(mediaMetadata?.id, displayFormat) {
+            mediaMetadata?.id?.audioSourceLabelFromMediaId()
+                ?: displayFormat?.audioSourceLabel()
+        }
+    var playerQualityLoadingGraceActive by remember { mutableStateOf(false) }
+    LaunchedEffect(mediaMetadata?.id, displayFormat?.id, displayFormat?.bitrate, displayFormat?.sampleRate, playerQualityLabel) {
+        val needsPlaybackDetails =
+            mediaMetadata != null &&
+                (
+                    displayFormat == null ||
+                        !displayFormat.hasUsefulPlaybackDetails() ||
+                        playerQualityLabel == null
+                )
+        if (!needsPlaybackDetails) {
+            playerQualityLoadingGraceActive = false
+            return@LaunchedEffect
+        }
+
+        playerQualityLoadingGraceActive = true
+        delay(6_000)
+        playerQualityLoadingGraceActive = false
+    }
+    val isPlayerQualityLoading =
+        mediaMetadata != null &&
+            (playbackState == Player.STATE_BUFFERING || playerQualityLoadingGraceActive) &&
+            (
+                displayFormat == null ||
+                    !displayFormat.hasUsefulPlaybackDetails() ||
+                    playerQualityLabel == null
+            )
+    val displayedPlayerQualityLabel =
+        if (isPlayerQualityLoading) "Loading" else playerQualityLabel
+    val displayedPlayerSourceLabel =
+        if (isPlayerQualityLoading) fallbackPlayerSourceLabel else playerSourceLabel ?: fallbackPlayerSourceLabel
 
     val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
     val squigglySlider by rememberPreference(SquigglySliderKey, defaultValue = false)
@@ -469,26 +581,63 @@ fun BottomSheetPlayer(
     // These states persist across playback state changes to ensure continuous progress updates
     val positionState = remember { mutableLongStateOf(0L) }
     val durationState = remember { mutableLongStateOf(0L) }
+    val bufferedPositionState = remember { mutableLongStateOf(0L) }
 
     // Convenience accessors for local use
     var position by positionState
     var duration by durationState
+    var bufferedPosition by bufferedPositionState
 
-    val effectivePosition by remember {
-        derivedStateOf {
-            if (isCasting) {
-                castPosition
-            } else {
-                position
-            }
+    val effectivePosition =
+        if (isCasting) {
+            castPosition
+        } else {
+            position
         }
-    }
+    val metadataDurationMs =
+        (mediaMetadata?.duration?.takeIf { it > 0 }
+            ?: currentSong?.song?.duration?.takeIf { it > 0 })
+            ?.toLong()
+            ?.times(1000L)
+            ?: C.TIME_UNSET
+    val effectiveDuration =
+        when {
+            isCasting && castDuration > 0L -> castDuration
+            duration != C.TIME_UNSET && duration > 0L -> duration
+            metadataDurationMs != C.TIME_UNSET -> metadataDurationMs
+            else -> 0L
+        }
 
     var sliderPosition by remember {
         mutableStateOf<Long?>(null)
     }
+    val sliderRangeEnd = effectiveDuration.takeIf { it > 0L } ?: 1L
+    val sliderValueRange = 0f..sliderRangeEnd.toFloat()
+    val displayedSliderPosition =
+        (sliderPosition ?: effectivePosition).coerceIn(0L, sliderRangeEnd)
+    val displayedBufferedPosition =
+        if (isCasting) {
+            displayedSliderPosition
+        } else {
+            max(displayedSliderPosition, bufferedPosition).coerceIn(0L, sliderRangeEnd)
+        }
+    val canSeekPlayer = effectiveDuration > 0L && !isListenTogetherGuest
     // Track when we last manually set position to avoid Cast overwriting it
     var lastManualSeekTime by remember { mutableLongStateOf(0L) }
+    fun seekToPlayerPosition(positionMs: Long) {
+        val target = if (effectiveDuration > 0L) {
+            positionMs.coerceIn(0L, effectiveDuration)
+        } else {
+            positionMs.coerceAtLeast(0L)
+        }
+        if (isCasting) {
+            castHandler?.seekTo(target)
+            lastManualSeekTime = System.currentTimeMillis()
+        } else {
+            playerConnection.seekTo(target)
+        }
+        position = target
+    }
 
     var gradientColors by remember {
         mutableStateOf<List<Color>>(emptyList())
@@ -838,13 +987,14 @@ fun BottomSheetPlayer(
     // Position update - only for local playback
     // When casting, we use castPosition directly to avoid sync issues
     // Use isPlaying instead of playbackState to ensure continuous updates during playback
-    LaunchedEffect(isPlaying, isCasting) {
-        if (!isCasting && isPlaying) {
+    LaunchedEffect(isPlaying, isCasting, mediaMetadata?.id) {
+        if (!isCasting) {
             while (isActive) {
-                delay(100) // Update more frequently for smoother progress bar
+                delay(if (isPlaying) 100 else 300)
                 if (sliderPosition == null) { // Only update if user isn't dragging
                     position = playerConnection.player.currentPosition
                     duration = playerConnection.player.duration
+                    bufferedPosition = playerConnection.player.bufferedPosition
                 }
             }
         }
@@ -855,6 +1005,7 @@ fun BottomSheetPlayer(
         if (!isCasting) {
             position = playerConnection.player.currentPosition
             duration = playerConnection.player.duration
+            bufferedPosition = playerConnection.player.bufferedPosition
         }
     }
 
@@ -1113,7 +1264,10 @@ fun BottomSheetPlayer(
                                                 ?: currentSong?.album?.id
                                                 ?: currentSong?.song?.albumId
                                             if (albumId != null) {
-                                                navController.navigate("album/$albumId")
+                                                navController.navigate(
+                                                    ExternalHomeItemIds.externalMetroRoute(albumId)
+                                                        ?: "album/$albumId",
+                                                )
                                                 state.collapseSoft()
                                             }
                                         },
@@ -1190,7 +1344,10 @@ fun BottomSheetPlayer(
                                                             ?.let { ann ->
                                                                 val artistId = ann.item
                                                                 if (artistId.isNotBlank()) {
-                                                                    navController.navigate("artist/$artistId")
+                                                                    navController.navigate(
+                                                                        ExternalHomeItemIds.externalMetroRoute(artistId)
+                                                                            ?: "artist/$artistId",
+                                                                    )
                                                                     state.collapseSoft()
                                                                 }
                                                             }
@@ -1466,113 +1623,111 @@ fun BottomSheetPlayer(
 
             when (sliderStyle) {
                 SliderStyle.DEFAULT -> {
+                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme)
                     Slider(
-                        value = (sliderPosition ?: effectivePosition).toFloat(),
-                        valueRange = 0f..(if (duration == C.TIME_UNSET) 0f else duration.toFloat()),
+                        value = displayedSliderPosition.toFloat(),
+                        valueRange = sliderValueRange,
                         onValueChange = {
-                            if (!isListenTogetherGuest) {
+                            if (canSeekPlayer) {
                                 sliderPosition = it.toLong()
                             }
                         },
                         onValueChangeFinished = {
-                            if (!isListenTogetherGuest) {
+                            if (canSeekPlayer) {
                                 sliderPosition?.let {
-                                    if (isCasting) {
-                                        castHandler?.seekTo(it)
-                                        lastManualSeekTime = System.currentTimeMillis()
-                                    } else {
-                                        playerConnection.player.seekTo(it)
-                                    }
-                                    position = it
+                                    seekToPlayerPosition(it)
                                 }
                                 sliderPosition = null
                             }
                         },
-                        enabled = !isListenTogetherGuest,
-                        colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                        enabled = canSeekPlayer,
+                        colors = colors,
+                        track = { sliderState ->
+                            PlayerSliderTrack(
+                                sliderState = sliderState,
+                                colors = colors,
+                                trackHeight = 8.dp,
+                                bufferedValue = displayedBufferedPosition.toFloat(),
+                            )
+                        },
                         modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
                     )
                 }
 
                 SliderStyle.WAVY -> {
+                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme)
                     if (squigglySlider) {
                         SquigglySlider(
-                            value = (sliderPosition ?: effectivePosition).toFloat(),
-                            valueRange = 0f..(if (duration == C.TIME_UNSET) 0f else duration.toFloat()),
+                            value = displayedSliderPosition.toFloat(),
+                            valueRange = sliderValueRange,
                             onValueChange = {
-                                sliderPosition = it.toLong()
+                                if (canSeekPlayer) {
+                                    sliderPosition = it.toLong()
+                                }
                             },
                             onValueChangeFinished = {
-                                sliderPosition?.let {
-                                    if (isCasting) {
-                                        castHandler?.seekTo(it)
-                                        lastManualSeekTime = System.currentTimeMillis()
-                                    } else {
-                                        playerConnection.player.seekTo(it)
+                                if (canSeekPlayer) {
+                                    sliderPosition?.let {
+                                        seekToPlayerPosition(it)
                                     }
-                                    position = it
+                                    sliderPosition = null
                                 }
-                                sliderPosition = null
                             },
                             modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                            colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                            colors = colors,
                             isPlaying = effectiveIsPlaying,
+                            bufferedValue = displayedBufferedPosition.toFloat(),
                         )
                     } else {
                         WavySlider(
-                            value = (sliderPosition ?: effectivePosition).toFloat(),
-                            valueRange = 0f..(if (duration == C.TIME_UNSET) 0f else duration.toFloat()),
+                            value = displayedSliderPosition.toFloat(),
+                            valueRange = sliderValueRange,
                             onValueChange = {
-                                sliderPosition = it.toLong()
+                                if (canSeekPlayer) {
+                                    sliderPosition = it.toLong()
+                                }
                             },
                             onValueChangeFinished = {
-                                sliderPosition?.let {
-                                    if (isCasting) {
-                                        castHandler?.seekTo(it)
-                                        lastManualSeekTime = System.currentTimeMillis()
-                                    } else {
-                                        playerConnection.player.seekTo(it)
+                                if (canSeekPlayer) {
+                                    sliderPosition?.let {
+                                        seekToPlayerPosition(it)
                                     }
-                                    position = it
+                                    sliderPosition = null
                                 }
-                                sliderPosition = null
                             },
-                            colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                            colors = colors,
                             modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
                             isPlaying = effectiveIsPlaying,
+                            bufferedValue = displayedBufferedPosition.toFloat(),
                         )
                     }
                 }
 
                 SliderStyle.SLIM -> {
+                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme)
                     Slider(
-                        value = (sliderPosition ?: effectivePosition).toFloat(),
-                        valueRange = 0f..(if (duration == C.TIME_UNSET) 0f else duration.toFloat()),
+                        value = displayedSliderPosition.toFloat(),
+                        valueRange = sliderValueRange,
                         onValueChange = {
-                            if (!isListenTogetherGuest) {
+                            if (canSeekPlayer) {
                                 sliderPosition = it.toLong()
                             }
                         },
                         onValueChangeFinished = {
-                            if (!isListenTogetherGuest) {
+                            if (canSeekPlayer) {
                                 sliderPosition?.let {
-                                    if (isCasting) {
-                                        castHandler?.seekTo(it)
-                                        lastManualSeekTime = System.currentTimeMillis()
-                                    } else {
-                                        playerConnection.player.seekTo(it)
-                                    }
-                                    position = it
+                                    seekToPlayerPosition(it)
                                 }
                                 sliderPosition = null
                             }
                         },
-                        enabled = !isListenTogetherGuest,
+                        enabled = canSeekPlayer,
                         thumb = { Spacer(modifier = Modifier.size(0.dp)) },
                         track = { sliderState ->
                             PlayerSliderTrack(
                                 sliderState = sliderState,
-                                colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme),
+                                colors = colors,
+                                bufferedValue = displayedBufferedPosition.toFloat(),
                             )
                         },
                         modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
@@ -1599,7 +1754,7 @@ fun BottomSheetPlayer(
                 )
 
                 Text(
-                    text = if (duration != C.TIME_UNSET) makeTimeString(duration) else "",
+                    text = if (effectiveDuration > 0L) makeTimeString(effectiveDuration) else "",
                     style = MaterialTheme.typography.labelMedium,
                     color = TextBackgroundColor,
                     maxLines = 1,
@@ -1926,18 +2081,35 @@ fun BottomSheetPlayer(
                             }
                         }
                     }
-                    playerQualityLabel?.let { label ->
+                    if (displayedPlayerQualityLabel != null || displayedPlayerSourceLabel != null) {
                         Spacer(Modifier.height(10.dp))
-                        Text(
-                            text = label,
-                            color = TextBackgroundColor,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            textAlign = TextAlign.Center,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        displayedPlayerQualityLabel?.let { label ->
+                            Text(
+                                text = label,
+                                color = TextBackgroundColor,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        displayedPlayerSourceLabel?.let { source ->
+                            if (displayedPlayerQualityLabel != null) {
+                                Spacer(Modifier.height(2.dp))
+                            }
+                            Text(
+                                text = "Source: $source",
+                                color = TextBackgroundColor.copy(alpha = 0.82f),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Medium,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
                 }
             }
@@ -1983,7 +2155,9 @@ fun BottomSheetPlayer(
                             InlineLyricsView(
                                 mediaMetadata = mediaMetadata,
                                 showLyrics = showLyrics,
-                                positionProvider = { effectivePosition },
+                                positionProvider = {
+                                    sliderPosition ?: if (isCasting) effectivePosition else null
+                                },
                             )
                             } else if (shouldShowCanvasBackground) {
                                 Spacer(modifier = Modifier.fillMaxSize())
@@ -2048,7 +2222,9 @@ fun BottomSheetPlayer(
                             InlineLyricsView(
                                 mediaMetadata = mediaMetadata,
                                 showLyrics = showLyrics,
-                                positionProvider = { effectivePosition },
+                                positionProvider = {
+                                    sliderPosition ?: if (isCasting) effectivePosition else null
+                                },
                             )
                             } else if (shouldShowCanvasBackground) {
                                 Spacer(modifier = Modifier.fillMaxSize())
@@ -2107,7 +2283,7 @@ fun BottomSheetPlayer(
 fun InlineLyricsView(
     mediaMetadata: MediaMetadata?,
     showLyrics: Boolean,
-    positionProvider: () -> Long,
+    positionProvider: () -> Long?,
 ) {
     val playerConnection = LocalPlayerConnection.current ?: return
     val currentLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
@@ -2117,6 +2293,7 @@ fun InlineLyricsView(
     val context = LocalContext.current
     val database = LocalDatabase.current
     val coroutineScope = rememberCoroutineScope()
+    val latestPositionProvider = rememberUpdatedState(positionProvider)
 
     var appInForeground by remember {
         mutableStateOf(
@@ -2226,7 +2403,7 @@ fun InlineLyricsView(
             else -> {
                 val lyricsContent: @Composable () -> Unit = {
                     Lyrics(
-                        sliderPositionProvider = positionProvider,
+                        sliderPositionProvider = { latestPositionProvider.value() },
                         modifier = Modifier.padding(horizontal = 24.dp),
                         showLyrics = showLyrics,
                     )

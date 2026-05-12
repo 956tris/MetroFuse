@@ -57,6 +57,8 @@ import com.metrolist.music.ui.screens.settings.SettingsScreen
 import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
+import com.metrolist.music.ui.screens.settings.integrations.DeezerSettings
+import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
 import com.metrolist.music.ui.screens.settings.integrations.InstagramLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.InstagramSettings
@@ -421,6 +423,14 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/tidal/login") {
         TidalLoginScreen(navController)
+    }
+
+    composable("settings/integrations/deezer") {
+        DeezerSettings(navController)
+    }
+
+    composable("settings/integrations/deezer/login") {
+        DeezerLoginScreen(navController)
     }
 
     composable("settings/integrations/soundcloud") {

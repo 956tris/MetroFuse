@@ -29,13 +29,25 @@ fun PlayerSliderTrack(
     sliderState: SliderState,
     modifier: Modifier = Modifier,
     colors: SliderColors = SliderDefaults.colors(),
-    trackHeight: Dp = 10.dp
+    trackHeight: Dp = 10.dp,
+    bufferedValue: Float? = null,
 ) {
     val inactiveTrackColor = colors.inactiveTrackColor
     val activeTrackColor = colors.activeTrackColor
+    val bufferedTrackColor = activeTrackColor.copy(alpha = 0.46f)
     val inactiveTickColor = colors.inactiveTickColor
     val activeTickColor = colors.activeTickColor
     val valueRange = sliderState.valueRange
+    val activeFraction =
+        calcFraction(
+            valueRange.start,
+            valueRange.endInclusive,
+            sliderState.value.coerceIn(valueRange.start, valueRange.endInclusive)
+        )
+    val bufferedFraction =
+        bufferedValue
+            ?.let { calcFraction(valueRange.start, valueRange.endInclusive, it.coerceIn(valueRange.start, valueRange.endInclusive)) }
+            ?.coerceAtLeast(activeFraction)
     Canvas(
         modifier
             .fillMaxWidth()
@@ -44,12 +56,10 @@ fun PlayerSliderTrack(
         drawTrack(
             stepsToTickFractions(sliderState.steps),
             0f,
-            calcFraction(
-                valueRange.start,
-                valueRange.endInclusive,
-                sliderState.value.coerceIn(valueRange.start, valueRange.endInclusive)
-            ),
+            activeFraction,
+            bufferedFraction,
             inactiveTrackColor,
+            bufferedTrackColor,
             activeTrackColor,
             inactiveTickColor,
             activeTickColor,
@@ -62,7 +72,9 @@ private fun DrawScope.drawTrack(
     tickFractions: FloatArray,
     activeRangeStart: Float,
     activeRangeEnd: Float,
+    bufferedRangeEnd: Float?,
     inactiveTrackColor: Color,
+    bufferedTrackColor: Color,
     activeTrackColor: Color,
     inactiveTickColor: Color,
     activeTickColor: Color,
@@ -82,6 +94,20 @@ private fun DrawScope.drawTrack(
         trackStrokeWidth,
         StrokeCap.Round
     )
+    bufferedRangeEnd?.takeIf { it > activeRangeEnd }?.let { bufferedEnd ->
+        val bufferedValueEnd = Offset(
+            sliderStart.x +
+                    (sliderEnd.x - sliderStart.x) * bufferedEnd,
+            center.y
+        )
+        drawLine(
+            bufferedTrackColor,
+            sliderStart,
+            bufferedValueEnd,
+            trackStrokeWidth,
+            StrokeCap.Round
+        )
+    }
     val sliderValueEnd = Offset(
         sliderStart.x +
                 (sliderEnd.x - sliderStart.x) * activeRangeEnd,

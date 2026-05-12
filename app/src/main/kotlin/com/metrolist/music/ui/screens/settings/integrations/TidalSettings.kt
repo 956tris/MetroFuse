@@ -34,14 +34,20 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
+import com.metrolist.music.constants.PreferTidalAudioKey
 import com.metrolist.music.constants.TidalArtworkFallbackEnabledKey
+import com.metrolist.music.constants.TidalAudioQuality
+import com.metrolist.music.constants.TidalAudioQualityKey
+import com.metrolist.music.constants.TidalAudioQualityOptions
 import com.metrolist.music.constants.TidalCookieKey
+import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
+import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.utils.tidal.isTidalCookieConfigured
 import com.metrolist.music.utils.tidal.normalizeTidalCookieInput
@@ -51,11 +57,15 @@ import com.metrolist.music.utils.tidal.normalizeTidalCookieInput
 fun TidalSettings(
     navController: NavController,
 ) {
+    val (preferTidalAudio, onPreferTidalAudioChange) =
+        rememberPreference(PreferTidalAudioKey, false)
+    var audioQuality by rememberEnumPreference(TidalAudioQualityKey, TidalAudioQuality.AAC_320)
     val (tidalArtworkFallbackEnabled, onTidalArtworkFallbackEnabledChange) =
         rememberPreference(TidalArtworkFallbackEnabledKey, false)
     var tidalCookie by rememberPreference(TidalCookieKey, "")
     val cookieConfigured = isTidalCookieConfigured(tidalCookie)
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
+    var showQualityDialog by rememberSaveable { mutableStateOf(false) }
 
     if (showCookieDialog) {
         TextFieldDialog(
@@ -75,6 +85,20 @@ fun TidalSettings(
             extraContent = {
                 InfoLabel(text = stringResource(R.string.tidal_cookie_helper))
             },
+        )
+    }
+
+    if (showQualityDialog) {
+        EnumDialog(
+            onDismiss = { showQualityDialog = false },
+            onSelect = { value ->
+                audioQuality = value
+                showQualityDialog = false
+            },
+            title = stringResource(R.string.tidal_audio_quality),
+            current = audioQuality,
+            values = TidalAudioQualityOptions,
+            valueText = { it.labelText() },
         )
     }
 
@@ -98,6 +122,38 @@ fun TidalSettings(
             title = stringResource(R.string.general),
             items =
                 listOf(
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.prefer_tidal_audio)) },
+                        description = { Text(stringResource(R.string.prefer_tidal_audio_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = preferTidalAudio,
+                                onCheckedChange = onPreferTidalAudioChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (preferTidalAudio) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.album),
+                        onClick = {
+                            onPreferTidalAudioChange(!preferTidalAudio)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.tidal_audio_quality)) },
+                        description = { Text(audioQuality.labelText()) },
+                        icon = painterResource(R.drawable.equalizer),
+                        onClick = {
+                            showQualityDialog = true
+                        },
+                    ),
                     Material3SettingsItem(
                         title = { Text(stringResource(R.string.tidal_artwork_fallback)) },
                         description = { Text(stringResource(R.string.tidal_artwork_fallback_desc)) },
@@ -185,3 +241,10 @@ fun TidalSettings(
         },
     )
 }
+
+@Composable
+private fun TidalAudioQuality.labelText(): String =
+    when (this) {
+        TidalAudioQuality.AAC_320 -> stringResource(R.string.tidal_quality_aac_320)
+        TidalAudioQuality.HI_RES_LOSSLESS -> stringResource(R.string.tidal_quality_hires)
+    }

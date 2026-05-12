@@ -87,6 +87,9 @@ import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.constants.ListItemHeight
+import com.metrolist.music.constants.MetroMixEnabledKey
+import com.metrolist.music.constants.MetroMixPreset
+import com.metrolist.music.constants.MetroMixPresetKey
 import com.metrolist.music.constants.PlayerInlineLyricsKey
 import com.metrolist.music.constants.VarispeedKey
 import com.metrolist.music.listentogether.ConnectionState
@@ -96,12 +99,16 @@ import com.metrolist.music.playback.ExoDownloadService
 import com.metrolist.music.db.entities.Song
 import com.metrolist.music.db.entities.SpeedDialItem
 import com.metrolist.music.ui.component.BottomSheetState
+import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.ListDialog
 import com.metrolist.music.ui.component.Material3MenuGroup
 import com.metrolist.music.ui.component.Material3MenuItemData
 import com.metrolist.music.ui.component.NewAction
 import com.metrolist.music.ui.component.NewActionGrid
 import com.metrolist.music.ui.component.VolumeSlider
+import com.metrolist.music.ui.utils.metroMixPresetDescription
+import com.metrolist.music.ui.utils.metroMixPresetLabel
+import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -139,6 +146,8 @@ fun PlayerMenu(
 
     val varispeedMode by rememberPreference(VarispeedKey, defaultValue = false)
     var playerInlineLyricsEnabled by rememberPreference(PlayerInlineLyricsKey, defaultValue = true)
+    var metroMixEnabled by rememberPreference(MetroMixEnabledKey, defaultValue = false)
+    var metroMixPreset by rememberEnumPreference(MetroMixPresetKey, defaultValue = MetroMixPreset.AUTO)
 
     val librarySong by database.song(mediaMetadata.id).collectAsStateWithLifecycle(initialValue = null)
     val coroutineScope = rememberCoroutineScope()
@@ -246,6 +255,25 @@ fun PlayerMenu(
     if (showSpeedDialog) {
         SpeedDialog(
             onDismiss = { showSpeedDialog = false },
+        )
+    }
+
+    var showMetroMixPresetDialog by rememberSaveable {
+        mutableStateOf(false)
+    }
+
+    if (showMetroMixPresetDialog) {
+        EnumDialog(
+            onDismiss = { showMetroMixPresetDialog = false },
+            onSelect = {
+                metroMixPreset = it
+                showMetroMixPresetDialog = false
+            },
+            title = stringResource(R.string.metromix_preset),
+            current = metroMixPreset,
+            values = MetroMixPreset.values().toList(),
+            valueText = { metroMixPresetLabel(it) },
+            valueDescription = { metroMixPresetDescription(it) },
         )
     }
 
@@ -681,6 +709,63 @@ fun PlayerMenu(
                                         listenTogetherManager.requestSync()
                                         onDismiss()
                                     },
+                                ),
+                            )
+                        }
+                    },
+            )
+        }
+
+        item { Spacer(modifier = Modifier.height(12.dp)) }
+
+        item {
+            Material3MenuGroup(
+                items =
+                    buildList {
+                        add(
+                            Material3MenuItemData(
+                                title = { Text(text = stringResource(R.string.metromix)) },
+                                description = {
+                                    Text(
+                                        text =
+                                            if (metroMixEnabled) {
+                                                stringResource(R.string.metromix_enabled_desc, metroMixPresetLabel(metroMixPreset))
+                                            } else {
+                                                stringResource(R.string.metromix_desc)
+                                            },
+                                    )
+                                },
+                                icon = {
+                                    Icon(
+                                        painter = painterResource(R.drawable.shuffle),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(24.dp),
+                                    )
+                                },
+                                trailingContent = {
+                                    Switch(
+                                        checked = metroMixEnabled,
+                                        onCheckedChange = { metroMixEnabled = it },
+                                    )
+                                },
+                                onClick = {
+                                    metroMixEnabled = !metroMixEnabled
+                                },
+                            ),
+                        )
+                        if (metroMixEnabled) {
+                            add(
+                                Material3MenuItemData(
+                                    title = { Text(text = stringResource(R.string.metromix_preset)) },
+                                    description = { Text(text = metroMixPresetDescription(metroMixPreset)) },
+                                    icon = {
+                                        Icon(
+                                            painter = painterResource(R.drawable.tune),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(24.dp),
+                                        )
+                                    },
+                                    onClick = { showMetroMixPresetDialog = true },
                                 ),
                             )
                         }

@@ -129,6 +129,7 @@ import com.metrolist.music.db.entities.Playlist
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.PlaylistSongMap
 import com.metrolist.music.db.entities.Song
+import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.playback.queues.ListQueue
@@ -137,6 +138,7 @@ import com.metrolist.music.playback.queues.YouTubeAlbumRadio
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
+import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.ui.component.AlbumGridItem
 import com.metrolist.music.ui.component.ArtistGridItem
 import com.metrolist.music.ui.component.ChipsRow
@@ -1169,7 +1171,14 @@ fun HomeScreen(
     }
 
     fun navigateExternalHomeItem(item: YTItem) {
-        if (item is SongItem && SoundCloudAudioProvider.isSoundCloudUrl(item.id)) {
+        if (
+            item is SongItem &&
+            (
+                SoundCloudAudioProvider.isSoundCloudUrl(item.id) ||
+                    TidalAudioProvider.isTidalTrackId(item.id) ||
+                    DeezerAudioProvider.isDeezerTrackId(item.id)
+            )
+        ) {
             if (!isListenTogetherGuest) {
                 playerConnection.playQueue(
                     ListQueue(
@@ -1458,6 +1467,7 @@ fun HomeScreen(
                                 HomeFeedSource.TIDAL to stringResource(R.string.home_source_tidal),
                                 HomeFeedSource.SPOTIFY to stringResource(R.string.home_source_spotify),
                                 HomeFeedSource.SOUNDCLOUD to stringResource(R.string.home_source_soundcloud),
+                                HomeFeedSource.DEEZER to stringResource(R.string.home_source_deezer),
                                 HomeFeedSource.OFFLINE to stringResource(R.string.home_source_offline),
                             ),
                         currentValue = homeFeedSource,
@@ -2646,11 +2656,12 @@ fun HomeScreen(
                                 return@forEach
                             }
                             val sectionData = homePage?.sections?.getOrNull(section.index)
-                            if (homeFeedSource == HomeFeedSource.SOUNDCLOUD) {
+                            if (homeFeedSource == HomeFeedSource.SOUNDCLOUD || homeFeedSource == HomeFeedSource.DEEZER) {
+                                val externalHomeKey = homeFeedSource.name.lowercase()
                                 if (sectionData != null && sectionData.items.isNotEmpty()) {
                                     val distinctItems = sectionData.items.distinctBy { it.id }
 
-                                    item(key = "soundcloud_home_section_title_${section.index}") {
+                                    item(key = "${externalHomeKey}_home_section_title_${section.index}") {
                                         NavigationTitle(
                                             title = sectionData.title,
                                             label = sectionData.label,
@@ -2659,7 +2670,7 @@ fun HomeScreen(
                                     }
 
                                     if (section.index == 0) {
-                                        item(key = "soundcloud_home_section_grid_${section.index}") {
+                                        item(key = "${externalHomeKey}_home_section_grid_${section.index}") {
                                             LazyHorizontalGrid(
                                                 state = rememberLazyGridState(),
                                                 rows = GridCells.Fixed(2),
@@ -2675,7 +2686,7 @@ fun HomeScreen(
                                             ) {
                                                 items(
                                                     items = distinctItems,
-                                                    key = { "soundcloud_compact_${it.id}" },
+                                                    key = { "${externalHomeKey}_compact_${it.id}" },
                                                 ) { item ->
                                                     SpotifyCompactHomeItem(
                                                         item = item,
@@ -2696,7 +2707,7 @@ fun HomeScreen(
                                             }
                                         }
                                     } else {
-                                        item(key = "soundcloud_home_section_shelf_${section.index}") {
+                                        item(key = "${externalHomeKey}_home_section_shelf_${section.index}") {
                                             LazyRow(
                                                 contentPadding =
                                                     WindowInsets.systemBars
@@ -2706,7 +2717,7 @@ fun HomeScreen(
                                             ) {
                                                 items(
                                                     items = distinctItems,
-                                                    key = { "soundcloud_shelf_${it.id}" },
+                                                    key = { "${externalHomeKey}_shelf_${it.id}" },
                                                 ) { item ->
                                                     SpotifyShelfItem(
                                                         item = item,

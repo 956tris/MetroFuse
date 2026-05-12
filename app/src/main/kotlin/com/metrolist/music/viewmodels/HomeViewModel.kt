@@ -26,6 +26,7 @@ import com.metrolist.innertube.pages.ExplorePage
 import com.metrolist.innertube.pages.HomePage
 import com.metrolist.innertube.utils.completed
 import com.metrolist.music.R
+import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.HideYoutubeShortsKey
@@ -48,6 +49,7 @@ import com.metrolist.music.extensions.filterVideoSongs
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.SimilarRecommendation
 import com.metrolist.music.playback.PublicDownloadExporter
+import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.ui.screens.wrapped.WrappedAudioService
@@ -702,6 +704,13 @@ class HomeViewModel @Inject constructor(
                 }.onFailure { reportException(it) }
             }
 
+            HomeFeedSource.DEEZER -> {
+                val cookie = context.dataStore.get(DeezerCookieKey, "")
+                DeezerHomeFeedProvider.load(cookie).onSuccess { page ->
+                    homePage.value = page.filtered(hideExplicit, hideVideoSongs, hideYoutubeShorts)
+                }.onFailure { reportException(it) }
+            }
+
             HomeFeedSource.OFFLINE -> {
                 val localSongs = database.localSongsByCreateDateAsc().first()
                 val localSongCountText =
@@ -918,6 +927,7 @@ class HomeViewModel @Inject constructor(
                             it[SpotifyCookieKey],
                             it[TidalCookieKey],
                             it[SoundCloudAuthTokenKey],
+                            it[DeezerCookieKey],
                         ),
                     )
                 }

@@ -90,12 +90,15 @@ import com.metrolist.music.constants.MiniPlayerBottomSpacing
 import com.metrolist.music.constants.MiniPlayerHeight
 import com.metrolist.music.constants.NavigationBarHeight
 import com.metrolist.music.constants.PauseSearchHistoryKey
+import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.db.entities.SearchHistory
 import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.YouTubeQueue
+import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
+import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.ui.component.ChipsRow
 import com.metrolist.music.ui.component.EmptyPlaceholder
 import com.metrolist.music.ui.component.HideOnScrollFAB
@@ -160,6 +163,9 @@ fun OnlineSearchResult(
     val pauseSearchHistory by rememberPreference(PauseSearchHistoryKey, defaultValue = false)
     val hideVideoSongs by rememberPreference(HideVideoSongsKey, defaultValue = false)
     val isSoundCloudSearch = viewModel.isSoundCloudSearch
+    val isTidalSearch = viewModel.isTidalSearch
+    val isDeezerSearch = viewModel.isDeezerSearch
+    val isExternalSearch = isSoundCloudSearch || isTidalSearch || isDeezerSearch
 
     BackHandler(enabled = isSearchFocused) {
         isSearchFocused = false
@@ -242,7 +248,11 @@ fun OnlineSearchResult(
             return
         }
 
-        if (SoundCloudAudioProvider.isSoundCloudUrl(item.id)) {
+        if (
+            SoundCloudAudioProvider.isSoundCloudUrl(item.id) ||
+            TidalAudioProvider.isTidalTrackId(item.id) ||
+            DeezerAudioProvider.isDeezerTrackId(item.id)
+        ) {
             playerConnection.playQueue(
                 ListQueue(
                     title = item.title,
@@ -343,15 +353,21 @@ fun OnlineSearchResult(
                                 }
 
                                 is AlbumItem -> {
-                                    navController.navigate("album/${item.id}")
+                                    ExternalHomeItemIds.externalMetroRoute(item)
+                                        ?.let(navController::navigate)
+                                        ?: navController.navigate("album/${item.id}")
                                 }
 
                                 is ArtistItem -> {
-                                    navController.navigate("artist/${item.id}")
+                                    ExternalHomeItemIds.externalMetroRoute(item)
+                                        ?.let(navController::navigate)
+                                        ?: navController.navigate("artist/${item.id}")
                                 }
 
                                 is PlaylistItem -> {
-                                    navController.navigate("online_playlist/${item.id}")
+                                    ExternalHomeItemIds.externalMetroRoute(item)
+                                        ?.let(navController::navigate)
+                                        ?: navController.navigate("online_playlist/${item.id}")
                                 }
 
                                 is PodcastItem -> {
@@ -396,6 +412,10 @@ fun OnlineSearchResult(
                         stringResource(
                             if (isSoundCloudSearch) {
                                 R.string.search_soundcloud
+                            } else if (isTidalSearch) {
+                                R.string.search_tidal
+                            } else if (isDeezerSearch) {
+                                R.string.search_deezer
                             } else {
                                 R.string.search_yt_music
                             },
@@ -477,18 +497,22 @@ fun OnlineSearchResult(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 val visibleChips =
-                    if (isSoundCloudSearch) {
-                        listOf(
-                            null to stringResource(R.string.filter_all),
-                            FILTER_SONG to stringResource(R.string.filter_songs),
-                            FILTER_ALBUM to stringResource(R.string.filter_albums),
-                            FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_community_playlists),
-                        )
+                    if (isExternalSearch) {
+                        buildList {
+                            add(null to stringResource(R.string.filter_all))
+                            add(FILTER_SONG to stringResource(R.string.filter_songs))
+                            add(FILTER_ALBUM to stringResource(R.string.filter_albums))
+                            if (isTidalSearch || isDeezerSearch) {
+                                add(FILTER_ARTIST to stringResource(R.string.filter_artists))
+                            }
+                            add(FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_community_playlists))
+                        }
                     } else {
                         listOf(
                             null to stringResource(R.string.filter_all),
                             FILTER_SONG to stringResource(R.string.filter_songs),
-                        ).let { baseChips ->
+                        )
+                            .let { baseChips ->
                             if (!hideVideoSongs) {
                                 baseChips + (FILTER_VIDEO to stringResource(R.string.filter_videos))
                             } else {

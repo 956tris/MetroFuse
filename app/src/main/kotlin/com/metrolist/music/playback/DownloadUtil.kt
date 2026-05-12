@@ -19,11 +19,15 @@ import com.metrolist.music.apple.AppleMusicAwareDataSourceFactory
 import com.metrolist.music.apple.AppleMusicSongResolver
 import com.metrolist.music.apple.AppleMusicWrapperDataSource
 import com.metrolist.music.constants.AppleMusicFallbackEnabledKey
+import com.metrolist.music.constants.DeezerAudioQuality
+import com.metrolist.music.constants.DeezerAudioQualityKey
+import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
 import com.metrolist.music.constants.PreferAppleMusicKey
+import com.metrolist.music.constants.PreferDeezerAudioKey
 import com.metrolist.music.constants.PreferSoundCloudAudioKey
 import com.metrolist.music.constants.PreferInstagramAudioKey
 import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
@@ -34,6 +38,9 @@ import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.FormatEntity
 import com.metrolist.music.db.entities.Song
+import com.metrolist.music.deezer.DeezerAudioAwareDataSourceFactory
+import com.metrolist.music.deezer.DeezerAudioDataSource
+import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
 import com.metrolist.music.extensions.toEnum
@@ -129,15 +136,16 @@ constructor(
 
     private val dataSourceFactory =
         ResolvingDataSource.Factory(
-            AppleMusicAwareDataSourceFactory(
-                CacheDataSource
-                    .Factory()
-                    .setCache(playerCache)
-                    .setUpstreamDataSourceFactory(
-                        OkHttpDataSource.Factory(
-                            OkHttpClient
-                                .Builder()
-                                .addInterceptor { chain ->
+            DeezerAudioAwareDataSourceFactory(
+                AppleMusicAwareDataSourceFactory(
+                    CacheDataSource
+                        .Factory()
+                        .setCache(playerCache)
+                        .setUpstreamDataSourceFactory(
+                            OkHttpDataSource.Factory(
+                                OkHttpClient
+                                    .Builder()
+                                    .addInterceptor { chain ->
                                     var request = chain.request()
                                     if (request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY) != null) {
                                         val clientName = request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY)
@@ -190,10 +198,11 @@ constructor(
                                                 instagramUserAgent,
                                             ).build()
                                     }
-                                    chain.proceed(request)
-                                }.build(),
+                                        chain.proceed(request)
+                                    }.build(),
+                            ),
                         ),
-                    ),
+                ),
             ),
         ) { dataSpec ->
             val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey) ?: error("No media id")
@@ -203,6 +212,12 @@ constructor(
                 return@Factory dataSpec
                     .buildUpon()
                     .setKey(appleWrapperCacheKey(mediaId))
+                    .build()
+            }
+            if (DeezerAudioDataSource.isDeezerUri(dataSpec.uri)) {
+                return@Factory dataSpec
+                    .buildUpon()
+                    .setKey(deezerFallbackCacheKey(mediaId))
                     .build()
             }
 
@@ -253,6 +268,9 @@ constructor(
     private fun currentStreamSelectionKey(context: Context): String {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = context.dataStore.get(PreferAppleMusicKey, false)
+        val preferDeezerAudio = context.dataStore.get(PreferDeezerAudioKey, false)
+        val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
+        val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val preferSoundCloudAudio = context.dataStore.get(PreferSoundCloudAudioKey, false)
         val preferInstagramAudio = context.dataStore.get(PreferInstagramAudioKey, false)
         val preferYouTubeMusicAudio = context.dataStore.get(PreferYouTubeMusicAudioKey, false)
@@ -275,6 +293,9 @@ constructor(
         return listOf(
             "appleFallback=$appleMusicFallbackEnabled",
             "preferApple=$preferAppleMusic",
+            "preferDeezer=$preferDeezerAudio",
+            "deezerResolver=${deezerResolverUrl.hashCode()}",
+            "deezerQuality=${deezerQuality.name}",
             "preferSoundCloud=$preferSoundCloudAudio",
             "preferInstagram=$preferInstagramAudio",
             "preferYouTube=$preferYouTubeMusicAudio",
@@ -296,6 +317,9 @@ constructor(
     ): DownloadStreamResolution {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
         val preferAppleMusic = appleMusicFallbackEnabled && context.dataStore.get(PreferAppleMusicKey, false)
+        val preferDeezerAudio = context.dataStore.get(PreferDeezerAudioKey, false)
+        val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
+        val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val preferSoundCloudAudio = context.dataStore.get(PreferSoundCloudAudioKey, false)
         val preferInstagramAudio = context.dataStore.get(PreferInstagramAudioKey, false)
         val preferYouTubeMusicAudio = context.dataStore.get(PreferYouTubeMusicAudioKey, false)
@@ -308,6 +332,7 @@ constructor(
             ?: InstagramAudioProvider.DEFAULT_APP_ID
         val instagramUuid = context.dataStore.get(InstagramUuidKey, "")
         val soundCloudAuthToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
+        val directDeezerMediaId = DeezerAudioProvider.isDeezerTrackId(mediaId)
         val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
 
         fun AppleMusicSongResolver.Resolved.toDownloadResolution(): DownloadStreamResolution =
@@ -324,6 +349,14 @@ constructor(
                 expiresAtMs = expiresAtMs,
                 cacheKey = qobuzFallbackCacheKey(mediaId),
                 format = qobuzFallbackFormat(mediaId, this),
+            )
+
+        fun DeezerAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
+            DownloadStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = deezerFallbackCacheKey(mediaId),
+                format = deezerFallbackFormat(mediaId, this),
             )
 
         fun SoundCloudAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
@@ -350,6 +383,8 @@ constructor(
             }
         var soundCloudAttempt: Result<SoundCloudAudioProvider.Resolved> =
             Result.failure(IllegalStateException("SoundCloud not attempted yet"))
+        var deezerAttempt: Result<DeezerAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Deezer audio not enabled"))
         var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Instagram audio not enabled"))
         var youtubeAttempt: Result<DownloadStreamResolution> =
@@ -361,6 +396,23 @@ constructor(
             }
             soundCloudAttempt.getOrNull()?.let { resolved ->
                 Timber.tag(TAG).i("Using preferred SoundCloud stream for download $mediaId: ${resolved.title}")
+                return resolved.toDownloadResolution()
+            }
+        }
+
+        if (preferDeezerAudio || directDeezerMediaId) {
+            deezerAttempt = runCatching {
+                DeezerAudioProvider.resolve(
+                    buildDeezerQuery(
+                        mediaId = mediaId,
+                        song = song,
+                        resolverUrl = deezerResolverUrl,
+                        quality = deezerQuality,
+                    ),
+                )
+            }
+            deezerAttempt.getOrNull()?.let { resolved ->
+                Timber.tag(TAG).i("Using preferred Deezer stream for download $mediaId: ${resolved.label}")
                 return resolved.toDownloadResolution()
             }
         }
@@ -435,6 +487,13 @@ constructor(
 
         val youtubeError = youtubeAttempt.exceptionOrNull() ?: IllegalStateException("YouTube fallback failed")
         val soundCloudError = soundCloudAttempt.exceptionOrNull() ?: IllegalStateException("SoundCloud fallback failed")
+        val deezerDetail = if (preferDeezerAudio || directDeezerMediaId) {
+            deezerAttempt.exceptionOrNull()?.message
+                ?.let { "Deezer failed: $it; " }
+                .orEmpty()
+        } else {
+            ""
+        }
         val instagramDetail = if (preferInstagramAudio) {
             instagramAttempt.exceptionOrNull()?.message
                 ?.let { "Instagram failed: $it; " }
@@ -445,7 +504,7 @@ constructor(
         val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
         val appleError = appleAttempt.exceptionOrNull() ?: IllegalStateException("Apple Music failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${instagramDetail}Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; SoundCloud failed: ${soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${instagramDetail}Apple Music failed: ${appleError.message ?: appleError.javaClass.simpleName}; SoundCloud failed: ${soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
             youtubeError,
         )
     }
@@ -503,6 +562,7 @@ constructor(
                 ?.times(1000L),
             countryCode = country,
             backend = when (backend) {
+                QobuzBackend.TRYPT -> QobuzAudioProvider.ResolverBackend.TRYPT
                 QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
                 QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
                 QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
@@ -523,6 +583,27 @@ constructor(
                 ?.takeIf { it > 0 }
                 ?.toLong()
                 ?.times(1000L),
+        )
+    }
+
+    private fun buildDeezerQuery(
+        mediaId: String,
+        song: Song?,
+        resolverUrl: String,
+        quality: DeezerAudioQuality,
+    ): DeezerAudioProvider.Query {
+        return DeezerAudioProvider.Query(
+            mediaId = mediaId,
+            title = song?.song?.title ?: mediaId,
+            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
+            album = song?.song?.albumName ?: song?.album?.title,
+            isrc = null,
+            durationMs = song?.song?.duration
+                ?.takeIf { it > 0 }
+                ?.toLong()
+                ?.times(1000L),
+            resolverUrl = resolverUrl,
+            quality = quality,
         )
     }
 
@@ -669,6 +750,7 @@ constructor(
     private companion object {
         private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
         private const val QOBUZ_FALLBACK_ITAG = 100_027
+        private const val DEEZER_FALLBACK_ITAG = 100_033
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val INSTAGRAM_FALLBACK_ITAG = 100_041
         private const val OLD_APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
@@ -676,6 +758,7 @@ constructor(
         private const val APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac-v3:"
         private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
+        private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
         private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
@@ -683,6 +766,8 @@ constructor(
         private fun appleWrapperCacheKey(mediaId: String) = "$APPLE_WRAPPER_CACHE_PREFIX$mediaId"
 
         private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
+
+        private fun deezerFallbackCacheKey(mediaId: String) = "$DEEZER_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
@@ -696,6 +781,7 @@ constructor(
             .removePrefix(OLD_APPLE_WRAPPER_CACHE_PREFIX)
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
+            .removePrefix(DEEZER_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
             .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
@@ -728,6 +814,22 @@ constructor(
             bitrate = resolved.bitrate,
             sampleRate = resolved.sampleRate,
             contentLength = 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun deezerFallbackFormat(
+            mediaId: String,
+            resolved: DeezerAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = DEEZER_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = resolved.contentLength ?: 0L,
             loudnessDb = null,
             perceptualLoudnessDb = null,
             playbackUrl = null,

@@ -383,7 +383,16 @@ class PlayerConnection(
             if (castHandler?.isCasting?.value == true) {
                 castHandler.seekTo(position)
             } else {
-                player.seekTo(position)
+                val currentPlayer = player
+                val currentIndex = currentPlayer.currentMediaItemIndex
+                if (currentIndex >= 0) {
+                    currentPlayer.seekTo(currentIndex, position.coerceAtLeast(0L))
+                } else {
+                    currentPlayer.seekTo(position.coerceAtLeast(0L))
+                }
+                if (currentPlayer.playbackState == Player.STATE_IDLE || currentPlayer.playbackState == Player.STATE_ENDED) {
+                    currentPlayer.prepare()
+                }
             }
         } catch (e: Exception) {
             Timber.tag(TAG).e(e, "Error in seekTo")
@@ -398,6 +407,7 @@ class PlayerConnection(
                 castHandler.skipToNext()
                 return
             }
+            service.prepareManualPlaybackTransition()
             player.seekToNext()
             if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {
                 player.prepare()
@@ -422,6 +432,7 @@ class PlayerConnection(
 
             // Logic to mimic standard seekToPrevious behavior but with explicit callbacks
             // If we are more than 3 seconds in, just restart the song
+            service.prepareManualPlaybackTransition()
             if (player.currentPosition > 3000 || !player.hasPreviousMediaItem()) {
                 player.seekTo(0)
                 if (player.playbackState == Player.STATE_IDLE || player.playbackState == Player.STATE_ENDED) {

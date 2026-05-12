@@ -118,10 +118,40 @@ enum class AudioQuality {
 
 val AppleMusicFallbackEnabledKey = booleanPreferencesKey("appleMusicFallbackEnabled")
 val PreferAppleMusicKey = booleanPreferencesKey("preferAppleMusic")
+val PreferTidalAudioKey = booleanPreferencesKey("preferTidalAudio")
+val TidalAudioQualityKey = stringPreferencesKey("tidalAudioQuality")
+val PreferDeezerAudioKey = booleanPreferencesKey("preferDeezerAudio")
+val DeezerResolverUrlKey = stringPreferencesKey("deezerResolverUrl")
+val DeezerAudioQualityKey = stringPreferencesKey("deezerAudioQuality")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
 
+enum class TidalAudioQuality {
+    AAC_320,
+    HI_RES_LOSSLESS,
+}
+
+val TidalAudioQualityOptions =
+    listOf(
+        TidalAudioQuality.AAC_320,
+        TidalAudioQuality.HI_RES_LOSSLESS,
+    )
+
+enum class DeezerAudioQuality {
+    MP3_128,
+    MP3_320,
+    FLAC,
+}
+
+val DeezerAudioQualityOptions =
+    listOf(
+        DeezerAudioQuality.MP3_128,
+        DeezerAudioQuality.MP3_320,
+        DeezerAudioQuality.FLAC,
+    )
+
 enum class QobuzBackend {
+    TRYPT,
     JUMO,
     KENNY,
     SQUID,
@@ -129,6 +159,7 @@ enum class QobuzBackend {
 
 val QobuzBackendOptions =
     listOf(
+        QobuzBackend.TRYPT,
         QobuzBackend.JUMO,
         QobuzBackend.KENNY,
         QobuzBackend.SQUID,
@@ -169,6 +200,30 @@ val PreventDuplicateTracksInQueueKey = booleanPreferencesKey("preventDuplicateTr
 val CrossfadeEnabledKey = booleanPreferencesKey("crossfadeEnabled")
 val CrossfadeDurationKey = floatPreferencesKey("crossfadeDurationFloat")
 val CrossfadeGaplessKey = booleanPreferencesKey("crossfadeGapless")
+val MetroMixEnabledKey = booleanPreferencesKey("metroMixEnabled")
+val MetroMixPresetKey = stringPreferencesKey("metroMixPreset")
+
+enum class MetroMixPreset(
+    val durationSeconds: Float,
+) {
+    AUTO(7f),
+    SMART_DJ(8f),
+    BEAT_BLEND(10f),
+    ENERGY_MATCH(8f),
+    CLUB_BLEND(12f),
+    VOCAL_BLEND(6f),
+    BASS_SWAP(5f),
+    RADIO_EDIT(3f),
+    QUICK_CUT(1.5f),
+    LOOP_OUT(8f),
+    FADE(5f),
+    RISE(8f),
+    BLEND(10f),
+    DROP(2f),
+    ECHO_OUT(6f),
+    SMOOTH(7f),
+    LONG_BLEND(12f),
+}
 
 val MaxImageCacheSizeKey = intPreferencesKey("maxImageCacheSize")
 val MaxSongCacheSizeKey = intPreferencesKey("maxSongCacheSize")
@@ -226,6 +281,7 @@ val EmbedAnimatedCanvasKey = booleanPreferencesKey("embedAnimatedCanvas")
 val SpotifyCookieKey = stringPreferencesKey("spotifyCanvasCookie")
 val TidalCookieKey = stringPreferencesKey("tidalCookie")
 val TidalArtworkFallbackEnabledKey = booleanPreferencesKey("tidalArtworkFallbackEnabled")
+val DeezerCookieKey = stringPreferencesKey("deezerCookie")
 val SoundCloudAuthTokenKey = stringPreferencesKey("soundCloudAuthToken")
 val PreferSoundCloudAudioKey = booleanPreferencesKey("preferSoundCloudAudio")
 val InstagramCookieKey = stringPreferencesKey("instagramCookie")
@@ -297,6 +353,7 @@ enum class HomeFeedSource {
     TIDAL,
     SPOTIFY,
     SOUNDCLOUD,
+    DEEZER,
     OFFLINE,
 }
 

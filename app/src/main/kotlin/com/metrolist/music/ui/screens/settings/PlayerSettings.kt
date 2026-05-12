@@ -56,6 +56,9 @@ import com.metrolist.music.constants.HistoryDuration
 import com.metrolist.music.constants.KeepScreenOn
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
+import com.metrolist.music.constants.MetroMixEnabledKey
+import com.metrolist.music.constants.MetroMixPreset
+import com.metrolist.music.constants.MetroMixPresetKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
@@ -99,6 +102,8 @@ import com.metrolist.music.ui.component.encodeDayTimes
 import com.metrolist.music.constants.SleepTimerFadeOutKey
 import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
 import com.metrolist.music.ui.utils.getLoudnessLevelLabel
+import com.metrolist.music.ui.utils.metroMixPresetDescription
+import com.metrolist.music.ui.utils.metroMixPresetLabel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -124,6 +129,14 @@ fun PlayerSettings(
     val (crossfadeGapless, onCrossfadeGaplessChange) = rememberPreference(
         CrossfadeGaplessKey,
         defaultValue = true
+    )
+    val (metroMixEnabled, onMetroMixEnabledChange) = rememberPreference(
+        MetroMixEnabledKey,
+        defaultValue = false
+    )
+    val (metroMixPreset, onMetroMixPresetChange) = rememberEnumPreference(
+        MetroMixPresetKey,
+        defaultValue = MetroMixPreset.AUTO
     )
     val (persistentQueue, onPersistentQueueChange) = rememberPreference(
         PersistentQueueKey,
@@ -261,6 +274,9 @@ fun PlayerSettings(
     var showLoudnessLevelDialog by remember {
         mutableStateOf(false)
     }
+    var showMetroMixPresetDialog by remember {
+        mutableStateOf(false)
+    }
 
     if (showAudioQualityDialog) {
         EnumDialog(
@@ -295,6 +311,7 @@ fun PlayerSettings(
             values = QobuzBackendOptions,
             valueText = {
                 when (it) {
+                    QobuzBackend.TRYPT -> stringResource(R.string.qobuz_backend_trypt)
                     QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
                     QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
                     QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
@@ -328,6 +345,21 @@ fun PlayerSettings(
             current = loudnessLevel,
             values = LoudnessLevel.values().toList(),
             valueText = { getLoudnessLevelLabel(it) }
+        )
+    }
+
+    if (showMetroMixPresetDialog) {
+        EnumDialog(
+            onDismiss = { showMetroMixPresetDialog = false },
+            onSelect = {
+                onMetroMixPresetChange(it)
+                showMetroMixPresetDialog = false
+            },
+            title = stringResource(R.string.metromix_preset),
+            current = metroMixPreset,
+            values = MetroMixPreset.values().toList(),
+            valueText = { metroMixPresetLabel(it) },
+            valueDescription = { metroMixPresetDescription(it) },
         )
     }
 
@@ -481,6 +513,7 @@ fun PlayerSettings(
                     description = {
                         Text(
                             when (qobuzBackend) {
+                                QobuzBackend.TRYPT -> stringResource(R.string.qobuz_backend_trypt)
                                 QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
                                 QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
                                 QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
@@ -495,6 +528,44 @@ fun PlayerSettings(
                     description = { Text(stringResource(R.string.qobuz_country_desc, qobuzCountry.uppercase(Locale.US))) },
                     onClick = { showQobuzCountryDialog = true }
                 ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.shuffle),
+                    title = { Text(stringResource(R.string.metromix)) },
+                    description = {
+                        Text(
+                            if (metroMixEnabled) {
+                                stringResource(R.string.metromix_enabled_desc, metroMixPresetLabel(metroMixPreset))
+                            } else {
+                                stringResource(R.string.metromix_desc)
+                            }
+                        )
+                    },
+                    showBadge = true,
+                    trailingContent = {
+                        Switch(
+                            checked = metroMixEnabled,
+                            onCheckedChange = onMetroMixEnabledChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (metroMixEnabled) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onMetroMixEnabledChange(!metroMixEnabled) }
+                ))
+                if (metroMixEnabled) {
+                    add(Material3SettingsItem(
+                        icon = painterResource(R.drawable.tune),
+                        title = { Text(stringResource(R.string.metromix_preset)) },
+                        description = { Text(metroMixPresetDescription(metroMixPreset)) },
+                        onClick = { showMetroMixPresetDialog = true }
+                    ))
+                }
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.linear_scale),
                     title = { Text(stringResource(R.string.crossfade)) },
@@ -659,19 +730,19 @@ fun PlayerSettings(
                     title = { Text(stringResource(R.string.audio_offload)) },
                     description = {
                         Text(
-                            if (crossfadeEnabled) stringResource(R.string.audio_offload_disabled_by_crossfade)
+                            if (crossfadeEnabled || metroMixEnabled) stringResource(R.string.audio_offload_disabled_by_transitions)
                             else stringResource(R.string.audio_offload_description)
                         )
                     },
                     trailingContent = {
                         Switch(
-                            checked = if (crossfadeEnabled) false else audioOffload,
+                            checked = if (crossfadeEnabled || metroMixEnabled) false else audioOffload,
                             onCheckedChange = onAudioOffloadChange,
-                            enabled = !crossfadeEnabled,
+                            enabled = !crossfadeEnabled && !metroMixEnabled,
                             thumbContent = {
                                 Icon(
                                     painter = painterResource(
-                                        id = if (!crossfadeEnabled && audioOffload) R.drawable.check else R.drawable.close
+                                        id = if (!crossfadeEnabled && !metroMixEnabled && audioOffload) R.drawable.check else R.drawable.close
                                     ),
                                     contentDescription = null,
                                     modifier = Modifier.size(SwitchDefaults.IconSize)
@@ -679,7 +750,7 @@ fun PlayerSettings(
                             }
                         )
                     },
-                    onClick = { if (!crossfadeEnabled) onAudioOffloadChange(!audioOffload) }
+                    onClick = { if (!crossfadeEnabled && !metroMixEnabled) onAudioOffloadChange(!audioOffload) }
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.graphic_eq),
