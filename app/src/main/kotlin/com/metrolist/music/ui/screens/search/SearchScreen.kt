@@ -209,10 +209,11 @@ fun SearchScreen(
                                                 when (searchSource) {
                                                     SearchSource.LOCAL -> R.string.search_library
                                                     SearchSource.ONLINE ->
-                                                        if (homeFeedSource == HomeFeedSource.SOUNDCLOUD) {
-                                                            R.string.search_soundcloud
-                                                        } else {
-                                                            R.string.search_yt_music
+                                                        when (homeFeedSource) {
+                                                            HomeFeedSource.SOUNDCLOUD -> R.string.search_soundcloud
+                                                            HomeFeedSource.TIDAL -> R.string.search_tidal
+                                                            HomeFeedSource.DEEZER -> R.string.search_deezer
+                                                            else -> R.string.search_yt_music
                                                         }
                                                 },
                                             ),

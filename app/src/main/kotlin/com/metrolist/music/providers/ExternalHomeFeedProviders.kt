@@ -13,6 +13,8 @@ import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.Album as TubeAlbum
 import com.metrolist.innertube.models.Artist as TubeArtist
 import com.metrolist.innertube.pages.HomePage
+import com.metrolist.innertube.pages.SearchSummary
+import com.metrolist.innertube.pages.SearchSummaryPage
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.utils.tidal.extractTidalAccessToken
 import com.metrolist.music.utils.tidal.extractTidalRefreshToken
@@ -82,6 +84,70 @@ object TidalHomeFeedProvider {
             runCatching {
                 loadPersonalizedHome(auth)
             }.getOrNull()?.sections?.isNotEmpty() == true
+        }
+
+    suspend fun search(
+        query: String,
+        cookie: String = "",
+    ): Result<SearchSummaryPage> =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val auth = tidalAuthInput(cookie)
+                val responseJson =
+                    client.newCall(
+                        tidalRequest(
+                            path = "v1/search",
+                            params =
+                                mapOf(
+                                    "query" to query,
+                                    "types" to "TRACKS,ALBUMS,PLAYLISTS,ARTISTS",
+                                    "limit" to "50",
+                                ),
+                            auth = auth,
+                            authenticated = auth.hasUserAuth,
+                        ),
+                    ).execute().use { response ->
+                        json.parseToJsonElement(response.requireTidalBody("TIDAL search")).jsonObject
+                    }
+
+                SearchSummaryPage(
+                    summaries =
+                        buildList {
+                            addSummary(
+                                "Songs",
+                                responseJson
+                                    .obj("tracks")
+                                    ?.array("items")
+                                    .orEmpty()
+                                    .mapNotNull { it.obj?.tidalWrappedContent()?.toTidalSong() },
+                            )
+                            addSummary(
+                                "Albums",
+                                responseJson
+                                    .obj("albums")
+                                    ?.array("items")
+                                    .orEmpty()
+                                    .mapNotNull { it.obj?.tidalWrappedContent()?.toTidalAlbum() },
+                            )
+                            addSummary(
+                                "Playlists",
+                                responseJson
+                                    .obj("playlists")
+                                    ?.array("items")
+                                    .orEmpty()
+                                    .mapNotNull { it.obj?.tidalWrappedContent()?.toTidalPlaylist() },
+                            )
+                            addSummary(
+                                "Artists",
+                                responseJson
+                                    .obj("artists")
+                                    ?.array("items")
+                                    .orEmpty()
+                                    .mapNotNull { it.obj?.tidalWrappedContent()?.toTidalArtist() },
+                            )
+                        },
+                )
+            }
         }
 
     suspend fun resolveAlbumArtwork(
@@ -1050,6 +1116,16 @@ object TidalHomeFeedProvider {
                 "https://resources.tidal.com/images/${value.replace("-", "/")}/$size.jpg"
             }
         }
+
+    private fun MutableList<SearchSummary>.addSummary(
+        title: String,
+        items: List<YTItem>,
+    ) {
+        val distinctItems = items.distinctBy { it.id }
+        if (distinctItems.isNotEmpty()) {
+            add(SearchSummary(title = title, items = distinctItems))
+        }
+    }
 }
 
 object SpotifyHomeFeedParser {
@@ -1324,8 +1400,10 @@ object ExternalHomeItemIds {
         return externalUrlProviderId(trimmed)
     }
 
-    fun externalMetroRoute(item: YTItem): String? {
-        val (provider, type, id) = externalProviderId(item.id) ?: return null
+    fun externalMetroRoute(item: YTItem): String? = externalMetroRoute(item.id)
+
+    fun externalMetroRoute(itemId: String): String? {
+        val (provider, type, id) = externalProviderId(itemId) ?: return null
         return when {
             provider == "metrofuse" && type == "playlist" && id == "create_offline" -> "create_offline_playlist"
             provider == "metrofuse" && type == "playlist" && id == "local" -> "auto_playlist/local"
@@ -1335,6 +1413,8 @@ object ExternalHomeItemIds {
             provider == "spotify" && type == "album" -> "online_playlist/$provider:album:$id"
             provider == "tidal" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
             provider == "soundcloud" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
+            provider == "deezer" && type == "album" -> "online_playlist/$provider:$type:$id"
+            provider == "deezer" && type == "artist" -> "online_playlist/$provider:$type:$id"
             else -> null
         }
     }
@@ -1356,6 +1436,12 @@ object ExternalHomeItemIds {
                     else -> null
                 }
 
+            "deezer" ->
+                when (type) {
+                    "track", "album", "artist", "playlist" -> "https://www.deezer.com/$type/$id"
+                    else -> null
+                }
+
             else -> null
         }
     }
@@ -1366,6 +1452,7 @@ object ExternalHomeItemIds {
             when {
                 "spotify.com/" in lower -> "spotify"
                 "tidal.com/" in lower -> "tidal"
+                "deezer.com/" in lower -> "deezer"
                 else -> return null
             }
 
@@ -1390,7 +1477,7 @@ object ExternalHomeItemIds {
             .substringBefore('/')
             .takeIf { it.isNotBlank() && it != "null" }
 
-    private val ExternalProviders = setOf("spotify", "tidal", "soundcloud", "metrofuse")
+    private val ExternalProviders = setOf("spotify", "tidal", "soundcloud", "deezer", "metrofuse")
     private val ExternalTypes = listOf("playlist", "track", "album", "artist", "mix")
 
     fun searchQuery(item: YTItem): String =

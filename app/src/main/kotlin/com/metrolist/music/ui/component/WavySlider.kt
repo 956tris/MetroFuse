@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
@@ -49,7 +50,8 @@ fun WavySlider(
     strokeWidth: Dp = 4.dp,
     thumbRadius: Dp = 8.dp,
     wavelength: Dp = WavyProgressIndicatorDefaults.LinearDeterminateWavelength,
-    waveSpeed: Dp = wavelength
+    waveSpeed: Dp = wavelength,
+    bufferedValue: Float? = null,
 ) {
     val density = LocalDensity.current
     val strokeWidthPx = with(density) { strokeWidth.toPx() }
@@ -58,8 +60,16 @@ fun WavySlider(
         Stroke(width = strokeWidthPx, cap = StrokeCap.Round) 
     }
     
-    val normalizedValue = ((value - valueRange.start) / (valueRange.endInclusive - valueRange.start))
-        .coerceIn(0f, 1f)
+    val duration = valueRange.endInclusive - valueRange.start
+    val normalizedValue = if (duration > 0f) {
+        ((value - valueRange.start) / duration).coerceIn(0f, 1f)
+    } else {
+        0f
+    }
+    val normalizedBufferedValue =
+        bufferedValue
+            ?.let { if (duration > 0f) ((it - valueRange.start) / duration).coerceIn(normalizedValue, 1f) else normalizedValue }
+            ?: normalizedValue
     
     var isDragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(normalizedValue) }
@@ -74,6 +84,7 @@ fun WavySlider(
     
     val activeColor = colors.activeTrackColor
     val inactiveColor = colors.inactiveTrackColor
+    val bufferedColor = activeColor.copy(alpha = 0.46f)
     val thumbColor = colors.thumbColor
     
     // Calculate container height to accommodate thumb
@@ -123,11 +134,29 @@ fun WavySlider(
         modifier = interactiveModifier,
         contentAlignment = Alignment.Center
     ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val y = size.height / 2f
+            drawLine(
+                color = inactiveColor,
+                start = Offset.Zero.copy(y = y),
+                end = Offset(size.width, y),
+                strokeWidth = strokeWidthPx,
+                cap = StrokeCap.Round,
+            )
+            drawLine(
+                color = bufferedColor,
+                start = Offset.Zero.copy(y = y),
+                end = Offset(size.width * normalizedBufferedValue, y),
+                strokeWidth = strokeWidthPx,
+                cap = StrokeCap.Round,
+            )
+        }
+
         LinearWavyProgressIndicator(
             progress = { displayValue },
             modifier = Modifier.fillMaxWidth(),
             color = activeColor,
-            trackColor = inactiveColor,
+            trackColor = Color.Transparent,
             stroke = stroke,
             trackStroke = stroke,
             gapSize = thumbRadius + 4.dp,

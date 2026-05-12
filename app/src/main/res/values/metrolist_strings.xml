@@ -14,8 +14,11 @@
     <string name="home_source_tidal">TIDAL</string>
     <string name="home_source_spotify">Spotify</string>
     <string name="home_source_soundcloud">SoundCloud</string>
+    <string name="home_source_deezer">Deezer</string>
     <string name="home_source_offline">Offline</string>
     <string name="search_soundcloud">Search SoundCloud</string>
+    <string name="search_tidal">Search TIDAL</string>
+    <string name="search_deezer">Search Deezer</string>
 
     <string name="weeks">Weeks</string>
     <string name="months">Months</string>
@@ -359,6 +362,44 @@
     <string name="crossfade_gapless_desc">Skip crossfade for albums designed to play without gaps</string>
     <string name="crossfade_beta_title">Beta feature!</string>
     <string name="crossfade_beta_message">Crossfade is a new feature and may have bugs. If you experience any issues, please report them.\n\nNOTE: This feature disables audio offload due to technical limitations</string>
+    <string name="metromix">MetroMix</string>
+    <string name="metromix_desc">DJ-style playlist transitions with quick presets</string>
+    <string name="metromix_enabled_desc">Using %s preset</string>
+    <string name="metromix_preset">MetroMix preset</string>
+    <string name="metromix_preset_auto">Auto</string>
+    <string name="metromix_preset_auto_desc">Chooses a transition from nearby track metadata</string>
+    <string name="metromix_preset_smart_dj">Smart DJ</string>
+    <string name="metromix_preset_smart_dj_desc">Spotify-style smooth blend with a soft volume dip</string>
+    <string name="metromix_preset_beat_blend">Beat blend</string>
+    <string name="metromix_preset_beat_blend_desc">Longer equal-power overlap for tracks with steady tempo</string>
+    <string name="metromix_preset_energy_match">Energy match</string>
+    <string name="metromix_preset_energy_match_desc">Keeps momentum up while avoiding a loud middle bump</string>
+    <string name="metromix_preset_club_blend">Club blend</string>
+    <string name="metromix_preset_club_blend_desc">Extended overlap for dance, remix, and continuous playlists</string>
+    <string name="metromix_preset_vocal_blend">Vocal blend</string>
+    <string name="metromix_preset_vocal_blend_desc">Lets the old vocal clear before the next track takes focus</string>
+    <string name="metromix_preset_bass_swap">Bass swap</string>
+    <string name="metromix_preset_bass_swap_desc">Tight transition that hands low-end energy to the next song</string>
+    <string name="metromix_preset_radio_edit">Radio edit</string>
+    <string name="metromix_preset_radio_edit_desc">Short clean mix for shuffled queues and quick skips</string>
+    <string name="metromix_preset_quick_cut">Quick cut</string>
+    <string name="metromix_preset_quick_cut_desc">Near-instant transition without the hard silence of a normal skip</string>
+    <string name="metromix_preset_loop_out">Loop out</string>
+    <string name="metromix_preset_loop_out_desc">Keeps the outgoing track alive underneath a soft incoming fade</string>
+    <string name="metromix_preset_fade">Fade</string>
+    <string name="metromix_preset_fade_desc">Simple even fade between tracks</string>
+    <string name="metromix_preset_rise">Rise</string>
+    <string name="metromix_preset_rise_desc">Brings the next song in faster while the old one falls away</string>
+    <string name="metromix_preset_blend">Blend</string>
+    <string name="metromix_preset_blend_desc">Longer overlap for playlists with similar energy</string>
+    <string name="metromix_preset_drop">Drop</string>
+    <string name="metromix_preset_drop_desc">Holds the old track, then cuts into the next one quickly</string>
+    <string name="metromix_preset_echo_out">Echo out</string>
+    <string name="metromix_preset_echo_out_desc">Fast fade-out curve that feels cleaner for vocal endings</string>
+    <string name="metromix_preset_smooth">Smooth</string>
+    <string name="metromix_preset_smooth_desc">Soft curve with minimal volume bumps</string>
+    <string name="metromix_preset_long_blend">Long blend</string>
+    <string name="metromix_preset_long_blend_desc">Twelve-second overlap for dance or continuous mixes</string>
 
     <!-- Romanization Settings -->
     <string name="lyrics_romanization_cyrillic">Cyrillic</string>
@@ -403,6 +444,7 @@
     <string name="audio_offload">Enable audio offload</string>
     <string name="audio_offload_description">Uses the hardware audio offload path for playback. Disabling this may increase battery usage, but can help if you experience issues with playback or audio post-processing</string>
     <string name="audio_offload_disabled_by_crossfade">Disabled because crossfade is active</string>
+    <string name="audio_offload_disabled_by_transitions">Disabled because transitions are active</string>
 
     <!-- Varispeed -->
     <string name="speed">Playback Speed</string>
@@ -431,6 +473,29 @@
     <string name="soundcloud_auth_not_configured">No SoundCloud auth configured</string>
     <string name="soundcloud_clear_auth">Clear SoundCloud auth</string>
     <string name="soundcloud_auth_saved">SoundCloud auth saved.</string>
+    <string name="deezer_integration">Deezer</string>
+    <string name="deezer_integration_desc">Resolve Deezer audio through your dzmedia server.</string>
+    <string name="prefer_deezer_audio">Prefer Deezer audio</string>
+    <string name="prefer_deezer_audio_desc">Try Deezer before Qobuz, Apple Music, and YouTube for playable audio.</string>
+    <string name="deezer_resolver_url">Deezer resolver URL</string>
+    <string name="deezer_resolver_url_desc">Current endpoint: %1$s</string>
+    <string name="deezer_resolver_url_placeholder">https://dzmedia-metrofuse.onrender.com/get_url</string>
+    <string name="deezer_resolver_url_helper">Use a dzmedia-compatible /get_url endpoint. Keep the ARL on the server, never in the app.</string>
+    <string name="deezer_audio_quality">Deezer quality</string>
+    <string name="deezer_quality_flac">FLAC</string>
+    <string name="deezer_quality_mp3_320">MP3 320 kbps</string>
+    <string name="deezer_quality_mp3_128">MP3 128 kbps</string>
+    <string name="deezer_reset_resolver">Reset Deezer resolver</string>
+    <string name="deezer_integration_info">The resolver only finds the encrypted Deezer media URL. MetroFuse decrypts the stream locally during playback or downloads.</string>
+    <string name="deezer_web_login">Deezer Web login</string>
+    <string name="deezer_web_login_desc">Log in with Deezer in the WebView. MetroFuse saves your Deezer session cookie for the Deezer home feed, search, albums, and playlists.</string>
+    <string name="deezer_cookie_title">Deezer cookie</string>
+    <string name="deezer_cookie_placeholder">Paste arl, sid, or a Deezer cookie header</string>
+    <string name="deezer_cookie_helper">Use Web login, or paste a Deezer cookie header containing arl. Your dzmedia server still keeps the server-side ARL used for audio URLs.</string>
+    <string name="deezer_cookie_configured">Deezer login configured</string>
+    <string name="deezer_cookie_not_configured">No Deezer login configured</string>
+    <string name="deezer_clear_cookie">Clear Deezer login</string>
+    <string name="deezer_cookie_saved">Deezer login saved.</string>
     <string name="instagram_integration">Instagram</string>
     <string name="instagram_web_login">Instagram Web login</string>
     <string name="instagram_web_login_desc">Log in with Instagram in the WebView. MetroFuse saves the session cookies used for Instagram Music audio lookup.</string>
@@ -494,6 +559,9 @@
     <string name="tidal_cookie_saved">TIDAL auth saved.</string>
     <string name="tidal_artwork_fallback">High quality album covers</string>
     <string name="tidal_artwork_fallback_desc">Use TIDAL album artwork in the player when no Spotify or Apple animated canvas is available</string>
+    <string name="tidal_audio_quality">TIDAL audio quality</string>
+    <string name="tidal_quality_aac_320">AAC 320 kbps</string>
+    <string name="tidal_quality_hires">HiRes / 24-bit</string>
 
     <string name="scrobbling_configuration">Scrobbling configuration</string>
     <string name="scrobble_min_track_duration">Scrobble songs longer than (seconds)</string>
@@ -1032,11 +1100,15 @@
     <string name="apple_music_fallback_desc">Try Apple Music when Qobuz cannot resolve a playable stream</string>
     <string name="prefer_apple_music">Prefer Apple Music</string>
     <string name="prefer_apple_music_desc">Try Apple Music before Qobuz when the Apple Music fallback is enabled</string>
+    <string name="prefer_tidal_audio">Prefer TIDAL audio</string>
+    <string name="prefer_tidal_audio_desc">Try TIDAL before Qobuz, Apple Music, and YouTube using the selected TIDAL quality.</string>
+    <string name="tidal_lossless_downgraded_to_aac">TIDAL FLAC was unavailable. Playing %1$d kbps AAC instead.</string>
     <string name="prefer_instagram_audio">Prefer Instagram audio</string>
     <string name="prefer_instagram_audio_desc">Experimental. Try Instagram Music before the normal audio provider chain.</string>
     <string name="prefer_youtube_music_audio">Prefer YouTube Music provider</string>
     <string name="prefer_youtube_music_audio_desc">Try YouTube Music before Qobuz, Apple Music, and other fallback providers.</string>
     <string name="qobuz_backend">Qobuz backend</string>
+    <string name="qobuz_backend_trypt">TrypT HiFi</string>
     <string name="qobuz_backend_jumo">JUMO-DL</string>
     <string name="qobuz_backend_kenny">Mono Kenny</string>
     <string name="qobuz_backend_squid">Squid</string>

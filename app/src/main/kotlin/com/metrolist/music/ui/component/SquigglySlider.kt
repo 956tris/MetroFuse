@@ -52,6 +52,7 @@ fun SquigglySlider(
     onValueChangeFinished: (() -> Unit)? = null,
     colors: SliderColors = SliderDefaults.colors(),
     isPlaying: Boolean = true,
+    bufferedValue: Float? = null,
 ) {
     val primaryColor = colors.activeTrackColor
     val inactiveColor = colors.inactiveTrackColor
@@ -167,8 +168,13 @@ fun SquigglySlider(
         ) {
             val strokeWidth = 5.dp.toPx()
             val progress = if (duration > 0f) (position / duration).coerceIn(0f, 1f) else 0f
+            val bufferedProgress =
+                bufferedValue
+                    ?.let { if (duration > 0f) ((it - valueRange.start) / duration).coerceIn(progress, 1f) else progress }
+                    ?: progress
             val totalWidth = size.width
             val totalProgressPx = totalWidth * progress
+            val totalBufferedPx = totalWidth * bufferedProgress
             val centerY = size.height / 2f
 
             // Calculate wave progress
@@ -226,6 +232,7 @@ fun SquigglySlider(
 
             val disabledAlpha = 77f / 255f
             val inactiveTrackColor = primaryColor.copy(alpha = disabledAlpha)
+            val bufferedTrackColor = primaryColor.copy(alpha = 0.46f)
             val capRadius = strokeWidth / 2f
 
             fun drawPathSegment(startX: Float, endX: Float, color: Color) {
@@ -244,11 +251,9 @@ fun SquigglySlider(
                 }
             }
 
-            // Played segment
+            drawPathSegment(0f, totalWidth, inactiveTrackColor)
+            drawPathSegment(0f, totalBufferedPx, bufferedTrackColor)
             drawPathSegment(0f, totalProgressPx, primaryColor)
-
-            // Unplayed segment
-            drawPathSegment(totalProgressPx, totalWidth, inactiveTrackColor)
 
             // Helper function to get wave Y position at any X
             fun getWaveY(x: Float): Float {

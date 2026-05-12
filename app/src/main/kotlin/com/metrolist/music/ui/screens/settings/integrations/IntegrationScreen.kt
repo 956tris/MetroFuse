@@ -70,6 +70,14 @@ fun IntegrationScreen(
                     }
                 ),
                 IntegrationCardItem(
+                    icon = painterResource(R.drawable.music_note),
+                    title = { Text(stringResource(R.string.deezer_integration)) },
+                    description = { Text(stringResource(R.string.deezer_integration_desc)) },
+                    onClick = {
+                        navController.navigate("settings/integrations/deezer")
+                    }
+                ),
+                IntegrationCardItem(
                     icon = painterResource(R.drawable.cloud),
                     title = { Text(stringResource(R.string.soundcloud_integration)) },
                     description = { Text(stringResource(R.string.soundcloud_web_login_desc)) },

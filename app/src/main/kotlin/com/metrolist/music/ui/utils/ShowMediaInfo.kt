@@ -32,9 +32,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -52,7 +54,7 @@ import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.shimmer.ShimmerHost
 import com.metrolist.music.ui.component.shimmer.TextPlaceholder
 import com.metrolist.music.utils.rememberEnumPreference
-import androidx.compose.ui.platform.LocalLocale
+import kotlinx.coroutines.withTimeoutOrNull
 
 @Composable
 fun getLoudnessLevelLabel(loudnessLevel: LoudnessLevel): String {
@@ -62,6 +64,62 @@ fun getLoudnessLevelLabel(loudnessLevel: LoudnessLevel): String {
         LoudnessLevel.BALANCED -> stringResource(R.string.loudness_level_balanced)
         LoudnessLevel.QUIET -> stringResource(R.string.loudness_level_quiet)
     }
+}
+
+private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
+private const val QOBUZ_FALLBACK_ITAG = 100_027
+private const val TIDAL_FALLBACK_ITAG = 100_029
+private const val DEEZER_FALLBACK_ITAG = 100_033
+private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
+private const val INSTAGRAM_FALLBACK_ITAG = 100_041
+private const val LOCAL_FILE_ITAG = -2000
+
+private val YouTubeAudioItags = setOf(139, 140, 141, 249, 250, 251, 256, 258, 325, 328, 338, 599, 600, 774)
+
+private fun String.canFetchYouTubeMediaInfo(): Boolean =
+    length == 11 && all { it.isLetterOrDigit() || it == '-' || it == '_' }
+
+private fun FormatEntity.audioSourceLabel(): String? =
+    when (itag) {
+        APPLE_MUSIC_WRAPPER_ITAG -> "Apple Music".takeIf { hasUsefulPlaybackDetails() }
+        QOBUZ_FALLBACK_ITAG -> "Qobuz"
+        TIDAL_FALLBACK_ITAG -> "TIDAL"
+        DEEZER_FALLBACK_ITAG -> "Deezer"
+        SOUNDCLOUD_FALLBACK_ITAG -> "SoundCloud"
+        INSTAGRAM_FALLBACK_ITAG -> "Instagram"
+        LOCAL_FILE_ITAG -> "Local"
+        in YouTubeAudioItags -> "YouTube Music"
+        else -> playbackUrl?.audioSourceLabelFromUrl()
+    }
+
+private fun String.audioSourceLabelFromUrl(): String? {
+    val value = lowercase()
+    return when {
+        value.contains("googlevideo.com") ||
+            value.contains("youtube.com") ||
+            value.contains("youtu.be") -> "YouTube Music"
+        value.contains("qobuz.com") ||
+            value.contains("jumo-dl") ||
+            value.contains("kennyy.com.br") ||
+            value.contains("squid.wtf") -> "Qobuz"
+        value.contains("tidal.com") ||
+            value.contains("zarz.moe") -> "TIDAL"
+        value.contains("deezer.com") ||
+            value.contains("dzcdn.net") ||
+            value.contains("dzmedia") -> "Deezer"
+        value.contains("soundcloud.com") ||
+            value.contains("sndcdn.com") -> "SoundCloud"
+        value.contains("instagram.com") ||
+            value.contains("cdninstagram.com") ||
+            value.contains("fbcdn.net") -> "Instagram"
+        else -> null
+    }
+}
+
+private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
+    val hasBitrate = bitrate > 0
+    val hasSampleRate = sampleRate?.let { it > 0 } == true
+    return hasBitrate || hasSampleRate
 }
 
 @Composable
@@ -80,6 +138,8 @@ fun ShowMediaInfo(videoId: String) {
     var currentFormat by remember { mutableStateOf<FormatEntity?>(null) }
 
     val playerConnection = LocalPlayerConnection.current
+    val playbackMetadataState = playerConnection?.mediaMetadata?.collectAsStateWithLifecycle(initialValue = null)
+    val playbackMetadata = playbackMetadataState?.value?.takeIf { it.id == videoId }
     val context = LocalContext.current
 
     val loudnessLevel by rememberEnumPreference(
@@ -90,7 +150,14 @@ fun ShowMediaInfo(videoId: String) {
     val targetLufs: Float = loudnessLevel.targetLufs
 
     LaunchedEffect(Unit, videoId) {
-        info = YouTube.getMediaInfo(videoId).getOrNull()
+        info =
+            if (videoId.canFetchYouTubeMediaInfo()) {
+                withTimeoutOrNull(5_000L) {
+                    YouTube.getMediaInfo(videoId).getOrNull()
+                }
+            } else {
+                null
+            }
     }
 
     LaunchedEffect(Unit, videoId) {
@@ -115,13 +182,24 @@ fun ShowMediaInfo(videoId: String) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        if (info != null && song != null) {
+        val title = song?.song?.title ?: playbackMetadata?.title
+        val artists =
+            song?.orderedArtists?.joinToString { it.name }
+                ?: playbackMetadata?.artists?.joinToString { it.name }
+        val displayMediaId = song?.id ?: playbackMetadata?.id ?: videoId
+        val hasDisplayInfo =
+            title != null ||
+                artists != null ||
+                currentFormat != null ||
+                info != null
+
+        if (hasDisplayInfo) {
             item(contentType = "MediaDetails") {
                 Column {
                     val baseList = listOf(
-                        stringResource(R.string.song_title) to song?.title,
-                        stringResource(R.string.song_artists) to song?.artists?.joinToString { it.name },
-                        stringResource(R.string.media_id) to song?.id
+                        stringResource(R.string.song_title) to title,
+                        stringResource(R.string.song_artists) to artists,
+                        stringResource(R.string.media_id) to displayMediaId
                     )
 
                     val baseIconsList = listOf(
@@ -131,6 +209,7 @@ fun ShowMediaInfo(videoId: String) {
                     )
 
                     val iconsList = listOf(
+                        R.drawable.cloud,
                         R.drawable.media3_icon_feed,
                         R.drawable.media3_icon_thumb_up_unfilled,
                         R.drawable.media3_icon_thumb_down_unfilled,
@@ -146,17 +225,19 @@ fun ShowMediaInfo(videoId: String) {
                     )
 
                     val measuredLufs: Double? = currentFormat?.perceptualLoudnessDb ?: currentFormat?.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs }
+                    val displayFormat = currentFormat?.takeIf { it.hasUsefulPlaybackDetails() }
 
                     val extendedList = if (currentFormat != null) {
                         listOf(
+                            stringResource(R.string.ai_provider) to displayFormat?.audioSourceLabel(),
                             stringResource(R.string.views) to info?.viewCount?.let(::numberFormatter).orEmpty(),
                             stringResource(R.string.likes) to info?.like?.let(::numberFormatter).orEmpty(),
                             stringResource(R.string.dislikes) to info?.dislike?.let(::numberFormatter).orEmpty(),
                             "Itag" to currentFormat?.itag?.toString(),
                             stringResource(R.string.mime_type) to currentFormat?.mimeType,
                             stringResource(R.string.codecs) to currentFormat?.codecs,
-                            stringResource(R.string.bitrate) to currentFormat?.bitrate?.let { "${it / 1000} Kbps" },
-                            stringResource(R.string.sample_rate) to currentFormat?.sampleRate?.let { "$it Hz" },
+                            stringResource(R.string.bitrate) to displayFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" },
+                            stringResource(R.string.sample_rate) to displayFormat?.sampleRate?.takeIf { it > 0 }?.let { "$it Hz" },
                             stringResource(R.string.loudness) to measuredLufs?.let {
                                 String.format(LocalLocale.current.platformLocale, "%.2f dB", it - targetLufs)
                             },
