@@ -117,23 +117,25 @@ fun CreatePlaylistDialog(
                         Switch(
                             checked = syncedPlaylist,
                             onCheckedChange = {
-                                val isYtmSyncEnabled = context.isSyncEnabled()
-                                if (!isSignedIn && !syncedPlaylist) {
-                                    Toast
-                                        .makeText(
-                                            context,
-                                            notLoggedInYoutubeStr,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                } else if (!isYtmSyncEnabled) {
-                                    Toast
-                                        .makeText(
-                                            context,
-                                            syncDisabledStr,
-                                            Toast.LENGTH_SHORT,
-                                        ).show()
-                                } else {
-                                    syncedPlaylist = !syncedPlaylist
+                                coroutineScope.launch {
+                                    val isYtmSyncEnabled = withContext(Dispatchers.IO) { context.isSyncEnabled() }
+                                    if (!isSignedIn && !syncedPlaylist) {
+                                        Toast
+                                            .makeText(
+                                                context,
+                                                notLoggedInYoutubeStr,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                    } else if (!isYtmSyncEnabled) {
+                                        Toast
+                                            .makeText(
+                                                context,
+                                                syncDisabledStr,
+                                                Toast.LENGTH_SHORT,
+                                            ).show()
+                                    } else {
+                                        syncedPlaylist = !syncedPlaylist
+                                    }
                                 }
                             },
                         )

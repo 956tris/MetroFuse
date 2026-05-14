@@ -49,10 +49,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -154,16 +152,12 @@ fun OnlinePlaylistScreen(
             }
         }
 
-    var inSelectMode by rememberSaveable { mutableStateOf(false) }
+    var inSelectMode by remember { mutableStateOf(false) }
     val selection =
-        rememberSaveable(
-            saver =
-                listSaver<MutableList<String>, String>(
-                    save = { it.toList() },
-                    restore = { it.toMutableStateList() },
-                ),
-        ) { mutableStateListOf() }
-    var selectionAnchorSongId by rememberSaveable { mutableStateOf<String?>(null) }
+        remember {
+            mutableStateListOf<String>()
+        }
+    var selectionAnchorSongId by remember { mutableStateOf<String?>(null) }
     val onExitSelectionMode = {
         inSelectMode = false
         selection.clear()

@@ -17,6 +17,7 @@ import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.SongWithStats
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -236,5 +237,9 @@ class WrappedManager(
         generatePlaylistMap()
         _state.update { it.copy(isDataReady = true) }
         Timber.tag("WrappedManager").d("Wrapped data preparation finished")
+    }
+
+    fun dispose() {
+        scope.cancel()
     }
 }
