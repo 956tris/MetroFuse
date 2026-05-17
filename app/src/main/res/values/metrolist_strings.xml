@@ -215,7 +215,7 @@
     <string name="discord_use_details">Use details instead of state</string>
     <string name="discord_use_details_description">Show the song title prominently instead of the artist name</string>
     <string name="discord_animated_covers">Animated Apple covers</string>
-    <string name="discord_animated_covers_description">Try Apple Music motion art in Discord Rich Presence and fall back to static covers when Discord cannot use it.</string>
+    <string name="discord_animated_covers_description">Use Apple Music motion art in Discord Rich Presence when the animated asset is ready.</string>
 
     <string name="enable_similar_content">Enable similar content</string>
     <string name="similar_content_desc">Automatically adds more similar songs when the end of the queue is reached</string>
@@ -1145,6 +1145,9 @@
     <string name="android_auto_target_playlist_desc">Choose the playlist where songs are saved when using the quick-add button in Android Auto</string>
     <string name="android_auto_target_playlist_auto">Not set</string>
     <string name="added_to_playlist">Added to playlist</string>
+    <string name="playlist_suggestions">Suggestions</string>
+    <string name="playlist_suggestions_refresh">Refresh suggestions</string>
+    <string name="playlist_suggestion_add_failed">Couldn\'t add song to playlist</string>
     <string name="android_auto_target_playlist_not_set">No playlist selected. Choose one in Android Auto settings</string>
 
     <!-- Stats time transfer -->

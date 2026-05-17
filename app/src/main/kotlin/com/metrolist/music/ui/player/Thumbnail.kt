@@ -7,6 +7,8 @@ package com.metrolist.music.ui.player
 
 import android.view.TextureView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -41,13 +43,16 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -67,6 +72,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.lifecycle.Lifecycle
@@ -587,15 +593,14 @@ private fun ThumbnailItem(
                         else -> item.mediaMetadata.artworkUri?.toString()
                     }
 
+                ThumbnailImage(
+                    artworkUri = artworkUriToUse,
+                    cropArtwork = cropAlbumArt,
+                )
                 if (item.mediaId == currentMediaId && !currentAppleCanvasUrl.isNullOrBlank()) {
                     AppleMusicCanvasVideo(
                         canvasUrl = currentAppleCanvasUrl,
                         modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    ThumbnailImage(
-                        artworkUri = artworkUriToUse,
-                        cropArtwork = cropAlbumArt
                     )
                 }
             }
@@ -673,20 +678,70 @@ private fun AppleMusicCanvasVideo(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val textureView = remember {
+    var isReady by remember(canvasUrl) { mutableStateOf(false) }
+    val currentOnReady by rememberUpdatedState { isReady = true }
+    val alpha by animateFloatAsState(
+        targetValue = if (isReady) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "AppleCanvasThumbnailAlpha",
+    )
+    val textureView = remember(canvasUrl) {
         TextureView(context).apply {
             isOpaque = false
             isClickable = false
             isFocusable = false
         }
     }
+    val okHttpClient =
+        remember {
+            OkHttpClient
+                .Builder()
+                .followRedirects(true)
+                .followSslRedirects(true)
+                .build()
+        }
     val player = remember(canvasUrl) {
-        ExoPlayer.Builder(context).build().apply {
+        val isRemoteCanvas =
+            canvasUrl.startsWith("http://", ignoreCase = true) ||
+                canvasUrl.startsWith("https://", ignoreCase = true)
+        val mediaSourceFactory =
+            if (isRemoteCanvas) {
+                DefaultMediaSourceFactory(
+                    OkHttpDataSource
+                        .Factory(okHttpClient)
+                        .setDefaultRequestProperties(
+                            mapOf(
+                                "Origin" to "https://music.apple.com",
+                                "Referer" to "https://music.apple.com/",
+                                "User-Agent" to "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/147 Mobile Safari/537.36",
+                            ),
+                        ),
+                )
+            } else {
+                DefaultMediaSourceFactory(context)
+            }
+
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build()
+            .apply {
+            setAudioAttributes(AudioAttributes.DEFAULT, false)
             repeatMode = Player.REPEAT_MODE_ONE
             volume = 0f
             playWhenReady = true
             setVideoTextureView(textureView)
-            setMediaItem(MediaItem.fromUri(canvasUrl))
+            setMediaItem(
+                MediaItem
+                    .Builder()
+                    .setUri(canvasUrl)
+                    .setMimeType(
+                        if (canvasUrl.substringBefore('?').endsWith(".m3u8", ignoreCase = true)) {
+                            MimeTypes.APPLICATION_M3U8
+                        } else {
+                            null
+                        },
+                    ).build(),
+            )
             prepare()
         }
     }
@@ -699,18 +754,38 @@ private fun AppleMusicCanvasVideo(
                 else -> Unit
             }
         }
+        val playerListener =
+            object : Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == Player.STATE_READY) {
+                        currentOnReady()
+                    }
+                }
+            }
+        player.addListener(playerListener)
         lifecycleOwner.lifecycle.addObserver(observer)
+        if (player.playbackState == Player.STATE_READY) {
+            currentOnReady()
+        }
         onDispose {
+            player.removeListener(playerListener)
             lifecycleOwner.lifecycle.removeObserver(observer)
             player.clearVideoTextureView(textureView)
             player.release()
         }
     }
 
-    AndroidView(
-        factory = { textureView },
-        modifier = modifier,
-    )
+    LaunchedEffect(player) {
+        player.playWhenReady = true
+        player.play()
+    }
+
+    key(canvasUrl) {
+        AndroidView(
+            factory = { textureView },
+            modifier = modifier.alpha(alpha),
+        )
+    }
 }
 
 /**

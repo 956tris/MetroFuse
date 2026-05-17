@@ -22,6 +22,9 @@ class YouTubePlaylistQueue(
     override val preloadItem: MediaMetadata? = null,
 ) : Queue {
     private var continuation: String? = initialContinuation
+    private val loadedSongIds = initialSongs.mapTo(mutableSetOf()) { it.id }
+    private var pendingSuggestions: List<SongItem> = emptyList()
+    private var suggestionsLoaded = false
     private var retryCount = 0
     private val maxRetries = 3
 
@@ -36,6 +39,7 @@ class YouTubePlaylistQueue(
             } else {
                 val playlistPage = YouTube.playlist(playlistId).getOrThrow()
                 continuation = playlistPage.songsContinuation
+                loadedSongIds.addAll(playlistPage.songs.map { it.id })
                 Queue.Status(
                     title = playlistPage.playlist.title,
                     items = playlistPage.songs.map { it.toMediaItem() },
@@ -45,28 +49,66 @@ class YouTubePlaylistQueue(
         }
     }
 
-    override fun hasNextPage(): Boolean = continuation != null
+    override fun hasNextPage(): Boolean = continuation != null || !suggestionsLoaded
 
     override suspend fun nextPage(): List<MediaItem> {
         return withContext(IO) {
-            val currentContinuation = continuation ?: return@withContext emptyList()
-            var lastException: Throwable? = null
-            
-            for (attempt in 0..maxRetries) {
-                try {
-                    val continuationPage = YouTube.playlistContinuation(currentContinuation).getOrThrow()
-                    continuation = continuationPage.continuation
-                    retryCount = 0
-                    return@withContext continuationPage.songs.map { it.toMediaItem() }
-                } catch (e: Exception) {
-                    lastException = e
-                    retryCount++
-                    if (retryCount >= maxRetries) {
-                        continuation = null
+            val currentContinuation = continuation
+            if (currentContinuation != null) {
+                var lastException: Throwable? = null
+
+                for (attempt in 0..maxRetries) {
+                    try {
+                        val continuationPage = YouTube.playlistContinuation(currentContinuation).getOrThrow()
+                        continuation = continuationPage.continuation
+                        if (continuationPage.suggestions.isNotEmpty()) {
+                            pendingSuggestions =
+                                (pendingSuggestions + continuationPage.suggestions)
+                                    .distinctBy { it.id }
+                        }
+                        retryCount = 0
+
+                        val songs =
+                            continuationPage.songs
+                                .filter { loadedSongIds.add(it.id) }
+                        if (songs.isNotEmpty() || continuation != null) {
+                            return@withContext songs.map { it.toMediaItem() }
+                        }
+                    } catch (e: Exception) {
+                        lastException = e
+                        retryCount++
+                        if (retryCount >= maxRetries) {
+                            continuation = null
+                        }
                     }
                 }
+
+                if (continuation != null) {
+                    throw lastException ?: Exception("Failed to get next page")
+                }
             }
-            throw lastException ?: Exception("Failed to get next page")
+
+            loadSuggestions()
         }
+    }
+
+    private suspend fun loadSuggestions(): List<MediaItem> {
+        if (suggestionsLoaded) return emptyList()
+        suggestionsLoaded = true
+
+        if (pendingSuggestions.isEmpty()) {
+            pendingSuggestions =
+                YouTube
+                    .playlist(playlistId, includeSuggestions = true)
+                    .getOrElse { return emptyList() }
+                    .suggestions
+        }
+
+        return pendingSuggestions
+            .filter { loadedSongIds.add(it.id) }
+            .map { it.toMediaItem() }
+            .also {
+                pendingSuggestions = emptyList()
+            }
     }
 }

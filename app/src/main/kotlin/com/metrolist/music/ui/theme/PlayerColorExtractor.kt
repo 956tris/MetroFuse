@@ -72,6 +72,70 @@ object PlayerColorExtractor {
         )
     }
 
+    suspend fun extractGalaxyColors(
+        palette: Palette,
+        fallbackColor: Int,
+    ): List<Color> = withContext(Dispatchers.Default) {
+        val dominantColor = palette.getDominantColor(fallbackColor)
+        val dominantHsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(dominantColor, dominantHsv)
+
+        if (dominantHsv[2] < 0.16f && dominantHsv[1] < 0.32f) {
+            return@withContext listOf(
+                Color.Black,
+                Color.Black,
+                Color.Black,
+                Color.White,
+            )
+        }
+
+        val bestSwatch =
+            listOfNotNull(
+                palette.dominantSwatch,
+                palette.vibrantSwatch,
+                palette.mutedSwatch,
+                palette.darkVibrantSwatch,
+                palette.darkMutedSwatch,
+                palette.lightVibrantSwatch,
+            ).maxByOrNull { swatch ->
+                val hsv = FloatArray(3)
+                android.graphics.Color.colorToHSV(swatch.rgb, hsv)
+                val dominantBoost = if (swatch == palette.dominantSwatch) 1.75f else 1f
+                val vibrantBoost = if (swatch == palette.vibrantSwatch) 1.22f else 1f
+                swatch.population *
+                    dominantBoost *
+                    vibrantBoost *
+                    (0.40f + hsv[1] * 1.35f) *
+                    (1.2f - abs(hsv[2] - dominantHsv[2]).coerceIn(0f, 0.85f))
+            }
+
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(bestSwatch?.rgb ?: dominantColor, hsv)
+        val sourceSaturation =
+            if (hsv[1] < 0.12f) {
+                dominantHsv[1]
+            } else {
+                hsv[1]
+            }
+        val saturation =
+            if (sourceSaturation < 0.10f) {
+                sourceSaturation.coerceIn(0f, 0.18f)
+            } else {
+                (sourceSaturation * 1.24f).coerceIn(0.28f, 0.82f)
+            }
+        val coverValue = dominantHsv[2].coerceIn(0.18f, 0.74f)
+        val accentValue = hsv[2].coerceIn(0.18f, 0.82f)
+        val anchorValue = ((coverValue * 0.62f) + (accentValue * 0.38f)).coerceIn(0.16f, 0.72f)
+        val hue = hsv[0]
+
+        listOf(
+            hsvColor(hue, saturation * 0.82f, anchorValue * 0.18f),
+            hsvColor(hue, saturation * 0.92f, anchorValue * 0.40f),
+            hsvColor(hue, saturation, anchorValue * 0.78f),
+            hsvColor(hue, saturation * 0.48f, (anchorValue * 1.28f).coerceIn(0.46f, 0.80f)),
+        )
+    }
+
     /**
      * Determines if a color is vibrant enough for use in player UI
      * 

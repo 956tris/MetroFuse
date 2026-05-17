@@ -810,7 +810,7 @@ object PublicDownloadExporter {
         return appleCanvasUrl?.let { url ->
             downloadCanvas(
                 url = url,
-                headers = emptyMap(),
+                headers = APPLE_CANVAS_HEADERS,
                 provider = "Apple Music",
             )
         }
@@ -1089,6 +1089,12 @@ object PublicDownloadExporter {
     private const val MAX_EMBEDDED_ARTWORK_SIDE = 1024
     private const val EMBEDDED_ARTWORK_JPEG_QUALITY = 92
     private const val MAX_EMBEDDED_CANVAS_BYTES = 8 * 1024 * 1024
+    private val APPLE_CANVAS_HEADERS =
+        mapOf(
+            "Origin" to "https://music.apple.com",
+            "Referer" to "https://music.apple.com/",
+            "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/147 Safari/537.36",
+        )
     private val HLS_URI_ATTRIBUTE = Regex("""URI="([^"]+)"""")
     private val HLS_BANDWIDTH_ATTRIBUTE = Regex("""BANDWIDTH=(\d+)""")
 

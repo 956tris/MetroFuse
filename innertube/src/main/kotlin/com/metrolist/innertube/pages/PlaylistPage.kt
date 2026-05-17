@@ -12,6 +12,7 @@ import com.metrolist.innertube.utils.parseTime
 data class PlaylistPage(
     val playlist: PlaylistItem,
     val songs: List<SongItem>,
+    val suggestions: List<SongItem> = emptyList(),
     val songsContinuation: String?,
     val continuation: String?,
 ) {
@@ -56,6 +57,83 @@ data class PlaylistPage(
                 libraryAddToken = libraryTokens.addToken,
                 libraryRemoveToken = libraryTokens.removeToken,
                 isEpisode = renderer.isEpisode
+            )
+        }
+
+        fun fromSuggestionListItemRenderer(renderer: MusicResponsiveListItemRenderer): SongItem? {
+            val libraryTokens = PageHelper.extractLibraryTokensFromMenuItems(renderer.menu?.menuRenderer?.items)
+            val secondaryLineRuns =
+                renderer.flexColumns
+                    .getOrNull(1)
+                    ?.musicResponsiveListItemFlexColumnRenderer
+                    ?.text
+                    ?.runs
+                    ?.splitBySeparator()
+
+            return SongItem(
+                id =
+                    renderer.playlistItemData?.videoId
+                        ?: renderer.overlay
+                            ?.musicItemThumbnailOverlayRenderer
+                            ?.content
+                            ?.musicPlayButtonRenderer
+                            ?.playNavigationEndpoint
+                            ?.watchEndpoint
+                            ?.videoId
+                        ?: renderer.navigationEndpoint?.watchEndpoint?.videoId
+                        ?: return null,
+                title =
+                    renderer.flexColumns.firstOrNull()
+                        ?.musicResponsiveListItemFlexColumnRenderer
+                        ?.text
+                        ?.runs
+                        ?.firstOrNull()
+                        ?.text ?: return null,
+                artists =
+                    secondaryLineRuns
+                        ?.firstOrNull()
+                        ?.oddElements()
+                        ?.map {
+                            Artist(
+                                name = it.text,
+                                id = it.navigationEndpoint?.browseEndpoint?.browseId,
+                            )
+                        }.orEmpty(),
+                album =
+                    secondaryLineRuns
+                        ?.getOrNull(1)
+                        ?.firstOrNull()
+                        ?.takeIf { it.navigationEndpoint?.browseEndpoint != null }
+                        ?.let {
+                            Album(
+                                name = it.text,
+                                id = it.navigationEndpoint?.browseEndpoint?.browseId ?: return@let null,
+                            )
+                        },
+                duration =
+                    secondaryLineRuns
+                        ?.lastOrNull()
+                        ?.firstOrNull()
+                        ?.text
+                        ?.parseTime(),
+                musicVideoType = renderer.musicVideoType,
+                thumbnail = renderer.thumbnail?.musicThumbnailRenderer?.getThumbnailUrl() ?: return null,
+                explicit =
+                    renderer.badges?.find {
+                        it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
+                    } != null,
+                endpoint =
+                    renderer.overlay
+                        ?.musicItemThumbnailOverlayRenderer
+                        ?.content
+                        ?.musicPlayButtonRenderer
+                        ?.playNavigationEndpoint
+                        ?.watchEndpoint
+                        ?: renderer.navigationEndpoint?.watchEndpoint,
+                setVideoId = renderer.playlistItemData?.playlistSetVideoId,
+                libraryAddToken = libraryTokens.addToken,
+                libraryRemoveToken = libraryTokens.removeToken,
+                isEpisode = renderer.isEpisode,
             )
         }
     }

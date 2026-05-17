@@ -36,20 +36,33 @@ class DiscordRPC(
         activityName: String = "",
         largeImageUrl: String? = song.song.thumbnailUrl,
         largeImageFallbackUrl: String? = song.song.thumbnailUrl,
+        canSend: () -> Boolean = { true },
     ) = runCatching {
         val currentTime = System.currentTimeMillis()
+        val safePlaybackSpeed =
+            playbackSpeed
+                .takeIf { it.isFinite() && it > 0f }
+                ?: 1.0f
+        val playbackPositionMillis = currentPlaybackTimeMillis.coerceAtLeast(0L)
 
-        val adjustedPlaybackTime = (currentPlaybackTimeMillis / playbackSpeed).toLong()
+        val adjustedPlaybackTime = (playbackPositionMillis / safePlaybackSpeed).toLong()
         val calculatedStartTime = currentTime - adjustedPlaybackTime
 
-        val songTitleWithRate = if (playbackSpeed != 1.0f) {
-            "${song.song.title} [${String.format("%.2fx", playbackSpeed)}]"
+        val songTitleWithRate = if (safePlaybackSpeed != 1.0f) {
+            "${song.song.title} [${String.format("%.2fx", safePlaybackSpeed)}]"
         } else {
             song.song.title
         }
 
-        val remainingDuration = song.song.duration * 1000L - currentPlaybackTimeMillis
-        val adjustedRemainingDuration = (remainingDuration / playbackSpeed).toLong()
+        val durationMillis =
+            song.song.duration
+                .takeIf { it > 0 }
+                ?.times(1000L)
+        val adjustedEndTime =
+            durationMillis
+                ?.let { it - playbackPositionMillis }
+                ?.takeIf { it > 0L }
+                ?.let { remainingDuration -> currentTime + (remainingDuration / safePlaybackSpeed).toLong() }
 
         val buttonsList = mutableListOf<Pair<String, String>>()
         if (button1Visible) {
@@ -80,7 +93,18 @@ class DiscordRPC(
         val largeImage =
             largeImageUrl
                 ?.takeIf { it.isNotBlank() }
-                ?.let { RpcImage.ExternalImage(it, fallbackDiscordAsset = largeImageFallbackUrl) }
+                ?.let { url ->
+                    val isAnimated = url.isAnimatedPresenceImageUrl()
+                    RpcImage.ExternalImage(
+                        image = url,
+                        fallbackDiscordAsset = largeImageFallbackUrl.takeUnless { isAnimated },
+                        cacheFailures = !isAnimated,
+                        resolveAttempts = if (isAnimated) 12 else 1,
+                        resolveRetryDelayMs = if (isAnimated) 1_000L else 0L,
+                        allowRawUrlFallback = !isAnimated,
+                    )
+                }
+        val requiresResolvedLargeImage = largeImageUrl?.isAnimatedPresenceImageUrl() == true
 
         setActivity(
             name = name,
@@ -96,9 +120,11 @@ class DiscordRPC(
             statusDisplayType = if (useDetails) StatusDisplayType.DETAILS else StatusDisplayType.STATE,
             since = currentTime,
             startTime = calculatedStartTime,
-            endTime = currentTime + adjustedRemainingDuration,
+            endTime = adjustedEndTime,
             applicationId = APPLICATION_ID,
-            status = status
+            status = status,
+            requireLargeImage = requiresResolvedLargeImage,
+            canSend = canSend,
         )
     }
 
@@ -118,6 +144,11 @@ class DiscordRPC(
                 .replace("{song_name}", song.song.title)
                 .replace("{artist_name}", song.artists.joinToString { it.name })
                 .replace("{album_name}", song.album?.title ?: "")
+        }
+
+        private fun String.isAnimatedPresenceImageUrl(): Boolean {
+            val path = substringBefore('?').lowercase()
+            return path.endsWith(".webp") || path.endsWith(".gif") || path.endsWith(".avif")
         }
     }
 }

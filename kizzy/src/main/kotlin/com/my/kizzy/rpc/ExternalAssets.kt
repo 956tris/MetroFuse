@@ -7,6 +7,7 @@ import io.ktor.client.request.header
 import io.ktor.client.request.setBody
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 @Serializable
@@ -27,12 +28,13 @@ suspend fun fetchExternalAsset(
     if (imageUrl.startsWith("mp:")) return imageUrl
     val api = "https://discord.com/api/v9/applications/$applicationId/external-assets"
     return runCatching {
+        val payload = "{\"urls\":${Json.encodeToString(listOf(imageUrl))}}"
         val response = client.post(api) {
             header("Authorization", token)
             header("User-Agent", userAgent ?: "Discord-Android/314013;RNA")
             if (superPropertiesBase64 != null) header("X-Super-Properties", superPropertiesBase64)
             header("Content-Type", "application/json")
-            setBody("{\"urls\":[\"$imageUrl\"]}")
+            setBody(payload)
         }
         val text = response.body<String>()
         val json = Json { ignoreUnknownKeys = true }

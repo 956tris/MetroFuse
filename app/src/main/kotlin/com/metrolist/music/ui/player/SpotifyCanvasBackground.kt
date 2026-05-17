@@ -31,6 +31,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -232,7 +233,7 @@ private fun SpotifyCanvasVideoLayer(
                     volume = 0f
                     playWhenReady = shouldPlay
                     setVideoTextureView(textureView)
-                    setMediaItem(MediaItem.fromUri(media.url))
+                    setMediaItem(media.url.toCanvasMediaItem())
                     prepare()
                 }
         }
@@ -284,3 +285,15 @@ private fun SpotifyCanvasVideoLayer(
                 .alpha(alpha),
     )
 }
+
+private fun String.toCanvasMediaItem(): MediaItem =
+    MediaItem
+        .Builder()
+        .setUri(this)
+        .setMimeType(
+            if (substringBefore("?").endsWith(".m3u8", ignoreCase = true)) {
+                MimeTypes.APPLICATION_M3U8
+            } else {
+                null
+            },
+        ).build()

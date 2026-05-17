@@ -76,6 +76,8 @@ open class KizzyRPC(
         applicationId: String? = null,
         status: String? = "online",
         since: Long? = null,
+        requireLargeImage: Boolean = false,
+        canSend: () -> Boolean = { true },
     ) {
         if (!isRpcRunning()) {
             discordWebSocket.connect()
@@ -93,6 +95,17 @@ open class KizzyRPC(
             )
         }
 
+        val resolvedLargeImage = largeImage?.resolveImage(resolveExternal)
+        if (requireLargeImage && resolvedLargeImage.isNullOrBlank()) {
+            error("Large image external asset did not resolve")
+        }
+        val resolvedSmallImage = smallImage?.resolveImage(resolveExternal)
+        if (!canSend()) return
+        val needsApplicationId =
+            !buttons.isNullOrEmpty() ||
+                resolvedLargeImage?.startsWith("mp:external/") == true ||
+                resolvedSmallImage?.startsWith("mp:external/") == true
+
         val presence = Presence(
             activities = listOf(
                 Activity(
@@ -105,14 +118,14 @@ open class KizzyRPC(
                     statusDisplayType = statusDisplayType.value,
                     timestamps = Timestamps(startTime, endTime),
                     assets = Assets(
-                        largeImage = largeImage?.resolveImage(resolveExternal),
-                        smallImage = smallImage?.resolveImage(resolveExternal),
+                        largeImage = resolvedLargeImage,
+                        smallImage = resolvedSmallImage,
                         largeText = largeText,
                         smallText = smallText
                     ),
                     buttons = buttons?.map { it.first },
                     metadata = Metadata(buttonUrls = buttons?.map { it.second }),
-                    applicationId = applicationId.takeIf { !buttons.isNullOrEmpty() },
+                    applicationId = applicationId.takeIf { needsApplicationId },
                     url = streamUrl
                 )
             ),

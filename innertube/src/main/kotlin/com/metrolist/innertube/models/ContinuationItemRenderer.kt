@@ -13,6 +13,7 @@ data class ContinuationItemRenderer(
         @Serializable
         data class ContinuationCommand(
             val token: String?,
+            val clickTrackingParams: String? = null,
         )
     }
 }

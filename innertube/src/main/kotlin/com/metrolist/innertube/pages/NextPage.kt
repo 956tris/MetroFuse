@@ -76,6 +76,8 @@ object NextPage {
                 renderer.badges?.find {
                     it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
                 } != null,
+            endpoint = renderer.navigationEndpoint.anyWatchEndpoint,
+            setVideoId = renderer.playlistSetVideoId,
             libraryAddToken = libraryTokens.addToken,
             libraryRemoveToken = libraryTokens.removeToken
         )

@@ -13,8 +13,12 @@ data class Continuation(
     @Serializable
     data class NextContinuationData(
         val continuation: String,
+        val clickTrackingParams: String? = null,
     )
 }
 
 fun List<Continuation>.getContinuation() =
     firstOrNull()?.nextContinuationData?.continuation
+
+fun List<Continuation>.getClickTrackingParams() =
+    firstOrNull()?.nextContinuationData?.clickTrackingParams

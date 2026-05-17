@@ -275,10 +275,18 @@ class InnerTube {
         browseId: String? = null,
         params: String? = null,
         continuation: String? = null,
+        continuationType: String? = null,
+        clickTrackingParams: String? = null,
         setLogin: Boolean = false,
     ) = withRetry {
         httpClient.post("browse") {
             ytClient(client, setLogin = setLogin || useLoginForBrowse)
+            if (continuation != null) {
+                parameter("ctoken", continuation)
+                parameter("continuation", continuation)
+                continuationType?.let { parameter("type", it) }
+                clickTrackingParams?.let { parameter("itct", it) }
+            }
             setBody(
                 BrowseBody(
                     context = client.toContext(

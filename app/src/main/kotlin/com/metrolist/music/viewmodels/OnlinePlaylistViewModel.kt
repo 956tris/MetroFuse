@@ -35,6 +35,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +43,7 @@ import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -69,6 +71,9 @@ class OnlinePlaylistViewModel @Inject constructor(
 
     val playlist = MutableStateFlow<PlaylistItem?>(null)
     val playlistSongs = MutableStateFlow<List<SongItem>>(emptyList())
+    val playlistSuggestions = MutableStateFlow<List<SongItem>>(emptyList())
+    private val _isLoadingSuggestions = MutableStateFlow(false)
+    val isLoadingSuggestions = _isLoadingSuggestions.asStateFlow()
 
     private val _isLoading = MutableStateFlow(true)
     val isLoading = _isLoading.asStateFlow()
@@ -86,6 +91,7 @@ class OnlinePlaylistViewModel @Inject constructor(
         private set
 
     private var proactiveLoadJob: Job? = null
+    private var suggestionsJob: Job? = null
 
     init {
         fetchInitialPlaylistData()
@@ -96,7 +102,9 @@ class OnlinePlaylistViewModel @Inject constructor(
             _isLoading.value = true
             _error.value = null
             continuation = null
+            playlistSuggestions.value = emptyList()
             proactiveLoadJob?.cancel() // Cancel any ongoing proactive load
+            suggestionsJob?.cancel()
 
             if (isExternalPlaylist) {
                 fetchExternalPlaylist()
@@ -181,6 +189,7 @@ class OnlinePlaylistViewModel @Inject constructor(
     private fun setExternalPlaylist(page: ExternalPlaylistPage) {
         playlist.value = page.playlist
         playlistSongs.value = applySongFilters(page.songs)
+        playlistSuggestions.value = emptyList()
         continuation = null
         _isLoading.value = false
     }
@@ -246,8 +255,10 @@ class OnlinePlaylistViewModel @Inject constructor(
             .onSuccess { playlistPage ->
                 playlist.value = playlistPage.playlist
                 playlistSongs.value = applySongFilters(playlistPage.songs)
+                playlistSuggestions.value = emptyList()
                 continuation = playlistPage.songsContinuation
                 _isLoading.value = false
+                loadPlaylistSuggestions(delayMillis = 650L)
                 if (continuation != null) {
                     startProactiveBackgroundLoading()
                 }
@@ -302,6 +313,33 @@ class OnlinePlaylistViewModel @Inject constructor(
         }
     }
 
+    fun refreshPlaylistSuggestions() {
+        loadPlaylistSuggestions(delayMillis = 0L)
+    }
+
+    private fun loadPlaylistSuggestions(delayMillis: Long) {
+        if (isExternalPlaylist || isPodcastPlaylist) return
+
+        suggestionsJob?.cancel()
+        suggestionsJob =
+            viewModelScope.launch(Dispatchers.IO) {
+                if (delayMillis > 0) {
+                    delay(delayMillis)
+                }
+                _isLoadingSuggestions.value = true
+                try {
+                    YouTube.playlist(playlistId, includeSuggestions = true)
+                        .onSuccess { playlistPage ->
+                            playlistSuggestions.value = applySongFilters(playlistPage.suggestions)
+                        }.onFailure { throwable ->
+                            reportException(throwable)
+                        }
+                } finally {
+                    _isLoadingSuggestions.value = false
+                }
+            }
+    }
+
     private fun startProactiveBackgroundLoading() {
         proactiveLoadJob?.cancel() // Cancel previous job if any
         proactiveLoadJob = viewModelScope.launch(Dispatchers.IO) {
@@ -319,6 +357,10 @@ class OnlinePlaylistViewModel @Inject constructor(
                         val currentSongs = playlistSongs.value.toMutableList()
                         currentSongs.addAll(playlistContinuationPage.songs)
                         playlistSongs.value = applySongFilters(currentSongs)
+                        if (playlistContinuationPage.suggestions.isNotEmpty()) {
+                            playlistSuggestions.value =
+                                applySongFilters(playlistSuggestions.value + playlistContinuationPage.suggestions)
+                        }
                         currentProactiveToken = playlistContinuationPage.continuation
                         // Update the class-level continuation for manual loadMore if needed
                         this@OnlinePlaylistViewModel.continuation = currentProactiveToken 
@@ -345,6 +387,10 @@ class OnlinePlaylistViewModel @Inject constructor(
                     val currentSongs = playlistSongs.value.toMutableList()
                     currentSongs.addAll(playlistContinuationPage.songs)
                     playlistSongs.value = applySongFilters(currentSongs)
+                    if (playlistContinuationPage.suggestions.isNotEmpty()) {
+                        playlistSuggestions.value =
+                            applySongFilters(playlistSuggestions.value + playlistContinuationPage.suggestions)
+                    }
                     continuation = playlistContinuationPage.continuation
                 }.onFailure { throwable ->
                     reportException(throwable)
@@ -357,6 +403,16 @@ class OnlinePlaylistViewModel @Inject constructor(
                 }
         }
     }
+
+    suspend fun addSuggestionToPlaylist(song: SongItem): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            YouTube.addToPlaylist(playlistId, song.id)
+                .map {
+                    val nextSongs = playlistSongs.value + song
+                    playlistSongs.value = applySongFilters(nextSongs)
+                    playlistSuggestions.value = playlistSuggestions.value.filterNot { it.id == song.id }
+                }
+        }
 
     fun retry() {
         proactiveLoadJob?.cancel()
@@ -373,5 +429,6 @@ class OnlinePlaylistViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         proactiveLoadJob?.cancel()
+        suggestionsJob?.cancel()
     }
 }

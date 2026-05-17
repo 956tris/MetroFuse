@@ -52,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -106,6 +107,7 @@ import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.viewmodels.OnlinePlaylistViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalMaterial3ExpressiveApi::class)
@@ -117,6 +119,7 @@ fun OnlinePlaylistScreen(
     val menuState = LocalMenuState.current
     val database = LocalDatabase.current
     val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
     val playerConnection = LocalPlayerConnection.current ?: return
     val listenTogetherManager = LocalListenTogetherManager.current
     val isListenTogetherGuest = listenTogetherManager?.let { it.isInRoom && !it.isHost } ?: false
@@ -127,14 +130,18 @@ fun OnlinePlaylistScreen(
 
     val playlist by viewModel.playlist.collectAsStateWithLifecycle()
     val songs by viewModel.playlistSongs.collectAsStateWithLifecycle()
+    val suggestions by viewModel.playlistSuggestions.collectAsStateWithLifecycle()
     val dbPlaylist by viewModel.dbPlaylist.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val isLoadingMore by viewModel.isLoadingMore.collectAsStateWithLifecycle()
+    val isLoadingSuggestions by viewModel.isLoadingSuggestions.collectAsStateWithLifecycle()
     val error by viewModel.error.collectAsStateWithLifecycle()
     val isPodcastPlaylist = viewModel.isPodcastPlaylist
     val isExternalPlaylist = viewModel.isExternalPlaylist
 
     val hideExplicit by rememberPreference(key = HideExplicitKey, defaultValue = false)
+    val suggestionsTitle = stringResource(R.string.playlist_suggestions)
+    val refreshSuggestionsText = stringResource(R.string.playlist_suggestions_refresh)
 
     val lazyListState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -172,6 +179,22 @@ fun OnlinePlaylistScreen(
 
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(isSearching) { if (isSearching) focusRequester.requestFocus() }
+
+    LaunchedEffect(lazyListState, filteredSongs.size, isSearching) {
+        snapshotFlow {
+            lazyListState.layoutInfo.visibleItemsInfo.lastOrNull()?.index to
+                lazyListState.layoutInfo.totalItemsCount
+        }.distinctUntilChanged()
+            .collect { (lastVisibleIndex, totalItemsCount) ->
+                if (!isSearching &&
+                    lastVisibleIndex != null &&
+                    totalItemsCount > 0 &&
+                    lastVisibleIndex >= totalItemsCount - 4
+                ) {
+                    viewModel.loadMoreSongs()
+                }
+            }
+    }
 
     LaunchedEffect(filteredSongs) {
         selection.fastForEachReversed { songId ->
@@ -352,6 +375,101 @@ fun OnlinePlaylistScreen(
                                 }
                             },
                         )
+                    }
+
+                    val visibleSuggestions =
+                        if (!isSearching && playlist.isEditable && !isExternalPlaylist) {
+                            suggestions.filterNot { suggestion -> songs.any { it.id == suggestion.id } }
+                        } else {
+                            emptyList()
+                        }
+
+                    if (visibleSuggestions.isNotEmpty() ||
+                        (isLoadingSuggestions && !isSearching && playlist.isEditable && !isExternalPlaylist)
+                    ) {
+                        item(key = "playlist_suggestions_header") {
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 24.dp, top = 28.dp, end = 24.dp, bottom = 12.dp)
+                                        .animateItem(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = suggestionsTitle,
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                IconButton(
+                                    enabled = !isLoadingSuggestions,
+                                    onClick = viewModel::refreshPlaylistSuggestions,
+                                ) {
+                                    if (isLoadingSuggestions) {
+                                        ContainedLoadingIndicator(modifier = Modifier.size(24.dp))
+                                    } else {
+                                        Icon(
+                                            painter = painterResource(R.drawable.refresh),
+                                            contentDescription = refreshSuggestionsText,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        itemsIndexed(visibleSuggestions, key = { _, song -> "playlist_suggestion_${song.id}" }) { index, songItem ->
+                            YouTubeListItem(
+                                item = songItem,
+                                isActive = mediaMetadata?.id == songItem.id,
+                                isPlaying = isPlaying,
+                                modifier =
+                                    Modifier
+                                        .combinedClickable(
+                                            enabled = !hideExplicit || !songItem.explicit,
+                                            onClick = {
+                                                if (songItem.id == mediaMetadata?.id) {
+                                                    playerConnection.togglePlayPause()
+                                                } else {
+                                                    playerConnection.playQueue(
+                                                        YouTubePlaylistQueue(
+                                                            playlistId = playlist.id,
+                                                            playlistTitle = suggestionsTitle,
+                                                            initialSongs = visibleSuggestions,
+                                                            startIndex = index,
+                                                        ),
+                                                    )
+                                                }
+                                            },
+                                            onLongClick = {
+                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                menuState.show {
+                                                    YouTubeSongMenu(songItem, navController, menuState::dismiss)
+                                                }
+                                            },
+                                        ).animateItem(),
+                                trailingContent = {
+                                    IconButton(
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                viewModel.addSuggestionToPlaylist(songItem)
+                                                    .onSuccess {
+                                                        snackbarHostState.showSnackbar(
+                                                            message = context.getString(R.string.added_to_playlist),
+                                                        )
+                                                    }.onFailure {
+                                                        snackbarHostState.showSnackbar(
+                                                            message = context.getString(R.string.playlist_suggestion_add_failed),
+                                                        )
+                                                    }
+                                            }
+                                        },
+                                    ) {
+                                        Icon(painterResource(R.drawable.playlist_add), null)
+                                    }
+                                },
+                            )
+                        }
                     }
 
                     if (isLoadingMore) {

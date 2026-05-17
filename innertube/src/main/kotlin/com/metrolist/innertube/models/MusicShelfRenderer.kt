@@ -14,6 +14,7 @@ data class MusicShelfRenderer(
     data class Content(
         val musicResponsiveListItemRenderer: MusicResponsiveListItemRenderer?,
         val musicMultiRowListItemRenderer: MusicMultiRowListItemRenderer?,
+        val musicShelfRenderer: MusicShelfRenderer? = null,
         val continuationItemRenderer: ContinuationItemRenderer?,
     )
 }

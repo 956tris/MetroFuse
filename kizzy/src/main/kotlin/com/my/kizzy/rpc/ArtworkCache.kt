@@ -13,13 +13,21 @@ internal object ArtworkCache {
 
     private val cache = ConcurrentHashMap<String, CacheEntry>()
 
-    suspend fun getOrFetch(key: String, fetch: suspend () -> String?): String? {
+    suspend fun getOrFetch(
+        key: String,
+        cacheFailures: Boolean = true,
+        fetch: suspend () -> String?,
+    ): String? {
         val now = System.currentTimeMillis()
         cache[key]?.takeIf { it.expiresAtMs > now }?.let { return it.value }
 
         val value = fetch()
-        val ttl = if (value == null) FAILURE_TTL_MS else SUCCESS_TTL_MS
-        cache[key] = CacheEntry(value, now + ttl)
+        if (value != null || cacheFailures) {
+            val ttl = if (value == null) FAILURE_TTL_MS else SUCCESS_TTL_MS
+            cache[key] = CacheEntry(value, now + ttl)
+        } else {
+            cache.remove(key)
+        }
         return value
     }
 }

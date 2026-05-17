@@ -84,13 +84,13 @@ object DiscordCanvasServerConverter {
                 .header("Cache-Control", "no-cache")
                 .build()
             client.newCall(request).execute().use { response ->
-                response.isSuccessful &&
-                    response.header("Content-Type")
-                        .orEmpty()
-                        .let { contentType ->
-                            contentType.contains("image/webp", ignoreCase = true) ||
-                                contentType.contains("image/gif", ignoreCase = true)
-                        }
+                if (!response.isSuccessful) return@use false
+                val contentType = response.header("Content-Type").orEmpty()
+                val contentLength = response.header("Content-Length")?.toLongOrNull()
+                contentType.contains("image/webp", ignoreCase = true) ||
+                    contentType.contains("image/gif", ignoreCase = true) ||
+                    contentType.contains("application/octet-stream", ignoreCase = true) ||
+                    (contentLength != null && contentLength > 0L)
             }
         }.getOrDefault(false)
 

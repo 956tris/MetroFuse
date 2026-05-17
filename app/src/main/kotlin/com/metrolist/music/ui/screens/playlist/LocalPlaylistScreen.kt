@@ -39,7 +39,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -126,6 +128,7 @@ import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.playback.ExoDownloadService
 import com.metrolist.music.playback.queues.ListQueue
+import com.metrolist.music.playback.queues.YouTubePlaylistQueue
 import com.metrolist.music.ui.component.ActionPromptDialog
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.DraggableScrollbar
@@ -136,10 +139,12 @@ import com.metrolist.music.ui.component.OverlayEditButton
 import com.metrolist.music.ui.component.SongListItem
 import com.metrolist.music.ui.component.SortHeader
 import com.metrolist.music.ui.component.TextFieldDialog
+import com.metrolist.music.ui.component.YouTubeListItem
 import com.metrolist.music.ui.menu.CustomThumbnailMenu
 import com.metrolist.music.ui.menu.LocalPlaylistMenu
 import com.metrolist.music.ui.menu.SelectionSongMenu
 import com.metrolist.music.ui.menu.SongMenu
+import com.metrolist.music.ui.menu.YouTubeSongMenu
 import com.metrolist.music.ui.screens.settings.DarkMode
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.makeTimeString
@@ -158,7 +163,7 @@ import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.time.LocalDateTime
 
 @SuppressLint("RememberReturnType")
-@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun LocalPlaylistScreen(
     navController: NavController,
@@ -253,6 +258,45 @@ fun LocalPlaylistScreen(
     }
 
     val editable: Boolean = playlist?.playlist?.isEditable == true
+    val suggestionsTitle = stringResource(R.string.playlist_suggestions)
+    val refreshSuggestionsText = stringResource(R.string.playlist_suggestions_refresh)
+    var playlistSuggestions by remember { mutableStateOf<List<SongItem>>(emptyList()) }
+    var suggestionsRefreshKey by rememberSaveable { mutableIntStateOf(0) }
+    var isLoadingPlaylistSuggestions by remember { mutableStateOf(false) }
+    val currentSongIds = remember(songs) { songs.map { it.song.id }.toSet() }
+    val visiblePlaylistSuggestions =
+        remember(playlistSuggestions, currentSongIds, isSearching, inSelectMode, editable, playlist?.playlist?.browseId) {
+            if (!isSearching && !inSelectMode && editable && playlist?.playlist?.browseId != null) {
+                playlistSuggestions.filterNot { it.id in currentSongIds }
+            } else {
+                emptyList()
+            }
+        }
+
+    LaunchedEffect(playlist?.playlist?.browseId, editable, suggestionsRefreshKey) {
+        val browseId = playlist?.playlist?.browseId
+        if (browseId == null || !editable) {
+            playlistSuggestions = emptyList()
+            isLoadingPlaylistSuggestions = false
+            return@LaunchedEffect
+        }
+
+        if (suggestionsRefreshKey == 0) {
+            delay(650L)
+        }
+        isLoadingPlaylistSuggestions = true
+        try {
+            YouTube.playlist(browseId, includeSuggestions = true)
+                .onSuccess { playlistPage ->
+                    playlistSuggestions = playlistPage.suggestions
+                }.onFailure { throwable ->
+                    playlistSuggestions = emptyList()
+                    reportException(throwable)
+                }
+        } finally {
+            isLoadingPlaylistSuggestions = false
+        }
+    }
 
     LaunchedEffect(songs) {
         selection.fastForEachReversed { mapId ->
@@ -676,12 +720,30 @@ fun LocalPlaylistScreen(
                                             } else if (song.song.id == mediaMetadata?.id) {
                                                 playerConnection.togglePlayPause()
                                             } else {
+                                                val currentPlaylist = playlist
+                                                val browseId = currentPlaylist?.playlist?.browseId
+                                                val initialSongs =
+                                                    songs.map {
+                                                        it.song
+                                                            .toMediaMetadata()
+                                                            .copy(setVideoId = it.map.setVideoId)
+                                                            .toYTItem()
+                                                    }
                                                 playerConnection.playQueue(
-                                                    ListQueue(
-                                                        title = playlist!!.playlist.name,
-                                                        items = songs.map { it.song.toMediaItem() },
-                                                        startIndex = songs.indexOfFirst { it.map.id == song.map.id },
-                                                    ),
+                                                    if (browseId != null) {
+                                                        YouTubePlaylistQueue(
+                                                            playlistId = browseId,
+                                                            playlistTitle = currentPlaylist?.playlist?.name,
+                                                            initialSongs = initialSongs,
+                                                            startIndex = songs.indexOfFirst { it.map.id == song.map.id },
+                                                        )
+                                                    } else {
+                                                        ListQueue(
+                                                            title = currentPlaylist?.playlist?.name,
+                                                            items = songs.map { it.song.toMediaItem() },
+                                                            startIndex = songs.indexOfFirst { it.map.id == song.map.id },
+                                                        )
+                                                    },
                                                 )
                                             }
                                         },
@@ -728,6 +790,117 @@ fun LocalPlaylistScreen(
                             content()
                         }
                     }
+                }
+            }
+
+            if (visiblePlaylistSuggestions.isNotEmpty() ||
+                (isLoadingPlaylistSuggestions && !isSearching && !inSelectMode && editable && playlist?.playlist?.browseId != null)
+            ) {
+                item(key = "playlist_suggestions_header") {
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(start = 24.dp, top = 28.dp, end = 24.dp, bottom = 12.dp)
+                                .animateItem(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = suggestionsTitle,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(
+                            enabled = !isLoadingPlaylistSuggestions,
+                            onClick = { suggestionsRefreshKey++ },
+                        ) {
+                            if (isLoadingPlaylistSuggestions) {
+                                ContainedLoadingIndicator(modifier = Modifier.size(24.dp))
+                            } else {
+                                Icon(
+                                    painter = painterResource(R.drawable.refresh),
+                                    contentDescription = refreshSuggestionsText,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                itemsIndexed(
+                    items = visiblePlaylistSuggestions,
+                    key = { _, song -> "local_playlist_suggestion_${song.id}" },
+                ) { index, songItem ->
+                    YouTubeListItem(
+                        item = songItem,
+                        isActive = mediaMetadata?.id == songItem.id,
+                        isPlaying = isPlaying,
+                        modifier =
+                            Modifier
+                                .combinedClickable(
+                                    onClick = {
+                                        if (songItem.id == mediaMetadata?.id) {
+                                            playerConnection.togglePlayPause()
+                                        } else {
+                                            playerConnection.playQueue(
+                                                ListQueue(
+                                                    title = suggestionsTitle,
+                                                    items = visiblePlaylistSuggestions.map { it.toMediaItem() },
+                                                    startIndex = index,
+                                                ),
+                                            )
+                                        }
+                                    },
+                                    onLongClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        menuState.show {
+                                            YouTubeSongMenu(
+                                                song = songItem,
+                                                navController = navController,
+                                                onDismiss = menuState::dismiss,
+                                            )
+                                        }
+                                    },
+                                ).animateItem(),
+                        trailingContent = {
+                            IconButton(
+                                onClick = {
+                                    val currentPlaylist = playlist ?: return@IconButton
+                                    val browseId = currentPlaylist.playlist.browseId ?: return@IconButton
+                                    coroutineScope.launch {
+                                        val result =
+                                            withContext(Dispatchers.IO) {
+                                                YouTube.addToPlaylist(browseId, songItem.id)
+                                                    .map {
+                                                        val metadata = songItem.toMediaMetadata()
+                                                        database.transaction {
+                                                            insert(metadata)
+                                                            val refreshedPlaylist = playlistBlocking(currentPlaylist.id) ?: currentPlaylist
+                                                            if (checkInPlaylist(refreshedPlaylist.id, metadata.id) == 0) {
+                                                                addSongsToPlaylist(
+                                                                    playlist = refreshedPlaylist,
+                                                                    songs = listOf(metadata.id to metadata.setVideoId),
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                            }
+
+                                        result
+                                            .onSuccess {
+                                                playlistSuggestions = playlistSuggestions.filterNot { it.id == songItem.id }
+                                                snackbarHostState.showSnackbar(context.getString(R.string.added_to_playlist))
+                                            }.onFailure { throwable ->
+                                                reportException(throwable)
+                                                snackbarHostState.showSnackbar(context.getString(R.string.playlist_suggestion_add_failed))
+                                            }
+                                    }
+                                },
+                            ) {
+                                Icon(painterResource(R.drawable.playlist_add), null)
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -1290,11 +1463,27 @@ fun LocalPlaylistHeader(
             // Shuffle Button - Smaller secondary button
             Surface(
                 onClick = {
+                    val shuffledSongs = songs.shuffled()
+                    val browseId = playlist.playlist.browseId
                     playerConnection.playQueue(
-                        ListQueue(
-                            title = playlist.playlist.name,
-                            items = songs.shuffled().map { it.song.toMediaItem() },
-                        ),
+                        if (browseId != null) {
+                            YouTubePlaylistQueue(
+                                playlistId = browseId,
+                                playlistTitle = playlist.playlist.name,
+                                initialSongs =
+                                    shuffledSongs.map {
+                                        it.song
+                                            .toMediaMetadata()
+                                            .copy(setVideoId = it.map.setVideoId)
+                                            .toYTItem()
+                                    },
+                            )
+                        } else {
+                            ListQueue(
+                                title = playlist.playlist.name,
+                                items = shuffledSongs.map { it.song.toMediaItem() },
+                            )
+                        },
                     )
                 },
                 shape = CircleShape,
@@ -1316,11 +1505,26 @@ fun LocalPlaylistHeader(
             // Play Button - Larger primary circular button
             Surface(
                 onClick = {
+                    val browseId = playlist.playlist.browseId
                     playerConnection.playQueue(
-                        ListQueue(
-                            title = playlist.playlist.name,
-                            items = songs.map { it.song.toMediaItem() },
-                        ),
+                        if (browseId != null) {
+                            YouTubePlaylistQueue(
+                                playlistId = browseId,
+                                playlistTitle = playlist.playlist.name,
+                                initialSongs =
+                                    songs.map {
+                                        it.song
+                                            .toMediaMetadata()
+                                            .copy(setVideoId = it.map.setVideoId)
+                                            .toYTItem()
+                                    },
+                            )
+                        } else {
+                            ListQueue(
+                                title = playlist.playlist.name,
+                                items = songs.map { it.song.toMediaItem() },
+                            )
+                        },
                     )
                 },
                 color = MaterialTheme.colorScheme.primary,

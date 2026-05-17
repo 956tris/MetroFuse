@@ -28,6 +28,7 @@ import com.metrolist.innertube.models.YouTubeClient
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB
 import com.metrolist.innertube.models.YouTubeClient.Companion.WEB_REMIX
 import com.metrolist.innertube.models.YouTubeLocale
+import com.metrolist.innertube.models.getClickTrackingParams
 import com.metrolist.innertube.models.getContinuation
 import com.metrolist.innertube.models.getItems
 import com.metrolist.innertube.models.oddElements
@@ -934,7 +935,10 @@ object YouTube {
             }
         }
 
-    suspend fun playlist(playlistId: String): Result<PlaylistPage> =
+    suspend fun playlist(
+        playlistId: String,
+        includeSuggestions: Boolean = false,
+    ): Result<PlaylistPage> =
         runCatching {
             val response =
                 innerTube
@@ -958,6 +962,45 @@ object YouTube {
                     ?: base?.musicEditablePlaylistDetailHeaderRenderer?.header?.musicResponsiveHeaderRenderer
 
             val editable = base?.musicEditablePlaylistDetailHeaderRenderer != null
+            val secondarySection =
+                response.contents
+                    ?.twoColumnBrowseResultsRenderer
+                    ?.secondaryContents
+                    ?.sectionListRenderer
+            val playlistShelf =
+                secondarySection
+                    ?.contents
+                    ?.firstOrNull()
+                    ?.musicPlaylistShelfRenderer
+            val songs =
+                playlistShelf
+                    ?.contents
+                    ?.getItems()
+                    ?.mapNotNull {
+                        PlaylistPage.fromMusicResponsiveListItemRenderer(it)
+                    } ?: emptyList()
+            val browseSuggestions =
+                if (includeSuggestions) {
+                    parsePlaylistSuggestions(secondarySection?.contents)
+                } else {
+                    emptyList()
+                }
+            val suggestions =
+                if (!includeSuggestions) {
+                    emptyList()
+                } else {
+                    browseSuggestions.ifEmpty {
+                        val continuation = secondarySection?.continuations?.getContinuation()
+                        if (continuation == null) {
+                            emptyList()
+                        } else {
+                            playlistSuggestionsContinuation(
+                                continuation = continuation,
+                                clickTrackingParams = secondarySection.continuations.getClickTrackingParams(),
+                            ).getOrNull().orEmpty()
+                        }
+                    }
+                }
 
             PlaylistPage(
                 playlist =
@@ -1010,43 +1053,17 @@ object YouTube {
                                 ?.watchPlaylistEndpoint,
                         isEditable = editable,
                     ),
-                songs =
-                    response.contents
-                        ?.twoColumnBrowseResultsRenderer
-                        ?.secondaryContents
-                        ?.sectionListRenderer
-                        ?.contents
-                        ?.firstOrNull()
-                        ?.musicPlaylistShelfRenderer
-                        ?.contents
-                        ?.getItems()
-                        ?.mapNotNull {
-                            PlaylistPage.fromMusicResponsiveListItemRenderer(it)
-                        } ?: emptyList(),
+                songs = songs,
+                suggestions = suggestions,
                 songsContinuation =
-                    response.contents
-                        ?.twoColumnBrowseResultsRenderer
-                        ?.secondaryContents
-                        ?.sectionListRenderer
-                        ?.contents
-                        ?.firstOrNull()
-                        ?.musicPlaylistShelfRenderer
+                    playlistShelf
                         ?.contents
                         ?.getContinuation()
-                        ?: response.contents
-                            ?.twoColumnBrowseResultsRenderer
-                            ?.secondaryContents
-                            ?.sectionListRenderer
-                            ?.contents
-                            ?.firstOrNull()
-                            ?.musicPlaylistShelfRenderer
+                        ?: playlistShelf
                             ?.continuations
                             ?.getContinuation(),
                 continuation =
-                    response.contents
-                        ?.twoColumnBrowseResultsRenderer
-                        ?.secondaryContents
-                        ?.sectionListRenderer
+                    secondarySection
                         ?.continuations
                         ?.getContinuation(),
             )
@@ -1059,6 +1076,7 @@ object YouTube {
                     .browse(
                         client = WEB_REMIX,
                         continuation = continuation,
+                        continuationType = "next",
                         setLogin = true,
                     ).body<BrowseResponse>()
 
@@ -1082,13 +1100,19 @@ object YouTube {
 
             val allContents = mainContents + shelfContents + appendedContents
 
+            val suggestionSongs =
+                (
+                    parsePlaylistSuggestions(response.continuationContents?.sectionListContinuation?.contents) +
+                        parsePlaylistSuggestionsFromItems(appendedContents)
+                ).distinctBy { it.id }
+
             val songs =
                 allContents
                     .mapNotNull { content: MusicShelfRenderer.Content -> content.musicResponsiveListItemRenderer }
                     .mapNotNull { renderer -> PlaylistPage.fromMusicResponsiveListItemRenderer(renderer) }
 
             val nextContinuation =
-                if (songs.isEmpty()) {
+                if (songs.isEmpty() && suggestionSongs.isEmpty()) {
                     null
                 } else {
                     response.continuationContents
@@ -1112,8 +1136,66 @@ object YouTube {
 
             PlaylistContinuationPage(
                 songs = songs,
+                suggestions = suggestionSongs,
                 continuation = nextContinuation,
             )
+        }
+
+    private fun parsePlaylistSuggestions(contents: List<SectionListRenderer.Content>?): List<SongItem> =
+        parsePlaylistSuggestionShelves(
+            contents
+                ?.asSequence()
+                ?.mapNotNull { it.musicShelfRenderer },
+        )
+
+    private fun parsePlaylistSuggestionsFromItems(contents: List<MusicShelfRenderer.Content>?): List<SongItem> =
+        parsePlaylistSuggestionShelves(
+            contents
+                ?.asSequence()
+                ?.mapNotNull { it.musicShelfRenderer },
+        )
+
+    private fun parsePlaylistSuggestionShelves(shelves: Sequence<MusicShelfRenderer>?): List<SongItem> =
+        shelves
+            ?.filter { shelf ->
+                shelf.title?.runs?.joinToString(separator = "") { it.text }?.contains("suggest", ignoreCase = true) == true
+            }?.flatMap { shelf ->
+                shelf.contents
+                    .orEmpty()
+                    .asSequence()
+                    .mapNotNull { it.musicResponsiveListItemRenderer }
+            }?.mapNotNull { renderer ->
+                PlaylistPage.fromSuggestionListItemRenderer(renderer)
+            }?.distinctBy { it.id }
+            ?.toList()
+            .orEmpty()
+
+    private suspend fun playlistSuggestionsContinuation(
+        continuation: String,
+        clickTrackingParams: String? = null,
+    ): Result<List<SongItem>> =
+        runCatching {
+            val response =
+                innerTube
+                    .browse(
+                        client = WEB_REMIX,
+                        continuation = continuation,
+                        continuationType = "next",
+                        clickTrackingParams = clickTrackingParams,
+                        setLogin = true,
+                    ).body<BrowseResponse>()
+
+            val appendedContents =
+                response.onResponseReceivedActions
+                    ?.firstOrNull()
+                    ?.appendContinuationItemsAction
+                    ?.continuationItems
+                    .orEmpty()
+
+            (
+                parsePlaylistSuggestions(response.continuationContents?.sectionListContinuation?.contents) +
+                    parsePlaylistSuggestionsFromItems(appendedContents)
+            ).distinctBy { it.id }
         }
 
     suspend fun podcast(podcastId: String): Result<PodcastPage> = podcastWithDebug(podcastId) { }
