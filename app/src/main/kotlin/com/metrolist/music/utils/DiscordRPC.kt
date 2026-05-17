@@ -8,20 +8,35 @@ package com.metrolist.music.utils
 import android.content.Context
 import com.metrolist.music.R
 import com.metrolist.music.db.entities.Song
-import com.my.kizzy.rpc.KizzyRPC
-import com.my.kizzy.rpc.RpcImage
+import com.metrolist.music.discordrpc.ActivityType
+import com.metrolist.music.discordrpc.DiscordRpcConnection
+import com.metrolist.music.discordrpc.SuperProperties
+import com.metrolist.music.discordrpc.entities.Button
+import com.metrolist.music.discordrpc.entities.Timestamps
 
 class DiscordRPC(
     val context: Context,
     token: String,
-) : KizzyRPC(
-    token = token,
-    os = "Android",
-    browser = "Discord Android",
-    device = android.os.Build.DEVICE,
-    userAgent = SuperProperties.userAgent,
-    superPropertiesBase64 = SuperProperties.superPropertiesBase64
 ) {
+    private val connection = DiscordRpcConnection(
+        token = token,
+        os = "Android",
+        browser = "Discord Android",
+        device = android.os.Build.DEVICE,
+        userAgent = SuperProperties.userAgent,
+        superPropertiesBase64 = SuperProperties.superPropertiesBase64,
+    )
+
+    fun start() {
+        connection.connect()
+    }
+
+    fun closeRPC() {
+        connection.closeDirect()
+    }
+
+    fun isRpcRunning(): Boolean = connection.isRunning()
+
     suspend fun updateSong(
         song: Song,
         currentPlaybackTimeMillis: Long,
@@ -51,68 +66,60 @@ class DiscordRPC(
         val remainingDuration = song.song.duration * 1000L - currentPlaybackTimeMillis
         val adjustedRemainingDuration = (remainingDuration / playbackSpeed).toLong()
 
-        val buttonsList = mutableListOf<Pair<String, String>>()
+        val buttonsList = mutableListOf<Button>()
         if (button1Visible) {
             val resolvedText = resolveVariables(
                 button1Text.ifEmpty { context.getString(R.string.discord_default_button_1) },
-                song
+                song,
             )
-            buttonsList.add(resolvedText to "https://music.youtube.com/watch?v=${song.song.id}")
+            buttonsList.add(Button(resolvedText, "https://music.youtube.com/watch?v=${song.song.id}"))
         }
         if (button2Visible) {
             val resolvedText = resolveVariables(
                 button2Text.ifEmpty { context.getString(R.string.discord_default_button_2) },
-                song
+                song,
             )
-            buttonsList.add(resolvedText to context.getString(R.string.discord_default_button_2_url))
+            buttonsList.add(Button(resolvedText, context.getString(R.string.discord_default_button_2_url)))
         }
 
         val type = when (activityType) {
-            "playing" -> Type.PLAYING
-            "watching" -> Type.WATCHING
-            "competing" -> Type.COMPETING
-            else -> Type.LISTENING
+            "playing" -> ActivityType.PLAYING
+            "watching" -> ActivityType.WATCHING
+            "competing" -> ActivityType.COMPETING
+            else -> ActivityType.LISTENING
         }
 
         val name = activityName.ifEmpty {
             context.getString(R.string.app_name).removeSuffix(" Debug")
         }
-        val largeImage =
-            largeImageUrl
-                ?.takeIf { it.isNotBlank() }
-                ?.let { RpcImage.ExternalImage(it, fallbackDiscordAsset = largeImageFallbackUrl) }
-
-        setActivity(
+        connection.setActivity(
             name = name,
-            details = songTitleWithRate,
-            state = song.artists.joinToString { it.name },
-            detailsUrl = "https://music.youtube.com/watch?v=${song.song.id}",
-            largeImage = largeImage,
-            smallImage = song.artists.firstOrNull()?.thumbnailUrl?.let { RpcImage.ExternalImage(it) },
+            type = type,
+            details = if (!useDetails) songTitleWithRate else song.artists.joinToString { it.name },
+            state = if (!useDetails) song.artists.joinToString { it.name } else songTitleWithRate,
+            timestamps = Timestamps(
+                start = calculatedStartTime,
+                end = currentTime + adjustedRemainingDuration,
+            ),
+            largeImage = largeImageUrl,
+            largeImageFallback = largeImageFallbackUrl,
+            smallImage = song.artists.firstOrNull()?.thumbnailUrl,
             largeText = song.album?.title,
             smallText = song.artists.firstOrNull()?.name,
-            buttons = if (buttonsList.isNotEmpty()) buttonsList else null,
-            type = type,
-            statusDisplayType = if (useDetails) StatusDisplayType.DETAILS else StatusDisplayType.STATE,
+            buttons = buttonsList.ifEmpty { null },
+            status = status,
             since = currentTime,
-            startTime = calculatedStartTime,
-            endTime = currentTime + adjustedRemainingDuration,
             applicationId = APPLICATION_ID,
-            status = status
         )
     }
 
-    override suspend fun close() {
-        super.close()
+    suspend fun close() {
+        connection.close()
     }
 
     companion object {
         private const val APPLICATION_ID = "1411019391843172514"
 
-        /**
-         * Resolves template variables in text.
-         * Supported: {song_name}, {artist_name}, {album_name}
-         */
         fun resolveVariables(text: String, song: Song): String {
             return text
                 .replace("{song_name}", song.song.title)

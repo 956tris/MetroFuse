@@ -1040,7 +1040,7 @@
     <string name="discord_default_button_2">Visit MetroFuse</string>
     <string name="discord_default_button_2_url">https://github.com/956tris/MetroFuse</string>
     <string name="login_successful">Login successful!</string>
-    <string name="discord_information_warning">This feature uses the KizzyRPC library to connect to Discord\'s Gateway and update your Rich Presence status. While no account suspensions from similar usage have been reported, this method is not officially supported by Discord and may be considered a Terms of Service violation. Your token is handled locally and never sent to third-party servers. Proceed at your own discretion!</string>
+    <string name="discord_information_warning">Metrolist sends your currently playing song to Discord\'s Gateway to update your Rich Presence. All data goes directly from your device to Discord — no third-party servers are involved. Your token stays on-device and is never shared. However, using a user token for Gateway connections is not officially supported and may violate Discord\'s Terms of Service. Proceed at your own discretion!</string>
     <string name="discord_activity_type">Activity type</string>
     <string name="discord_activity_playing">Playing</string>
     <string name="discord_activity_listening">Listening</string>

@@ -98,11 +98,11 @@ import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
+import com.metrolist.music.discordrpc.DiscordRpcConnection
+import com.metrolist.music.discordrpc.SuperProperties
 import com.metrolist.music.utils.DiscordRPC
-import com.metrolist.music.utils.SuperProperties
 import com.metrolist.music.utils.makeTimeString
 import com.metrolist.music.utils.rememberPreference
-import com.my.kizzy.rpc.KizzyRPC
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -183,7 +183,7 @@ fun DiscordSettings(
             return@LaunchedEffect
         }
         launch(Dispatchers.IO) {
-            KizzyRPC
+            DiscordRpcConnection
                 .getUserInfo(
                     token,
                     SuperProperties.userAgent,
@@ -223,7 +223,7 @@ fun DiscordSettings(
                 isVerifying = true
                 error = null
                 coroutineScope.launch(Dispatchers.IO) {
-                    KizzyRPC
+                    DiscordRpcConnection
                         .getUserInfo(
                             token,
                             SuperProperties.userAgent,
