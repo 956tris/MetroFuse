@@ -435,7 +435,7 @@ fun BottomSheetPlayer(
     val currentLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
     val appleTallCanvasUrl by playerConnection.service.currentAppleTallCanvasUrl.collectAsStateWithLifecycle()
     val embeddedCanvasUrl by playerConnection.service.currentEmbeddedCanvasUrl.collectAsStateWithLifecycle()
-    val currentFormat by playerConnection.service.currentFormat.collectAsStateWithLifecycle(initialValue = null)
+    val currentFormat by playerConnection.currentFormat.collectAsStateWithLifecycle(initialValue = null)
     val displayFormat =
         remember(currentFormat, mediaMetadata?.id) {
             currentFormat?.takeIf { format ->

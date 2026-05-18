@@ -3918,6 +3918,41 @@ class MusicService :
         ).joinToString(";")
     }
 
+    private fun isProviderFirstInPlaybackOrder(
+        mediaId: String,
+        provider: AudioProviderOrderItem,
+        skipAppleForThisAttempt: Boolean = false,
+    ): Boolean {
+        val providerOverride = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
+        if (providerOverride != null) {
+            return providerOverride.provider == provider
+        }
+
+        val orderedProviders =
+            buildList {
+                when {
+                    SoundCloudAudioProvider.isSoundCloudUrl(mediaId) -> add(AudioProviderOrderItem.SOUNDCLOUD)
+                    TidalAudioProvider.isTidalTrackId(mediaId) -> add(AudioProviderOrderItem.TIDAL)
+                    DeezerAudioProvider.isDeezerTrackId(mediaId) -> add(AudioProviderOrderItem.DEEZER)
+                }
+                addAll(AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, "")))
+            }.distinct()
+
+        return orderedProviders.firstOrNull { canAttemptProviderFromOrder(it, skipAppleForThisAttempt) } == provider
+    }
+
+    private fun canAttemptProviderFromOrder(
+        provider: AudioProviderOrderItem,
+        skipAppleForThisAttempt: Boolean = false,
+    ): Boolean =
+        when (provider) {
+            AudioProviderOrderItem.APPLE_MUSIC ->
+                dataStore.get(AppleMusicFallbackEnabledKey, true) && !skipAppleForThisAttempt
+            AudioProviderOrderItem.INSTAGRAM ->
+                dataStore.get(InstagramCookieKey, "").isNotBlank()
+            else -> true
+        }
+
     private fun createDataSourceFactory(): DataSource.Factory {
         return ResolvingDataSource.Factory(
             DeezerAudioAwareDataSourceFactory(
@@ -3973,12 +4008,11 @@ class MusicService :
                 return@Factory dataSpec
             }
 
-            val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
-            val preferAppleMusic = dataStore.get(PreferAppleMusicKey, false)
-            val applePrimary =
-                appleMusicFallbackEnabled &&
-                    preferAppleMusic &&
-                    !skipAppleOnceMediaIds.contains(mediaId)
+            val applePrimary = isProviderFirstInPlaybackOrder(
+                mediaId = mediaId,
+                provider = AudioProviderOrderItem.APPLE_MUSIC,
+                skipAppleForThisAttempt = skipAppleOnceMediaIds.contains(mediaId),
+            )
             val shouldBypassUrlCache =
                     bypassCacheForQualityChange.contains(mediaId) ||
                     skipAppleOnceMediaIds.contains(mediaId)
@@ -4232,15 +4266,9 @@ class MusicService :
         }
 
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
-        val preferAppleMusic = appleMusicFallbackEnabled && dataStore.get(PreferAppleMusicKey, false)
-        val preferTidalAudio = dataStore.get(PreferTidalAudioKey, false)
         val tidalQuality = dataStore.get(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
-        val preferDeezerAudio = dataStore.get(PreferDeezerAudioKey, false)
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
-        val preferInstagramAudio = dataStore.get(PreferInstagramAudioKey, false)
-        val preferYouTubeMusicAudio = dataStore.get(PreferYouTubeMusicAudioKey, false)
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
         val providerOverride = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
@@ -4357,11 +4385,19 @@ class MusicService :
         fun providerMediaId(provider: AudioProviderOrderItem): String =
             if (isForcedProvider(provider)) providerOverride?.providerMediaId().orEmpty().ifBlank { mediaId } else mediaId
 
+        fun canAttemptOrderedProvider(provider: AudioProviderOrderItem): Boolean =
+            when (provider) {
+                AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackEnabled && !skipAppleForThisAttempt
+                AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
+                else -> true
+            }
+
         suspend fun attemptProvider(provider: AudioProviderOrderItem): PlaybackStreamResolution? {
             if (provider in attemptedProviders) return null
+            if (provider == AudioProviderOrderItem.APPLE_MUSIC && skipAppleForThisAttempt) return null
+            if (!canAttemptOrderedProvider(provider) && !isForcedProvider(provider)) return null
             when (provider) {
                 AudioProviderOrderItem.SOUNDCLOUD -> {
-                    if (!preferSoundCloudAudio && !directSoundCloudMediaId && !isForcedProvider(provider)) return null
                     attemptedProviders += provider
                     soundCloudAttempt = runCatching {
                         resolveSoundCloudFallback(
@@ -4378,7 +4414,6 @@ class MusicService :
                     }
                 }
                 AudioProviderOrderItem.TIDAL -> {
-                    if (!preferTidalAudio && !directTidalMediaId && !isForcedProvider(provider)) return null
                     attemptedProviders += provider
                     tidalAttempt = runCatching {
                         TidalAudioProvider.resolve(
@@ -4401,7 +4436,6 @@ class MusicService :
                     }
                 }
                 AudioProviderOrderItem.DEEZER -> {
-                    if (!preferDeezerAudio && !directDeezerMediaId && !isForcedProvider(provider)) return null
                     attemptedProviders += provider
                     deezerAttempt = runCatching {
                         DeezerAudioProvider.resolve(
@@ -4423,7 +4457,6 @@ class MusicService :
                     }
                 }
                 AudioProviderOrderItem.INSTAGRAM -> {
-                    if (!preferInstagramAudio) return null
                     attemptedProviders += provider
                     instagramAttempt = runCatching {
                         InstagramAudioProvider.resolve(
@@ -4443,7 +4476,6 @@ class MusicService :
                     }
                 }
                 AudioProviderOrderItem.YOUTUBE_MUSIC -> {
-                    if (!preferYouTubeMusicAudio && !isForcedProvider(provider)) return null
                     attemptedProviders += provider
                     youtubeAttempt = runCatching {
                         resolveYouTubeFallback(
@@ -4473,7 +4505,6 @@ class MusicService :
                     }
                 }
                 AudioProviderOrderItem.APPLE_MUSIC -> {
-                    if ((!appleMusicFallbackEnabled && !isForcedProvider(provider)) || skipAppleForThisAttempt) return null
                     attemptedProviders += provider
                     appleAttempt = runCatching {
                         AppleMusicSongResolver.resolve(buildAppleMusicQuery(providerMediaId(provider), song, queuedMetadata))
@@ -4522,21 +4553,21 @@ class MusicService :
             ?: IllegalStateException("YouTube fallback failed")
         val soundCloudError = soundCloudAttempt.exceptionOrNull()
             ?: IllegalStateException("SoundCloud fallback failed")
-        val tidalDetail = if (preferTidalAudio || directTidalMediaId) {
+        val tidalDetail = if (attemptedProviders.contains(AudioProviderOrderItem.TIDAL) || directTidalMediaId) {
             tidalAttempt.exceptionOrNull()?.readableMessage()
                 ?.let { "TIDAL failed: $it; " }
                 .orEmpty()
         } else {
             ""
         }
-        val deezerDetail = if (preferDeezerAudio || directDeezerMediaId) {
+        val deezerDetail = if (attemptedProviders.contains(AudioProviderOrderItem.DEEZER) || directDeezerMediaId) {
             deezerAttempt.exceptionOrNull()?.readableMessage()
                 ?.let { "Deezer failed: $it; " }
                 .orEmpty()
         } else {
             ""
         }
-        val instagramDetail = if (preferInstagramAudio) {
+        val instagramDetail = if (attemptedProviders.contains(AudioProviderOrderItem.INSTAGRAM)) {
             instagramAttempt.exceptionOrNull()?.readableMessage()
                 ?.let { "Instagram failed: $it; " }
                 .orEmpty()
@@ -5153,14 +5184,17 @@ class MusicService :
             ?: return mediaItem
         val appleSkippedForAttempt = skipAppleOnceMediaIds.contains(mediaId)
         val applePrimary =
-            dataStore.get(AppleMusicFallbackEnabledKey, true) &&
-                dataStore.get(PreferAppleMusicKey, false) &&
-                !appleSkippedForAttempt
+            isProviderFirstInPlaybackOrder(
+                mediaId = mediaId,
+                provider = AudioProviderOrderItem.APPLE_MUSIC,
+                skipAppleForThisAttempt = appleSkippedForAttempt,
+            )
         val tidalPrimary =
             !applePrimary &&
-                (
-                    dataStore.get(PreferTidalAudioKey, false) ||
-                        TidalAudioProvider.isTidalTrackId(mediaId)
+                isProviderFirstInPlaybackOrder(
+                    mediaId = mediaId,
+                    provider = AudioProviderOrderItem.TIDAL,
+                    skipAppleForThisAttempt = appleSkippedForAttempt,
                 )
         val tidalQuality = dataStore.get(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
         val skipTidalLiveManifestForAttempt =
@@ -5305,9 +5339,11 @@ class MusicService :
                 val appleSkippedForAttempt = mediaId?.let(skipAppleOnceMediaIds::contains) == true
                 val applePrimary =
                     mediaId != null &&
-                        dataStore.get(AppleMusicFallbackEnabledKey, true) &&
-                        dataStore.get(PreferAppleMusicKey, false) &&
-                        !appleSkippedForAttempt
+                        isProviderFirstInPlaybackOrder(
+                            mediaId = mediaId,
+                            provider = AudioProviderOrderItem.APPLE_MUSIC,
+                            skipAppleForThisAttempt = appleSkippedForAttempt,
+                        )
                 if (mediaId != null && applePrimary) {
                     mediaItem.buildPendingAppleRoute(mediaId)?.also {
                         Timber.tag("AppleALAC").d(

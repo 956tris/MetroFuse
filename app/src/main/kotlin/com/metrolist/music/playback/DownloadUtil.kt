@@ -322,13 +322,8 @@ constructor(
         song: Song?,
     ): DownloadStreamResolution {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
-        val preferAppleMusic = appleMusicFallbackEnabled && context.dataStore.get(PreferAppleMusicKey, false)
-        val preferDeezerAudio = context.dataStore.get(PreferDeezerAudioKey, false)
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val preferSoundCloudAudio = context.dataStore.get(PreferSoundCloudAudioKey, false)
-        val preferInstagramAudio = context.dataStore.get(PreferInstagramAudioKey, false)
-        val preferYouTubeMusicAudio = context.dataStore.get(PreferYouTubeMusicAudioKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
@@ -341,6 +336,13 @@ constructor(
         val soundCloudAuthToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
         val directDeezerMediaId = DeezerAudioProvider.isDeezerTrackId(mediaId)
         val directSoundCloudMediaId = SoundCloudAudioProvider.isSoundCloudUrl(mediaId)
+
+        fun canAttemptOrderedProvider(provider: AudioProviderOrderItem): Boolean =
+            when (provider) {
+                AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackEnabled
+                AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
+                else -> true
+            }
 
         fun AppleMusicSongResolver.Resolved.toDownloadResolution(): DownloadStreamResolution =
             DownloadStreamResolution(
@@ -407,9 +409,9 @@ constructor(
 
         suspend fun attemptProvider(provider: AudioProviderOrderItem): DownloadStreamResolution? {
             if (provider in attemptedProviders) return null
+            if (!canAttemptOrderedProvider(provider)) return null
             when (provider) {
                 AudioProviderOrderItem.SOUNDCLOUD -> {
-                    if (!preferSoundCloudAudio && !directSoundCloudMediaId) return null
                     attemptedProviders += provider
                     soundCloudAttempt = runCatching {
                         SoundCloudAudioProvider.resolve(buildSoundCloudQuery(mediaId, song), soundCloudAuthToken)
@@ -421,7 +423,6 @@ constructor(
                 }
                 AudioProviderOrderItem.TIDAL -> return null
                 AudioProviderOrderItem.DEEZER -> {
-                    if (!preferDeezerAudio && !directDeezerMediaId) return null
                     attemptedProviders += provider
                     deezerAttempt = runCatching {
                         DeezerAudioProvider.resolve(
@@ -439,7 +440,6 @@ constructor(
                     }
                 }
                 AudioProviderOrderItem.INSTAGRAM -> {
-                    if (!preferInstagramAudio) return null
                     attemptedProviders += provider
                     instagramAttempt = runCatching {
                         InstagramAudioProvider.resolve(
@@ -456,7 +456,6 @@ constructor(
                     }
                 }
                 AudioProviderOrderItem.YOUTUBE_MUSIC -> {
-                    if (!preferYouTubeMusicAudio) return null
                     attemptedProviders += provider
                     youtubeAttempt = runCatching {
                         resolveYouTubeFallback(mediaId)
@@ -476,7 +475,6 @@ constructor(
                     }
                 }
                 AudioProviderOrderItem.APPLE_MUSIC -> {
-                    if (!appleMusicFallbackEnabled) return null
                     attemptedProviders += provider
                     appleAttempt = runCatching {
                         AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
@@ -512,14 +510,14 @@ constructor(
 
         val youtubeError = youtubeAttempt.exceptionOrNull() ?: IllegalStateException("YouTube fallback failed")
         val soundCloudError = soundCloudAttempt.exceptionOrNull() ?: IllegalStateException("SoundCloud fallback failed")
-        val deezerDetail = if (preferDeezerAudio || directDeezerMediaId) {
+        val deezerDetail = if (attemptedProviders.contains(AudioProviderOrderItem.DEEZER) || directDeezerMediaId) {
             deezerAttempt.exceptionOrNull()?.message
                 ?.let { "Deezer failed: $it; " }
                 .orEmpty()
         } else {
             ""
         }
-        val instagramDetail = if (preferInstagramAudio) {
+        val instagramDetail = if (attemptedProviders.contains(AudioProviderOrderItem.INSTAGRAM)) {
             instagramAttempt.exceptionOrNull()?.message
                 ?.let { "Instagram failed: $it; " }
                 .orEmpty()

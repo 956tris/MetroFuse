@@ -55,23 +55,6 @@ object AppleMusicCanvasProvider {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/147 Safari/537.36"
     private val WEB_MVOD_HLS_REGEX =
         Regex("""https://mvod\.itunes\.apple\.com/[^"'<>\\\s]+?\.m3u8""")
-    private val ARTIST_MOTION_OVERRIDES =
-        mapOf(
-            "travis scott" to
-                AppleCanvasArtwork(
-                    title = "Travis Scott",
-                    artist = "Travis Scott",
-                    albumId = null,
-                    animated = "https://mvod.itunes.apple.com/itunes-assets/HLSMusic116/v4/d9/e4/84/d9e4848a-b243-2332-c4ca-b198de6f8582/P609226005_Anull_video_gr580_sdr_1920x1080.m3u8",
-                ),
-            "don toliver" to
-                AppleCanvasArtwork(
-                    title = "Don Toliver",
-                    artist = "Don Toliver",
-                    albumId = null,
-                    animated = "https://mvod.itunes.apple.com/itunes-assets/HLSMusic211/v4/4e/e6/c6/4ee6c66a-ab13-8eaa-3173-7c34a36b7342/P1260889925_Anull_video_gr580_sdr_1920x1080.m3u8",
-                ),
-        )
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)
@@ -154,7 +137,6 @@ object AppleMusicCanvasProvider {
         artist: String,
         storefront: String = "us",
     ): AppleCanvasArtwork? {
-        artist.artistMotionOverride()?.let { return it }
         val key = cacheKey("artist", artist, storefront)
         return getCacheEntry(key)?.value
     }
@@ -164,14 +146,6 @@ object AppleMusicCanvasProvider {
         storefront: String = "us",
     ): AppleCanvasArtwork? = withTimeoutOrNull(LOOKUP_TIMEOUT_MS) {
         val key = cacheKey("artist", artist, storefront)
-        artist.artistMotionOverride()?.let { override ->
-            cache[key] =
-                CacheEntry(
-                    value = override,
-                    expiresAtMs = System.currentTimeMillis() + POSITIVE_CACHE_TTL_MS,
-                )
-            return@withTimeoutOrNull override
-        }
         getCacheEntry(key)?.let { return@withTimeoutOrNull it.value }
 
         val result = searchArtistMotion(artist, storefront)
@@ -840,9 +814,6 @@ object AppleMusicCanvasProvider {
             .firstOrNull()
             .orEmpty()
             .cleanForMatch()
-
-    private fun String.artistMotionOverride(): AppleCanvasArtwork? =
-        ARTIST_MOTION_OVERRIDES[cleanForMatch()]
 
     private fun String.isMixLikeTitle(): Boolean {
         val value = lowercase(Locale.ROOT)
