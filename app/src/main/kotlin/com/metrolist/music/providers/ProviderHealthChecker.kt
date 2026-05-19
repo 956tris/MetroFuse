@@ -24,6 +24,15 @@ object ProviderHealthChecker {
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
     private const val TIDAL_PUBLIC_TOKEN = "49YxDN9a2aFV6RTG"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+    private val TIDAL_RESOLVERS =
+        listOf(
+            TidalResolver("tidal_resolver_hifi_isback", "HiFi is Back v2.7", "https://hifi-isback.peridotclient.com"),
+            TidalResolver("tidal_resolver_maus", "Maus QQDL v2.6", "https://maus.qqdl.site"),
+            TidalResolver("tidal_resolver_vogel", "Vogel QQDL v2.6", "https://vogel.qqdl.site"),
+            TidalResolver("tidal_resolver_katze", "Katze QQDL v2.6", "https://katze.qqdl.site"),
+            TidalResolver("tidal_resolver_hund", "Hund QQDL v2.6", "https://hund.qqdl.site"),
+            TidalResolver("tidal_resolver_wolf", "Wolf QQDL v2.6", "https://wolf.qqdl.site"),
+        )
 
     private val client =
         OkHttpClient
@@ -54,6 +63,14 @@ object ProviderHealthChecker {
         val latencyMs: Long?,
         val message: String,
     )
+
+    private data class TidalResolver(
+        val id: String,
+        val name: String,
+        val baseUrl: String,
+    ) {
+        val endpoint: String = baseUrl.trimEnd('/') + "/"
+    }
 
     fun targets(
         deezerResolverUrl: String,
@@ -104,13 +121,17 @@ object ProviderHealthChecker {
                 detail = "Search and catalog metadata",
                 headers = mapOf("x-tidal-token" to TIDAL_PUBLIC_TOKEN),
             ),
-            getTarget(
-                id = "tidal_resolver",
-                group = "TIDAL",
-                name = "TIDAL resolver",
-                endpoint = "https://api.zarz.moe/v1/dl/tid2",
-                detail = "Lossless stream resolver reachability",
-            ),
+            *TIDAL_RESOLVERS
+                .map { resolver ->
+                    getTarget(
+                        id = resolver.id,
+                        group = "TIDAL",
+                        name = resolver.name,
+                        endpoint = resolver.endpoint,
+                        detail = "Lossless stream resolver reachability",
+                    )
+                }
+                .toTypedArray(),
             getTarget(
                 id = "qobuz_trypt",
                 group = "Qobuz",

@@ -11,10 +11,8 @@ import com.metrolist.music.constants.TidalAudioQuality
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
@@ -33,12 +31,11 @@ import kotlin.math.roundToInt
 object TidalAudioProvider {
     private const val API_BASE_URL = "https://tidal.com/v1"
     private const val SONG_LINK_API_URL = "https://api.song.link/v1-alpha.1/links"
-    private const val DOWNLOAD_API_URL = "https://api.zarz.moe/v1/dl/tid2"
     private const val PUBLIC_TOKEN = "49YxDN9a2aFV6RTG"
     private const val COUNTRY_CODE = "US"
     private const val LOCALE = "en_US"
     private const val DEVICE_TYPE = "BROWSER"
-    private const val DOWNLOAD_USER_AGENT = "SpotiFLAC-Mobile/4.5.1"
+    private const val DOWNLOAD_USER_AGENT = "MetroFuse-Android"
     private const val BROWSER_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
     private const val DASH_MIME_TYPE = "application/dash+xml"
@@ -58,8 +55,16 @@ object TidalAudioProvider {
     private const val MIN_MATCH_SCORE = 90
     private const val STRONG_MATCH_SCORE = 150
     private const val REJECT_SCORE = -1_000_000
-    private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val AMAZON_DATE = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US)
+    private val DOWNLOAD_API_ENDPOINTS =
+        listOf(
+            TidalDownloadEndpoint("HiFi is Back v2.7", "https://hifi-isback.peridotclient.com"),
+            TidalDownloadEndpoint("Maus QQDL v2.6", "https://maus.qqdl.site"),
+            TidalDownloadEndpoint("Vogel QQDL v2.6", "https://vogel.qqdl.site"),
+            TidalDownloadEndpoint("Katze QQDL v2.6", "https://katze.qqdl.site"),
+            TidalDownloadEndpoint("Hund QQDL v2.6", "https://hund.qqdl.site"),
+            TidalDownloadEndpoint("Wolf QQDL v2.6", "https://wolf.qqdl.site"),
+        )
 
     data class Query(
         val mediaId: String,
@@ -189,6 +194,13 @@ object TidalAudioProvider {
         val codecs: String,
         val contentLength: Long?,
     )
+
+    private class TidalDownloadEndpoint(
+        val name: String,
+        baseUrl: String,
+    ) {
+        val baseUrl: String = baseUrl.trimEnd('/')
+    }
 
     private data class ScoredTrack(
         val track: MatchedTrack,
@@ -637,26 +649,87 @@ object TidalAudioProvider {
         audioQuality: TidalAudioQuality,
     ): Resolved {
         val isAtmosRequest = quality.equals("DOLBY_ATMOS", ignoreCase = true)
-        val body =
-            if (isAtmosRequest) {
-                JSONObject()
-                    .put("id", track.trackId)
-                    .put("endpoint", "manifests")
-                    .put("formats", JSONArray().put("EAC3_JOC"))
-            } else {
-                JSONObject()
-                    .put("id", track.trackId)
-                    .put("quality", quality)
+        val manifestFormats = quality.tidalManifestFormats()
+        val errors = mutableListOf<String>()
+        var rateLimitCount = 0
+        var longestRetryAfterMs = 0L
+        for (endpoint in DOWNLOAD_API_ENDPOINTS) {
+            val result =
+                runCatching {
+                    requestDirectFlacFromEndpoint(
+                        endpoint = endpoint,
+                        isAtmosRequest = isAtmosRequest,
+                        manifestFormats = manifestFormats,
+                        track = track,
+                        quality = quality,
+                        durationMs = durationMs,
+                        now = now,
+                        cacheDir = cacheDir,
+                        preferLiveDash = preferLiveDash,
+                        audioQuality = audioQuality,
+                    )
+                }
+            result.getOrNull()?.let { return it }
+            val error = result.exceptionOrNull() ?: continue
+            if (error is TidalRateLimitedException) {
+                rateLimitCount += 1
+                longestRetryAfterMs = maxOf(longestRetryAfterMs, error.retryAfterMs)
             }
-                .toString()
-                .toRequestBody(JSON_MEDIA_TYPE)
+            errors += "${endpoint.name}: ${error.message ?: error.javaClass.simpleName}"
+            Timber.tag("TidalAudio").w(error, "TIDAL resolver ${endpoint.name} failed for ${track.trackId}")
+        }
+        if (rateLimitCount == DOWNLOAD_API_ENDPOINTS.size && longestRetryAfterMs > 0L) {
+            resolverRateLimitedUntilMs = System.currentTimeMillis() + longestRetryAfterMs
+            throw TidalRateLimitedException(longestRetryAfterMs)
+        }
+        throw TidalAudioResolutionException(
+            "TIDAL resolver failed on all mirrors for ${track.title}: ${errors.joinToString(" | ").take(720)}",
+        )
+    }
+
+    private fun requestDirectFlacFromEndpoint(
+        endpoint: TidalDownloadEndpoint,
+        isAtmosRequest: Boolean,
+        manifestFormats: List<String>?,
+        track: MatchedTrack,
+        quality: String,
+        durationMs: Long?,
+        now: Long,
+        cacheDir: File?,
+        preferLiveDash: Boolean,
+        audioQuality: TidalAudioQuality,
+    ): Resolved {
+        val url = if (manifestFormats != null) {
+            endpoint.baseUrl
+                .toHttpUrl()
+                .newBuilder()
+                .addPathSegment("trackManifests")
+                .addQueryParameter("id", track.trackId)
+                .apply {
+                    manifestFormats.forEach { format ->
+                        addQueryParameter("formats", format)
+                    }
+                }
+                .addQueryParameter("adaptive", "false")
+                .addQueryParameter("manifestType", "MPEG_DASH")
+                .addQueryParameter("uriScheme", "HTTPS")
+                .addQueryParameter("usage", "PLAYBACK")
+                .build()
+        } else {
+            endpoint.baseUrl
+                .toHttpUrl()
+                .newBuilder()
+                .addPathSegment("track")
+                .addQueryParameter("id", track.trackId)
+                .addQueryParameter("quality", quality)
+                .build()
+        }
         val request =
             Request
                 .Builder()
-                .url(DOWNLOAD_API_URL)
-                .post(body)
+                .url(url)
+                .get()
                 .header("Accept", "application/json")
-                .header("Content-Type", "application/json")
                 .header("User-Agent", DOWNLOAD_USER_AGENT)
                 .build()
 
@@ -676,14 +749,11 @@ object TidalAudioProvider {
                 val retryAfterMs = headerRetryAfterMs
                     ?: bodyRetryAfterMs
                     ?: RATE_LIMIT_COOLDOWN_MS
-                if (headerRetryAfterMs != null) {
-                    resolverRateLimitedUntilMs = System.currentTimeMillis() + retryAfterMs
-                }
                 throw TidalRateLimitedException(retryAfterMs)
             }
             if (!response.isSuccessful) {
                 throw TidalAudioResolutionException(
-                    "TIDAL FLAC resolver HTTP ${response.code}: ${responseBody.take(180)}",
+                    "TIDAL ${endpoint.name} HTTP ${response.code}: ${responseBody.take(180)}",
                 )
             }
             val root = JSONObject(responseBody)
@@ -694,25 +764,27 @@ object TidalAudioProvider {
             val manifest: ParsedManifest
             val dataSampleRate: Int?
             val dataBitDepth: Int?
-            if (isAtmosRequest) {
+            if (manifestFormats != null) {
                 val attributes = data
                     .optJSONObject("data")
                     ?.optJSONObject("attributes")
-                    ?: throw TidalAudioResolutionException("TIDAL Atmos manifest payload missing attributes")
+                    ?: throw TidalAudioResolutionException("TIDAL manifest payload missing attributes")
                 val formats = attributes.optJSONArray("formats")
-                val hasAtmos =
-                    formats != null &&
-                        (0 until formats.length()).any { index ->
-                            formats.optString(index).equals("EAC3_JOC", ignoreCase = true)
+                val returnedFormats =
+                    formats
+                        ?.let { array ->
+                            (0 until array.length())
+                                .mapNotNull { index -> array.optString(index).takeIf(String::isNotBlank) }
                         }
-                if (!hasAtmos) {
-                    throw TidalAudioResolutionException("TIDAL API did not report EAC3_JOC for this track")
+                        .orEmpty()
+                if (returnedFormats.none { returned -> manifestFormats.any { it.equals(returned, ignoreCase = true) } }) {
+                    throw TidalAudioResolutionException("TIDAL API did not report ${manifestFormats.joinToString()} for this track")
                 }
                 val manifestUrl = attributes.stringOrNull("uri")
-                    ?: throw TidalAudioResolutionException("TIDAL Atmos manifest URI was empty")
+                    ?: throw TidalAudioResolutionException("TIDAL manifest URI was empty")
                 val manifestText = fetchText(manifestUrl)
                 manifest = parseManifestText(manifestText, "audio/mp4")
-                resolvedQuality = "DOLBY_ATMOS"
+                resolvedQuality = returnedFormats.toResolvedTidalQuality(quality)
                 dataSampleRate = manifest.sampleRate ?: 48_000
                 dataBitDepth = null
             } else {
@@ -852,16 +924,33 @@ object TidalAudioProvider {
             when (audioQuality) {
                 TidalAudioQuality.AAC_320 -> add("HIGH")
                 TidalAudioQuality.HI_RES_LOSSLESS -> {
-                    if (track.supportsHiResLossless() || track.supportsLossless()) {
-                        add("LOSSLESS")
-                    }
                     if (track.supportsHiResLossless()) {
                         add("HI_RES_LOSSLESS")
+                    }
+                    if (track.supportsHiResLossless() || track.supportsLossless()) {
+                        add("LOSSLESS")
                     }
                     add("HIGH")
                 }
             }
         }.distinct()
+
+    private fun String.tidalManifestFormats(): List<String>? =
+        when {
+            equals("DOLBY_ATMOS", ignoreCase = true) -> listOf("EAC3_JOC")
+            equals("HI_RES_LOSSLESS", ignoreCase = true) ||
+                equals("HI_RES", ignoreCase = true) -> listOf("FLAC_HIRES")
+            equals("LOSSLESS", ignoreCase = true) -> listOf("FLAC")
+            else -> null
+        }
+
+    private fun List<String>.toResolvedTidalQuality(requestedQuality: String): String =
+        when {
+            any { it.equals("EAC3_JOC", ignoreCase = true) } -> "DOLBY_ATMOS"
+            any { it.equals("FLAC_HIRES", ignoreCase = true) } -> "HI_RES_LOSSLESS"
+            any { it.equals("FLAC", ignoreCase = true) } -> "LOSSLESS"
+            else -> requestedQuality
+        }
 
     private fun String.isLosslessQuality(): Boolean =
         equals("LOSSLESS", ignoreCase = true) ||
