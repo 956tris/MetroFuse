@@ -6,10 +6,15 @@
 package com.metrolist.music.utils.spotify
 
 import com.metrolist.innertube.models.Album
+import com.metrolist.innertube.models.AlbumItem
 import com.metrolist.innertube.models.Artist
+import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.PlaylistItem
 import com.metrolist.innertube.models.SongItem
+import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.pages.HomePage
+import com.metrolist.innertube.pages.SearchSummary
+import com.metrolist.innertube.pages.SearchSummaryPage
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.providers.ExternalPlaylistPage
 import com.metrolist.music.providers.SpotifyHomeFeedParser
@@ -49,6 +54,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
 data class SpotifyCanvasMedia(
@@ -238,6 +244,9 @@ object SpotifyCanvasClient {
     private val client =
         OkHttpClient
             .Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(25, TimeUnit.SECONDS)
             .followRedirects(true)
             .followSslRedirects(true)
             .build()
@@ -253,6 +262,61 @@ object SpotifyCanvasClient {
 
     suspend fun resolveSearch(query: String, cookie: String): String? {
         return searchTracks(query, cookie).firstOrNull()?.uri
+    }
+
+    suspend fun resolveSearchSummaryPage(
+        query: String,
+        cookie: String,
+    ): SearchSummaryPage? {
+        if (query.isBlank()) return SearchSummaryPage(emptyList())
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
+        val root =
+            spotifyApiGet(
+                url =
+                    "https://api.spotify.com/v1/search"
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addQueryParameter("q", query)
+                        .addQueryParameter("type", "track,album,artist,playlist")
+                        .addQueryParameter("limit", "12")
+                        .addQueryParameter("market", "from_token")
+                        .build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify search",
+            )
+
+        return SearchSummaryPage(
+            buildList {
+                addSpotifySummary(
+                    "Songs",
+                    root.obj("tracks")
+                        ?.array("items")
+                        .orEmpty()
+                        .mapNotNull { it.obj?.toSpotifyPlaylistSong() },
+                )
+                addSpotifySummary(
+                    "Albums",
+                    root.obj("albums")
+                        ?.array("items")
+                        .orEmpty()
+                        .mapNotNull { it.obj?.toSpotifyAlbumItem() },
+                )
+                addSpotifySummary(
+                    "Artists",
+                    root.obj("artists")
+                        ?.array("items")
+                        .orEmpty()
+                        .mapNotNull { it.obj?.toSpotifyArtistItem() },
+                )
+                addSpotifySummary(
+                    "Playlists",
+                    root.obj("playlists")
+                        ?.array("items")
+                        .orEmpty()
+                        .mapNotNull { it.obj?.toSpotifyPlaylistItem() },
+                )
+            },
+        )
     }
 
     private data class CachedString(
@@ -325,6 +389,96 @@ object SpotifyCanvasClient {
         return resolveTrackUri(expectation, normalizedCookie)
     }
 
+    suspend fun resolveAutoplayRecommendations(
+        mediaMetadata: MediaMetadata,
+        cookie: String,
+        context: List<MediaMetadata> = emptyList(),
+        title: String? = null,
+        limit: Int = 25,
+    ): List<SongItem> {
+        if (mediaMetadata.isEpisode || mediaMetadata.isVideoSong || limit <= 0) return emptyList()
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return emptyList()
+        val seedUri =
+            mediaMetadata.id.spotifyTrackUri()
+                ?: buildExpectation(mediaMetadata)?.let { resolveTrackUri(it, normalizedCookie) }
+                ?: return emptyList()
+        val contextUris =
+            buildList {
+                for (metadata in context.asReversed()) {
+                    if (size >= 12) break
+                    if (metadata.isEpisode || metadata.isVideoSong) continue
+                    val uri =
+                        metadata.id.spotifyTrackUri()
+                            ?: buildExpectation(metadata)?.let { resolveTrackUri(it, normalizedCookie) }
+                            ?: continue
+                    if (uri !in this) add(uri)
+                }
+            }
+
+        return resolveAutoplayRecommendations(
+            seedUri = seedUri,
+            contextUris = (listOf(seedUri) + contextUris).distinct(),
+            normalizedCookie = normalizedCookie,
+            title = title,
+            limit = limit,
+        )
+    }
+
+    private suspend fun resolveAutoplayRecommendations(
+        seedUri: String,
+        contextUris: List<String>,
+        normalizedCookie: String,
+        title: String?,
+        limit: Int,
+    ): List<SongItem> {
+        val seedId = seedUri.spotifyTrackId() ?: return emptyList()
+        val trackIds =
+            contextUris
+                .mapNotNull { it.spotifyTrackId() }
+                .ifEmpty { listOf(seedId) }
+                .toSet()
+
+        val response =
+            withContext(Dispatchers.IO) {
+                val requestBody =
+                    json
+                        .encodeToString(
+                            SpotifyPlaylistExtenderRequest(
+                                numResults = limit.coerceIn(1, 50),
+                                trackSkipIds = trackIds,
+                                trackIds = trackIds,
+                                title = title,
+                            ),
+                        ).toRequestBody(JSON_MEDIA_TYPE)
+                val request =
+                    Request
+                        .Builder()
+                        .url("https://spclient.wg.spotify.com/playlistextender/ft/v2/assist-curation")
+                        .header("User-Agent", WEB_USER_AGENT)
+                        .header("Accept", "application/json")
+                        .header("App-Platform", "WebPlayer")
+                        .header("Referer", WEB_REFERER)
+                        .header("Origin", WEB_ORIGIN)
+                        .header("Cookie", normalizedCookie)
+                        .header("Authorization", "Bearer ${ensureToken(normalizedCookie)}")
+                        .post(requestBody)
+                        .build()
+
+                client.newCall(request).execute().use { response ->
+                    json.decodeFromString<SpotifyPlaylistExtenderResponse>(
+                        response.requireBody("Spotify playlist extender recommendations"),
+                    )
+                }
+            }
+
+        return response
+            .recommendedTracks
+            .mapNotNull { it.toSongItem() }
+            .filterNot { it.id.equals(seedUri, ignoreCase = true) }
+            .distinctBy { it.id }
+            .take(limit)
+    }
+
     suspend fun resolveHomePage(cookie: String): HomePage? {
         val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
         val spTCookie =
@@ -357,6 +511,96 @@ object SpotifyCanvasClient {
         }
 
         return null
+    }
+
+    suspend fun resolveLibraryPage(cookie: String): HomePage? {
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
+        val sections = mutableListOf<HomePage.Section>()
+
+        runCatching {
+            spotifyApiGet(
+                url =
+                    "https://api.spotify.com/v1/me/tracks"
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addQueryParameter("limit", "50")
+                        .addQueryParameter("market", "from_token")
+                        .build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify saved tracks",
+            ).array("items")
+                .orEmpty()
+                .mapNotNull { it.obj?.obj("track")?.toSpotifyPlaylistSong() }
+        }.onSuccess { items ->
+            sections.addSpotifyHomeSection("Saved Spotify songs", items)
+        }.onFailure { error ->
+            Timber.w(error, "Spotify library saved tracks failed")
+        }
+
+        runCatching {
+            spotifyApiGet(
+                url =
+                    "https://api.spotify.com/v1/me/playlists"
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addQueryParameter("limit", "50")
+                        .build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify playlists",
+            ).array("items")
+                .orEmpty()
+                .mapNotNull { it.obj?.toSpotifyPlaylistItem() }
+        }.onSuccess { items ->
+            sections.addSpotifyHomeSection("Spotify playlists", items)
+        }.onFailure { error ->
+            Timber.w(error, "Spotify library playlists failed")
+        }
+
+        runCatching {
+            spotifyApiGet(
+                url =
+                    "https://api.spotify.com/v1/me/albums"
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addQueryParameter("limit", "50")
+                        .addQueryParameter("market", "from_token")
+                        .build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify saved albums",
+            ).array("items")
+                .orEmpty()
+                .mapNotNull { it.obj?.obj("album")?.toSpotifyAlbumItem() }
+        }.onSuccess { items ->
+            sections.addSpotifyHomeSection("Saved Spotify albums", items)
+        }.onFailure { error ->
+            Timber.w(error, "Spotify library albums failed")
+        }
+
+        runCatching {
+            spotifyApiGet(
+                url =
+                    "https://api.spotify.com/v1/me/following"
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addQueryParameter("type", "artist")
+                        .addQueryParameter("limit", "50")
+                        .build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify followed artists",
+            ).obj("artists")
+                ?.array("items")
+                .orEmpty()
+                .mapNotNull { it.obj?.toSpotifyArtistItem() }
+        }.onSuccess { items ->
+            sections.addSpotifyHomeSection("Followed Spotify artists", items)
+        }.onFailure { error ->
+            Timber.w(error, "Spotify library artists failed")
+        }
+
+        return HomePage(
+            chips = null,
+            sections = sections,
+        )
     }
 
     suspend fun resolvePlaylist(
@@ -450,27 +694,16 @@ object SpotifyCanvasClient {
     ): ExternalPlaylistPage =
         withContext(Dispatchers.IO) {
             val albumRoot =
-                client.newCall(
-                    Request
-                        .Builder()
-                        .url(
-                            "https://api.spotify.com/v1/albums/$albumId"
-                                .toHttpUrl()
-                                .newBuilder()
-                                .addQueryParameter("market", "from_token")
-                                .build(),
-                        )
-                        .header("User-Agent", WEB_USER_AGENT)
-                        .header("Accept", "application/json")
-                        .header("Referer", WEB_REFERER)
-                        .header("Origin", WEB_ORIGIN)
-                        .header("Cookie", normalizedCookie)
-                        .header("Authorization", "Bearer ${ensureWebToken(normalizedCookie)}")
-                        .get()
-                        .build(),
-                ).execute().use { response ->
-                    json.parseToJsonElement(response.requireBody("Spotify album")).jsonObject
-                }
+                spotifyApiGet(
+                    url =
+                        "https://api.spotify.com/v1/albums/$albumId"
+                            .toHttpUrl()
+                            .newBuilder()
+                            .addQueryParameter("market", "from_token")
+                            .build(),
+                    normalizedCookie = normalizedCookie,
+                    operation = "Spotify album",
+                )
 
             val songs = mutableListOf<SongItem>()
             val firstTrackPage = albumRoot.obj("tracks")
@@ -491,29 +724,18 @@ object SpotifyCanvasClient {
                 songs.size < PLAYLIST_TRACK_SAFETY_LIMIT
             ) {
                 val page =
-                    client.newCall(
-                        Request
-                            .Builder()
-                            .url(
-                                "https://api.spotify.com/v1/albums/$albumId/tracks"
-                                    .toHttpUrl()
-                                    .newBuilder()
-                                    .addQueryParameter("market", "from_token")
-                                    .addQueryParameter("limit", ALBUM_TRACK_PAGE_SIZE.toString())
-                                    .addQueryParameter("offset", offset.toString())
-                                    .build(),
-                            )
-                            .header("User-Agent", WEB_USER_AGENT)
-                            .header("Accept", "application/json")
-                            .header("Referer", WEB_REFERER)
-                            .header("Origin", WEB_ORIGIN)
-                            .header("Cookie", normalizedCookie)
-                            .header("Authorization", "Bearer ${ensureWebToken(normalizedCookie)}")
-                            .get()
-                            .build(),
-                    ).execute().use { response ->
-                        json.parseToJsonElement(response.requireBody("Spotify album tracks")).jsonObject
-                    }
+                    spotifyApiGet(
+                        url =
+                            "https://api.spotify.com/v1/albums/$albumId/tracks"
+                                .toHttpUrl()
+                                .newBuilder()
+                                .addQueryParameter("market", "from_token")
+                                .addQueryParameter("limit", ALBUM_TRACK_PAGE_SIZE.toString())
+                                .addQueryParameter("offset", offset.toString())
+                                .build(),
+                        normalizedCookie = normalizedCookie,
+                        operation = "Spotify album tracks",
+                    )
 
                 val pageSongs =
                     page
@@ -758,23 +980,12 @@ object SpotifyCanvasClient {
                             "total,items(track(id,name,duration_ms,explicit,artists(id,name),album(id,name,images)))",
                         ).build()
 
-                val request =
-                    Request
-                        .Builder()
-                        .url(url)
-                        .header("User-Agent", WEB_USER_AGENT)
-                        .header("Accept", "application/json")
-                        .header("Referer", WEB_REFERER)
-                        .header("Origin", WEB_ORIGIN)
-                        .header("Cookie", normalizedCookie)
-                        .header("Authorization", "Bearer ${ensureWebToken(normalizedCookie)}")
-                        .get()
-                        .build()
-
                 val page =
-                    client.newCall(request).execute().use { response ->
-                        json.parseToJsonElement(response.requireBody("Spotify playlist tracks")).jsonObject
-                    }
+                    spotifyApiGet(
+                        url = url,
+                        normalizedCookie = normalizedCookie,
+                        operation = "Spotify playlist tracks",
+                    )
 
                 total = total ?: page.long("total")?.toInt()
                 val pageSongs =
@@ -810,21 +1021,12 @@ object SpotifyCanvasClient {
                 ).build()
 
         return withContext(Dispatchers.IO) {
-            val request =
-                Request
-                    .Builder()
-                    .url(url)
-                    .header("User-Agent", WEB_USER_AGENT)
-                    .header("Accept", "application/json")
-                    .header("Referer", WEB_REFERER)
-                    .header("Origin", WEB_ORIGIN)
-                    .header("Cookie", normalizedCookie)
-                    .header("Authorization", "Bearer ${ensureWebToken(normalizedCookie)}")
-                    .get()
-                    .build()
-
-            client.newCall(request).execute().use { response ->
-                val root = json.parseToJsonElement(response.requireBody("Spotify playlist")).jsonObject
+            val root =
+                spotifyApiGet(
+                    url = url,
+                    normalizedCookie = normalizedCookie,
+                    operation = "Spotify playlist",
+                )
                 val songs =
                     runCatching {
                         resolvePlaylistTracksFromWebApi(playlistId, normalizedCookie)
@@ -851,7 +1053,6 @@ object SpotifyCanvasClient {
                         ),
                     songs = songs,
                 )
-            }
         }
     }
 
@@ -1037,6 +1238,62 @@ object SpotifyCanvasClient {
 
             client.newCall(request).execute().use { response ->
                 json.decodeFromString<T>(response.requireBody(operation))
+            }
+        }
+
+    private suspend fun spotifyApiGet(
+        url: HttpUrl,
+        normalizedCookie: String,
+        operation: String,
+    ): JsonObject {
+        val webResult =
+            runCatching {
+                spotifyApiGet(
+                    url = url,
+                    normalizedCookie = normalizedCookie,
+                    operation = operation,
+                    tokenProvider = ::ensureWebToken,
+                )
+            }
+
+        webResult.onSuccess { return it }
+
+        Timber.w(
+            webResult.exceptionOrNull(),
+            "%s failed with Spotify web token; retrying device token",
+            operation,
+        )
+
+        return spotifyApiGet(
+            url = url,
+            normalizedCookie = normalizedCookie,
+            operation = operation,
+            tokenProvider = ::ensureToken,
+        )
+    }
+
+    private suspend fun spotifyApiGet(
+        url: HttpUrl,
+        normalizedCookie: String,
+        operation: String,
+        tokenProvider: suspend (String) -> String,
+    ): JsonObject =
+        withContext(Dispatchers.IO) {
+            val request =
+                Request
+                    .Builder()
+                    .url(url)
+                    .header("User-Agent", WEB_USER_AGENT)
+                    .header("Accept", "application/json")
+                    .header("Referer", WEB_REFERER)
+                    .header("Origin", WEB_ORIGIN)
+                    .header("Cookie", normalizedCookie)
+                    .header("Authorization", "Bearer ${tokenProvider(normalizedCookie)}")
+                    .get()
+                    .build()
+
+            client.newCall(request).execute().use { response ->
+                json.parseToJsonElement(response.requireBody(operation)).jsonObject
             }
         }
 
@@ -1788,6 +2045,124 @@ object SpotifyCanvasClient {
             }
     }
 
+    private fun SpotifyPlaylistExtenderTrack.toSongItem(): SongItem? {
+        val trackId = uri.spotifyTrackId() ?: return null
+        return SongItem(
+            id = "spotify:track:$trackId",
+            title = name.takeIf { it.isNotBlank() } ?: return null,
+            artists =
+                artists.mapNotNull { artist ->
+                    artist.name
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { name ->
+                            Artist(
+                                name = name,
+                                id = artist.id?.takeIf { it.isNotBlank() }?.let { "spotify:artist:$it" },
+                            )
+                        }
+                },
+            album =
+                album
+                    ?.name
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { name ->
+                        Album(
+                            name = name,
+                            id = album.id?.takeIf { it.isNotBlank() }?.let { "spotify:album:$it" } ?: "",
+                        )
+                    },
+            thumbnail = album?.largeImageUrl ?: album?.imageUrl ?: "",
+            explicit = explicit,
+        )
+    }
+
+    private fun JsonObject.toSpotifyAlbumItem(): AlbumItem? {
+        val id = string("id") ?: string("uri")?.substringAfterLast(':') ?: return null
+        val title = string("name") ?: return null
+        val artists =
+            array("artists")
+                .orEmpty()
+                .mapNotNull { artist ->
+                    val obj = artist.obj ?: return@mapNotNull null
+                    val name = obj.string("name") ?: return@mapNotNull null
+                    Artist(
+                        name = name,
+                        id = obj.string("id")?.let { "spotify:artist:$it" },
+                    )
+                }
+
+        return AlbumItem(
+            browseId = "spotify:album:$id",
+            playlistId = "spotify:album:$id",
+            title = title,
+            artists = artists,
+            year = string("release_date")?.take(4)?.toIntOrNull(),
+            thumbnail = spotifyWebApiImageUrl().orEmpty(),
+            explicit = false,
+        )
+    }
+
+    private fun JsonObject.toSpotifyArtistItem(): ArtistItem? {
+        val id = string("id") ?: string("uri")?.substringAfterLast(':') ?: return null
+        val title = string("name") ?: return null
+        return ArtistItem(
+            id = "spotify:artist:$id",
+            title = title,
+            thumbnail = spotifyWebApiImageUrl(),
+            shuffleEndpoint = null,
+            radioEndpoint = null,
+        )
+    }
+
+    private fun JsonObject.toSpotifyPlaylistItem(): PlaylistItem? {
+        val id = string("id") ?: string("uri")?.substringAfterLast(':') ?: return null
+        val title = string("name") ?: return null
+        return PlaylistItem(
+            id = "spotify:playlist:$id",
+            title = title,
+            author =
+                obj("owner")
+                    ?.string("display_name")
+                    ?.let { Artist(name = it, id = obj("owner")?.string("id")) },
+            songCountText =
+                obj("tracks")
+                    ?.long("total")
+                    ?.let { "$it songs" },
+            thumbnail = spotifyWebApiImageUrl(),
+            playEndpoint = null,
+            shuffleEndpoint = null,
+            radioEndpoint = null,
+        )
+    }
+
+    private fun MutableList<SearchSummary>.addSpotifySummary(
+        title: String,
+        items: List<YTItem>,
+    ) {
+        val distinctItems = items.distinctBy { it.id }
+        if (distinctItems.isNotEmpty()) {
+            add(SearchSummary(title = title, items = distinctItems))
+        }
+    }
+
+    private fun MutableList<HomePage.Section>.addSpotifyHomeSection(
+        title: String,
+        items: List<YTItem>,
+    ) {
+        val distinctItems = items.distinctBy { it.id }
+        if (distinctItems.isNotEmpty()) {
+            add(
+                HomePage.Section(
+                    title = title,
+                    label = null,
+                    thumbnail = distinctItems.firstOrNull()?.thumbnail,
+                    endpoint = null,
+                    items = distinctItems,
+                ),
+            )
+        }
+    }
+
     private data class WebAccessToken(
         val accessToken: String,
         val expiresAtMs: Long,
@@ -1796,6 +2171,39 @@ object SpotifyCanvasClient {
     private data class SpotifyNuance(
         val secret: String,
         val version: Int,
+    )
+
+    @Serializable
+    private data class SpotifyPlaylistExtenderRequest(
+        @SerialName("playlistURI") val playlistUri: String? = null,
+        @SerialName("numResults") val numResults: Int,
+        @SerialName("trackSkipIDs") val trackSkipIds: Set<String> = emptySet(),
+        @SerialName("trackIDs") val trackIds: Set<String> = emptySet(),
+        val title: String? = null,
+        val condensed: Boolean = true,
+    )
+
+    @Serializable
+    private data class SpotifyPlaylistExtenderResponse(
+        @SerialName("recommended_tracks") val recommendedTracks: List<SpotifyPlaylistExtenderTrack> = emptyList(),
+    )
+
+    @Serializable
+    private data class SpotifyPlaylistExtenderTrack(
+        val uri: String,
+        val name: String,
+        @SerialName("preview_id") val previewId: String? = null,
+        val album: SpotifyPlaylistExtenderItem? = null,
+        val artists: List<SpotifyPlaylistExtenderItem> = emptyList(),
+        @SerialName("explicit") val explicit: Boolean = false,
+    )
+
+    @Serializable
+    private data class SpotifyPlaylistExtenderItem(
+        val id: String? = null,
+        val name: String? = null,
+        @SerialName("image_url") val imageUrl: String? = null,
+        @SerialName("large_image_url") val largeImageUrl: String? = null,
     )
 
     @Serializable

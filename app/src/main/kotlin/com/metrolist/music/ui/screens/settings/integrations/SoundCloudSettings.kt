@@ -11,14 +11,11 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -34,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
-import com.metrolist.music.constants.PreferSoundCloudAudioKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
@@ -53,8 +49,6 @@ fun SoundCloudSettings(
 ) {
     var soundCloudAuthToken by rememberPreference(SoundCloudAuthTokenKey, "")
     val authConfigured = isSoundCloudAuthConfigured(soundCloudAuthToken)
-    val (preferSoundCloudAudio, onPreferSoundCloudAudioChange) =
-        rememberPreference(PreferSoundCloudAudioKey, defaultValue = false)
     var showAuthDialog by rememberSaveable { mutableStateOf(false) }
 
     if (showAuthDialog) {
@@ -119,28 +113,6 @@ fun SoundCloudSettings(
                         description = { Text(stringResource(R.string.soundcloud_auth_token_helper)) },
                         icon = painterResource(R.drawable.token),
                         onClick = { showAuthDialog = true },
-                    ),
-                    Material3SettingsItem(
-                        title = { Text(stringResource(R.string.prefer_soundcloud_audio)) },
-                        description = { Text(stringResource(R.string.prefer_soundcloud_audio_desc)) },
-                        trailingContent = {
-                            Switch(
-                                checked = preferSoundCloudAudio,
-                                onCheckedChange = onPreferSoundCloudAudioChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter =
-                                            painterResource(
-                                                id = if (preferSoundCloudAudio) R.drawable.check else R.drawable.close,
-                                            ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                                    )
-                                },
-                            )
-                        },
-                        icon = painterResource(R.drawable.cloud),
-                        onClick = { onPreferSoundCloudAudioChange(!preferSoundCloudAudio) },
                     ),
                     Material3SettingsItem(
                         title = { Text(stringResource(R.string.soundcloud_clear_auth)) },

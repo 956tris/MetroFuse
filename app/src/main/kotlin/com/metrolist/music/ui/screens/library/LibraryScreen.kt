@@ -16,6 +16,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.navigation.NavController
 import com.metrolist.music.R
 import com.metrolist.music.constants.ChipSortTypeKey
+import com.metrolist.music.constants.HomeFeedSource
+import com.metrolist.music.constants.HomeFeedSourceKey
 import com.metrolist.music.constants.LibraryFilter
 import com.metrolist.music.ui.component.ChipsRow
 import com.metrolist.music.utils.rememberEnumPreference
@@ -23,6 +25,7 @@ import com.metrolist.music.utils.rememberEnumPreference
 @Composable
 fun LibraryScreen(navController: NavController) {
     var filterType by rememberEnumPreference(ChipSortTypeKey, LibraryFilter.LIBRARY)
+    val homeFeedSource by rememberEnumPreference(HomeFeedSourceKey, HomeFeedSource.YOUTUBE_MUSIC)
 
     val filterContent = @Composable {
         Row {
@@ -44,6 +47,15 @@ fun LibraryScreen(navController: NavController) {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        if (homeFeedSource == HomeFeedSource.SPOTIFY) {
+            SpotifyLibraryScreen(
+                navController = navController,
+                filterContent = filterContent,
+                filterType = filterType,
+            )
+            return@Box
+        }
+
         when (filterType) {
             LibraryFilter.LIBRARY -> LibraryMixScreen(navController, filterContent)
             LibraryFilter.PLAYLISTS -> LibraryPlaylistsScreen(navController, filterContent)

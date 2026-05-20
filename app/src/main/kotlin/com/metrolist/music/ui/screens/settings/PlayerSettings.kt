@@ -62,8 +62,6 @@ import com.metrolist.music.constants.MetroMixPresetKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
-import com.metrolist.music.constants.PreferAppleMusicKey
-import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendOptions
@@ -158,14 +156,6 @@ fun PlayerSettings(
     val (appleMusicFallbackEnabled, onAppleMusicFallbackEnabledChange) = rememberPreference(
         AppleMusicFallbackEnabledKey,
         defaultValue = true
-    )
-    val (preferAppleMusic, onPreferAppleMusicChange) = rememberPreference(
-        PreferAppleMusicKey,
-        defaultValue = false
-    )
-    val (preferYouTubeMusicAudio, onPreferYouTubeMusicAudioChange) = rememberPreference(
-        PreferYouTubeMusicAudioKey,
-        defaultValue = false
     )
     val (qobuzBackend, onQobuzBackendChange) = rememberEnumPreference(
         QobuzBackendKey,
@@ -474,50 +464,6 @@ fun PlayerSettings(
                         )
                     },
                     onClick = { onAppleMusicFallbackEnabledChange(!appleMusicFallbackEnabled) }
-                ))
-                if (appleMusicFallbackEnabled) {
-                    add(Material3SettingsItem(
-                        icon = painterResource(R.drawable.star),
-                        title = { Text(stringResource(R.string.prefer_apple_music)) },
-                        description = { Text(stringResource(R.string.prefer_apple_music_desc)) },
-                        trailingContent = {
-                            Switch(
-                                checked = preferAppleMusic,
-                                onCheckedChange = onPreferAppleMusicChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter = painterResource(
-                                            id = if (preferAppleMusic) R.drawable.check else R.drawable.close
-                                        ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize)
-                                    )
-                                }
-                            )
-                        },
-                        onClick = { onPreferAppleMusicChange(!preferAppleMusic) }
-                    ))
-                }
-                add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.music_note),
-                    title = { Text(stringResource(R.string.prefer_youtube_music_audio)) },
-                    description = { Text(stringResource(R.string.prefer_youtube_music_audio_desc)) },
-                    trailingContent = {
-                        Switch(
-                            checked = preferYouTubeMusicAudio,
-                            onCheckedChange = onPreferYouTubeMusicAudioChange,
-                            thumbContent = {
-                                Icon(
-                                    painter = painterResource(
-                                        id = if (preferYouTubeMusicAudio) R.drawable.check else R.drawable.close
-                                    ),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(SwitchDefaults.IconSize)
-                                )
-                            }
-                        )
-                    },
-                    onClick = { onPreferYouTubeMusicAudioChange(!preferYouTubeMusicAudio) }
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.settings),

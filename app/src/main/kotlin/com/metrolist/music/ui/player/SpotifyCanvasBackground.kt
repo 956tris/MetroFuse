@@ -11,6 +11,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -23,8 +26,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -35,6 +43,9 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import coil3.request.allowHardware
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.utils.spotify.SpotifyCanvasClient
 import com.metrolist.music.utils.spotify.SpotifyCanvasMedia
@@ -146,6 +157,122 @@ fun SpotifyCanvasVideoBackground(
                 Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = scrimAlpha.coerceIn(0f, 1f))),
+        )
+    }
+}
+
+@Composable
+fun AppleMusicFadedCanvasBackground(
+    media: SpotifyCanvasMedia,
+    artworkUrl: String?,
+    shouldPlay: Boolean,
+    surfaceColor: Color,
+    fadeColor: Color,
+    preservePlayerBackdrop: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val baseAlpha = if (preservePlayerBackdrop) 0.04f else 0.10f
+    val videoAlpha = 1f
+    val blurWashAlpha = if (preservePlayerBackdrop) 0.82f else 0.94f
+    val veilSoftAlpha = if (preservePlayerBackdrop) 0.18f else 0.24f
+    val veilMidAlpha = if (preservePlayerBackdrop) 0.38f else 0.48f
+    val veilDeepAlpha = if (preservePlayerBackdrop) 0.58f else 0.68f
+    val veilBottomAlpha = if (preservePlayerBackdrop) 0.70f else 0.82f
+    val bottomDimAlpha = if (preservePlayerBackdrop) 0.08f else 0.12f
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(surfaceColor.copy(alpha = baseAlpha)),
+    ) {
+        SpotifyCanvasVideoBackground(
+            media = media,
+            shouldPlay = shouldPlay,
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .alpha(videoAlpha),
+            scrimAlpha = 0f,
+        )
+
+        if (!artworkUrl.isNullOrBlank()) {
+            AsyncImage(
+                model =
+                    ImageRequest
+                        .Builder(context)
+                        .data(artworkUrl)
+                        .size(96, 160)
+                        .allowHardware(false)
+                        .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .blur(96.dp)
+                        .graphicsLayer {
+                            scaleX = 1.18f
+                            scaleY = 1.18f
+                        }
+                        .graphicsLayer {
+                            compositingStrategy = CompositingStrategy.Offscreen
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush =
+                                    Brush.verticalGradient(
+                                        colorStops =
+                                            arrayOf(
+                                                0.00f to Color.Transparent,
+                                                0.34f to Color.Transparent,
+                                                0.50f to Color.White.copy(alpha = 0.18f),
+                                                0.66f to Color.White.copy(alpha = 0.62f),
+                                                0.82f to Color.White.copy(alpha = 0.90f),
+                                                1.00f to Color.White,
+                                            ),
+                                    ),
+                                blendMode = BlendMode.DstIn,
+                            )
+                        }
+                        .alpha(blurWashAlpha),
+            )
+        }
+
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colorStops =
+                                arrayOf(
+                                    0.00f to Color.Transparent,
+                                    0.42f to Color.Transparent,
+                                    0.56f to fadeColor.copy(alpha = veilSoftAlpha),
+                                    0.72f to fadeColor.copy(alpha = veilMidAlpha),
+                                    0.90f to fadeColor.copy(alpha = veilDeepAlpha),
+                                    1.00f to fadeColor.copy(alpha = veilBottomAlpha),
+                                ),
+                        ),
+                    ),
+        )
+
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            colorStops =
+                                arrayOf(
+                                    0.00f to Color.Transparent,
+                                    0.68f to Color.Transparent,
+                                    1.00f to Color.Black.copy(alpha = bottomDimAlpha),
+                                ),
+                        ),
+                    ),
         )
     }
 }

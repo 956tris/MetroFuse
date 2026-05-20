@@ -5,6 +5,7 @@
 
 package com.metrolist.music.ui.player
 
+import android.content.Context
 import android.view.TextureView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -72,6 +73,7 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -704,6 +706,7 @@ private fun AppleMusicCanvasVideo(
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setTrackSelector(createCanvasTrackSelector(context))
             .build()
             .apply {
             setAudioAttributes(AudioAttributes.DEFAULT, false)
@@ -737,6 +740,17 @@ private fun AppleMusicCanvasVideo(
         modifier = modifier,
     )
 }
+
+private fun createCanvasTrackSelector(context: Context): DefaultTrackSelector =
+    DefaultTrackSelector(context).apply {
+        setParameters(
+            buildUponParameters()
+                .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .setForceHighestSupportedBitrate(true)
+                .build(),
+        )
+    }
 
 /**
  * Seek effect overlay showing seek direction.

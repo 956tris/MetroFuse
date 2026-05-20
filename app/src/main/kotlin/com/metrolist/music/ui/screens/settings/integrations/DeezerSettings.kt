@@ -11,14 +11,11 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -39,7 +36,6 @@ import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerAudioQualityOptions
 import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
-import com.metrolist.music.constants.PreferDeezerAudioKey
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
@@ -58,8 +54,6 @@ import com.metrolist.music.utils.rememberPreference
 fun DeezerSettings(
     navController: NavController,
 ) {
-    val (preferDeezerAudio, onPreferDeezerAudioChange) =
-        rememberPreference(PreferDeezerAudioKey, false)
     var resolverUrl by rememberPreference(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
     var audioQuality by rememberEnumPreference(DeezerAudioQualityKey, DeezerAudioQuality.MP3_128)
     var deezerCookie by rememberPreference(DeezerCookieKey, "")
@@ -168,30 +162,6 @@ fun DeezerSettings(
                         icon = painterResource(R.drawable.token),
                         onClick = {
                             showCookieDialog = true
-                        },
-                    ),
-                    Material3SettingsItem(
-                        title = { Text(stringResource(R.string.prefer_deezer_audio)) },
-                        description = { Text(stringResource(R.string.prefer_deezer_audio_desc)) },
-                        trailingContent = {
-                            Switch(
-                                checked = preferDeezerAudio,
-                                onCheckedChange = onPreferDeezerAudioChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter =
-                                            painterResource(
-                                                id = if (preferDeezerAudio) R.drawable.check else R.drawable.close,
-                                            ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                                    )
-                                },
-                            )
-                        },
-                        icon = painterResource(R.drawable.album),
-                        onClick = {
-                            onPreferDeezerAudioChange(!preferDeezerAudio)
                         },
                     ),
                     Material3SettingsItem(

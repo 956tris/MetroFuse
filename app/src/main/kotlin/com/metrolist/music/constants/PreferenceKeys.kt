@@ -158,10 +158,8 @@ enum class AudioQuality {
 }
 
 val AppleMusicFallbackEnabledKey = booleanPreferencesKey("appleMusicFallbackEnabled")
-val PreferAppleMusicKey = booleanPreferencesKey("preferAppleMusic")
-val PreferTidalAudioKey = booleanPreferencesKey("preferTidalAudio")
 val TidalAudioQualityKey = stringPreferencesKey("tidalAudioQuality")
-val PreferDeezerAudioKey = booleanPreferencesKey("preferDeezerAudio")
+val TidalAnimatedCoversEnabledKey = booleanPreferencesKey("tidalAnimatedCoversEnabled")
 val DeezerResolverUrlKey = stringPreferencesKey("deezerResolverUrl")
 val DeezerAudioQualityKey = stringPreferencesKey("deezerAudioQuality")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
@@ -169,12 +167,14 @@ val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
 
 enum class TidalAudioQuality {
     AAC_320,
+    FLAC,
     HI_RES_LOSSLESS,
 }
 
 val TidalAudioQualityOptions =
     listOf(
         TidalAudioQuality.AAC_320,
+        TidalAudioQuality.FLAC,
         TidalAudioQuality.HI_RES_LOSSLESS,
     )
 
@@ -358,13 +358,10 @@ val TidalCookieKey = stringPreferencesKey("tidalCookie")
 val TidalArtworkFallbackEnabledKey = booleanPreferencesKey("tidalArtworkFallbackEnabled")
 val DeezerCookieKey = stringPreferencesKey("deezerCookie")
 val SoundCloudAuthTokenKey = stringPreferencesKey("soundCloudAuthToken")
-val PreferSoundCloudAudioKey = booleanPreferencesKey("preferSoundCloudAudio")
 val InstagramCookieKey = stringPreferencesKey("instagramCookie")
 val InstagramUserAgentKey = stringPreferencesKey("instagramUserAgent")
 val InstagramAppIdKey = stringPreferencesKey("instagramAppId")
 val InstagramUuidKey = stringPreferencesKey("instagramUuid")
-val PreferInstagramAudioKey = booleanPreferencesKey("preferInstagramAudio")
-val PreferYouTubeMusicAudioKey = booleanPreferencesKey("preferYouTubeMusicAudio")
 
 val ScrobbleDelayPercentKey = floatPreferencesKey("scrobbleDelayPercent")
 val ScrobbleMinSongDurationKey = intPreferencesKey("scrobbleMinSongDuration")
@@ -618,6 +615,7 @@ val HistoryDuration = floatPreferencesKey("historyDuration")
 val PlayerButtonsStyleKey = stringPreferencesKey("player_buttons_style")
 val PlayerBackgroundStyleKey = stringPreferencesKey("playerBackgroundStyle")
 val PlayerInlineLyricsKey = booleanPreferencesKey("playerInlineLyrics")
+val ExperimentalAppleMusicCoverFadeKey = booleanPreferencesKey("experimentalAppleMusicCoverFade")
 val ShowLyricsKey = booleanPreferencesKey("showLyrics")
 val LyricsTextPositionKey = stringPreferencesKey("lyricsTextPosition")
 val LyricsClickKey = booleanPreferencesKey("lyricsClick")

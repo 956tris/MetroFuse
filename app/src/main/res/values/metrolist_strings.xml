@@ -18,7 +18,9 @@
     <string name="home_source_offline">Offline</string>
     <string name="search_soundcloud">Search SoundCloud</string>
     <string name="search_tidal">Search TIDAL</string>
+    <string name="search_spotify">Search Spotify</string>
     <string name="search_deezer">Search Deezer</string>
+    <string name="spotify_library_login_required">Log in with Spotify to show your Spotify library</string>
 
     <string name="weeks">Weeks</string>
     <string name="months">Months</string>
@@ -67,6 +69,11 @@
     <string name="show_artist_monthly_listeners">Show monthly listeners</string>
     <string name="apple_music_artist_motion_backgrounds">Apple Music artist motion backgrounds</string>
     <string name="apple_music_artist_motion_backgrounds_desc">Use Apple Music animated hero videos on supported artist pages.</string>
+    <string name="experiments">Experiments</string>
+    <string name="experiments_settings_desc">Try unfinished MetroFuse UI ideas behind opt-in toggles</string>
+    <string name="experiments_player">Player experiments</string>
+    <string name="experimental_apple_music_cover_fade">Fade Apple Music cover into UI</string>
+    <string name="experimental_apple_music_cover_fade_desc">Uses tall Apple Music motion art as a soft full-player backdrop when available. Experimental and off by default.</string>
 
     <!-- Menu descriptions -->
     <string name="download_playlist_desc">Download all songs for offline playback</string>
@@ -534,8 +541,6 @@
     <string name="audio_provider_apple_music">Apple Music</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
-    <string name="prefer_soundcloud_audio">Prefer SoundCloud audio</string>
-    <string name="prefer_soundcloud_audio_desc">Try SoundCloud before Qobuz, Apple Music, and YouTube for playable audio.</string>
     <string name="soundcloud_integration">SoundCloud</string>
     <string name="soundcloud_web_login">SoundCloud Web login</string>
     <string name="soundcloud_web_login_desc">Log in with SoundCloud in the WebView. MetroFuse saves the OAuth token used for personalized SoundCloud home and your own account streams.</string>
@@ -548,8 +553,6 @@
     <string name="soundcloud_auth_saved">SoundCloud auth saved.</string>
     <string name="deezer_integration">Deezer</string>
     <string name="deezer_integration_desc">Resolve Deezer audio through your dzmedia server.</string>
-    <string name="prefer_deezer_audio">Prefer Deezer audio</string>
-    <string name="prefer_deezer_audio_desc">Try Deezer before Qobuz, Apple Music, and YouTube for playable audio.</string>
     <string name="deezer_resolver_url">Deezer resolver URL</string>
     <string name="deezer_resolver_url_desc">Current endpoint: %1$s</string>
     <string name="deezer_resolver_url_placeholder">https://dzmedia-metrofuse.onrender.com/get_url</string>
@@ -637,8 +640,11 @@
     <string name="tidal_cookie_saved">TIDAL auth saved.</string>
     <string name="tidal_artwork_fallback">High quality album covers</string>
     <string name="tidal_artwork_fallback_desc">Use TIDAL album artwork in the player when no Spotify or Apple animated canvas is available</string>
+    <string name="tidal_animated_covers">TIDAL animated covers</string>
+    <string name="tidal_animated_covers_desc">Use TIDAL video covers in the player like Apple Music motion art. You need to be logged in with TIDAL for this to work.</string>
     <string name="tidal_audio_quality">TIDAL audio quality</string>
     <string name="tidal_quality_aac_320">AAC 320 kbps</string>
+    <string name="tidal_quality_flac">FLAC / 16-bit</string>
     <string name="tidal_quality_hires">HiRes / 24-bit</string>
 
     <string name="scrobbling_configuration">Scrobbling configuration</string>
@@ -1181,15 +1187,7 @@
     <string name="autoplay_desc">Automatically play the next song when the current one ends</string>
     <string name="apple_music_fallback">Apple Music fallback</string>
     <string name="apple_music_fallback_desc">Try Apple Music when Qobuz cannot resolve a playable stream</string>
-    <string name="prefer_apple_music">Prefer Apple Music</string>
-    <string name="prefer_apple_music_desc">Try Apple Music before Qobuz when the Apple Music fallback is enabled</string>
-    <string name="prefer_tidal_audio">Prefer TIDAL audio</string>
-    <string name="prefer_tidal_audio_desc">Try TIDAL before Qobuz, Apple Music, and YouTube using the selected TIDAL quality.</string>
     <string name="tidal_lossless_downgraded_to_aac">TIDAL FLAC was unavailable. Playing %1$d kbps AAC instead.</string>
-    <string name="prefer_instagram_audio">Prefer Instagram audio</string>
-    <string name="prefer_instagram_audio_desc">Experimental. Try Instagram Music before the normal audio provider chain.</string>
-    <string name="prefer_youtube_music_audio">Prefer YouTube Music provider</string>
-    <string name="prefer_youtube_music_audio_desc">Try YouTube Music before Qobuz, Apple Music, and other fallback providers.</string>
     <string name="qobuz_backend">Qobuz backend</string>
     <string name="qobuz_backend_trypt">TrypT HiFi</string>
     <string name="qobuz_backend_jumo">JUMO-DL</string>

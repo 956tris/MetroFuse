@@ -29,11 +29,6 @@ import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
-import com.metrolist.music.constants.PreferAppleMusicKey
-import com.metrolist.music.constants.PreferDeezerAudioKey
-import com.metrolist.music.constants.PreferSoundCloudAudioKey
-import com.metrolist.music.constants.PreferInstagramAudioKey
-import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
@@ -271,13 +266,8 @@ constructor(
 
     private fun currentStreamSelectionKey(context: Context): String {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
-        val preferAppleMusic = context.dataStore.get(PreferAppleMusicKey, false)
-        val preferDeezerAudio = context.dataStore.get(PreferDeezerAudioKey, false)
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val preferSoundCloudAudio = context.dataStore.get(PreferSoundCloudAudioKey, false)
-        val preferInstagramAudio = context.dataStore.get(PreferInstagramAudioKey, false)
-        val preferYouTubeMusicAudio = context.dataStore.get(PreferYouTubeMusicAudioKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
@@ -297,13 +287,8 @@ constructor(
             ?: "US"
         return listOf(
             "appleFallback=$appleMusicFallbackEnabled",
-            "preferApple=$preferAppleMusic",
-            "preferDeezer=$preferDeezerAudio",
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
-            "preferSoundCloud=$preferSoundCloudAudio",
-            "preferInstagram=$preferInstagramAudio",
-            "preferYouTube=$preferYouTubeMusicAudio",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "instagramAuth=$instagramCookieConfigured",
             "instagramCookie=${instagramCookie.hashCode()}",

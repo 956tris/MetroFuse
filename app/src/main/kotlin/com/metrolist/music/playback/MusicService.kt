@@ -79,6 +79,7 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ShuffleOrder.DefaultShuffleOrder
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.session.CommandButton
@@ -161,16 +162,11 @@ import com.metrolist.music.constants.PauseListenHistoryKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
-import com.metrolist.music.constants.PreferAppleMusicKey
-import com.metrolist.music.constants.PreferDeezerAudioKey
-import com.metrolist.music.constants.PreferTidalAudioKey
-import com.metrolist.music.constants.PreferSoundCloudAudioKey
-import com.metrolist.music.constants.PreferInstagramAudioKey
-import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
 import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
+import com.metrolist.music.constants.TidalAnimatedCoversEnabledKey
 import com.metrolist.music.constants.TidalAudioQuality
 import com.metrolist.music.constants.TidalAudioQualityKey
 import com.metrolist.music.constants.TidalCookieKey
@@ -413,16 +409,23 @@ class MusicService :
     private var currentQueue: Queue = EmptyQueue
     var queueTitle: String? = null
     private var queueSaveJob: Job? = null
+    private var spotifyAutoplayJob: Job? = null
+    private var spotifyAutoplaySeedKey: String? = null
 
     val currentMediaMetadata = MutableStateFlow<com.metrolist.music.models.MediaMetadata?>(null)
     val currentAppleCanvasUrl = MutableStateFlow<String?>(null)
     val currentAppleTallCanvasUrl = MutableStateFlow<String?>(null)
+    val currentTidalCanvasUrl = MutableStateFlow<String?>(null)
     val currentEmbeddedCanvasUrl = MutableStateFlow<String?>(null)
     val currentPreferredArtworkUrl = MutableStateFlow<String?>(null)
     val currentTidalArtworkUrl = currentPreferredArtworkUrl
     private val preferredArtworkCache =
         object : LinkedHashMap<String, String?>(256, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean = size > 256
+        }
+    private val tidalAnimatedArtworkCache =
+        object : LinkedHashMap<String, String?>(128, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean = size > 128
         }
     private val currentSong =
         currentMediaMetadata
@@ -433,6 +436,7 @@ class MusicService :
         currentMediaMetadata.flatMapLatest { mediaMetadata ->
             database.format(mediaMetadata?.id)
         }
+    val currentPlaybackFormat = MutableStateFlow<FormatEntity?>(null)
 
     lateinit var playerVolume: MutableStateFlow<Float>
     val isMuted = MutableStateFlow(false)
@@ -591,6 +595,7 @@ class MusicService :
     // URL cache for stream URLs - class-level so it can be invalidated on errors
     private val songUrlCache = HashMap<String, CachedSongStream>()
     private val audioFormatRetryJobs = ConcurrentHashMap<String, Job>()
+    private val audioFormatRefreshJobs = ConcurrentHashMap<String, Job>()
     private val appleCanvasPrefetchMediaIds = ConcurrentHashMap.newKeySet<String>()
 
     // Flag to bypass cache when quality changes - forces fresh stream fetch
@@ -834,6 +839,7 @@ class MusicService :
                 markAppleWrapperFormat(metadata)
                 coroutineScope {
                     launch { updateAppleCanvas(metadata) }
+                    launch { updateTidalCanvas(metadata) }
                     launch { updatePreferredArtwork(metadata) }
                 }
             }
@@ -984,6 +990,11 @@ class MusicService :
         currentSong.debounce(1000).collect(scope) { song ->
             updateNotification()
             updateWidgetUI(player.isPlaying)
+        }
+
+        currentFormat.collect(scope) { format ->
+            val mediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
+            currentPlaybackFormat.value = format?.takeIf { mediaId == null || it.id == mediaId }
         }
 
         combine(
@@ -1319,6 +1330,7 @@ class MusicService :
                 .Builder(this)
                 .setMediaSourceFactory(createMediaSourceFactory())
                 .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor))
+                .setTrackSelector(createAudioTrackSelector())
                 .setLoadControl(createLoadControl())
                 .setHandleAudioBecomingNoisy(true)
                 .setWakeMode(C.WAKE_MODE_NETWORK)
@@ -1354,6 +1366,17 @@ class MusicService :
         }
         return player
     }
+
+    private fun createAudioTrackSelector(): DefaultTrackSelector =
+        DefaultTrackSelector(this).apply {
+            setParameters(
+                buildUponParameters()
+                    .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    .setForceHighestSupportedBitrate(true)
+                    .build(),
+            )
+        }
 
     private fun setupAudioFocusRequest() {
         audioFocusRequest =
@@ -1673,6 +1696,8 @@ class MusicService :
 
         currentQueue = queue
         queueTitle = null
+        spotifyAutoplayJob?.cancel()
+        spotifyAutoplaySeedKey = null
         val persistShuffleAcrossQueues = dataStore.get(PersistentShuffleAcrossQueuesKey, false)
         val previousShuffleEnabled = player.shuffleModeEnabled
         if (!persistShuffleAcrossQueues) {
@@ -2457,6 +2482,79 @@ class MusicService :
         }
     }
 
+    private fun maybeAppendSpotifyAutoplayRecommendations(playAfterAppend: Boolean) {
+        if (spotifyAutoplayJob?.isActive == true) return
+
+        val seedMetadata = player.currentMetadata ?: currentMediaMetadata.value ?: return
+        if (seedMetadata.isEpisode || seedMetadata.isVideoSong) return
+
+        val seedKey = "${seedMetadata.id}:${player.mediaItemCount}:${if (playAfterAppend) "ended" else "preload"}"
+        if (spotifyAutoplaySeedKey == seedKey) return
+        spotifyAutoplaySeedKey = seedKey
+
+        spotifyAutoplayJob =
+            scope.launch(SilentHandler) {
+                if (!dataStore.get(AutoplayKey, true)) return@launch
+                if (dataStore.get(DisableLoadMoreWhenRepeatAllKey, false) && player.repeatMode == REPEAT_MODE_ALL) return@launch
+                val cookie = dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() } ?: return@launch
+                val queueContext = player.mediaItems.mapNotNull { it.metadata }
+                val existingIds = player.mediaItems.map { it.mediaId }.toSet()
+                val existingFingerprints = player.mediaItems.mapNotNull { it.spotifyAutoplayFingerprint() }.toSet()
+                val recommendations =
+                    withContext(Dispatchers.IO) {
+                        SpotifyCanvasClient.resolveAutoplayRecommendations(
+                            mediaMetadata = seedMetadata,
+                            cookie = cookie,
+                            context = queueContext,
+                            title = queueTitle,
+                            limit = 30,
+                        )
+                    }
+                        .map(SongItem::toMediaItem)
+                        .filterExplicit(dataStore.get(HideExplicitKey, false))
+                        .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
+                        .filterNot { mediaItem ->
+                            mediaItem.mediaId in existingIds ||
+                                mediaItem.spotifyAutoplayFingerprint()?.let { it in existingFingerprints } == true
+                        }
+
+                if (recommendations.isEmpty() || player.playbackState == STATE_IDLE) return@launch
+
+                val firstRecommendationIndex = player.mediaItemCount
+                val shouldStartFirstRecommendation =
+                    playAfterAppend && player.playbackState == Player.STATE_ENDED && !player.hasNextMediaItem()
+                player.addMediaItems(recommendations)
+                if (player.shuffleModeEnabled) {
+                    val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
+                    applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
+                }
+
+                if (shouldStartFirstRecommendation) {
+                    player.seekTo(firstRecommendationIndex, 0)
+                    player.prepare()
+                    if (castConnectionHandler?.isCasting?.value != true) {
+                        player.play()
+                    }
+                }
+            }
+    }
+
+    private fun MediaItem.spotifyAutoplayFingerprint(): String? {
+        val metadata = metadata ?: return null
+        val title = metadata.title.spotifyAutoplayNormalize()
+        if (title.isBlank()) return null
+        val artist = metadata.artists.firstOrNull()?.name.orEmpty().spotifyAutoplayNormalize()
+        return "$title::$artist"
+    }
+
+    private fun String.spotifyAutoplayNormalize(): String =
+        lowercase()
+            .replace(Regex("\\(.*?\\)|\\[.*?\\]"), " ")
+            .replace(Regex("\\b(feat\\.?|ft\\.?|with)\\b"), " ")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
     override fun onMediaItemTransition(
         mediaItem: MediaItem?,
         reason: Int,
@@ -2479,10 +2577,16 @@ class MusicService :
         // Check if new item is an episode and restore its position
         val newMetadata = mediaItem?.metadata
         currentMediaMetadata.value = newMetadata ?: player.currentMetadata
+        val transitionedMediaId = newMetadata?.id ?: mediaItem?.mediaId
+        currentPlaybackFormat.value = null
+        refreshCurrentPlaybackFormatFromDatabase(transitionedMediaId)
         updateCurrentAudioFormatFromTracks(player.currentTracks)
-        (newMetadata?.id ?: mediaItem?.mediaId)
+        transitionedMediaId
             ?.takeIf { it.isNotBlank() }
-            ?.let(::scheduleAudioFormatRetry)
+            ?.let { mediaId ->
+                scheduleAudioFormatRetry(mediaId)
+                scheduleAudioFormatRefresh(mediaId)
+            }
         if (newMetadata?.isEpisode == true) {
             previousEpisodeId = newMetadata.id
             // Delay restoration to let playback start
@@ -2558,6 +2662,14 @@ class MusicService :
             }
         }
 
+        if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT &&
+            player.mediaItemCount > 0 &&
+            player.currentMediaItemIndex >= player.mediaItemCount - 1 &&
+            !currentQueue.hasNextPage()
+        ) {
+            maybeAppendSpotifyAutoplayRecommendations(playAfterAppend = false)
+        }
+
         // Save state when media item changes
         if (dataStore.get(PersistentQueueKey, true)) {
             saveQueueToDisk()
@@ -2600,6 +2712,8 @@ class MusicService :
                 if (castConnectionHandler?.isCasting?.value != true) {
                     player.play()
                 }
+            } else if (autoplay) {
+                maybeAppendSpotifyAutoplayRecommendations(playAfterAppend = true)
             }
         }
 
@@ -2615,7 +2729,11 @@ class MusicService :
             retryJob?.cancel()
             currentMediaMetadata.value = player.currentMetadata
             updateCurrentAudioFormatFromTracks(player.currentTracks)
-            player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let(::scheduleAudioFormatRetry)
+            player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let { mediaId ->
+                refreshCurrentPlaybackFormatFromDatabase(mediaId)
+                scheduleAudioFormatRetry(mediaId)
+                scheduleAudioFormatRefresh(mediaId)
+            }
             player.currentMediaItem?.localConfiguration?.uri
                 ?.takeIf { AppleMusicWrapperDataSource.isAppleUri(it) }
                 ?.let {
@@ -3827,6 +3945,7 @@ class MusicService :
                         b2Visible,
                         activityType,
                         activityName,
+                        currentPreferredArtworkUrl.value,
                     )?.onFailure {
                         if (showFeedback) {
                             Handler(Looper.getMainLooper()).post {
@@ -3865,15 +3984,9 @@ class MusicService :
 
     private fun currentStreamSelectionKey(): String {
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
-        val preferAppleMusic = dataStore.get(PreferAppleMusicKey, false)
-        val preferTidalAudio = dataStore.get(PreferTidalAudioKey, false)
         val tidalQuality = dataStore.get(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
-        val preferDeezerAudio = dataStore.get(PreferDeezerAudioKey, false)
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val preferSoundCloudAudio = dataStore.get(PreferSoundCloudAudioKey, false)
-        val preferInstagramAudio = dataStore.get(PreferInstagramAudioKey, false)
-        val preferYouTubeMusicAudio = dataStore.get(PreferYouTubeMusicAudioKey, false)
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
         val providerMatchOverrides = dataStore.get(AudioProviderMatchOverridesKey, "")
@@ -3895,15 +4008,9 @@ class MusicService :
             ?: "US"
         return listOf(
             "appleFallback=$appleMusicFallbackEnabled",
-            "preferApple=$preferAppleMusic",
-            "preferTidal=$preferTidalAudio",
             "tidalQuality=${tidalQuality.name}",
-            "preferDeezer=$preferDeezerAudio",
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
-            "preferSoundCloud=$preferSoundCloudAudio",
-            "preferInstagram=$preferInstagramAudio",
-            "preferYouTube=$preferYouTubeMusicAudio",
             "stopOnProviderError=$stopOnProviderError",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "providerOverrides=${providerMatchOverrides.hashCode()}",
@@ -4085,6 +4192,7 @@ class MusicService :
             database.query {
                 upsert(resolved.format)
             }
+            publishCurrentPlaybackFormat(mediaId, resolved.format)
 
             if (bypassCacheForQualityChange.remove(mediaId)) {
                 Timber.tag("MusicService").d("Cleared bypass cache flag for $mediaId after stream fetch")
@@ -4207,8 +4315,41 @@ class MusicService :
                     upsert(format)
                 }
             }
+            publishCurrentPlaybackFormat(mediaId, format)
         }.onFailure { error ->
             Timber.tag(TAG).w(error, "Failed to restore cached stream format for $mediaId")
+        }
+    }
+
+    private fun publishCurrentPlaybackFormat(
+        mediaId: String,
+        format: FormatEntity,
+    ) {
+        scope.launch {
+            val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
+            if (currentMediaId == mediaId && format.id == mediaId) {
+                currentPlaybackFormat.value = format
+            }
+        }
+    }
+
+    private fun refreshCurrentPlaybackFormatFromDatabase(mediaId: String?) {
+        if (mediaId.isNullOrBlank()) {
+            currentPlaybackFormat.value = null
+            return
+        }
+
+        scope.launch(Dispatchers.IO) {
+            val format =
+                runCatching {
+                    database.getFormatByIdBlocking(mediaId)
+                }.getOrNull()
+            withContext(Dispatchers.Main) {
+                val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
+                if (currentMediaId == mediaId) {
+                    currentPlaybackFormat.value = format
+                }
+            }
         }
     }
 
@@ -4930,6 +5071,47 @@ class MusicService :
         }
     }
 
+    private suspend fun updateTidalCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {
+        currentTidalCanvasUrl.value = null
+        if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
+        if (!dataStore.get(TidalAnimatedCoversEnabledKey, false)) return
+        if (isLocalMedia(metadata)) return
+
+        val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return
+        val cacheKey = preferredArtworkCacheKey(metadata, artist)
+        val cached =
+            synchronized(tidalAnimatedArtworkCache) {
+                if (tidalAnimatedArtworkCache.containsKey(cacheKey)) {
+                    true to tidalAnimatedArtworkCache[cacheKey]
+                } else {
+                    false to null
+                }
+            }
+        if (cached.first) {
+            if (currentMediaMetadata.value?.id == metadata.id) {
+                currentTidalCanvasUrl.value = cached.second
+            }
+            return
+        }
+
+        val resolved =
+            withTimeoutOrNull(3_500L) {
+                TidalHomeFeedProvider.resolveAnimatedArtwork(
+                    title = metadata.title,
+                    artist = artist,
+                    album = metadata.album?.title,
+                    cookie = dataStore.get(TidalCookieKey, ""),
+                )
+            }?.takeIf { it.isNotBlank() }
+
+        synchronized(tidalAnimatedArtworkCache) {
+            tidalAnimatedArtworkCache[cacheKey] = resolved
+        }
+        if (currentMediaMetadata.value?.id == metadata.id) {
+            currentTidalCanvasUrl.value = resolved
+        }
+    }
+
     private suspend fun updatePreferredArtwork(
         metadata: com.metrolist.music.models.MediaMetadata?,
     ) {
@@ -4950,6 +5132,7 @@ class MusicService :
         if (cached.first) {
             if (currentMediaMetadata.value?.id == metadata.id) {
                 currentPreferredArtworkUrl.value = cached.second
+                refreshDiscordRpcForPreferredArtwork(metadata.id)
             }
             return
         }
@@ -4979,7 +5162,16 @@ class MusicService :
         }
         if (currentMediaMetadata.value?.id == metadata.id) {
             currentPreferredArtworkUrl.value = resolved
+            refreshDiscordRpcForPreferredArtwork(metadata.id)
         }
+    }
+
+    private fun refreshDiscordRpcForPreferredArtwork(mediaId: String) {
+        if (currentPreferredArtworkUrl.value.isNullOrBlank()) return
+        if (player.playbackState != Player.STATE_READY || !player.isPlaying) return
+        val song = currentSong.value ?: return
+        if (song.song.id != mediaId) return
+        updateDiscordRPC(song)
     }
 
     private fun preferredArtworkCacheKey(
@@ -5489,6 +5681,7 @@ class MusicService :
 
         scope.launch(Dispatchers.IO) {
             var shouldRetry = false
+            var resolvedPlaybackFormat: FormatEntity? = null
             database.query {
                 val existing = getFormatByIdBlocking(mediaId)
                 val cached = songUrlCache[mediaId]?.format
@@ -5501,6 +5694,7 @@ class MusicService :
                 if (existing == null) {
                     val inserted = baseFormat.withRendererAudioMetadata(audioFormat, rendererBitrate, rendererSampleRate)
                     upsert(inserted)
+                    resolvedPlaybackFormat = inserted
                     shouldRetry = !inserted.hasUsefulAudioMetadata()
                     return@query
                 }
@@ -5522,6 +5716,7 @@ class MusicService :
                     !shouldUpdateSampleRate &&
                     !shouldClearAlacBitrate
                 ) {
+                    resolvedPlaybackFormat = baseFormat
                     shouldRetry = !baseFormat.hasUsefulAudioMetadata()
                     return@query
                 }
@@ -5531,7 +5726,16 @@ class MusicService :
                     sampleRate = if (shouldUpdateSampleRate) rendererSampleRate else baseFormat.sampleRate,
                 )
                 upsert(updated)
+                resolvedPlaybackFormat = updated
                 shouldRetry = !updated.hasUsefulAudioMetadata()
+            }
+            resolvedPlaybackFormat?.let { format ->
+                withContext(Dispatchers.Main) {
+                    val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
+                    if (currentMediaId == mediaId && format.id == mediaId) {
+                        currentPlaybackFormat.value = format
+                    }
+                }
             }
             if (retryIfUnknown && shouldRetry) {
                 scheduleAudioFormatRetry(mediaId)
@@ -5634,6 +5838,26 @@ class MusicService :
         audioFormatRetryJobs[mediaId] = retryJob
         retryJob.invokeOnCompletion {
             audioFormatRetryJobs.remove(mediaId, retryJob)
+        }
+    }
+
+    private fun scheduleAudioFormatRefresh(mediaId: String) {
+        if (audioFormatRefreshJobs[mediaId]?.isActive == true) return
+
+        val refreshJob =
+            scope.launch {
+                refreshCurrentPlaybackFormatFromDatabase(mediaId)
+                listOf(250L, 900L, 1_800L).forEach { delayMs ->
+                    delay(delayMs)
+                    if (player.currentMediaItem?.mediaId != mediaId) return@launch
+                    refreshCurrentPlaybackFormatFromDatabase(mediaId)
+                    updateCurrentAudioFormatFromTracks(player.currentTracks)
+                }
+            }
+
+        audioFormatRefreshJobs[mediaId] = refreshJob
+        refreshJob.invokeOnCompletion {
+            audioFormatRefreshJobs.remove(mediaId, refreshJob)
         }
     }
 
@@ -6243,6 +6467,9 @@ class MusicService :
         newPosition: Player.PositionInfo,
         reason: Int,
     ) {
+        player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let { mediaId ->
+            scheduleAudioFormatRefresh(mediaId)
+        }
         if (reason == Player.DISCONTINUITY_REASON_SEEK) {
             scheduleCrossfade()
         }

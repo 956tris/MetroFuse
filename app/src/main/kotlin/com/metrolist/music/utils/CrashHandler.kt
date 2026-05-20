@@ -23,6 +23,11 @@ class CrashHandler private constructor(
         Thread.getDefaultUncaughtExceptionHandler()
 
     override fun uncaughtException(thread: Thread, throwable: Throwable) {
+        if (throwable.isMedia3HlsTrackSelectionCrash()) {
+            Timber.w(throwable, "Suppressed Media3 HLS fallback track-selection crash on ${thread.name}")
+            return
+        }
+
         try {
             val crashLog = buildCrashLog(throwable)
             Timber.e(throwable, "App crashed")
@@ -42,6 +47,14 @@ class CrashHandler private constructor(
             Timber.e(e, "Error handling crash")
             defaultHandler?.uncaughtException(thread, throwable)
         }
+    }
+
+    private fun Throwable.isMedia3HlsTrackSelectionCrash(): Boolean {
+        if (this !is ArrayIndexOutOfBoundsException) return false
+        val stackClassNames = stackTrace.map { it.className }
+        return stackClassNames.any { it == "androidx.media3.exoplayer.trackselection.BaseTrackSelection" } &&
+            stackClassNames.any { it == "androidx.media3.exoplayer.hls.HlsChunkSource" } &&
+            stackClassNames.any { it == "androidx.media3.exoplayer.hls.HlsSampleStreamWrapper" }
     }
 
     private fun buildCrashLog(throwable: Throwable): String {
