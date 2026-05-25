@@ -126,6 +126,8 @@
     <string name="gradient">Gradient</string>
     <string name="new_player_design">New player design</string>
     <string name="new_mini_player_design">New mini-player design</string>
+    <string name="legacy_quality_label">Legacy quality label</string>
+    <string name="legacy_quality_label_desc">Show the audio quality below the play button instead of in the top badge</string>
     <string name="player_background_blur">Blur</string>
     <string name="player_background_galaxy_blur">Galaxy blur</string>
     <string name="player_buttons_style">Player button colors</string>

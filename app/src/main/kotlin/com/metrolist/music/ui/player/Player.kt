@@ -151,6 +151,7 @@ import com.metrolist.music.constants.PlayerButtonsStyle
 import com.metrolist.music.constants.PlayerButtonsStyleKey
 import com.metrolist.music.constants.PlayerHorizontalPadding
 import com.metrolist.music.constants.PlayerInlineLyricsKey
+import com.metrolist.music.constants.PlayerLegacyQualityLabelKey
 import com.metrolist.music.constants.QueuePeekHeight
 import com.metrolist.music.constants.SleepTimerDefaultKey
 import com.metrolist.music.constants.SleepTimerFadeOutKey
@@ -295,7 +296,7 @@ private fun FormatEntity.playerQualityLabel(): String? {
         ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
     val sampleRate = sampleRate
         ?.takeIf { it > 0 }
-        ?.let { "$it Hz" }
+        ?.formatSampleRateLabel()
 
     if (codec == null && bitrate == null && sampleRate == null) return null
     if (codec == "ALAC" && bitrate == null && sampleRate == null) return null
@@ -311,6 +312,15 @@ private fun Int.isPlausibleAlacBitrate(sampleRate: Int?): Boolean {
         else -> 10_000_000
     }
     return this in 128_000..max
+}
+
+private fun Int.formatSampleRateLabel(): String {
+    val tenthsOfKhz = (this + 50) / 100
+    return if (tenthsOfKhz % 10 == 0) {
+        "${tenthsOfKhz / 10} kHz"
+    } else {
+        "${tenthsOfKhz / 10}.${tenthsOfKhz % 10} kHz"
+    }
 }
 
 private fun blendColors(
@@ -351,6 +361,7 @@ fun BottomSheetPlayer(
             UseNewPlayerDesignKey,
             defaultValue = true,
         )
+    val useLegacyQualityLabel by rememberPreference(PlayerLegacyQualityLabelKey, defaultValue = false)
     val (hidePlayerThumbnail, onHidePlayerThumbnailChange) = rememberPreference(HidePlayerThumbnailKey, false)
     val (hideStatusBarOnFullscreen) = rememberPreference(HideStatusBarOnFullscreenKey, false)
     val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
@@ -1519,7 +1530,7 @@ fun BottomSheetPlayer(
                 Column(
                     modifier = Modifier.weight(1f),
                 ) {
-                    displayedPlayerQualityLabel?.let { label ->
+                    if (!useLegacyQualityLabel) displayedPlayerQualityLabel?.let { label ->
                         QualityBadge(
                             label = label,
                             containerColor = qualityBadgeContainerColor,
@@ -2351,6 +2362,51 @@ fun BottomSheetPlayer(
                             }
                         }
                     }
+
+                    if ((useLegacyQualityLabel && displayedPlayerQualityLabel != null) || displayedPlayerSourceLabel != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp),
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = PlayerHorizontalPadding),
+                        ) {
+                            if (useLegacyQualityLabel) {
+                                displayedPlayerQualityLabel?.let { label ->
+                                    Text(
+                                        text = label,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = TextBackgroundColor,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Clip,
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .basicMarquee(iterations = 1, initialDelayMillis = 1800, velocity = 24.dp),
+                                    )
+                                }
+                            }
+                            displayedPlayerSourceLabel?.let { source ->
+                                Text(
+                                    text = "Source: $source",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TextBackgroundColor.copy(alpha = 0.82f),
+                                    textAlign = TextAlign.Center,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .basicMarquee(iterations = 1, initialDelayMillis = 2200, velocity = 24.dp),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2546,7 +2602,8 @@ private fun QualityBadge(
             style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            overflow = TextOverflow.Clip,
+            modifier = Modifier.basicMarquee(iterations = 1, initialDelayMillis = 1800, velocity = 24.dp),
         )
     }
 }

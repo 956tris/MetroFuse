@@ -411,7 +411,7 @@ private fun SmoothWrappedLyricLine(
 }
 
 private const val MaxSmoothInlineTextLines = 3
-private val InlineLyricFillLead = 12.dp
+private val InlineLyricFillLead = 2.dp
 private val InlineLyricSweepVerticalPadding = 3.dp
 
 private data class InlineSweepRect(
@@ -432,61 +432,74 @@ private fun InlineKaraokeLine.fillRects(
     val textOffset = sweepTextOffset(positionMs).coerceIn(0f, text.length.toFloat())
     val charOffset = textOffset.toInt().coerceIn(0, text.lastIndex)
     val lineIndex = layout.getLineForOffset(charOffset).coerceIn(0, layout.lineCount - 1)
-    val lineProgress = layout.lineProgressForOffset(lineIndex, textOffset)
+    val lineFillRight = layout.horizontalPositionForOffset(lineIndex, textOffset) + fillLeadPx
 
     return buildList {
         for (index in 0 until lineIndex) {
-            add(layout.fillRectForLine(index, progress = 1f, fillLeadPx = 0f, verticalPaddingPx = verticalPaddingPx))
+            add(layout.fillRectForLine(index, layout.getLineRight(index), verticalPaddingPx))
         }
-        add(layout.fillRectForLine(lineIndex, lineProgress, fillLeadPx, verticalPaddingPx))
+        add(layout.fillRectForLine(lineIndex, lineFillRight, verticalPaddingPx))
     }
 }
 
 private fun InlineKaraokeLine.sweepTextOffset(positionMs: Long): Float {
-    val firstSegment = segments.firstOrNull() ?: return 0f
-    if (positionMs <= firstSegment.startMs) return 0f
+    if (segments.isEmpty()) return 0f
 
+    var heldOffset = 0f
     segments.forEach { segment ->
+        if (positionMs < segment.startMs) return heldOffset
+
+        val segmentEndOffset = visibleEndOffset(segment)
         if (positionMs <= segment.endMs) {
             val progress =
                 ((positionMs - segment.startMs).toFloat() / (segment.endMs - segment.startMs).coerceAtLeast(1))
                     .coerceIn(0f, 1f)
             val easedProgress = progress * progress * (3f - 2f * progress)
-            return segment.startIndex + ((segment.endIndex - segment.startIndex) * easedProgress)
+            return segment.startIndex + ((segmentEndOffset - segment.startIndex) * easedProgress)
         }
+
+        heldOffset = segmentEndOffset
     }
 
-    return text.length.toFloat()
+    return heldOffset
 }
 
-private fun TextLayoutResult.lineProgressForOffset(
+private fun InlineKaraokeLine.visibleEndOffset(segment: InlineKaraokeSegment): Float {
+    var endIndex = segment.endIndex.coerceIn(segment.startIndex, text.length)
+    while (endIndex > segment.startIndex && text.getOrNull(endIndex - 1)?.isWhitespace() == true) {
+        endIndex--
+    }
+    return endIndex.toFloat()
+}
+
+private fun TextLayoutResult.horizontalPositionForOffset(
     lineIndex: Int,
     textOffset: Float,
 ): Float {
-    val lineStart = getLineStart(lineIndex).toFloat()
-    val lineEnd = getLineEnd(lineIndex, visibleEnd = false).coerceAtLeast(getLineStart(lineIndex) + 1).toFloat()
-    return ((textOffset - lineStart) / (lineEnd - lineStart)).coerceIn(0f, 1f)
+    val lineLeft = getLineLeft(lineIndex)
+    val lineRight = getLineRight(lineIndex).coerceAtLeast(lineLeft + 1f)
+    val lineStart = getLineStart(lineIndex)
+    val lineEnd = getLineEnd(lineIndex, visibleEnd = true).coerceAtLeast(lineStart)
+    if (lineEnd <= lineStart || textOffset <= lineStart) return lineLeft
+    if (textOffset >= lineEnd) return lineRight
+
+    val lowerOffset = textOffset.toInt().coerceIn(lineStart, lineEnd - 1)
+    val charBounds = getBoundingBox(lowerOffset)
+    val charProgress = (textOffset - lowerOffset).coerceIn(0f, 1f)
+    return (charBounds.left + (charBounds.width * charProgress)).coerceIn(lineLeft, lineRight)
 }
 
 private fun TextLayoutResult.fillRectForLine(
     lineIndex: Int,
-    progress: Float,
-    fillLeadPx: Float,
+    fillRight: Float,
     verticalPaddingPx: Float,
 ): InlineSweepRect {
     val lineLeft = getLineLeft(lineIndex)
     val lineRight = getLineRight(lineIndex).coerceAtLeast(lineLeft + 1f)
-    val fillRight =
-        if (progress <= 0f) {
-            lineLeft
-        } else {
-            (lineLeft + ((lineRight - lineLeft) * progress.coerceIn(0f, 1f)) + fillLeadPx)
-                .coerceAtMost(lineRight)
-        }
     return InlineSweepRect(
         left = lineLeft,
         top = getLineTop(lineIndex) - verticalPaddingPx,
-        right = fillRight,
+        right = fillRight.coerceIn(lineLeft, lineRight),
         bottom = getLineBottom(lineIndex) + verticalPaddingPx,
     )
 }

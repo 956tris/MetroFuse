@@ -87,6 +87,7 @@ import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerButtonsStyle
 import com.metrolist.music.constants.PlayerButtonsStyleKey
+import com.metrolist.music.constants.PlayerLegacyQualityLabelKey
 import com.metrolist.music.constants.PureBlackMiniPlayerKey
 import com.metrolist.music.constants.RespectAgentPositioningKey
 import com.metrolist.music.constants.SelectedThemeColorKey
@@ -184,6 +185,11 @@ fun AppearanceSettings(
         rememberPreference(
             UseNewPlayerDesignKey,
             defaultValue = true,
+        )
+    val (useLegacyQualityLabel, onUseLegacyQualityLabelChange) =
+        rememberPreference(
+            PlayerLegacyQualityLabelKey,
+            defaultValue = false,
         )
     val (miniPlayerBackground, onMiniPlayerBackgroundChange) =
         rememberEnumPreference(
@@ -1219,6 +1225,28 @@ fun AppearanceSettings(
                             )
                         },
                         onClick = { onUseNewPlayerDesignChange(!useNewPlayerDesign) },
+                    ),
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.graphic_eq),
+                        title = { Text(stringResource(R.string.legacy_quality_label)) },
+                        description = { Text(stringResource(R.string.legacy_quality_label_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = useLegacyQualityLabel,
+                                onCheckedChange = onUseLegacyQualityLabelChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (useLegacyQualityLabel) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        onClick = { onUseLegacyQualityLabelChange(!useLegacyQualityLabel) },
                     ),
                     Material3SettingsItem(
                         icon = painterResource(R.drawable.gradient),
