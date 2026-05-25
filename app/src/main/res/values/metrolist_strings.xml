@@ -63,6 +63,7 @@
 
     <!-- Artist about section -->
     <string name="about_artist">About</string>
+    <string name="top_tracks_header">Top Tracks:</string>
     <string name="show_more">Show more</string>
     <string name="show_less">Show less</string>
     <string name="artist_page_settings">Artist page</string>

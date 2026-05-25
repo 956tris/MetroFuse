@@ -697,7 +697,7 @@ private fun SpotifyArtwork(
             )
         } else {
             Icon(
-                painter = painterResource(R.drawable.music_note),
+                painter = painterResource(item.spotifyHomeFallbackIcon()),
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(28.dp),
@@ -747,6 +747,13 @@ private fun YTItem.spotifyHomeThumbnail(): String? =
         is ArtistItem -> thumbnail
         is PodcastItem -> thumbnail
         is EpisodeItem -> thumbnail
+    }
+
+private fun YTItem.spotifyHomeFallbackIcon(): Int =
+    if (this is PlaylistItem && id.startsWith("deezer:mix:", ignoreCase = true)) {
+        R.drawable.provider_deezer
+    } else {
+        R.drawable.music_note
     }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -945,7 +952,6 @@ fun HomeScreen(
             "SAPISID" in parseCookieString(innerTubeCookie)
         }
     val url = if (isLoggedIn) accountImageUrl else null
-    var spotifyHomeFilter by remember { mutableStateOf("All") }
 
     // Extract unique podcasts from episodes for "Podcast Channels" row
     // Cache the podcasts to prevent them from disappearing during refresh
@@ -1216,22 +1222,6 @@ fun HomeScreen(
         }
     }
 
-    fun isSpotifyPodcastSection(sectionData: HomePage.Section): Boolean =
-        sectionData.title.contains("podcast", ignoreCase = true) ||
-            sectionData.label?.contains("podcast", ignoreCase = true) == true ||
-            sectionData.items.any {
-                it is PodcastItem ||
-                    it is EpisodeItem ||
-                    it.title.contains("podcast", ignoreCase = true)
-            }
-
-    fun shouldShowSpotifySection(sectionData: HomePage.Section): Boolean =
-        when (spotifyHomeFilter) {
-            "Music" -> !isSpotifyPodcastSection(sectionData)
-            "Podcasts" -> isSpotifyPodcastSection(sectionData)
-            else -> true
-        }
-
     val ytGridItem: @Composable (YTItem) -> Unit = { item ->
         YouTubeGridItem(
             item = item,
@@ -1473,18 +1463,6 @@ fun HomeScreen(
                         )
                     }
 
-                    item(key = "spotify_home_filters") {
-                        ChipsRow(
-                            chips =
-                                listOf(
-                                    "All" to "All",
-                                    "Music" to "Music",
-                                    "Podcasts" to "Podcasts",
-                                ),
-                            currentValue = spotifyHomeFilter,
-                            onValueUpdate = { spotifyHomeFilter = it },
-                        )
-                    }
                 }
 
                 if (homeFeedSource == HomeFeedSource.OFFLINE && offlineSongs.isNotEmpty()) {
@@ -2727,15 +2705,10 @@ fun HomeScreen(
                                     }
                                 }
                                 return@forEach
-                            }
-                            if (homeFeedSource == HomeFeedSource.SPOTIFY) {
-                                if (sectionData != null && shouldShowSpotifySection(sectionData)) {
-                                    val spotifyDisplayIndex =
-                                        homePage
-                                            ?.sections
-                                            ?.take(section.index)
-                                            ?.count(::shouldShowSpotifySection)
-                                            ?: section.index
+            }
+            if (homeFeedSource == HomeFeedSource.SPOTIFY) {
+                if (sectionData != null) {
+                    val spotifyDisplayIndex = section.index
                                     val distinctItems =
                                         sectionData.items
                                             .distinctBy { it.id }

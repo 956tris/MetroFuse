@@ -124,10 +124,17 @@ object SoundCloudHomeFeedProvider {
                 val token = normalizeSoundCloudAuthInput(authToken).orEmpty()
                 val collectionType = type.lowercase().takeIf { it in setOf("playlist", "album", "mix") } ?: "playlist"
                 val collection =
-                    apiObject(
-                        path = "playlists/$collectionId",
-                        authToken = token,
-                    )
+                    runCatching {
+                        apiObject(
+                            path = "playlists/$collectionId",
+                            authToken = token,
+                        )
+                    }.getOrElse { directError ->
+                        resolveCollectionObject(
+                            collectionId = collectionId,
+                            authToken = token,
+                        ) ?: throw directError
+                    }
                 val songs = collection.loadCollectionSongs(token)
                 val playlistItem =
                     collection.toPlaylistItem(preferredType = collectionType)
@@ -457,9 +464,46 @@ object SoundCloudHomeFeedProvider {
         }
     }
 
+    private fun apiTrackArray(
+        ids: List<String>,
+        authToken: String,
+    ): JSONArray {
+        val urlBuilder = API_BASE.toHttpUrl()
+            .newBuilder()
+            .addPathSegments("tracks")
+            .addQueryParameter("client_id", SoundCloudAudioProvider.clientId())
+            .addQueryParameter("app_locale", APP_LOCALE)
+            .addQueryParameter("ids", ids.joinToString(","))
+
+        val requestBuilder =
+            Request
+                .Builder()
+                .url(urlBuilder.build())
+                .get()
+                .header("Accept", "application/json")
+                .header("User-Agent", SoundCloudAudioProvider.BROWSER_USER_AGENT)
+                .header("Referer", "https://soundcloud.com/")
+
+        if (authToken.isNotBlank()) {
+            requestBuilder.header("Authorization", "OAuth $authToken")
+        }
+
+        return client.newCall(requestBuilder.build()).execute().use { response ->
+            val payload = response.body.string()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("SoundCloud tracks ${response.code}: ${payload.take(180)}")
+            }
+            JSONArray(payload)
+        }
+    }
+
     private fun JSONObject.loadCollectionSongs(authToken: String): List<SongItem> {
         val rawInitialTracks = optJSONArray("tracks")
-        val initial = rawInitialTracks.trackItems()
+        val initial =
+            (
+                rawInitialTracks.trackItems() +
+                    rawInitialTracks.hydratedTrackItems(authToken)
+            ).distinctBy { it.id }
         val trackCount = longOrNull("track_count")?.toInt() ?: initial.size
         if (initial.size >= trackCount || trackCount <= initial.size) return initial
 
@@ -498,6 +542,41 @@ object SoundCloudHomeFeedProvider {
         return songs.distinctBy { it.id }
     }
 
+    private fun resolveCollectionObject(
+        collectionId: String,
+        authToken: String,
+    ): JSONObject? {
+        val resolvedFromUrl =
+            collectionId
+                .takeIf { it.startsWith("http", ignoreCase = true) }
+                ?.let { url ->
+                    runCatching {
+                        apiObject(
+                            path = "resolve",
+                            authToken = authToken,
+                            params = mapOf("url" to url),
+                        )
+                    }.getOrNull()
+                }
+        if (resolvedFromUrl?.isPlaylistObject() == true) return resolvedFromUrl
+
+        val searchQuery =
+            collectionId
+                .replace('/', ' ')
+                .replace('-', ' ')
+                .replace('_', ' ')
+                .trim()
+                .takeIf { it.isNotBlank() && it.any(Char::isLetter) }
+                ?: return null
+
+        return safeCollectionItems(
+            path = "search/playlists",
+            authToken = authToken,
+            limit = 10,
+            extraParams = mapOf("q" to searchQuery),
+        ).firstPlaylistObject()
+    }
+
     private fun JSONArray?.trackItems(): List<SongItem> {
         if (this == null) return emptyList()
         val tracks = mutableListOf<JSONObject>()
@@ -505,6 +584,25 @@ object SoundCloudHomeFeedProvider {
         return tracks
             .mapNotNull { it.toSongItem() }
             .distinctBy { it.id }
+    }
+
+    private fun JSONArray?.hydratedTrackItems(authToken: String): List<SongItem> {
+        if (this == null) return emptyList()
+        val trackIds = mutableListOf<String>()
+        collectTrackIds(this, trackIds)
+        if (trackIds.isEmpty()) return emptyList()
+
+        return trackIds
+            .distinct()
+            .chunked(50)
+            .flatMap { ids ->
+                runCatching {
+                    apiTrackArray(ids, authToken).trackItems()
+                }.getOrElse { throwable ->
+                    Timber.tag("SoundCloudHome").w(throwable, "SoundCloud track hydration failed")
+                    emptyList()
+                }
+            }.distinctBy { it.id }
     }
 
     private fun JSONArray?.playlistItems(): List<PlaylistItem> {
@@ -536,6 +634,33 @@ object SoundCloudHomeFeedProvider {
             is JSONArray -> {
                 for (index in 0 until value.length()) {
                     collectTracks(value.opt(index), output)
+                }
+            }
+        }
+    }
+
+    private fun collectTrackIds(
+        value: Any?,
+        output: MutableList<String>,
+    ) {
+        when (value) {
+            is JSONObject -> {
+                val looksLikeTrack =
+                    value.optString("kind").equals("track", ignoreCase = true) ||
+                        value.stringOrNull("permalink_url") != null
+                if (looksLikeTrack) {
+                    value.longOrNull("id")?.toString()?.let(output::add)
+                    return
+                }
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    collectTrackIds(value.opt(keys.next()), output)
+                }
+            }
+
+            is JSONArray -> {
+                for (index in 0 until value.length()) {
+                    collectTrackIds(value.opt(index), output)
                 }
             }
         }
@@ -668,6 +793,14 @@ object SoundCloudHomeFeedProvider {
         for (index in 0 until length()) {
             val track = optJSONObject(index) ?: continue
             track.soundCloudArtworkUrl()?.let { return it }
+        }
+        return null
+    }
+
+    private fun JSONArray.firstPlaylistObject(): JSONObject? {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            if (item.isPlaylistObject()) return item
         }
         return null
     }

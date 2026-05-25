@@ -9,9 +9,7 @@ import com.metrolist.innertube.models.Album
 import com.metrolist.innertube.models.AlbumItem
 import com.metrolist.innertube.models.Artist
 import com.metrolist.innertube.models.ArtistItem
-import com.metrolist.innertube.models.EpisodeItem
 import com.metrolist.innertube.models.PlaylistItem
-import com.metrolist.innertube.models.PodcastItem
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.pages.HomePage
@@ -52,10 +50,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import org.w3c.dom.Element
-import org.w3c.dom.Node
 import timber.log.Timber
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.math.BigInteger
 import java.net.URLDecoder
@@ -67,8 +62,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
-import javax.xml.XMLConstants
-import javax.xml.parsers.DocumentBuilderFactory
 import kotlin.math.abs
 
 data class SpotifyCanvasMedia(
@@ -80,6 +73,11 @@ data class SpotifyMixMetadata(
     val bpm: Float? = null,
     val keySignature: String? = null,
     val timeSignature: Int? = null,
+)
+
+private data class SpotifyArtistPageMetadata(
+    val imageUrl: String?,
+    val statsText: String?,
 )
 
 data class SpotifyAccountInfo(
@@ -249,7 +247,6 @@ object SpotifyCanvasClient {
     private const val GRAPH_HASH_CACHE_TTL_MS = 24 * 60 * 60 * 1000L
     private const val PLAYLIST_TRACK_PAGE_SIZE = 50
     private const val ALBUM_TRACK_PAGE_SIZE = 50
-    private const val SPOTIFY_SHOW_EPISODE_PAGE_SIZE = 100
     private const val PLAYLIST_TRACK_SAFETY_LIMIT = 10_000
     private const val SPOTIFY_SUSPICIOUS_PLAYLIST_PAGE_SIZE = 30
     private const val LIKED_TRACKS_OPEN_LIMIT = 1_000
@@ -262,38 +259,28 @@ object SpotifyCanvasClient {
         "a65e12194ed5fc443a1cdebed5fabe33ca5b07b987185d63c72483867ad13cb4"
     private const val SPOTIFY_DECORATE_CONTEXT_TRACKS_HASH =
         "383de00240775c39a6afe0b1055dc562b2a3930894201f9762f3fc32a74971c7"
+    private const val SPOTIFY_GET_ALBUM_NAME_AND_TRACKS_HASH =
+        "8628ad33de3267d7bef516c76a746979a5f98891a2c9eaff3dfec828abdcd983"
+    private const val SPOTIFY_GET_ARTIST_NAME_AND_TRACKS_HASH =
+        "0adaf1a1a8a94c7ed095639c4d9456d2b1cfac16ac511d5dd2b01b6dd89f748a"
     private const val LIBRARY_ITEM_PAGE_SIZE = 50
     private const val LIBRARY_ITEM_SAFETY_LIMIT = 1_000
-    private const val SPOTIFY_LEGACY_SHOW_EPISODES_HASH =
-        "e0e5ce27bd7748d2c59b4d44ba245a8992a05be75d6fabc3b20753fc8857444d"
     private const val WEB_PLAYER_URL = "https://open.spotify.com/"
     private val CASITA_SLOT_TYPES = setOf(1, 2, 3)
-    private val CASITA_PODCAST_HOME_FEED_IDS =
-        listOf(
-            "podcasts",
-            "shows",
-            "podcast",
-            "episodes",
-            "new-episodes",
-            "your-episodes",
-            "podcasts-shows",
-            "podcasts_and_shows",
-        )
-    private val SPOTIFY_PODCAST_DRM_AUDIO_FORMATS = setOf(7, 14, 15)
     private val CASITA_EAGERLOAD_COMPONENT_TYPES =
         listOf(2, 3, 4, 6, 7, 8, 11, 12, 13, 15, 16, 17, 18, 23, 24, 25, 27, 28, 31, 33, 35, 36, 37, 39)
-    private val CASITA_EAGERLOAD_EXTENSION_KINDS = listOf(8, 9, 10, 11, 12)
+    private val CASITA_EAGERLOAD_EXTENSION_KINDS = listOf(8, 9, 10)
     private val CASITA_EAGERLOAD_QUERY = spotifyCasitaEagerloadQuery()
     private val JSON_MEDIA_TYPE = "application/json".toMediaType()
     private val PROTOBUF_MEDIA_TYPE = "application/x-www-form-urlencoded".toMediaType()
     private val SPOTIFY_HOME_URI_REGEX =
         Regex(
-            """^spotify:(track|album|artist|playlist|show|episode|collection):[A-Za-z0-9:_-]+$""",
+            """^spotify:(track|album|artist|playlist|collection):[A-Za-z0-9:_-]+$""",
             RegexOption.IGNORE_CASE,
         )
     private val SPOTIFY_OPEN_URL_REGEX =
         Regex(
-            """https?://open\.spotify\.com/(track|album|artist|playlist|show|episode)/([A-Za-z0-9]{22})""",
+            """https?://open\.spotify\.com/(track|album|artist|playlist)/([A-Za-z0-9]{22})""",
             RegexOption.IGNORE_CASE,
         )
     private val SPOTIFY_BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toCharArray()
@@ -336,6 +323,7 @@ object SpotifyCanvasClient {
     private val libraryPageCache = ConcurrentHashMap<String, CachedValue<HomePage>>()
     private val externalPlaylistCache = ConcurrentHashMap<String, CachedValue<ExternalPlaylistPage>>()
     private val recommendationCache = ConcurrentHashMap<String, CachedValue<List<SongItem>>>()
+    private val artistPageMetadataCache = ConcurrentHashMap<String, CachedValue<SpotifyArtistPageMetadata>>()
 
     suspend fun resolveSearch(query: String, cookie: String): String? {
         return searchTracks(query, cookie).firstOrNull()?.uri
@@ -520,8 +508,6 @@ object SpotifyCanvasClient {
     private val trackUriCache = ConcurrentHashMap<String, CachedString>()
     private val trackIsrcCache = ConcurrentHashMap<String, CachedString>()
     private val canvasUrlCache = ConcurrentHashMap<String, CachedString>()
-    private val episodeDirectAudioCache = ConcurrentHashMap<String, CachedString>()
-    private val podcastRssUrlCache = ConcurrentHashMap<String, CachedString>()
     private val audioFeaturesCache = ConcurrentHashMap<String, CachedMixMetadata>()
 
     private data class CachedMixMetadata(
@@ -591,28 +577,6 @@ object SpotifyCanvasClient {
 
         trackIsrcCache[trackId] = CachedString(isrc.orEmpty(), now)
         return isrc
-    }
-
-    suspend fun resolveEpisodeDirectAudioUrl(
-        episodeIdOrUri: String,
-        cookie: String,
-    ): String? {
-        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
-        val episodeId = spotifyEntityId(episodeIdOrUri, "episode") ?: return null
-        val now = System.currentTimeMillis()
-        episodeDirectAudioCache[episodeId]
-            ?.takeIf { now - it.cachedAt < CACHE_TTL_MS }
-            ?.let { return it.value.ifBlank { null } }
-
-        val directUrl =
-            runCatching {
-                resolveEpisodeDirectAudioUrlFromWebApi(episodeId, normalizedCookie)
-            }.onFailure { error ->
-                Timber.w(error, "Spotify episode direct audio failed for %s", episodeId)
-            }.getOrNull()
-
-        episodeDirectAudioCache[episodeId] = CachedString(directUrl.orEmpty(), now)
-        return directUrl
     }
 
     private fun cacheTrackIsrc(
@@ -1138,7 +1102,6 @@ object SpotifyCanvasClient {
 
         return runCatching {
             resolveHomePageFromSpotubeGraphQl(normalizedCookie)
-                .withSpotifyPodcastSections(normalizedCookie)
         }.onFailure { error ->
             Timber.w(error, "Spotify GraphQL home request failed")
         }.getOrNull()
@@ -1172,23 +1135,6 @@ object SpotifyCanvasClient {
         return page
     }
 
-    private suspend fun HomePage.withSpotifyPodcastSections(normalizedCookie: String): HomePage {
-        val podcastSections =
-            runCatching {
-                resolveCasitaPodcastHomeSections(normalizedCookie)
-                    .filter { section -> section.isSpotifyPodcastSection() }
-            }.onFailure { error ->
-                Timber.w(error, "Spotify podcast home feed failed")
-            }.getOrDefault(emptyList())
-
-        if (podcastSections.isEmpty()) return this
-
-        val sections =
-            (this.sections + podcastSections)
-                .distinctBy { section -> section.title to section.items.joinToString("|") { it.id } }
-        return HomePage(chips = chips, sections = sections)
-    }
-
     private suspend fun resolveHomePageFromCasita(normalizedCookie: String): HomePage {
         runCatching {
             resolveHomePageFromCasitaDefaultFeed(normalizedCookie)
@@ -1203,96 +1149,10 @@ object SpotifyCanvasClient {
 
     private suspend fun resolveHomePageFromCasitaDefaultFeed(normalizedCookie: String): HomePage {
         val defaultPage = resolveCasitaHomeFeed(normalizedCookie, CASITA_DEFAULT_HOME_FEED_ID)
-        val podcastSections =
-            resolveCasitaPodcastHomeSections(normalizedCookie)
-                .filter { section -> section.isSpotifyPodcastSection() }
-        val sections =
-            (defaultPage.sections + podcastSections)
-                .distinctBy { section -> section.title to section.items.joinToString("|") { it.id } }
+        val sections = defaultPage.sections
         check(sections.isNotEmpty()) { "Spotify Casita v1 home returned no renderable sections" }
 
         return HomePage(chips = null, sections = sections)
-    }
-
-    private suspend fun resolveCasitaPodcastHomeSections(normalizedCookie: String): List<HomePage.Section> {
-        val defaultSections =
-            runCatching {
-                resolveCasitaHomeFeed(normalizedCookie, CASITA_DEFAULT_HOME_FEED_ID).sections
-            }.onFailure { error ->
-                Timber.w(error, "Spotify default Casita podcast scan failed")
-            }.getOrDefault(emptyList())
-                .spotifyWorkingPodcastSections()
-        if (defaultSections.isNotEmpty()) return defaultSections
-
-        val slotSections =
-            runCatching {
-                resolveHomePageFromCasitaSlots(normalizedCookie).sections
-            }.onFailure { error ->
-                Timber.w(error, "Spotify Casita slot podcast scan failed")
-            }.getOrDefault(emptyList())
-                .spotifyWorkingPodcastSections()
-        if (slotSections.isNotEmpty()) return slotSections
-
-        val feedIds =
-            (
-                runCatching {
-                    resolveCasitaFeedIds(normalizedCookie)
-                }.onFailure { error ->
-                    Timber.w(error, "Spotify Casita feeds request failed")
-                }.getOrDefault(emptyList()) + CASITA_PODCAST_HOME_FEED_IDS
-            ).distinct()
-                .filterNot { it.equals(CASITA_DEFAULT_HOME_FEED_ID, ignoreCase = true) }
-
-        for (feedId in feedIds) {
-            val sections =
-                runCatching {
-                    resolveCasitaHomeFeed(normalizedCookie, feedId).sections
-                }.onFailure { error ->
-                    Timber.w(error, "Spotify Casita home feed %s failed", feedId)
-                }.getOrDefault(emptyList())
-                    .spotifyWorkingPodcastSections()
-            if (sections.isNotEmpty()) return sections
-        }
-
-        return emptyList()
-    }
-
-    private fun List<HomePage.Section>.spotifyWorkingPodcastSections(): List<HomePage.Section> =
-        mapNotNull { section ->
-            if (!section.isSpotifyPodcastSection()) return@mapNotNull null
-            val items =
-                section.items
-                    .filter { item ->
-                        item is EpisodeItem ||
-                            item is PodcastItem ||
-                            item.id.startsWith("spotify:episode:", ignoreCase = true) ||
-                            item.id.startsWith("spotify:show:", ignoreCase = true)
-                    }.distinctBy { it.id }
-            if (items.isEmpty()) return@mapNotNull null
-            section.copy(items = items, thumbnail = section.thumbnail ?: items.firstOrNull()?.thumbnail)
-        }.distinctBy { section -> section.title to section.items.joinToString("|") { it.id } }
-
-    private suspend fun resolveCasitaFeedIds(normalizedCookie: String): List<String> {
-        val root =
-            parseProtoMessage(
-                spotifyCasitaGet(
-                    url =
-                        SPOTIFY_WEBGATE_URL
-                            .toHttpUrl()
-                            .newBuilder()
-                            .addPathSegments(CASITA_FEEDS_PATH)
-                            .addQueryParameter("mobile-only-dsa-enabled", "false")
-                            .addQueryParameter("locale", Locale.getDefault().toLanguageTag().ifBlank { "en-US" })
-                            .build(),
-                    normalizedCookie = normalizedCookie,
-                    cacheControl = "no-cache",
-                    operation = "Spotify Casita feeds",
-                ),
-            )
-
-        return root.messages(1)
-            .flatMap { feed -> feed.casitaPodcastFeedIds() }
-            .distinct()
     }
 
     private suspend fun resolveCasitaHomeFeed(
@@ -1340,36 +1200,6 @@ object SpotifyCanvasClient {
 
         return HomePage(chips = null, sections = sections)
     }
-
-    private fun ProtoMessage.casitaPodcastFeedIds(): List<String> {
-        val id = string(1)?.takeIf { it.isNotBlank() }
-        val name = string(2).orEmpty()
-        val isPodcastFeed =
-            listOfNotNull(id, name)
-                .any { value ->
-                    value.contains("podcast", ignoreCase = true) ||
-                        value.contains("show", ignoreCase = true)
-                }
-
-        return buildList {
-            if (isPodcastFeed && id != null) add(id)
-            messages(3).forEach { child -> addAll(child.casitaPodcastFeedIds()) }
-        }
-    }
-
-    private fun HomePage.Section.isSpotifyPodcastSection(): Boolean =
-        title.contains("podcast", ignoreCase = true) ||
-            title.contains("episode", ignoreCase = true) ||
-            title.contains("show", ignoreCase = true) ||
-            label?.contains("podcast", ignoreCase = true) == true ||
-            label?.contains("episode", ignoreCase = true) == true ||
-            label?.contains("show", ignoreCase = true) == true ||
-            items.any { item ->
-                item is PodcastItem ||
-                    item is EpisodeItem ||
-                    item.id.startsWith("spotify:show:", ignoreCase = true) ||
-                    item.id.startsWith("spotify:episode:", ignoreCase = true)
-            }
 
     private suspend fun resolveHomePageFromCasitaSlots(normalizedCookie: String): HomePage {
         val layout =
@@ -1694,7 +1524,7 @@ object SpotifyCanvasClient {
             put("filters", JsonArray(listOf(JsonPrimitive(filter))))
             put("order", JsonNull)
             put("textFilter", "")
-            put("features", JsonArray(listOf(JsonPrimitive("LIKED_SONGS"), JsonPrimitive("YOUR_EPISODES"))))
+            put("features", JsonArray(listOf(JsonPrimitive("LIKED_SONGS"))))
             put("limit", limit)
             put("offset", offset)
             put("flatten", false)
@@ -2058,10 +1888,16 @@ object SpotifyCanvasClient {
         val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
         val normalizedAlbumId = spotifyEntityId(albumId, "album") ?: return null
         return runCatching {
-            resolveAlbumFromWebApi(normalizedAlbumId, normalizedCookie)
+            resolveAlbumFromGraphQl(normalizedAlbumId, normalizedCookie)
         }.onFailure { error ->
-            Timber.w(error, "Spotify album Web API load failed for %s", normalizedAlbumId)
+            Timber.w(error, "Spotify album GraphQL load failed for %s", normalizedAlbumId)
         }.getOrNull()
+            ?.takeIf { it.songs.isNotEmpty() }
+            ?: runCatching {
+                resolveAlbumFromWebApi(normalizedAlbumId, normalizedCookie)
+            }.onFailure { error ->
+                Timber.w(error, "Spotify album Web API load failed for %s", normalizedAlbumId)
+            }.getOrNull()
             ?: runCatching {
                 resolveAlbumFromBatchWebApi(normalizedAlbumId, normalizedCookie)
             }.onFailure { error ->
@@ -2078,21 +1914,32 @@ object SpotifyCanvasClient {
         val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
         val normalizedAlbumId = spotifyEntityId(albumId, "album") ?: return null
         return runCatching {
-            resolveAlbumPageFromWebApi(
+            resolveAlbumPageFromGraphQl(
                 albumId = normalizedAlbumId,
                 normalizedCookie = normalizedCookie,
                 offset = offset.coerceAtLeast(0),
-                limit = limit.coerceIn(1, 50),
+                limit = limit.coerceIn(1, GRAPH_PLAYLIST_PAGE_SIZE),
             )
         }.onFailure { error ->
-            Timber.w(error, "Spotify album page load failed for %s at %d", normalizedAlbumId, offset)
-        }.getOrElse {
-            if (offset.coerceAtLeast(0) == 0) {
-                resolveAlbum(normalizedAlbumId, normalizedCookie)
-            } else {
-                null
+            Timber.w(error, "Spotify album GraphQL page load failed for %s at %d", normalizedAlbumId, offset)
+        }.getOrNull()
+            ?.takeIf { it.songs.isNotEmpty() }
+            ?: runCatching {
+                resolveAlbumPageFromWebApi(
+                    albumId = normalizedAlbumId,
+                    normalizedCookie = normalizedCookie,
+                    offset = offset.coerceAtLeast(0),
+                    limit = limit.coerceIn(1, 50),
+                )
+            }.onFailure { error ->
+                Timber.w(error, "Spotify album page load failed for %s at %d", normalizedAlbumId, offset)
+            }.getOrElse {
+                if (offset.coerceAtLeast(0) == 0) {
+                    resolveAlbum(normalizedAlbumId, normalizedCookie)
+                } else {
+                    null
+                }
             }
-        }
     }
 
     suspend fun resolveArtist(
@@ -2102,481 +1949,21 @@ object SpotifyCanvasClient {
         val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
         val normalizedArtistId = spotifyEntityId(artistId, "artist") ?: return null
         return runCatching {
-            resolveArtistFromWebApi(normalizedArtistId, normalizedCookie)
+            resolveArtistFromGraphQl(normalizedArtistId, normalizedCookie)
         }.onFailure { error ->
-            Timber.w(error, "Spotify artist Web API load failed for %s", normalizedArtistId)
+            Timber.w(error, "Spotify artist GraphQL load failed for %s", normalizedArtistId)
         }.getOrNull()
+            ?.takeIf { it.songs.isNotEmpty() }
+            ?: runCatching {
+                resolveArtistFromWebApi(normalizedArtistId, normalizedCookie)
+            }.onFailure { error ->
+                Timber.w(error, "Spotify artist Web API load failed for %s", normalizedArtistId)
+            }.getOrNull()
             ?: runCatching {
                 resolveArtistFromBatchWebApi(normalizedArtistId, normalizedCookie)
             }.onFailure { error ->
                 Timber.w(error, "Spotify artist batch Web API load failed for %s", normalizedArtistId)
             }.getOrNull()
-    }
-
-    suspend fun resolveShowPage(
-        showId: String,
-        cookie: String,
-        offset: Int = 0,
-        limit: Int = PLAYLIST_TRACK_PAGE_SIZE,
-    ): ExternalPlaylistPage? {
-        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return null
-        val normalizedShowId = spotifyEntityId(showId, "show") ?: return null
-        if (offset.coerceAtLeast(0) > 0) {
-            return runCatching {
-                resolveShowFromWebApi(
-                    showId = normalizedShowId,
-                    normalizedCookie = normalizedCookie,
-                    offset = offset.coerceAtLeast(0),
-                    limit = limit.coerceIn(1, 50),
-                )
-            }.onFailure { error ->
-                Timber.w(error, "Spotify show page Web API load failed for %s at %d", normalizedShowId, offset)
-            }.getOrNull()
-                ?.takeIf { it.songs.isNotEmpty() }
-        }
-        val showUri = "spotify:show:$normalizedShowId"
-        val podcastSections =
-            runCatching {
-                resolveCasitaPodcastHomeSections(normalizedCookie)
-            }.onFailure { error ->
-                Timber.w(error, "Spotify show podcast sections failed for %s", normalizedShowId)
-            }.getOrDefault(emptyList())
-
-        val showItem =
-            podcastSections
-                .flatMap { it.items }
-                .filterIsInstance<PodcastItem>()
-                .firstOrNull { it.id.equals(showUri, ignoreCase = true) }
-        val episodes =
-            podcastSections
-                .flatMap { it.items }
-                .filterIsInstance<EpisodeItem>()
-                .filter { episode ->
-                    episode.podcast?.id.equals(showUri, ignoreCase = true) ||
-                        episode.author?.id.equals(showUri, ignoreCase = true)
-                }.map { episode -> episode.toSpotifyPodcastSong() }
-                .distinctBy { it.id }
-
-        if (episodes.isNotEmpty()) {
-            return ExternalPlaylistPage(
-                playlist =
-                    PlaylistItem(
-                        id = showUri,
-                        title = showItem?.title ?: episodes.firstOrNull()?.album?.name ?: "Spotify podcast",
-                        author = showItem?.author,
-                        songCountText = episodes.size.takeIf { it > 0 }?.let { "$it episodes" } ?: showItem?.episodeCountText,
-                        thumbnail = showItem?.thumbnail ?: episodes.firstOrNull()?.thumbnail,
-                        playEndpoint = null,
-                        shuffleEndpoint = null,
-                        radioEndpoint = null,
-                    ),
-                songs = episodes,
-            )
-        }
-
-        runCatching {
-            resolveShowFromLegacyGraphQl(normalizedShowId, normalizedCookie, showItem)
-        }.onFailure { error ->
-            Timber.w(error, "Spotify show legacy podcast audio failed for %s", normalizedShowId)
-        }.getOrNull()
-            ?.takeIf { it.songs.isNotEmpty() }
-            ?.let { return it }
-
-        runCatching {
-            resolveShowFromPodcastRss(normalizedShowId, normalizedCookie, showItem)
-        }.onFailure { error ->
-            Timber.w(error, "Spotify show public RSS audio failed for %s", normalizedShowId)
-        }.getOrNull()
-            ?.takeIf { it.songs.isNotEmpty() }
-            ?.let { return it }
-
-        return runCatching {
-            resolveShowFromWebApi(
-                showId = normalizedShowId,
-                normalizedCookie = normalizedCookie,
-                offset = offset.coerceAtLeast(0),
-                limit = limit.coerceIn(1, 50),
-            )
-        }.onFailure { error ->
-            Timber.w(error, "Spotify show Web API load failed for %s", normalizedShowId)
-        }.getOrNull()
-            ?.takeIf { it.songs.isNotEmpty() }
-            ?: showItem?.let {
-                ExternalPlaylistPage(
-                    playlist =
-                        PlaylistItem(
-                            id = showUri,
-                            title = it.title,
-                            author = it.author,
-                            songCountText = it.episodeCountText,
-                            thumbnail = it.thumbnail,
-                            playEndpoint = null,
-                            shuffleEndpoint = null,
-                            radioEndpoint = null,
-                        ),
-                    songs = emptyList(),
-                )
-            }
-    }
-
-    private suspend fun resolveShowFromLegacyGraphQl(
-        showId: String,
-        normalizedCookie: String,
-        showItem: PodcastItem?,
-    ): ExternalPlaylistPage? =
-        withContext(Dispatchers.IO) {
-            val showUri = "spotify:show:$showId"
-            val songs = mutableListOf<SongItem>()
-            val seen = mutableSetOf<String>()
-            var offset = 0
-            var total: Int? = null
-            var showTitle = showItem?.title ?: "Spotify podcast"
-            var publisher = showItem?.author?.name
-            var thumbnail = showItem?.thumbnail
-            var pagesLoaded = 0
-
-            while (songs.size < PLAYLIST_TRACK_SAFETY_LIMIT && pagesLoaded < 200) {
-                val root =
-                    spotifyLegacyGraphQlGet(
-                        operation = "ShowEpisodes",
-                        hash = SPOTIFY_LEGACY_SHOW_EPISODES_HASH,
-                        variables =
-                            buildJsonObject {
-                                put("uri", showUri)
-                                put("offset", offset)
-                                put("limit", SPOTIFY_SHOW_EPISODE_PAGE_SIZE)
-                            },
-                        normalizedCookie = normalizedCookie,
-                    )
-
-                val podcast = root.obj("data")?.obj("podcast") ?: return@withContext null
-                showTitle = podcast.string("name") ?: showTitle
-                publisher = podcast.string("publisher") ?: publisher
-                thumbnail = podcast.spotifyLegacyCoverArtUrl() ?: thumbnail
-
-                val episodes = podcast.obj("episodes")
-                total = total ?: episodes?.long("totalCount")?.toInt() ?: episodes?.long("total")?.toInt()
-                val rawItems = episodes?.array("items").orEmpty()
-                rawItems
-                    .mapNotNull { item ->
-                        item.obj
-                            ?.obj("episode")
-                            ?.toSpotifyLegacyPodcastEpisodeSong(
-                                showId = showId,
-                                showTitle = showTitle,
-                                publisher = publisher,
-                                showThumbnail = thumbnail,
-                            )
-                    }.filter { seen.add(it.id) }
-                    .forEach(songs::add)
-
-                if (rawItems.isEmpty()) break
-
-                val nextOffset = offset + SPOTIFY_SHOW_EPISODE_PAGE_SIZE
-                if (nextOffset <= offset) break
-                offset = nextOffset
-                pagesLoaded += 1
-
-                val expectedTotal = total
-                if (expectedTotal != null && offset >= expectedTotal) break
-            }
-
-            if (songs.isEmpty()) return@withContext null
-
-            ExternalPlaylistPage(
-                playlist =
-                    PlaylistItem(
-                        id = showUri,
-                        title = showTitle,
-                        author = publisher?.let { Artist(name = it, id = null) } ?: showItem?.author,
-                        songCountText = (total ?: songs.size).takeIf { it > 0 }?.let { "$it episodes" },
-                        thumbnail = thumbnail ?: songs.firstOrNull()?.thumbnail,
-                        playEndpoint = null,
-                        shuffleEndpoint = null,
-                        radioEndpoint = null,
-                    ),
-                songs = songs,
-            )
-        }
-
-    private suspend fun resolveShowFromPodcastRss(
-        showId: String,
-        normalizedCookie: String,
-        showItem: PodcastItem?,
-    ): ExternalPlaylistPage? =
-        withContext(Dispatchers.IO) {
-            val showRoot =
-                runCatching {
-                    spotifyShowApiGet(
-                        path = "shows/$showId",
-                        normalizedCookie = normalizedCookie,
-                        operation = "Spotify show metadata for RSS",
-                    )
-                }.onFailure { error ->
-                    Timber.w(error, "Spotify show metadata for RSS failed for %s", showId)
-                }.getOrNull()
-
-            val showUri = "spotify:show:$showId"
-            val showTitle =
-                showRoot?.string("name")
-                    ?: showItem?.title
-                    ?: return@withContext null
-            val publisher = showRoot?.string("publisher") ?: showItem?.author?.name
-            val spotifyThumbnail = showRoot?.spotifyWebApiImageUrl() ?: showItem?.thumbnail
-            val feedUrl =
-                resolvePodcastFeedUrlFromItunes(
-                    title = showTitle,
-                    publisher = publisher,
-                ) ?: return@withContext null
-            val feed = resolvePodcastRssFeed(feedUrl) ?: return@withContext null
-            val feedTitle = feed.title.takeIf { it.isNotBlank() } ?: showTitle
-            val feedAuthor = feed.author ?: publisher
-            val thumbnail = feed.thumbnail ?: spotifyThumbnail
-            val songs =
-                feed.episodes
-                    .mapNotNull { episode ->
-                        val directUrl =
-                            episode.enclosureUrl
-                                .takeIf { it.isPodcastRssDirectAudioUrl(episode.enclosureType) }
-                                ?: return@mapNotNull null
-                        SongItem(
-                            id = directUrl,
-                            title = episode.title,
-                            artists =
-                                listOfNotNull(
-                                    (feedAuthor ?: feedTitle)
-                                        .takeIf { it.isNotBlank() }
-                                        ?.let { Artist(name = it, id = showUri) },
-                                ),
-                            album = Album(name = feedTitle, id = showUri),
-                            duration = episode.durationSeconds,
-                            thumbnail = episode.thumbnail ?: thumbnail.orEmpty(),
-                            explicit = episode.explicit,
-                            isEpisode = true,
-                        )
-                    }.distinctBy { it.id }
-
-            if (songs.isEmpty()) return@withContext null
-
-            ExternalPlaylistPage(
-                playlist =
-                    PlaylistItem(
-                        id = showUri,
-                        title = feedTitle,
-                        author = feedAuthor?.let { Artist(name = it, id = null) },
-                        songCountText = "${songs.size} episodes",
-                        thumbnail = thumbnail,
-                        playEndpoint = null,
-                        shuffleEndpoint = null,
-                        radioEndpoint = null,
-                    ),
-                songs = songs,
-            )
-        }
-
-    private suspend fun resolvePodcastFeedUrlFromItunes(
-        title: String,
-        publisher: String?,
-    ): String? {
-        val cacheKey =
-            listOf(
-                normalizeForMatch(title),
-                normalizeForMatch(publisher.orEmpty()),
-            ).joinToString("|")
-        val now = System.currentTimeMillis()
-        podcastRssUrlCache[cacheKey]
-            ?.takeIf { now - it.cachedAt < CACHE_TTL_MS }
-            ?.let { return it.value.ifBlank { null } }
-
-        val query =
-            listOfNotNull(title, publisher)
-                .filter { it.isNotBlank() }
-                .joinToString(" ")
-                .ifBlank { title }
-        val root =
-            httpJsonGet(
-                url =
-                    "https://itunes.apple.com/search"
-                        .toHttpUrl()
-                        .newBuilder()
-                        .addQueryParameter("term", query)
-                        .addQueryParameter("media", "podcast")
-                        .addQueryParameter("entity", "podcast")
-                        .addQueryParameter("limit", "10")
-                        .build(),
-                operation = "iTunes podcast search",
-            )
-
-        val best =
-            root.array("results")
-                .orEmpty()
-                .mapNotNull { item ->
-                    val candidate = item.obj ?: return@mapNotNull null
-                    val feedUrl = candidate.string("feedUrl")?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    val candidateTitle = candidate.string("collectionName").orEmpty()
-                    val candidatePublisher = candidate.string("artistName")
-                    val score =
-                        podcastFeedMatchScore(
-                            expectedTitle = title,
-                            expectedPublisher = publisher,
-                            candidateTitle = candidateTitle,
-                            candidatePublisher = candidatePublisher,
-                        )
-                    PodcastRssCandidate(feedUrl = feedUrl, score = score)
-                }.maxByOrNull { it.score }
-                ?.takeIf { it.score >= 45 }
-
-        podcastRssUrlCache[cacheKey] = CachedString(best?.feedUrl.orEmpty(), now)
-        return best?.feedUrl
-    }
-
-    private suspend fun resolvePodcastRssFeed(feedUrl: String): PodcastRssFeed? =
-        withContext(Dispatchers.IO) {
-            val root =
-                DocumentBuilderFactory
-                    .newInstance()
-                    .apply {
-                        isNamespaceAware = false
-                        runCatching { setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true) }
-                        runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
-                        runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
-                        runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
-                    }.newDocumentBuilder()
-                    .parse(
-                        ByteArrayInputStream(
-                            httpBytesGet(
-                                url = feedUrl.toHttpUrl(),
-                                operation = "podcast RSS feed",
-                                accept = "application/rss+xml, application/xml, text/xml, */*",
-                            ),
-                        ),
-                    ).documentElement
-
-            val channel = root.elementsByName("channel").firstOrNull() ?: root
-            val feedTitle = channel.directChildText("title").orEmpty()
-            val feedAuthor =
-                channel.directChildText("itunes:author", "author", "managingEditor", "publisher")
-            val feedThumbnail =
-                channel.directChildElements("itunes:image", "image")
-                    .firstNotNullOfOrNull { image ->
-                        image.attribute("href")
-                            ?: image.directChildText("url")
-                    }
-            val episodes =
-                channel.directChildElements("item")
-                    .mapNotNull { item ->
-                        val title = item.directChildText("title") ?: return@mapNotNull null
-                        val enclosure = item.directChildElements("enclosure").firstOrNull() ?: return@mapNotNull null
-                        val enclosureUrl = enclosure.attribute("url") ?: return@mapNotNull null
-                        val enclosureType = enclosure.attribute("type")
-                        PodcastRssEpisode(
-                            title = title,
-                            enclosureUrl = enclosureUrl,
-                            enclosureType = enclosureType,
-                            durationSeconds =
-                                item.directChildText("itunes:duration", "duration")
-                                    ?.spotifyPodcastRssDurationSeconds(),
-                            thumbnail =
-                                item.directChildElements("itunes:image", "image")
-                                    .firstNotNullOfOrNull { image ->
-                                        image.attribute("href") ?: image.directChildText("url")
-                                    },
-                            explicit =
-                                item.directChildText("itunes:explicit", "explicit")
-                                    ?.equals("yes", ignoreCase = true) == true ||
-                                    item.directChildText("itunes:explicit", "explicit")
-                                        ?.equals("true", ignoreCase = true) == true,
-                        )
-                    }
-            PodcastRssFeed(
-                title = feedTitle,
-                author = feedAuthor,
-                thumbnail = feedThumbnail,
-                episodes = episodes,
-            )
-        }
-
-    private suspend fun httpJsonGet(
-        url: HttpUrl,
-        operation: String,
-    ): JsonObject =
-        withContext(Dispatchers.IO) {
-            val request =
-                Request
-                    .Builder()
-                    .url(url)
-                    .header("User-Agent", WEB_USER_AGENT)
-                    .header("Accept", "application/json")
-                    .get()
-                    .build()
-
-            client.newCall(request).execute().use { response ->
-                val body = response.body.string()
-                if (!response.isSuccessful) {
-                    throw SpotifyApiException(
-                        statusCode = response.code,
-                        message = "$operation failed: ${body.ifBlank { "${response.code} ${response.message}" }}",
-                    )
-                }
-                json.parseToJsonElement(body.ifBlank { error("$operation returned an empty response") }).jsonObject
-            }
-        }
-
-    private suspend fun httpBytesGet(
-        url: HttpUrl,
-        operation: String,
-        accept: String,
-    ): ByteArray =
-        withContext(Dispatchers.IO) {
-            val request =
-                Request
-                    .Builder()
-                    .url(url)
-                    .header("User-Agent", WEB_USER_AGENT)
-                    .header("Accept", accept)
-                    .get()
-                    .build()
-
-            client.newCall(request).execute().use { response ->
-                val body = response.body.bytes()
-                if (!response.isSuccessful) {
-                    throw SpotifyApiException(
-                        statusCode = response.code,
-                        message =
-                            "$operation failed: ${response.code} ${response.message}",
-                    )
-                }
-                if (body.isEmpty()) error("$operation returned an empty response")
-                body
-            }
-        }
-
-    private fun podcastFeedMatchScore(
-        expectedTitle: String,
-        expectedPublisher: String?,
-        candidateTitle: String,
-        candidatePublisher: String?,
-    ): Int {
-        val expected = normalizeForMatch(expectedTitle)
-        val candidate = normalizeForMatch(candidateTitle)
-        if (expected.isBlank() || candidate.isBlank()) return 0
-        var score =
-            when {
-                expected == candidate -> 100
-                expected in candidate || candidate in expected -> 75
-                else -> tokenOverlapScore(expected, candidate, 60)
-            }
-        val publisher = normalizeForMatch(expectedPublisher.orEmpty())
-        val candidateAuthor = normalizeForMatch(candidatePublisher.orEmpty())
-        if (publisher.isNotBlank() && candidateAuthor.isNotBlank()) {
-            score +=
-                when {
-                    publisher == candidateAuthor -> 25
-                    publisher in candidateAuthor || candidateAuthor in publisher -> 15
-                    else -> tokenOverlapScore(publisher, candidateAuthor, 20)
-                }
-        }
-        return score
     }
 
     private fun tokenOverlapScore(
@@ -2589,211 +1976,6 @@ object SpotifyCanvasClient {
         val candidateTokens = candidate.split(' ').filter { it.length > 2 }.toSet()
         val overlap = expectedTokens.intersect(candidateTokens).size
         return (overlap * maxScore) / expectedTokens.size.coerceAtLeast(1)
-    }
-
-    private data class PodcastRssCandidate(
-        val feedUrl: String,
-        val score: Int,
-    )
-
-    private data class PodcastRssFeed(
-        val title: String,
-        val author: String?,
-        val thumbnail: String?,
-        val episodes: List<PodcastRssEpisode>,
-    )
-
-    private data class PodcastRssEpisode(
-        val title: String,
-        val enclosureUrl: String,
-        val enclosureType: String?,
-        val durationSeconds: Int?,
-        val thumbnail: String?,
-        val explicit: Boolean,
-    )
-
-    private suspend fun resolveShowFromWebApi(
-        showId: String,
-        normalizedCookie: String,
-        offset: Int = 0,
-        limit: Int = PLAYLIST_TRACK_PAGE_SIZE,
-    ): ExternalPlaylistPage =
-        withContext(Dispatchers.IO) {
-            val showRoot =
-                runCatching {
-                    spotifyShowApiGet(
-                        path = "shows/$showId",
-                        normalizedCookie = normalizedCookie,
-                        operation = "Spotify show",
-                    )
-                }.onFailure { error ->
-                    Timber.w(error, "Spotify show metadata failed for %s; loading episodes only", showId)
-                }.getOrNull()
-
-            val showUri = "spotify:show:$showId"
-            val showTitle = showRoot?.string("name") ?: "Spotify podcast"
-            val publisher = showRoot?.string("publisher")
-            val page =
-                spotifyShowApiGet(
-                    path = "shows/$showId/episodes",
-                    normalizedCookie = normalizedCookie,
-                    operation = "Spotify show episodes",
-                    offset = offset.coerceAtLeast(0),
-                    limit = limit.coerceIn(1, 50),
-                )
-            val total =
-                page.long("total")?.toInt()
-                    ?: showRoot?.obj("episodes")?.long("total")?.toInt()
-            val pageOffset = page.long("offset")?.toInt() ?: offset.coerceAtLeast(0)
-            val rawItems = page.array("items").orEmpty()
-            val pageLimit =
-                page.long("limit")
-                    ?.toInt()
-                    ?.takeIf { it > 0 }
-                    ?: rawItems.size.takeIf { it > 0 }
-                    ?: limit.coerceIn(1, 50)
-            val songs =
-                rawItems
-                    .mapNotNull { it.obj?.toSpotifyShowEpisodeSong(showId, showTitle, publisher, showRoot) }
-                    .distinctBy { it.id }
-            val hasMore =
-                page.string("next") != null ||
-                    total?.let { expected -> expected > pageOffset + rawItems.size } == true
-            val nextOffset =
-                spotifyPagedNextOffset(
-                    nextUrl = page.string("next"),
-                    pageOffset = pageOffset,
-                    itemCount = rawItems.size,
-                    total = total,
-                ).takeIf { hasMore || total == null }
-
-            ExternalPlaylistPage(
-                playlist =
-                    PlaylistItem(
-                        id = showUri,
-                        title = showTitle,
-                        author = publisher?.let { Artist(name = it, id = null) },
-                        songCountText = (total ?: songs.size).takeIf { it > 0 }?.let { "$it episodes" },
-                        thumbnail = showRoot?.spotifyWebApiImageUrl() ?: songs.firstOrNull()?.thumbnail,
-                        playEndpoint = null,
-                        shuffleEndpoint = null,
-                        radioEndpoint = null,
-                    ),
-                songs = songs,
-                continuation = nextOffset?.toString(),
-            )
-        }
-
-    private suspend fun spotifyShowApiGet(
-        path: String,
-        normalizedCookie: String,
-        operation: String,
-        offset: Int? = null,
-        limit: Int? = null,
-        queryParameters: Map<String, String> = emptyMap(),
-    ): JsonObject {
-        val markets =
-            listOf(
-                "from_token",
-                Locale.getDefault().country.takeIf { it.length == 2 }.orEmpty().ifBlank { "US" },
-                "US",
-                null,
-            ).distinct()
-        var lastError: Throwable? = null
-        markets.forEach { market ->
-            val result =
-                runCatching {
-                    spotifyApiGet(
-                        url =
-                            "https://api.spotify.com/v1/$path"
-                                .toHttpUrl()
-                                .newBuilder()
-                                .apply {
-                                    market?.let { addQueryParameter("market", it) }
-                                    offset?.let { addQueryParameter("offset", it.toString()) }
-                                    limit?.let { addQueryParameter("limit", it.toString()) }
-                                    queryParameters.forEach { (name, value) -> addQueryParameter(name, value) }
-                                }.build(),
-                        normalizedCookie = normalizedCookie,
-                        operation = operation,
-                    )
-                }
-            result.onSuccess { return it }
-            lastError = result.exceptionOrNull()
-        }
-        throw lastError ?: IllegalStateException("$operation failed")
-    }
-
-    private suspend fun resolveEpisodeDirectAudioUrlFromWebApi(
-        episodeId: String,
-        normalizedCookie: String,
-    ): String? {
-        val episodeRoot =
-            spotifyShowApiGet(
-                path = "episodes/$episodeId",
-                normalizedCookie = normalizedCookie,
-                operation = "Spotify episode",
-            )
-        episodeRoot.spotifyEpisodeDirectPlaybackUrl()
-            ?.let { return it }
-        resolveEpisodeDirectAudioUrlFromPodcastRss(episodeRoot, normalizedCookie)
-            ?.let { return it }
-
-        val episodeItems =
-            spotifyShowApiGet(
-                path = "episodes",
-                normalizedCookie = normalizedCookie,
-                operation = "Spotify episodes",
-                queryParameters = mapOf("ids" to episodeId),
-            ).array("episodes")
-                .orEmpty()
-        episodeItems.forEach { episode ->
-            val root = episode.obj ?: return@forEach
-            root.spotifyEpisodeDirectPlaybackUrl()
-                ?.let { return it }
-            resolveEpisodeDirectAudioUrlFromPodcastRss(root, normalizedCookie)
-                ?.let { return it }
-        }
-        return null
-    }
-
-    private suspend fun resolveEpisodeDirectAudioUrlFromPodcastRss(
-        episodeRoot: JsonObject,
-        normalizedCookie: String,
-    ): String? {
-        val title = episodeRoot.string("name") ?: return null
-        val durationSeconds = episodeRoot.long("duration_ms")?.div(1000)?.toInt()
-        val showRoot = episodeRoot.obj("show")
-        val showTitle = showRoot?.string("name") ?: return null
-        val publisher = showRoot.string("publisher")
-        val feedUrl =
-            resolvePodcastFeedUrlFromItunes(
-                title = showTitle,
-                publisher = publisher,
-            ) ?: return null
-        val feed = resolvePodcastRssFeed(feedUrl) ?: return null
-        return feed.episodes
-            .mapNotNull { episode ->
-                val directUrl =
-                    episode.enclosureUrl
-                        .takeIf { it.isPodcastRssDirectAudioUrl(episode.enclosureType) }
-                        ?: return@mapNotNull null
-                val titleScore =
-                    when {
-                        normalizeForMatch(episode.title) == normalizeForMatch(title) -> 100
-                        else -> tokenOverlapScore(normalizeForMatch(title), normalizeForMatch(episode.title), 100)
-                    }
-                val durationScore =
-                    when {
-                        durationSeconds == null || episode.durationSeconds == null -> 0
-                        abs(durationSeconds - episode.durationSeconds) <= 3 -> 20
-                        abs(durationSeconds - episode.durationSeconds) <= 10 -> 10
-                        else -> -20
-                    }
-                directUrl to (titleScore + durationScore)
-            }.maxByOrNull { it.second }
-            ?.takeIf { it.second >= 60 }
-            ?.first
     }
 
     private suspend fun resolvePlaylistPageFromWebApi(
@@ -2859,6 +2041,152 @@ object SpotifyCanvasClient {
                             shuffleEndpoint = null,
                             radioEndpoint = null,
                         ),
+                songs = songs,
+                continuation = nextOffset?.toString(),
+            )
+        }
+
+    private suspend fun resolveAlbumFromGraphQl(
+        albumId: String,
+        normalizedCookie: String,
+    ): ExternalPlaylistPage? {
+        val firstPage =
+            resolveAlbumPageFromGraphQl(
+                albumId = albumId,
+                normalizedCookie = normalizedCookie,
+                offset = 0,
+                limit = GRAPH_PLAYLIST_PAGE_SIZE,
+            ) ?: return null
+        val songs = firstPage.songs.toMutableList()
+        var nextOffset = firstPage.continuation?.toIntOrNull()
+
+        while (nextOffset != null && songs.size < PLAYLIST_TRACK_SAFETY_LIMIT) {
+            val page =
+                resolveAlbumPageFromGraphQl(
+                    albumId = albumId,
+                    normalizedCookie = normalizedCookie,
+                    offset = nextOffset,
+                    limit = GRAPH_PLAYLIST_PAGE_SIZE,
+                ) ?: break
+            if (page.songs.isEmpty()) break
+            songs += page.songs
+            nextOffset = page.continuation?.toIntOrNull()?.takeIf { it > nextOffset }
+        }
+
+        return firstPage.copy(
+            songs = songs.distinctBy { it.id },
+            continuation = nextOffset?.toString(),
+        )
+    }
+
+    private suspend fun resolveAlbumPageFromGraphQl(
+        albumId: String,
+        normalizedCookie: String,
+        offset: Int,
+        limit: Int,
+    ): ExternalPlaylistPage? {
+        runCatching {
+            resolveAlbumPageFromGraphQl(
+                albumId = albumId,
+                normalizedCookie = normalizedCookie,
+                offset = offset,
+                limit = limit,
+                tokenProvider = ::ensureWebToken,
+            )
+        }.getOrNull()
+            ?.let { return it }
+
+        return runCatching {
+            resolveAlbumPageFromGraphQl(
+                albumId = albumId,
+                normalizedCookie = normalizedCookie,
+                offset = offset,
+                limit = limit,
+                tokenProvider = ::ensureToken,
+            )
+        }.getOrNull()
+    }
+
+    private suspend fun resolveAlbumPageFromGraphQl(
+        albumId: String,
+        normalizedCookie: String,
+        offset: Int,
+        limit: Int,
+        tokenProvider: suspend (String) -> String,
+    ): ExternalPlaylistPage? =
+        withContext(Dispatchers.IO) {
+            val albumUri = "spotify:album:$albumId"
+            val root =
+                postGraphQlWithHashFallback(
+                    operation = "getAlbumNameAndTracks",
+                    variables =
+                        buildJsonObject {
+                            put("uri", albumUri)
+                            put("offset", offset.coerceAtLeast(0))
+                            put("limit", limit.coerceIn(1, GRAPH_PLAYLIST_PAGE_SIZE))
+                        },
+                    cookie = normalizedCookie,
+                    hashOverride = SPOTIFY_GET_ALBUM_NAME_AND_TRACKS_HASH,
+                    tokenProvider = tokenProvider,
+                )
+            val albumRoot = root.obj("data")?.obj("albumUnion") ?: return@withContext null
+            val trackPage = albumRoot.obj("tracksV2")
+            val rawItems = trackPage?.array("items").orEmpty()
+            val trackIds =
+                rawItems.mapNotNull { item ->
+                    item.obj?.obj("track")?.spotifyGraphTrackId()
+                }
+            val hydratedTracks = hydrateSpotifyTrackIds(trackIds, normalizedCookie, tokenProvider)
+            val albumTitle = albumRoot.string("name") ?: "Spotify album"
+            val albumThumbnail = albumRoot.spotifyInitialStateImageUrl()
+            val albumModel = Album(name = albumTitle, id = albumUri)
+            val songs =
+                trackIds.mapNotNull { trackId ->
+                    hydratedTracks[trackId]?.let { song ->
+                        song.copy(
+                            album = song.album ?: albumModel,
+                            thumbnail = song.thumbnail.ifBlank { albumThumbnail.orEmpty() },
+                        )
+                    }
+                }
+            val total = trackPage?.long("totalCount")?.toInt() ?: trackPage?.long("total")?.toInt()
+            val pageOffset = offset.coerceAtLeast(0)
+            val nextOffset =
+                spotifyPagedNextOffset(
+                    nextUrl = null,
+                    pageOffset = pageOffset,
+                    itemCount = rawItems.size,
+                    total = total,
+                )
+            val artists =
+                albumRoot
+                    .obj("artists")
+                    ?.array("items")
+                    .orEmpty()
+                    .mapNotNull { artist ->
+                        val obj = artist.obj ?: return@mapNotNull null
+                        val name =
+                            obj.obj("profile")?.string("name")
+                                ?: obj.string("name")
+                                ?: return@mapNotNull null
+                        Artist(
+                            name = name,
+                            id = obj.string("uri") ?: obj.string("id")?.let { "spotify:artist:$it" },
+                        )
+                    }
+
+            ExternalPlaylistPage(
+                playlist =
+                    PlaylistItem(
+                        id = albumUri,
+                        title = albumTitle,
+                        author = artists.joinToString(", ") { it.name }.takeIf { it.isNotBlank() }?.let { Artist(name = it, id = null) },
+                        songCountText = (total ?: songs.size).takeIf { it > 0 }?.let { "$it songs" },
+                        thumbnail = albumThumbnail ?: songs.firstOrNull()?.thumbnail,
+                        playEndpoint = null,
+                        shuffleEndpoint = null,
+                        radioEndpoint = null,
+                    ),
                 songs = songs,
                 continuation = nextOffset?.toString(),
             )
@@ -3132,6 +2460,83 @@ object SpotifyCanvasClient {
             )
         }
 
+    private suspend fun resolveArtistFromGraphQl(
+        artistId: String,
+        normalizedCookie: String,
+    ): ExternalPlaylistPage? {
+        runCatching {
+            resolveArtistFromGraphQl(
+                artistId = artistId,
+                normalizedCookie = normalizedCookie,
+                tokenProvider = ::ensureWebToken,
+            )
+        }.getOrNull()
+            ?.let { return it }
+
+        return runCatching {
+            resolveArtistFromGraphQl(
+                artistId = artistId,
+                normalizedCookie = normalizedCookie,
+                tokenProvider = ::ensureToken,
+            )
+        }.getOrNull()
+    }
+
+    private suspend fun resolveArtistFromGraphQl(
+        artistId: String,
+        normalizedCookie: String,
+        tokenProvider: suspend (String) -> String,
+    ): ExternalPlaylistPage? =
+        withContext(Dispatchers.IO) {
+            val artistUri = "spotify:artist:$artistId"
+            val root =
+                postGraphQlWithHashFallback(
+                    operation = "getArtistNameAndTracks",
+                    variables =
+                        buildJsonObject {
+                            put("uri", artistUri)
+                            put("offset", 0)
+                            put("limit", PLAYLIST_TRACK_PAGE_SIZE)
+                        },
+                    cookie = normalizedCookie,
+                    hashOverride = SPOTIFY_GET_ARTIST_NAME_AND_TRACKS_HASH,
+                    tokenProvider = tokenProvider,
+                )
+            val artistRoot = root.obj("data")?.obj("artistUnion") ?: return@withContext null
+            val artistName =
+                artistRoot.obj("profile")?.string("name")
+                    ?: artistRoot.string("name")
+                    ?: "Spotify artist"
+            val trackIds =
+                artistRoot
+                    .obj("discography")
+                    ?.obj("topTracks")
+                    ?.array("items")
+                    .orEmpty()
+                    .mapNotNull { item -> item.obj?.obj("track")?.spotifyGraphTrackId() }
+            val hydratedTracks = hydrateSpotifyTrackIds(trackIds, normalizedCookie, tokenProvider)
+            val songs = trackIds.mapNotNull { trackId -> hydratedTracks[trackId] }.distinctBy { it.id }
+            val pageMetadata = resolveSpotifyArtistPageMetadata(artistId, normalizedCookie)
+
+            ExternalPlaylistPage(
+                playlist =
+                    PlaylistItem(
+                        id = artistUri,
+                        title = artistName,
+                        author = Artist(name = "Spotify", id = null),
+                        songCountText =
+                            pageMetadata?.statsText
+                                ?: artistRoot.spotifyArtistStatsText()
+                                ?: songs.takeIf { it.isNotEmpty() }?.let { "${it.size} top songs" },
+                        thumbnail = pageMetadata?.imageUrl ?: artistRoot.spotifyArtistImageUrl() ?: songs.firstOrNull()?.thumbnail,
+                        playEndpoint = null,
+                        shuffleEndpoint = null,
+                        radioEndpoint = null,
+                    ),
+                songs = songs,
+            )
+        }
+
     private suspend fun resolveArtistFromWebApi(
         artistId: String,
         normalizedCookie: String,
@@ -3146,6 +2551,7 @@ object SpotifyCanvasClient {
                     operation = "Spotify artist",
                 )
             val artistName = artistRoot.string("name") ?: "Spotify artist"
+            val pageMetadata = resolveSpotifyArtistPageMetadata(artistId, normalizedCookie)
             val songs =
                 loadSpotifyArtistTracks(
                     artistId = artistId,
@@ -3159,8 +2565,15 @@ object SpotifyCanvasClient {
                         id = "spotify:artist:$artistId",
                         title = artistName,
                         author = Artist(name = "Spotify", id = null),
-                        songCountText = songs.takeIf { it.isNotEmpty() }?.let { "${it.size} top songs" },
-                        thumbnail = artistRoot.spotifyWebApiImageUrl() ?: songs.firstOrNull()?.thumbnail,
+                        songCountText =
+                            pageMetadata?.statsText
+                                ?: artistRoot.spotifyArtistStatsText()
+                                ?: songs.takeIf { it.isNotEmpty() }?.let { "${it.size} top songs" },
+                        thumbnail =
+                            pageMetadata?.imageUrl
+                                ?: artistRoot.spotifyArtistImageUrl()
+                                ?: artistRoot.spotifyWebApiImageUrl()
+                                ?: songs.firstOrNull()?.thumbnail,
                         playEndpoint = null,
                         shuffleEndpoint = null,
                         radioEndpoint = null,
@@ -3189,6 +2602,7 @@ object SpotifyCanvasClient {
                     .firstNotNullOfOrNull { it.obj }
                     ?: error("Spotify artist batch returned no artist")
             val artistName = artistRoot.string("name") ?: "Spotify artist"
+            val pageMetadata = resolveSpotifyArtistPageMetadata(artistId, normalizedCookie)
             val songs =
                 loadSpotifyArtistTracks(
                     artistId = artistId,
@@ -3202,8 +2616,15 @@ object SpotifyCanvasClient {
                         id = "spotify:artist:$artistId",
                         title = artistName,
                         author = Artist(name = "Spotify", id = null),
-                        songCountText = songs.takeIf { it.isNotEmpty() }?.let { "${it.size} top songs" },
-                        thumbnail = artistRoot.spotifyWebApiImageUrl() ?: songs.firstOrNull()?.thumbnail,
+                        songCountText =
+                            pageMetadata?.statsText
+                                ?: artistRoot.spotifyArtistStatsText()
+                                ?: songs.takeIf { it.isNotEmpty() }?.let { "${it.size} top songs" },
+                        thumbnail =
+                            pageMetadata?.imageUrl
+                                ?: artistRoot.spotifyArtistImageUrl()
+                                ?: artistRoot.spotifyWebApiImageUrl()
+                                ?: songs.firstOrNull()?.thumbnail,
                         playEndpoint = null,
                         shuffleEndpoint = null,
                         radioEndpoint = null,
@@ -3211,6 +2632,52 @@ object SpotifyCanvasClient {
                 songs = songs,
             )
         }
+
+    private suspend fun resolveSpotifyArtistPageMetadata(
+        artistId: String,
+        normalizedCookie: String,
+    ): SpotifyArtistPageMetadata? {
+        val cacheKey = spotifyCacheKey(normalizedCookie, "artist-page", artistId)
+        artistPageMetadataCache.fresh(cacheKey)?.let { return it }
+
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val request =
+                    Request
+                        .Builder()
+                        .url("https://open.spotify.com/artist/$artistId")
+                        .header("User-Agent", WEB_USER_AGENT)
+                        .header("Accept", "text/html,application/xhtml+xml")
+                        .header("Referer", WEB_REFERER)
+                        .apply {
+                            if (normalizedCookie.isNotBlank()) {
+                                header("Cookie", normalizedCookie)
+                            }
+                        }.get()
+                        .build()
+
+                client.newCall(request).execute().use { response ->
+                    val html = response.requireBody("Spotify artist page")
+                    val root = html.spotifyInitialStateJson()
+                    val artist =
+                        root
+                            .obj("entities")
+                            ?.obj("items")
+                            ?.obj("spotify:artist:$artistId")
+                            ?: return@use null
+                    SpotifyArtistPageMetadata(
+                        imageUrl = artist.spotifyArtistImageUrl(),
+                        statsText = artist.spotifyArtistStatsText(),
+                    ).takeIf { metadata ->
+                        !metadata.imageUrl.isNullOrBlank() || !metadata.statsText.isNullOrBlank()
+                    }
+                }
+            }.onFailure { error ->
+                Timber.w(error, "Spotify artist page metadata failed for %s", artistId)
+            }.getOrNull()
+                ?.also { metadata -> artistPageMetadataCache.putFresh(cacheKey, metadata) }
+        }
+    }
 
     private suspend fun loadSpotifyArtistTracks(
         artistId: String,
@@ -3575,6 +3042,35 @@ object SpotifyCanvasClient {
             }
         }
     }
+
+    private suspend fun postGraphQlWithHashFallback(
+        operation: String,
+        variables: JsonObject,
+        cookie: String,
+        hashOverride: String,
+        tokenProvider: suspend (String) -> String,
+    ): JsonObject =
+        runCatching {
+            postGraphQl<JsonObject>(
+                operation = operation,
+                variables = variables,
+                cookie = cookie,
+                tokenProvider = tokenProvider,
+            )
+        }.getOrElse { firstError ->
+            runCatching {
+                postGraphQl<JsonObject>(
+                    operation = operation,
+                    variables = variables,
+                    cookie = cookie,
+                    hashOverride = hashOverride,
+                    tokenProvider = tokenProvider,
+                )
+            }.getOrElse { fallbackError ->
+                fallbackError.addSuppressed(firstError)
+                throw fallbackError
+            }
+        }
 
     private data class SpotifyPlaylistTrackLoad(
         val songs: List<SongItem>,
@@ -5512,6 +5008,21 @@ object SpotifyCanvasClient {
         }
     }
 
+    private suspend fun hydrateSpotifyTrackIds(
+        trackIds: List<String>,
+        normalizedCookie: String,
+        tokenProvider: suspend (String) -> String,
+    ): Map<String, SongItem> =
+        hydrateSpotifyGraphPlaylistTracks(
+            refs =
+                trackIds
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .map(::SpotifyGraphPlaylistTrackRef),
+            normalizedCookie = normalizedCookie,
+            tokenProvider = tokenProvider,
+        )
+
     private suspend fun hydrateSpotifyGraphPlaylistTracksFromGraphQl(
         refs: List<SpotifyGraphPlaylistTrackRef>,
         normalizedCookie: String,
@@ -5563,6 +5074,13 @@ object SpotifyCanvasClient {
         return id?.let(::SpotifyGraphPlaylistTrackRef)
     }
 
+    private fun JsonObject.spotifyGraphTrackId(): String? =
+        string("uri")?.spotifyTrackId()
+            ?: string("id")?.spotifyTrackId()
+            ?: obj("data")?.spotifyGraphTrackId()
+            ?: obj("track")?.spotifyGraphTrackId()
+            ?: obj("item")?.spotifyGraphTrackId()
+
     private fun JsonObject.spotifyGraphContentTotal(): Int? =
         long("totalCount")?.toInt()
             ?: long("total")?.toInt()
@@ -5605,99 +5123,6 @@ object SpotifyCanvasClient {
             duration = long("duration_ms")?.div(1000)?.toInt(),
             thumbnail = albumObject.spotifyWebApiImageUrl().orEmpty(),
             explicit = boolean("explicit"),
-        )
-    }
-
-    private fun JsonObject.toSpotifyShowEpisodeSong(
-        showId: String,
-        showTitle: String,
-        publisher: String?,
-        showObject: JsonObject?,
-    ): SongItem? {
-        val episodeId = spotifyEntityId(string("id") ?: string("uri") ?: return null, "episode") ?: return null
-        val mediaId = spotifyEpisodeDirectPlaybackUrl() ?: "spotify:episode:$episodeId"
-        val title = string("name") ?: return null
-        val showUri = "spotify:show:$showId"
-        val thumbnail = spotifyWebApiImageUrl() ?: showObject?.spotifyWebApiImageUrl().orEmpty()
-        return SongItem(
-            id = mediaId,
-            title = title,
-            artists =
-                listOfNotNull(
-                    (publisher ?: showTitle)
-                        .takeIf { it.isNotBlank() }
-                        ?.let { Artist(name = it, id = showUri) },
-                ),
-            album =
-                Album(
-                    name = showTitle,
-                    id = showUri,
-                ),
-            duration = long("duration_ms")?.div(1000)?.toInt(),
-            thumbnail = thumbnail,
-            explicit = boolean("explicit"),
-            isEpisode = true,
-        )
-    }
-
-    private fun JsonObject.spotifyEpisodeDirectPlaybackUrl(): String? =
-        string("external_playback_url")
-            ?.takeIf { it.isSpotifyPodcastDirectAudioUrl() }
-            ?: obj("audio")
-                ?.array("items")
-                .orEmpty()
-                .firstNotNullOfOrNull { item ->
-                    val audio = item.obj ?: return@firstNotNullOfOrNull null
-                    audio
-                        .string("url")
-                        ?.takeIf { audio.boolean("externallyHosted") }
-                        ?.takeIf { it.isSpotifyPodcastDirectAudioUrl() }
-                }
-
-    private fun JsonObject.toSpotifyLegacyPodcastEpisodeSong(
-        showId: String,
-        showTitle: String,
-        publisher: String?,
-        showThumbnail: String?,
-    ): SongItem? {
-        val directMediaUrl =
-            obj("audio")
-                ?.array("items")
-                .orEmpty()
-                .firstNotNullOfOrNull { item ->
-                    val audio = item.obj ?: return@firstNotNullOfOrNull null
-                    audio
-                        .string("url")
-                        ?.takeIf { audio.boolean("externallyHosted") }
-                        ?.takeIf { it.isSpotifyPodcastDirectAudioUrl() }
-                }
-                ?: return null
-        val title = string("name") ?: return null
-        val showUri = "spotify:show:$showId"
-        val thumbnail = spotifyLegacyCoverArtUrl() ?: showThumbnail.orEmpty()
-        val durationMs =
-            obj("duration")?.long("totalMilliseconds")
-                ?: long("duration_ms")
-                ?: long("durationMs")
-
-        return SongItem(
-            id = directMediaUrl,
-            title = title,
-            artists =
-                listOfNotNull(
-                    (publisher ?: showTitle)
-                        .takeIf { it.isNotBlank() }
-                        ?.let { Artist(name = it, id = showUri) },
-                ),
-            album =
-                Album(
-                    name = showTitle,
-                    id = showUri,
-                ),
-            duration = durationMs?.div(1000)?.toInt(),
-            thumbnail = thumbnail,
-            explicit = boolean("explicit"),
-            isEpisode = true,
         )
     }
 
@@ -6034,6 +5459,104 @@ object SpotifyCanvasClient {
                 image.obj?.string("url")
             }
 
+    private fun JsonObject.spotifyArtistImageUrl(): String? =
+        listOf(
+            obj("visuals")?.obj("avatarImage"),
+            obj("avatarImage"),
+            obj("profile")?.obj("avatarImage"),
+            obj("profile")?.obj("avatar"),
+            obj("avatar"),
+            obj("image"),
+            obj("images"),
+        ).firstNotNullOfOrNull { it?.spotifyInitialStateImageUrl() }
+            ?: spotifyWebApiImageUrl()
+
+    private fun JsonObject.spotifyArtistStatsText(): String? {
+        spotifyArtistMonthlyListeners()
+            ?.let { return "${it.spotifyGroupedCount()} monthly listeners" }
+
+        spotifyArtistStatsString()
+            ?.let { return it }
+
+        spotifyArtistFollowers()
+            ?.let { return "${it.spotifyGroupedCount()} followers" }
+
+        return null
+    }
+
+    private fun JsonObject.spotifyArtistStatsString(): String? =
+        findSpotifyStringValue(valueMatches = { value ->
+            val normalized = value.lowercase(Locale.US)
+            "monthly" in normalized && "listener" in normalized
+        })
+
+    private fun JsonObject.spotifyArtistMonthlyListeners(): Long? =
+        listOfNotNull(
+            obj("stats")?.long("monthlyListeners"),
+            obj("stats")?.long("monthlyListenerCount"),
+            obj("stats")?.obj("monthlyListeners")?.long("total"),
+            obj("stats")?.obj("monthlyListenerCount")?.long("total"),
+            long("monthlyListeners"),
+            long("monthlyListenerCount"),
+        ).firstOrNull { it > 0L }
+            ?: findSpotifyLongValue(keyMatches = { key ->
+                val normalized = key.lowercase(Locale.US)
+                "monthly" in normalized && "listener" in normalized
+            })
+
+    private fun JsonObject.spotifyArtistFollowers(): Long? =
+        listOfNotNull(
+            obj("stats")?.long("followers"),
+            obj("stats")?.long("followerCount"),
+            obj("followers")?.long("total"),
+            long("followers"),
+            long("followerCount"),
+        ).firstOrNull { it > 0L }
+            ?: findSpotifyLongValue(keyMatches = { key ->
+                val normalized = key.lowercase(Locale.US)
+                "follower" in normalized
+            })
+
+    private fun JsonObject.findSpotifyLongValue(
+        keyMatches: (String) -> Boolean,
+        depth: Int = 0,
+    ): Long? {
+        if (depth > 5) return null
+        entries.forEach { (key, value) ->
+            if (keyMatches(key)) {
+                when (value) {
+                    is JsonPrimitive -> value.longOrNull?.takeIf { it > 0L }?.let { return it }
+                    is JsonObject -> value.long("total")?.takeIf { it > 0L }?.let { return it }
+                    else -> Unit
+                }
+            }
+            when (value) {
+                is JsonObject -> value.findSpotifyLongValue(keyMatches, depth + 1)?.let { return it }
+                is JsonArray -> value.firstNotNullOfOrNull { it.obj?.findSpotifyLongValue(keyMatches, depth + 1) }?.let { return it }
+                else -> Unit
+            }
+        }
+        return null
+    }
+
+    private fun JsonObject.findSpotifyStringValue(
+        valueMatches: (String) -> Boolean,
+        depth: Int = 0,
+    ): String? {
+        if (depth > 5) return null
+        entries.forEach { (_, value) ->
+            when (value) {
+                is JsonPrimitive -> value.contentOrNull?.takeIf(valueMatches)?.let { return it }
+                is JsonObject -> value.findSpotifyStringValue(valueMatches, depth + 1)?.let { return it }
+                is JsonArray -> value.firstNotNullOfOrNull { it.obj?.findSpotifyStringValue(valueMatches, depth + 1) }?.let { return it }
+                else -> Unit
+            }
+        }
+        return null
+    }
+
+    private fun Long.spotifyGroupedCount(): String = String.format(Locale.US, "%,d", this)
+
     private fun JsonObject.spotifyLegacyCoverArtUrl(): String? = spotifyInitialStateImageUrl()
 
     private fun JsonObject.spotifyInitialStateImageUrl(depth: Int = 0): String? {
@@ -6214,15 +5737,7 @@ object SpotifyCanvasClient {
                                 parseCasitaAlbumMetadata(uri, bytes)
                             extensionKind == 8 || typeUrl.contains("Metadata\$Artist") ->
                                 parseCasitaArtistMetadata(uri, bytes)
-                            extensionKind == 12 ||
-                                typeUrl.contains("Metadata\$Episode") ||
-                                typeUrl.contains("EpisodeMetadata", ignoreCase = true) ||
-                                uri.spotifyHomeType() == "episode" ->
-                                parseCasitaEpisodeMetadata(uri, bytes)
-                            extensionKind == 11 ||
-                                typeUrl.contains("Metadata\$Show") ||
-                                uri.spotifyHomeType() == "show" ->
-                                parseCasitaShowMetadata(uri, bytes)
+                            extensionKind == 11 || extensionKind == 12 -> null
                             uri.spotifyHomeType() == "playlist" ||
                                 typeUrl.contains("PlaylistMetadata", ignoreCase = true) ->
                                 parseCasitaPlaylistMetadata(uri, bytes)
@@ -6346,7 +5861,6 @@ object SpotifyCanvasClient {
         images: List<String>,
     ): SpotifyCasitaEntity? {
         val type = uri.spotifyHomeType() ?: return null
-        if (type == "episode") return null
         val title =
             texts
                 .firstOrNull { text ->
@@ -6468,88 +5982,6 @@ object SpotifyCanvasClient {
         )
     }
 
-    private fun parseCasitaEpisodeMetadata(
-        fallbackUri: String,
-        bytes: ByteArray,
-    ): SpotifyCasitaEntity? =
-        parseProtoMessageOrNull(bytes)?.let { parseCasitaEpisodeMessage(fallbackUri, it) }
-
-    private fun parseCasitaEpisodeMessage(
-        fallbackUri: String?,
-        message: ProtoMessage,
-    ): SpotifyCasitaEntity? {
-        val title = message.string(2)?.takeIf { it.isNotBlank() } ?: return null
-        val directMediaUrl = message.spotifyPodcastDirectAudioUrl() ?: return null
-        val audioFormats = message.messages(12).mapNotNull { it.int(2) }
-        val hasDrmOnlySpotifyAudio =
-            audioFormats.isNotEmpty() &&
-                audioFormats.none(::isSpotifyPodcastNonDrmAudioFormat)
-        if (hasDrmOnlySpotifyAudio || message.bool(91) || message.bool(96)) return null
-
-        val showEntity = message.firstMessage(71)?.let { parseCasitaShowMessage(null, it) }
-        val showUri =
-            showEntity
-                ?.uri
-                ?.takeIf { it.startsWith("spotify:show:", ignoreCase = true) }
-                .orEmpty()
-        val showTitle = showEntity?.title
-
-        return SpotifyCasitaEntity(
-            uri = message.firstBytes(1)?.spotifyGidUri("episode") ?: fallbackUri ?: "",
-            type = "episode",
-            title = title,
-            subtitle = showTitle,
-            thumbnail =
-                message.firstMessage(68)?.casitaClassicImageGroupUrl()
-                    ?: showEntity?.thumbnail,
-            artists =
-                listOfNotNull(
-                    showTitle?.let {
-                        Artist(
-                            name = it,
-                            id = showUri.takeIf { uri -> uri.isNotBlank() },
-                        )
-                    },
-                ),
-            album =
-                showTitle?.let {
-                    Album(
-                        name = it,
-                        id = showUri,
-                    )
-                },
-            durationSeconds = message.int(7)?.takeIf { it > 0 }?.div(1000),
-            explicit = message.bool(70),
-            publishDateText = message.firstMessage(66)?.casitaDateText(),
-            directMediaUrl = directMediaUrl,
-            playableWithoutDrm = true,
-        )
-    }
-
-    private fun parseCasitaShowMetadata(
-        fallbackUri: String,
-        bytes: ByteArray,
-    ): SpotifyCasitaEntity? =
-        parseProtoMessageOrNull(bytes)?.let { parseCasitaShowMessage(fallbackUri, it) }
-
-    private fun parseCasitaShowMessage(
-        fallbackUri: String?,
-        message: ProtoMessage,
-    ): SpotifyCasitaEntity? {
-        if (message.bool(85) || message.bool(89) || message.bool(90)) return null
-        val title = message.string(2)?.takeIf { it.isNotBlank() } ?: return null
-        val publisher = message.string(66)?.takeIf { it.isNotBlank() }
-        return SpotifyCasitaEntity(
-            uri = message.firstBytes(1)?.spotifyGidUri("show") ?: fallbackUri ?: "",
-            type = "show",
-            title = title,
-            subtitle = publisher,
-            thumbnail = message.firstMessage(69)?.casitaClassicImageGroupUrl(),
-            explicit = message.bool(68),
-            playableWithoutDrm = true,
-        )
-    }
-
     private fun parseGenericCasitaMetadata(
         fallbackUri: String,
         bytes: ByteArray,
@@ -6631,57 +6063,9 @@ object SpotifyCanvasClient {
                     shuffleEndpoint = null,
                     radioEndpoint = null,
                 )
-            "show" ->
-                if (playableWithoutDrm) {
-                    PodcastItem(
-                        id = canonicalUri,
-                        title = title,
-                        author = subtitle?.let { Artist(name = it, id = null) },
-                        episodeCountText = songCountText,
-                        thumbnail = thumbnail,
-                        playEndpoint = null,
-                        shuffleEndpoint = null,
-                    )
-                } else {
-                    null
-                }
-            "episode" ->
-                directMediaUrl
-                    ?.takeIf { it.isSpotifyPodcastDirectAudioUrl() }
-                    ?.let { playbackUrl ->
-                        EpisodeItem(
-                            id = playbackUrl,
-                            title = title,
-                            author = subtitle?.let { Artist(name = it, id = album?.id?.takeIf { id -> id.isNotBlank() }) },
-                            podcast = album,
-                            duration = durationSeconds,
-                            publishDateText = publishDateText,
-                            thumbnail = thumbnail.orEmpty(),
-                            explicit = explicit,
-                        )
-                    }
             else -> null
         }
     }
-
-    private fun EpisodeItem.toSpotifyPodcastSong(): SongItem =
-        SongItem(
-            id = id,
-            title = title,
-            artists =
-                listOfNotNull(
-                    author
-                        ?: podcast
-                            ?.name
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let { Artist(name = it, id = podcast?.id) },
-                ),
-            album = podcast,
-            duration = duration,
-            thumbnail = thumbnail,
-            explicit = explicit,
-            isEpisode = true,
-        )
 
     private fun fallbackCasitaEntity(uri: String): SpotifyCasitaEntity? =
         when (uri.lowercase()) {
@@ -6690,14 +6074,6 @@ object SpotifyCanvasClient {
                     uri = uri,
                     type = "collection",
                     title = "Liked Songs",
-                    subtitle = "Spotify",
-                    thumbnail = null,
-                )
-            "spotify:collection:your-episodes" ->
-                SpotifyCasitaEntity(
-                    uri = uri,
-                    type = "collection",
-                    title = "Your Episodes",
                     subtitle = "Spotify",
                     thumbnail = null,
                 )
@@ -6724,134 +6100,6 @@ object SpotifyCanvasClient {
             width = message.int(3) ?: 0,
             height = message.int(4) ?: 0,
         )
-    }
-
-    private fun ProtoMessage.spotifyPodcastDirectAudioUrl(): String? =
-        collectCasitaStrings()
-            .firstOrNull { it.isSpotifyPodcastDirectAudioUrl() }
-
-    private fun isSpotifyPodcastNonDrmAudioFormat(format: Int): Boolean =
-        format in 0..17 && format !in SPOTIFY_PODCAST_DRM_AUDIO_FORMATS
-
-    private fun String.isSpotifyPodcastDirectAudioUrl(): Boolean {
-        val trimmed = trim()
-        val url = runCatching { trimmed.toHttpUrl() }.getOrNull() ?: return false
-        if (url.scheme !in setOf("http", "https")) return false
-
-        val lower = trimmed.lowercase()
-        if (
-            listOf(
-                "widevine",
-                "license",
-                "drm",
-                "cbcs",
-                "m3u8",
-                ".mpd",
-                "manifest",
-                "spotify.com/episode",
-                "spotify.com/show",
-            ).any { it in lower }
-        ) {
-            return false
-        }
-
-        val pathAndQuery = lower.substringAfter("://", lower)
-        return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac")
-            .any { it in pathAndQuery } ||
-            listOf("audio", "podcast", "episode", "download")
-                .any { it in pathAndQuery }
-    }
-
-    private fun String.isPodcastRssDirectAudioUrl(contentType: String?): Boolean {
-        val trimmed = trim()
-        val url = runCatching { trimmed.toHttpUrl() }.getOrNull() ?: return false
-        if (url.scheme !in setOf("http", "https")) return false
-        val lower = trimmed.lowercase(Locale.US)
-        if (
-            listOf(
-                "widevine",
-                "license",
-                "drm",
-                "cbcs",
-                ".mpd",
-                "manifest",
-                "spotify.com/episode",
-                "spotify.com/show",
-            ).any { it in lower }
-        ) {
-            return false
-        }
-        if (contentType?.lowercase(Locale.US)?.startsWith("audio/") == true) return true
-        return isSpotifyPodcastDirectAudioUrl()
-    }
-
-    private fun String.spotifyPodcastRssDurationSeconds(): Int? {
-        val trimmed = trim()
-        if (trimmed.isBlank()) return null
-        if (trimmed.all { it.isDigit() }) return trimmed.toIntOrNull()
-        val parts = trimmed.split(':').mapNotNull { it.toIntOrNull() }
-        if (parts.isEmpty() || parts.size > 3) return null
-        return parts.fold(0) { total, part -> (total * 60) + part }.takeIf { it > 0 }
-    }
-
-    private fun Element.directChildElements(vararg names: String): List<Element> =
-        buildList {
-            val wanted = names.map { it.substringAfter(':').lowercase(Locale.US) }.toSet()
-            val children = childNodes
-            for (index in 0 until children.length) {
-                val child = children.item(index) as? Element ?: continue
-                val name = child.xmlLocalName()
-                if (name in wanted) add(child)
-            }
-        }
-
-    private fun Element.elementsByName(name: String): List<Element> =
-        buildList {
-            collectElementsByName(name.substringAfter(':').lowercase(Locale.US), this@elementsByName)
-        }
-
-    private fun MutableList<Element>.collectElementsByName(
-        wantedName: String,
-        node: Node,
-    ) {
-        val children = node.childNodes
-        for (index in 0 until children.length) {
-            val child = children.item(index)
-            if (child is Element) {
-                if (child.xmlLocalName() == wantedName) add(child)
-                collectElementsByName(wantedName, child)
-            }
-        }
-    }
-
-    private fun Element.directChildText(vararg names: String): String? =
-        directChildElements(*names)
-            .firstNotNullOfOrNull { element ->
-                element.textContent
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-            }
-
-    private fun Element.attribute(name: String): String? =
-        getAttribute(name)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-
-    private fun Element.xmlLocalName(): String =
-        (localName ?: nodeName.substringAfter(':'))
-            .lowercase(Locale.US)
-
-    private fun ProtoMessage.casitaDateText(): String? {
-        val year = int(1)?.takeIf { it > 0 } ?: return null
-        val month = int(2)?.takeIf { it in 1..12 }
-        val day = int(3)?.takeIf { it in 1..31 }
-        return when {
-            month != null && day != null ->
-                listOf(year.toString().padStart(4, '0'), month.toString().padStart(2, '0'), day.toString().padStart(2, '0'))
-                    .joinToString("-")
-            month != null -> "${year.toString().padStart(4, '0')}-${month.toString().padStart(2, '0')}"
-            else -> year.toString()
-        }
     }
 
     private fun ProtoMessage.collectCasitaStrings(depth: Int = 0): List<String> {
@@ -6977,9 +6225,6 @@ object SpotifyCanvasClient {
         val durationSeconds: Int? = null,
         val explicit: Boolean = false,
         val songCountText: String? = null,
-        val publishDateText: String? = null,
-        val directMediaUrl: String? = null,
-        val playableWithoutDrm: Boolean = true,
     )
 
     private data class SpotifyCasitaImage(

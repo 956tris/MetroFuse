@@ -60,12 +60,16 @@ class OnlinePlaylistViewModel @Inject constructor(
             .externalProviderId(playlistId)
             ?.takeIf { (provider, type, _) ->
                 type == "playlist" ||
-                    (provider == "spotify" && type in setOf("album", "artist", "collection", "show", "mix")) ||
+                    (provider == "spotify" && type in setOf("album", "artist", "collection", "mix")) ||
                     (provider == "tidal" && type in setOf("album", "mix")) ||
                     (provider == "soundcloud" && type in setOf("album", "mix")) ||
-                    (provider == "deezer" && type in setOf("album", "artist"))
+                    (provider == "deezer" && type in setOf("album", "artist", "mix"))
             }
     val isExternalPlaylist = externalCollectionIdParts != null
+    val isSpotifyArtist =
+        externalCollectionIdParts
+            ?.let { (provider, type, _) -> provider == "spotify" && type == "artist" }
+            ?: false
 
     val playlist = MutableStateFlow<PlaylistItem?>(null)
     val playlistSongs = MutableStateFlow<List<SongItem>>(emptyList())
@@ -131,7 +135,6 @@ class OnlinePlaylistViewModel @Inject constructor(
                         "album" -> SpotifyCanvasClient.resolveAlbum(externalId, cookie)
                         "artist" -> SpotifyCanvasClient.resolveArtist(externalId, cookie)
                         "collection" -> SpotifyCanvasClient.resolvePlaylist(externalId, cookie)
-                        "show" -> SpotifyCanvasClient.resolveShowPage(externalId, cookie)
                         "playlist", "mix" ->
                             SpotifyCanvasClient.resolvePlaylist(
                                 playlistId = externalId,
@@ -421,12 +424,6 @@ class OnlinePlaylistViewModel @Inject constructor(
                                     "playlist", "mix", "collection" ->
                                         SpotifyCanvasClient.resolvePlaylistPage(
                                             playlistId = currentToken.id,
-                                            cookie = cookie,
-                                            offset = currentToken.offset,
-                                        )
-                                    "show" ->
-                                        SpotifyCanvasClient.resolveShowPage(
-                                            showId = currentToken.id,
                                             cookie = cookie,
                                             offset = currentToken.offset,
                                         )

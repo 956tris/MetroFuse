@@ -165,6 +165,7 @@ object DeezerHomeFeedProvider {
         when (type.lowercase(Locale.US)) {
             "album" -> loadAlbum(collectionId, cookie)
             "artist" -> loadArtist(collectionId, cookie)
+            "mix", "flow" -> loadFlow(collectionId, cookie)
             else -> loadPlaylist(collectionId, cookie)
         }
 
@@ -327,6 +328,66 @@ object DeezerHomeFeedProvider {
                         author = null,
                         songCountText = songs.size.takeIf { it > 0 }?.let { "$it songs" },
                         thumbnail = artistJson.deezerPictureUrl() ?: songs.firstOrNull()?.thumbnail,
+                        playEndpoint = null,
+                        shuffleEndpoint = null,
+                        radioEndpoint = null,
+                    )
+                ExternalPlaylistPage(playlist = playlist, songs = songs)
+            }
+        }
+
+    private suspend fun loadFlow(
+        flowId: String,
+        cookie: String = "",
+    ): Result<ExternalPlaylistPage> =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val normalizedCookie = normalizeDeezerCookieInput(cookie).orEmpty()
+                if (normalizedCookie.isBlank()) {
+                    throw IllegalStateException("Deezer Flow needs a logged-in Deezer session")
+                }
+                val session = gatewaySession(normalizedCookie)
+                val flowType = flowId.takeIf { it.isNotBlank() && it != "flow" } ?: "FLOW"
+                val requests =
+                    listOf(
+                        DeezerGatewayRequest(
+                            method = "song.getListByUserMood",
+                            input = """{"TYPE":"$flowType","NB":$TRACK_PAGE_LIMIT}""",
+                        ),
+                        DeezerGatewayRequest(
+                            method = "song.getListByUserMood",
+                            input = """{"TYPE":"FLOW","NB":$TRACK_PAGE_LIMIT}""",
+                        ),
+                        DeezerGatewayRequest(
+                            method = "radio.getUserRadio",
+                            input = """{"USER_ID":"${session.userId}","NB":$TRACK_PAGE_LIMIT}""",
+                        ),
+                    )
+                val songs =
+                    requests
+                        .firstNotNullOfOrNull { request ->
+                            runCatching {
+                                gatewayCall(
+                                    method = request.method,
+                                    cookie = session.cookie,
+                                    apiToken = session.token,
+                                    userId = session.userId,
+                                    gatewayInput = request.input,
+                                ).privateSongItems()
+                                    .distinctBy { it.id }
+                                    .takeIf { it.isNotEmpty() }
+                            }.onFailure { throwable ->
+                                Timber.tag("DeezerHome").w(throwable, "Deezer Flow request failed: ${request.method}")
+                            }.getOrNull()
+                        }.orEmpty()
+
+                val playlist =
+                    PlaylistItem(
+                        id = "deezer:mix:$flowId",
+                        title = flowId.toDeezerFlowTitle(),
+                        author = TubeArtist(name = "Deezer", id = null),
+                        songCountText = songs.size.takeIf { it > 0 }?.let { "$it songs" },
+                        thumbnail = songs.firstOrNull()?.thumbnail,
                         playEndpoint = null,
                         shuffleEndpoint = null,
                         radioEndpoint = null,
@@ -555,6 +616,7 @@ object DeezerHomeFeedProvider {
         return when {
             "song" in type || "track" in type -> data.toPrivateSongItem()
             "album" in type -> data.toPrivateAlbumItem()
+            "flow" in type -> data.toPrivateFlowItem()
             "playlist" in type -> data.toPrivatePlaylistItem()
             "artist" in type -> data.toPrivateArtistItem()
             else -> null
@@ -612,6 +674,40 @@ object DeezerHomeFeedProvider {
             author = null,
             songCountText = longOrNull("NB_SONG")?.let { "$it songs" },
             thumbnail = deezerPrivateImageUrl(stringOrNull("PLAYLIST_PICTURE"), pictureType),
+            playEndpoint = null,
+            shuffleEndpoint = null,
+            radioEndpoint = null,
+        )
+    }
+
+    private fun JSONObject.toPrivateFlowItem(): PlaylistItem? {
+        val id =
+            listOfNotNull(
+                stringOrNull("FLOW_ID"),
+                stringOrNull("FLOW_TYPE"),
+                stringOrNull("TYPE"),
+                stringOrNull("id"),
+            ).firstOrNull()
+                ?.lowercase(Locale.US)
+                ?.replace(Regex("""[^a-z0-9_-]+"""), "_")
+                ?.trim('_')
+                ?.takeIf { it.isNotBlank() }
+                ?: "flow"
+        val title =
+            stringOrNull("TITLE")
+                ?: stringOrNull("title")
+                ?: stringOrNull("LABEL")
+                ?: id.toDeezerFlowTitle()
+        val pictureType = stringOrNull("PICTURE_TYPE") ?: "playlist"
+        return PlaylistItem(
+            id = "deezer:mix:$id",
+            title = title,
+            author = TubeArtist(name = "Deezer", id = null),
+            songCountText = null,
+            thumbnail =
+                deezerPrivateImageUrl(stringOrNull("PICTURE"), pictureType)
+                    ?: deezerPrivateImageUrl(stringOrNull("FLOW_PICTURE"), pictureType)
+                    ?: deezerPictureUrl(),
             playEndpoint = null,
             shuffleEndpoint = null,
             radioEndpoint = null,
@@ -722,6 +818,37 @@ object DeezerHomeFeedProvider {
     private fun JSONObject.unwrap(): JSONObject =
         optJSONObject("data") ?: optJSONObject("DATA") ?: this
 
+    private fun JSONObject.privateSongItems(): List<SongItem> =
+        buildList {
+            collectPrivateSongItems(this@privateSongItems, this)
+        }
+
+    private fun collectPrivateSongItems(
+        value: Any?,
+        output: MutableList<SongItem>,
+        depth: Int = 0,
+    ) {
+        if (depth > 7) return
+        when (value) {
+            is JSONObject -> {
+                value.toPrivateSongItem()?.let {
+                    output += it
+                    return
+                }
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    collectPrivateSongItems(value.opt(keys.next()), output, depth + 1)
+                }
+            }
+
+            is JSONArray -> {
+                for (index in 0 until value.length()) {
+                    collectPrivateSongItems(value.opt(index), output, depth + 1)
+                }
+            }
+        }
+    }
+
     private fun JSONObject.deezerCoverUrl(): String? =
         stringOrNull("cover_xl")
             ?: stringOrNull("cover_big")
@@ -747,6 +874,11 @@ object DeezerHomeFeedProvider {
     private data class DeezerArtworkCandidate(
         val artwork: String,
         val score: Int,
+    )
+
+    private data class DeezerGatewayRequest(
+        val method: String,
+        val input: String,
     )
 
     private fun deezerArtworkScore(
@@ -796,6 +928,16 @@ object DeezerHomeFeedProvider {
             .replace(Regex("""\([^)]*\)|\[[^]]*]"""), " ")
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()
+
+    private fun String.toDeezerFlowTitle(): String =
+        if (equals("flow", ignoreCase = true) || equals("FLOW", ignoreCase = true)) {
+            "Flow"
+        } else {
+            split(Regex("""[_\-\s]+"""))
+                .filter { it.isNotBlank() }
+                .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase(Locale.US) } }
+                .ifBlank { "Flow" }
+        }
 
     private fun YTItem.thumbnail(): String? =
         when (this) {

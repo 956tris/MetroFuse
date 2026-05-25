@@ -4217,7 +4217,7 @@ class MusicService :
             }
             if (
                 explicitProviderMediaId == null &&
-                dataSpec.uri.isSpotifyPodcastDirectMediaUri()
+                dataSpec.uri.isDirectHttpAudioUri()
             ) {
                 return@Factory dataSpec
             }
@@ -4262,8 +4262,7 @@ class MusicService :
             val song = database.getSongByIdBlocking(mediaId)
             val streamSelectionKey = currentStreamSelectionKey()
 
-            val spotifyPodcastEpisodeMediaId = mediaId.spotifyEpisodeIdOrNull() != null
-            if (song?.song?.isLocal == true || (song?.song?.isEpisode == true && !spotifyPodcastEpisodeMediaId)) {
+            if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
                 return@Factory dataSpec
             }
 
@@ -4594,22 +4593,6 @@ class MusicService :
                 mimeType = mimeType,
             )
         }
-        mediaId.spotifyEpisodeIdOrNull()?.let { spotifyEpisodeId ->
-            val cookie = dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() }
-                ?: error("Spotify login cookie is missing")
-            val directUrl =
-                SpotifyCanvasClient.resolveEpisodeDirectAudioUrl(spotifyEpisodeId, cookie)
-                    ?: error("Spotify podcast episode has no non-DRM stream")
-            val mimeType = directUrl.directHttpAudioMimeType()
-            return PlaybackStreamResolution(
-                uri = directUrl,
-                expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
-                cacheKey = directHttpAudioCacheKey(mediaId),
-                format = directHttpAudioFormat(mediaId, mimeType),
-                mimeType = mimeType,
-            )
-        }
-
         val appleMusicFallbackEnabled = dataStore.get(AppleMusicFallbackEnabledKey, true)
         val appleMusicForceAlac = dataStore.get(AppleMusicForceAlacKey, false)
         val appleMusicSuperFast = dataStore.get(AppleMusicSuperFastKey, false)
@@ -5696,12 +5679,6 @@ class MusicService :
                 uri = localConfiguration.uri.toString(),
                 cacheKey = appleWrapperCacheKey(mediaId),
             )
-        }
-
-        if (mediaId.spotifyEpisodeIdOrNull() != null) {
-            val song = database.getSongByIdBlocking(mediaId)
-            val resolved = resolvePlaybackStreamBlocking(mediaId, song, mediaItem.metadata)
-            return mediaItem.withResolvedPlaybackStream(resolved.uri, resolved.cacheKey, resolved.mimeType)
         }
 
         val streamSelectionKey = currentStreamSelectionKey()
@@ -7373,12 +7350,6 @@ class MusicService :
 
         private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
 
-        private fun String.spotifyEpisodeIdOrNull(): String? =
-            trim()
-                .takeIf { it.startsWith("spotify:episode:", ignoreCase = true) }
-                ?.substringAfterLast(':')
-                ?.takeIf { it.isNotBlank() }
-
         private fun isTidalFallbackCacheKey(key: String): Boolean =
             key.startsWith(TIDAL_FALLBACK_CACHE_PREFIX) ||
                 key.startsWith(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
@@ -7440,31 +7411,6 @@ class MusicService :
                         host.endsWith(".audio.tidal.com") ||
                         host.endsWith(".tidal.com")
                 )
-        }
-
-        private fun Uri.isSpotifyPodcastDirectMediaUri(): Boolean {
-            val lowerScheme = scheme?.lowercase(Locale.US)
-            if (lowerScheme !in setOf("http", "https")) return false
-            val lower = toString().lowercase(Locale.US)
-            if (
-                listOf(
-                    "widevine",
-                    "license",
-                    "drm",
-                    "cbcs",
-                    "m3u8",
-                    ".mpd",
-                    "manifest",
-                    "spotify.com/episode",
-                    "spotify.com/show",
-                ).any { it in lower }
-            ) {
-                return false
-            }
-            return listOf(".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac")
-                .any { it in lower } ||
-                listOf("audio", "podcast", "episode", "download")
-                    .any { it in lower }
         }
 
         private fun Uri.isPendingTidalManifestUri(): Boolean =

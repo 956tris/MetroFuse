@@ -8,7 +8,6 @@ package com.metrolist.music.providers
 import com.metrolist.innertube.models.AlbumItem
 import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.PlaylistItem
-import com.metrolist.innertube.models.PodcastItem
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.Album as TubeAlbum
@@ -1312,7 +1311,6 @@ object SpotifyHomeFeedParser {
                     "Album", "PreRelease" -> candidate.toSpotifyAlbum(uri)
                     "Playlist", "PseudoPlaylist" -> candidate.toSpotifyPlaylist(uri)
                     "Artist" -> candidate.toSpotifyArtist(uri)
-                    "Show", "Podcast" -> candidate.toSpotifyPodcast(uri)
                     else -> null
                 }
             if (parsed != null) {
@@ -1405,30 +1403,6 @@ object SpotifyHomeFeedParser {
             thumbnail = spotifyArtworkUrl(),
             shuffleEndpoint = null,
             radioEndpoint = null,
-        )
-    }
-
-    private fun JsonObject.toSpotifyPodcast(uri: String?): PodcastItem? {
-        val id = spotifyId(uri) ?: return null
-        val title =
-            obj("profile")?.string("name")
-                ?: string("name")
-                ?: return null
-        val publisher =
-            string("publisher")
-                ?: obj("publisher")?.string("name")
-                ?: obj("ownerV2")?.obj("data")?.string("name")
-                ?: obj("owner")?.string("displayName")
-
-        return PodcastItem(
-            id = "spotify:show:$id",
-            title = title,
-            author = publisher?.let { TubeArtist(name = it, id = null) },
-            episodeCountText = obj("episodes")?.long("totalCount")?.let { "$it episodes" }
-                ?: obj("episodes")?.long("total")?.let { "$it episodes" },
-            thumbnail = spotifyArtworkUrl(),
-            playEndpoint = null,
-            shuffleEndpoint = null,
         )
     }
 
@@ -1629,14 +1603,11 @@ object SpotifyHomeFeedParser {
             typeText.contains("PreRelease", ignoreCase = true) -> "PreRelease"
             typeText.contains("Playlist", ignoreCase = true) -> "Playlist"
             typeText.contains("Artist", ignoreCase = true) -> "Artist"
-            typeText.contains("Show", ignoreCase = true) -> "Show"
-            typeText.contains("Podcast", ignoreCase = true) -> "Podcast"
             uri?.startsWith("spotify:track:", ignoreCase = true) == true -> "Track"
             uri?.startsWith("spotify:album:", ignoreCase = true) == true -> "Album"
             uri?.startsWith("spotify:playlist:", ignoreCase = true) == true -> "Playlist"
             uri?.startsWith("spotify:user:", ignoreCase = true) == true && uri.contains(":playlist:", ignoreCase = true) -> "Playlist"
             uri?.startsWith("spotify:artist:", ignoreCase = true) == true -> "Artist"
-            uri?.startsWith("spotify:show:", ignoreCase = true) == true -> "Show"
             else -> null
         }
     }
@@ -1679,12 +1650,12 @@ object ExternalHomeItemIds {
             provider == "spotify" && type == "album" -> "online_playlist/$provider:album:$id"
             provider == "spotify" && type == "artist" -> "online_playlist/$provider:artist:$id"
             provider == "spotify" && type == "collection" -> "online_playlist/$provider:collection:$id"
-            provider == "spotify" && type == "show" -> "online_playlist/$provider:show:$id"
             provider == "spotify" && type == "mix" -> "online_playlist/$provider:mix:$id"
             provider == "tidal" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
             provider == "soundcloud" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
             provider == "deezer" && type == "album" -> "online_playlist/$provider:$type:$id"
             provider == "deezer" && type == "artist" -> "online_playlist/$provider:$type:$id"
+            provider == "deezer" && type == "mix" -> "online_playlist/$provider:$type:$id"
             else -> null
         }
     }
@@ -1695,7 +1666,7 @@ object ExternalHomeItemIds {
         return when (provider) {
             "spotify" ->
                 when (type) {
-                    "track", "album", "artist", "playlist", "show", "episode" -> "https://open.spotify.com/$type/$id"
+                    "track", "album", "artist", "playlist" -> "https://open.spotify.com/$type/$id"
                     "collection" -> "https://open.spotify.com/collection/$id"
                     else -> null
                 }
@@ -1707,9 +1678,16 @@ object ExternalHomeItemIds {
                     else -> null
                 }
 
+            "soundcloud" ->
+                when (type) {
+                    "playlist", "album", "mix" -> "https://soundcloud.com/search/sets?q=$id"
+                    else -> null
+                }
+
             "deezer" ->
                 when (type) {
                     "track", "album", "artist", "playlist" -> "https://www.deezer.com/$type/$id"
+                    "mix" -> "https://www.deezer.com/flow"
                     else -> null
                 }
 
@@ -1723,9 +1701,19 @@ object ExternalHomeItemIds {
             when {
                 "spotify.com/" in lower -> "spotify"
                 "tidal.com/" in lower -> "tidal"
+                "soundcloud.com/" in lower -> "soundcloud"
                 "deezer.com/" in lower -> "deezer"
                 else -> return null
             }
+
+        if (provider == "soundcloud") {
+            val setMarker = "/sets/"
+            val setIndex = lower.indexOf(setMarker)
+            if (setIndex >= 0) {
+                val externalId = id.substring(setIndex + setMarker.length).externalIdPart() ?: return null
+                return Triple(provider, "playlist", externalId)
+            }
+        }
 
         ExternalTypes.forEach { type ->
             listOf("/$type/", "/browse/$type/").forEach { marker ->
@@ -1743,7 +1731,7 @@ object ExternalHomeItemIds {
     private fun String.externalIdPart(): String? = spotifyExternalId()
 
     private val ExternalProviders = setOf("spotify", "tidal", "soundcloud", "deezer", "metrofuse")
-    private val ExternalTypes = listOf("playlist", "track", "album", "artist", "show", "episode", "mix", "collection")
+    private val ExternalTypes = listOf("playlist", "track", "album", "artist", "mix", "collection")
 
     fun searchQuery(item: YTItem): String =
         when (item) {
@@ -1784,8 +1772,6 @@ private fun String.spotifyExternalId(): String? {
             "/album/",
             "/artist/",
             "/track/",
-            "/show/",
-            "/episode/",
             "/mix/",
             "/collection/",
         )
