@@ -76,6 +76,8 @@
     <string name="experiments_player">Player experiments</string>
     <string name="experimental_apple_music_cover_fade">Fade Apple Music cover into UI</string>
     <string name="experimental_apple_music_cover_fade_desc">Uses tall Apple Music motion art as a soft full-player backdrop when available. Experimental and off by default.</string>
+    <string name="experimental_smooth_inline_lyrics">Smooth under-album lyric line</string>
+    <string name="experimental_smooth_inline_lyrics_desc">Shows only the current under-album lyric, wrapping up to three lines with a timed glow.</string>
 
     <!-- Menu descriptions -->
     <string name="download_playlist_desc">Download all songs for offline playback</string>

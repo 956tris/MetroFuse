@@ -37,6 +37,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -56,6 +57,7 @@ internal fun PlayerInlineLyrics(
     lyricsEntity: LyricsEntity?,
     positionMs: Long,
     textColor: Color,
+    smoothSlidingLine: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val playerConnection = LocalPlayerConnection.current
@@ -99,51 +101,97 @@ internal fun PlayerInlineLyrics(
     val lyricLines = remember(lyricsEntries, smoothPositionMs) {
         lyricsEntries.currentInlineLines(smoothPositionMs)
     }
+    val hasWordTimings = remember(lyricsEntries) {
+        lyricsEntries.any { !it.words.isNullOrEmpty() }
+    }
+    val smoothLine = remember(lyricsEntries, smoothPositionMs, smoothSlidingLine, hasWordTimings) {
+        if (smoothSlidingLine && hasWordTimings) {
+            lyricsEntries.currentSmoothInlineLine(smoothPositionMs)
+        } else {
+            null
+        }
+    }
+    val useSmoothSlidingLine = smoothLine != null
 
     Box(
         modifier =
             modifier
-                .height(InlineLyricsSlotHeight)
+                .height(if (useSmoothSlidingLine) SmoothInlineLyricsSlotHeight else InlineLyricsSlotHeight)
                 .clipToBounds(),
         contentAlignment = Alignment.CenterStart,
     ) {
-        AnimatedContent(
-            targetState = lyricLines,
-            transitionSpec = {
-                (
-                    slideInVertically(
-                        animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-                        initialOffsetY = { it / 2 },
-                    ) + fadeIn(animationSpec = tween(durationMillis = 220, delayMillis = 90))
-                ).togetherWith(
-                    slideOutVertically(
-                        animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-                        targetOffsetY = { -it / 2 },
-                    ) + fadeOut(animationSpec = tween(durationMillis = 180)),
-                )
-            },
-            label = "PlayerInlineLyricsLine",
-        ) { lines ->
-            Column(
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                lines.forEach { line ->
-                    Text(
-                        text = line.inlineLyricsText(smoothPositionMs, textColor),
-                        style =
-                            MaterialTheme.typography.titleLarge.copy(
-                                fontSize = if (line.isBackground) 14.sp else 17.sp,
-                                lineHeight = if (line.isBackground) 18.sp else 21.sp,
-                                fontWeight = if (line.isBackground) FontWeight.Bold else FontWeight.ExtraBold,
-                                fontStyle = if (line.isBackground) FontStyle.Italic else FontStyle.Normal,
-                                textAlign = if (line.isBackground) TextAlign.Center else TextAlign.Start,
-                                color = textColor,
-                            ),
-                        maxLines = if (lines.size > 1) 1 else MaxInlineTextLines,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth(),
+        if (useSmoothSlidingLine) {
+            AnimatedContent(
+                targetState = smoothLine,
+                transitionSpec = {
+                    (
+                        slideInVertically(
+                            animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+                            initialOffsetY = { it / 2 },
+                        ) + fadeIn(animationSpec = tween(durationMillis = 220, delayMillis = 90))
+                    ).togetherWith(
+                        slideOutVertically(
+                            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+                            targetOffsetY = { -it / 2 },
+                        ) + fadeOut(animationSpec = tween(durationMillis = 180)),
                     )
+                },
+                label = "PlayerInlineLyricsSmoothLine",
+            ) { line ->
+                SmoothWrappedLyricLine(
+                    line = line,
+                    positionMs = smoothPositionMs,
+                    textColor = textColor,
+                    style =
+                        MaterialTheme.typography.titleLarge.copy(
+                            fontSize = if (line.entry.isBackground) 15.sp else 18.sp,
+                            lineHeight = if (line.entry.isBackground) 19.sp else 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            fontStyle = if (line.entry.isBackground) FontStyle.Italic else FontStyle.Normal,
+                            textAlign = TextAlign.Start,
+                            color = textColor,
+                        ),
+                )
+            }
+        } else {
+            AnimatedContent(
+                targetState = lyricLines,
+                transitionSpec = {
+                    (
+                        slideInVertically(
+                            animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
+                            initialOffsetY = { it / 2 },
+                        ) + fadeIn(animationSpec = tween(durationMillis = 220, delayMillis = 90))
+                    ).togetherWith(
+                        slideOutVertically(
+                            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
+                            targetOffsetY = { -it / 2 },
+                        ) + fadeOut(animationSpec = tween(durationMillis = 180)),
+                    )
+                },
+                label = "PlayerInlineLyricsLine",
+            ) { lines ->
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    lines.forEach { line ->
+                        Text(
+                            text = line.inlineLyricsText(smoothPositionMs, textColor),
+                            style =
+                                MaterialTheme.typography.titleLarge.copy(
+                                    fontSize = if (line.isBackground) 14.sp else 17.sp,
+                                    lineHeight = if (line.isBackground) 18.sp else 21.sp,
+                                    fontWeight = if (line.isBackground) FontWeight.Bold else FontWeight.ExtraBold,
+                                    fontStyle = if (line.isBackground) FontStyle.Italic else FontStyle.Normal,
+                                    textAlign = if (line.isBackground) TextAlign.Center else TextAlign.Start,
+                                    color = textColor,
+                                ),
+                            maxLines = if (lines.size > 1) 1 else MaxInlineTextLines,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }
@@ -176,6 +224,186 @@ private fun List<LyricsEntry>.currentInlineLines(positionMs: Long): List<LyricsE
 private const val MaxInlineLyricLines = 3
 private const val MaxInlineTextLines = 3
 private val InlineLyricsSlotHeight = 68.dp
+private val SmoothInlineLyricsSlotHeight = 76.dp
+
+private data class InlineKaraokeLine(
+    val entry: LyricsEntry,
+    val text: String,
+    val segments: List<InlineKaraokeSegment>,
+)
+
+private data class InlineKaraokeSegment(
+    val startIndex: Int,
+    val endIndex: Int,
+    val startMs: Long,
+    val endMs: Long,
+)
+
+private fun List<LyricsEntry>.currentSmoothInlineLine(positionMs: Long): InlineKaraokeLine? {
+    if (isEmpty()) return null
+
+    val activeIndices = LyricsUtils.findActiveLineIndices(this, positionMs)
+    val selectedIndex =
+        activeIndices
+            .filter { index ->
+                getOrNull(index)?.let { line -> line.text.isNotBlank() && !line.isBackground } == true
+            }.maxByOrNull { index -> get(index).time }
+            ?: activeIndices
+                .filter { index -> getOrNull(index)?.text?.isNotBlank() == true }
+                .maxByOrNull { index -> get(index).time }
+            ?: indices
+                .filter { index ->
+                    val line = get(index)
+                    line.time <= positionMs + 120L && line.text.isNotBlank() && !line.isBackground
+                }.maxByOrNull { index -> get(index).time }
+            ?: indices.firstOrNull { index -> get(index).text.isNotBlank() && !get(index).isBackground }
+            ?: indices.firstOrNull { index -> get(index).text.isNotBlank() }
+            ?: return null
+
+    val entry = get(selectedIndex)
+    val segments = entry.words?.toInlineKaraokeSegments().orEmpty()
+    if (segments.isEmpty()) return null
+
+    return InlineKaraokeLine(
+        entry = entry,
+        text = segments.joinToString(separator = "") { segment -> segment.text },
+        segments = segments.map { segment ->
+            InlineKaraokeSegment(
+                startIndex = segment.startIndex,
+                endIndex = segment.endIndex,
+                startMs = segment.startMs,
+                endMs = segment.endMs,
+            )
+        },
+    )
+}
+
+private data class InlineKaraokeTextSegment(
+    val text: String,
+    val startIndex: Int,
+    val endIndex: Int,
+    val startMs: Long,
+    val endMs: Long,
+)
+
+private fun List<com.metrolist.music.lyrics.WordTimestamp>.toInlineKaraokeSegments(): List<InlineKaraokeTextSegment> {
+    var textIndex = 0
+    return mapIndexedNotNull { index, word ->
+        val segmentText =
+            buildString {
+                append(word.text.replace('\n', ' '))
+                if (word.hasTrailingSpace && index < lastIndex) append(' ')
+            }
+        if (segmentText.isEmpty()) return@mapIndexedNotNull null
+        val startIndex = textIndex
+        textIndex += segmentText.length
+        val startMs = (word.startTime * 1000).toLong()
+        val endMs =
+            (word.endTime * 1000)
+                .toLong()
+                .takeIf { it > startMs }
+                ?: (startMs + (word.text.length * 70L).coerceAtLeast(280L))
+        InlineKaraokeTextSegment(
+            text = segmentText,
+            startIndex = startIndex,
+            endIndex = textIndex,
+            startMs = startMs,
+            endMs = endMs,
+        )
+    }
+}
+
+@Composable
+private fun SmoothWrappedLyricLine(
+    line: InlineKaraokeLine,
+    positionMs: Long,
+    textColor: Color,
+    style: TextStyle,
+) {
+    Box(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .height(SmoothInlineLyricsSlotHeight)
+                .clipToBounds(),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text(
+            text = line.smoothInlineLyricsText(positionMs, textColor),
+            style =
+                style.copy(
+                    color = textColor.copy(alpha = 0.38f),
+                    shadow =
+                        Shadow(
+                            color = textColor.copy(alpha = 0.10f),
+                            offset = Offset.Zero,
+                            blurRadius = 8f,
+                        ),
+                ),
+            maxLines = MaxSmoothInlineTextLines,
+            softWrap = true,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+private const val MaxSmoothInlineTextLines = 3
+
+private fun InlineKaraokeLine.smoothInlineLyricsText(
+    positionMs: Long,
+    textColor: Color,
+) = buildAnnotatedString {
+    segments.forEach { segment ->
+        val segmentText = text.substring(segment.startIndex, segment.endIndex)
+        val isActive = positionMs in segment.startMs..segment.endMs
+        val hasPassed = positionMs > segment.endMs
+        val progress =
+            if (isActive) {
+                ((positionMs - segment.startMs).toFloat() / (segment.endMs - segment.startMs).coerceAtLeast(1))
+                    .coerceIn(0f, 1f)
+            } else {
+                0f
+            }
+        val easedProgress = progress * progress * (3f - 2f * progress)
+        val color =
+            when {
+                hasPassed -> textColor.copy(alpha = 0.96f)
+                isActive -> textColor.copy(alpha = 0.70f + (0.26f * easedProgress))
+                else -> textColor.copy(alpha = 0.34f)
+            }
+        val shadow =
+            when {
+                isActive -> {
+                    Shadow(
+                        color = textColor.copy(alpha = 0.26f + (0.28f * easedProgress)),
+                        offset = Offset.Zero,
+                        blurRadius = 12f + (12f * easedProgress),
+                    )
+                }
+
+                hasPassed -> {
+                    Shadow(
+                        color = textColor.copy(alpha = 0.14f),
+                        offset = Offset.Zero,
+                        blurRadius = 7f,
+                    )
+                }
+
+                else -> null
+            }
+
+        withStyle(
+            SpanStyle(
+                color = color,
+                fontWeight = if (isActive) FontWeight.Black else FontWeight.ExtraBold,
+                shadow = shadow,
+            ),
+        ) {
+            append(segmentText)
+        }
+    }
+}
 
 private fun LyricsEntry.inlineLyricsText(
     positionMs: Long,

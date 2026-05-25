@@ -141,6 +141,7 @@ import com.metrolist.music.constants.CanvasArtworkPriorityKey
 import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.DarkModeKey
 import com.metrolist.music.constants.ExperimentalAppleMusicCoverFadeKey
+import com.metrolist.music.constants.ExperimentalSmoothInlineLyricsKey
 import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.HideStatusBarOnFullscreenKey
 import com.metrolist.music.constants.KeepScreenOn
@@ -371,6 +372,7 @@ fun BottomSheetPlayer(
         defaultValue = PlayerButtonsStyle.DEFAULT,
     )
     val playerInlineLyricsEnabled by rememberPreference(PlayerInlineLyricsKey, defaultValue = true)
+    val smoothInlineLyricsEnabled by rememberPreference(ExperimentalSmoothInlineLyricsKey, defaultValue = false)
     val spotifyCanvasEnabled by rememberPreference(SpotifyCanvasEnabledKey, false)
     val spotifyCookie by rememberPreference(SpotifyCookieKey, "")
     val experimentalAppleMusicCoverFade by rememberPreference(ExperimentalAppleMusicCoverFadeKey, false)
@@ -1427,6 +1429,7 @@ fun BottomSheetPlayer(
                     lyricsEntity = currentLyrics,
                     positionMs = sliderPosition ?: effectivePosition,
                     textColor = TextBackgroundColor,
+                    smoothSlidingLine = smoothInlineLyricsEnabled,
                     modifier =
                         Modifier
                             .fillMaxWidth()

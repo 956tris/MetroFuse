@@ -30,6 +30,7 @@ import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.constants.ExperimentalAppleMusicCoverFadeKey
+import com.metrolist.music.constants.ExperimentalSmoothInlineLyricsKey
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
@@ -43,6 +44,10 @@ fun ExperimentsSettings(
 ) {
     val (appleMusicCoverFade, onAppleMusicCoverFadeChange) = rememberPreference(
         key = ExperimentalAppleMusicCoverFadeKey,
+        defaultValue = false,
+    )
+    val (smoothInlineLyrics, onSmoothInlineLyricsChange) = rememberPreference(
+        key = ExperimentalSmoothInlineLyricsKey,
         defaultValue = false,
     )
 
@@ -87,6 +92,27 @@ fun ExperimentsSettings(
                         )
                     },
                     onClick = { onAppleMusicCoverFadeChange(!appleMusicCoverFade) },
+                ),
+                Material3SettingsItem(
+                    icon = painterResource(R.drawable.lyrics),
+                    title = { Text(stringResource(R.string.experimental_smooth_inline_lyrics)) },
+                    description = { Text(stringResource(R.string.experimental_smooth_inline_lyrics_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = smoothInlineLyrics,
+                            onCheckedChange = onSmoothInlineLyricsChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (smoothInlineLyrics) R.drawable.check else R.drawable.close,
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize),
+                                )
+                            },
+                        )
+                    },
+                    onClick = { onSmoothInlineLyricsChange(!smoothInlineLyrics) },
                 ),
             ),
         )
