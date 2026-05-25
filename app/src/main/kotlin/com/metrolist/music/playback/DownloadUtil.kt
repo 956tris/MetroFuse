@@ -29,6 +29,7 @@ import com.metrolist.music.constants.AppleMusicForceAlacKey
 import com.metrolist.music.constants.AppleMusicSuperFastKey
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
+import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
@@ -283,6 +284,7 @@ constructor(
         val appleWrapperSecure = context.dataStore.get(AppleMusicWrapperSecureKey, true)
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
+        val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
@@ -308,6 +310,7 @@ constructor(
             "appleWrapperSecure=$appleWrapperSecure",
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
+            "deezerFast=$deezerFastMode",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "instagramAuth=$instagramCookieConfigured",
             "instagramCookie=${instagramCookie.hashCode()}",
@@ -332,6 +335,7 @@ constructor(
         val appleWrapperSecure = context.dataStore.get(AppleMusicWrapperSecureKey, true)
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
+        val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
@@ -445,6 +449,7 @@ constructor(
                                 song = song,
                                 resolverUrl = deezerResolverUrl,
                                 quality = deezerQuality,
+                                fastMode = deezerFastMode,
                             ),
                         )
                     }
@@ -651,6 +656,7 @@ constructor(
         song: Song?,
         resolverUrl: String,
         quality: DeezerAudioQuality,
+        fastMode: Boolean = false,
     ): DeezerAudioProvider.Query {
         return DeezerAudioProvider.Query(
             mediaId = mediaId,
@@ -664,6 +670,7 @@ constructor(
                 ?.times(1000L),
             resolverUrl = resolverUrl,
             quality = quality,
+            fastMode = fastMode,
         )
     }
 

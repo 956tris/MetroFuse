@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -35,6 +38,7 @@ import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerAudioQualityOptions
 import com.metrolist.music.constants.DeezerCookieKey
+import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.ui.component.EnumDialog
@@ -56,6 +60,7 @@ fun DeezerSettings(
 ) {
     var resolverUrl by rememberPreference(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
     var audioQuality by rememberEnumPreference(DeezerAudioQualityKey, DeezerAudioQuality.MP3_128)
+    val (fastMode, onFastModeChange) = rememberPreference(DeezerFastModeKey, false)
     var deezerCookie by rememberPreference(DeezerCookieKey, "")
     val cookieConfigured = isDeezerCookieConfigured(deezerCookie)
     var showResolverDialog by rememberSaveable { mutableStateOf(false) }
@@ -181,6 +186,27 @@ fun DeezerSettings(
                         onClick = {
                             showQualityDialog = true
                         },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.deezer_fast_mode)) },
+                        description = { Text(stringResource(R.string.deezer_fast_mode_desc)) },
+                        icon = painterResource(R.drawable.speed),
+                        trailingContent = {
+                            Switch(
+                                checked = fastMode,
+                                onCheckedChange = onFastModeChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter = painterResource(
+                                            id = if (fastMode) R.drawable.check else R.drawable.close,
+                                        ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        onClick = { onFastModeChange(!fastMode) },
                     ),
                     Material3SettingsItem(
                         title = { Text(stringResource(R.string.deezer_reset_resolver)) },

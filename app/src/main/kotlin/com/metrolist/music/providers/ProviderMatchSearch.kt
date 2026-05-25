@@ -12,6 +12,7 @@ import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
+import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
@@ -107,7 +108,8 @@ object ProviderMatchSearch {
             AudioProviderOrderItem.DEEZER -> {
                 val quality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
                 val resolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
-                DeezerAudioProvider.searchCandidates(metadata.toDeezerQuery(resolverUrl, quality, isrcOverride), limit).map { track ->
+                val fastMode = context.dataStore.get(DeezerFastModeKey, false)
+                DeezerAudioProvider.searchCandidates(metadata.toDeezerQuery(resolverUrl, quality, fastMode, isrcOverride), limit).map { track ->
                     ProviderMatchCandidate(
                         provider = provider,
                         providerTrackId = track.trackId,
@@ -190,6 +192,7 @@ object ProviderMatchSearch {
     private fun MediaMetadata.toDeezerQuery(
         resolverUrl: String,
         quality: DeezerAudioQuality,
+        fastMode: Boolean,
         isrcOverride: String? = null,
     ): DeezerAudioProvider.Query =
         DeezerAudioProvider.Query(
@@ -201,6 +204,7 @@ object ProviderMatchSearch {
             durationMs = duration.takeIf { it > 0 }?.toLong()?.times(1000L),
             resolverUrl = resolverUrl,
             quality = quality,
+            fastMode = fastMode,
         )
 
     private fun MediaMetadata.toQobuzQuery(

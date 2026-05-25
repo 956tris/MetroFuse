@@ -567,6 +567,8 @@
     <string name="deezer_quality_flac">FLAC</string>
     <string name="deezer_quality_mp3_320">MP3 320 kbps</string>
     <string name="deezer_quality_mp3_128">MP3 128 kbps</string>
+    <string name="deezer_fast_mode">Fast Deezer loading</string>
+    <string name="deezer_fast_mode_desc">Batch quality fallbacks and skip slower backup lookups for quicker Deezer starts.</string>
     <string name="deezer_reset_resolver">Reset Deezer resolver</string>
     <string name="deezer_integration_info">The resolver only finds the encrypted Deezer media URL. MetroFuse decrypts the stream locally during playback or downloads.</string>
     <string name="deezer_web_login">Deezer Web login</string>

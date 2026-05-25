@@ -1994,7 +1994,7 @@ fun BottomSheetPlayer(
                 )
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(14.dp))
 
             AnimatedVisibility(
                 visible = !isFullScreen,
@@ -2475,7 +2475,7 @@ fun BottomSheetPlayer(
                         controlsContent(it)
                     }
 
-                    Spacer(Modifier.height(30.dp))
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         }

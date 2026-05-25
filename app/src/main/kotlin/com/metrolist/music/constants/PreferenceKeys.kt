@@ -172,6 +172,7 @@ val TidalAudioQualityKey = stringPreferencesKey("tidalAudioQuality")
 val TidalAnimatedCoversEnabledKey = booleanPreferencesKey("tidalAnimatedCoversEnabled")
 val DeezerResolverUrlKey = stringPreferencesKey("deezerResolverUrl")
 val DeezerAudioQualityKey = stringPreferencesKey("deezerAudioQuality")
+val DeezerFastModeKey = booleanPreferencesKey("deezerFastMode")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
 

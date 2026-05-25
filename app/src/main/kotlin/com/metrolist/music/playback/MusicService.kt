@@ -127,6 +127,7 @@ import com.metrolist.music.constants.CrossfadeGaplessKey
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerCookieKey
+import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.DisableLoadMoreWhenRepeatAllKey
 import com.metrolist.music.constants.DiscordActivityNameKey
@@ -4053,6 +4054,7 @@ class MusicService :
         val tidalQuality = dataStore.get(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
+        val deezerFastMode = dataStore.get(DeezerFastModeKey, false)
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
         val providerMatchOverrides = dataStore.get(AudioProviderMatchOverridesKey, "")
@@ -4081,6 +4083,7 @@ class MusicService :
             "tidalQuality=${tidalQuality.name}",
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
+            "deezerFast=$deezerFastMode",
             "stopOnProviderError=$stopOnProviderError",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "providerOverrides=${providerMatchOverrides.hashCode()}",
@@ -4565,6 +4568,7 @@ class MusicService :
         val tidalQuality = dataStore.get(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
+        val deezerFastMode = dataStore.get(DeezerFastModeKey, false)
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
         val providerOverride = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
@@ -4752,6 +4756,7 @@ class MusicService :
                                 metadataOverride = queuedMetadata,
                                 resolverUrl = deezerResolverUrl,
                                 quality = deezerQuality,
+                                fastMode = deezerFastMode,
                                 isrcOverride = spotifyIsrc,
                             ),
                         )
@@ -5038,6 +5043,7 @@ class MusicService :
         metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
         resolverUrl: String,
         quality: DeezerAudioQuality,
+        fastMode: Boolean = false,
         isrcOverride: String? = null,
     ): DeezerAudioProvider.Query {
         val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
@@ -5063,6 +5069,7 @@ class MusicService :
             durationMs = durationMs,
             resolverUrl = resolverUrl,
             quality = quality,
+            fastMode = fastMode,
         )
     }
 
