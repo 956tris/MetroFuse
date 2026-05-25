@@ -145,9 +145,6 @@
 -dontwarn java.beans.Introspector
 -dontwarn java.beans.PropertyDescriptor
 
-# Keep all classes within the kuromoji package
--keep class com.atilika.kuromoji.** { *; }
-
 ## Queue Persistence Rules
 # Keep queue-related classes to prevent serialization issues in release builds
 -keep class com.metrolist.music.models.PersistQueue { *; }

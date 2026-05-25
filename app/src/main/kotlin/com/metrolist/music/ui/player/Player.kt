@@ -2377,23 +2377,23 @@ fun BottomSheetPlayer(
                                 displayedPlayerQualityLabel?.let { label ->
                                     Text(
                                         text = label,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = TextBackgroundColor,
                                         textAlign = TextAlign.Center,
                                         maxLines = 1,
-                                        overflow = TextOverflow.Clip,
+                                        overflow = TextOverflow.Ellipsis,
                                         modifier =
                                             Modifier
                                                 .fillMaxWidth()
-                                                .basicMarquee(iterations = 1, initialDelayMillis = 1800, velocity = 24.dp),
+                                                .basicMarquee(iterations = 1, initialDelayMillis = 2200, velocity = 18.dp),
                                     )
                                 }
                             }
                             displayedPlayerSourceLabel?.let { source ->
                                 Text(
                                     text = "Source: $source",
-                                    style = MaterialTheme.typography.bodyMedium,
+                                    style = MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.SemiBold,
                                     color = TextBackgroundColor.copy(alpha = 0.82f),
                                     textAlign = TextAlign.Center,
