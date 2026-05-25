@@ -77,7 +77,7 @@ class AppleMusicWrapperDataSource(
             resourceName = resourceName,
             resourceUri = request::resourceUri,
             client = client,
-            highWorkerMode = false,
+            highWorkerMode = request.highWorkerMode,
         )
         val position = dataSpec.position.coerceIn(0L, bytes.size.toLong()).toInt()
         val available = bytes.size - position
@@ -104,7 +104,7 @@ class AppleMusicWrapperDataSource(
             start = dataSpec.position,
             requestedLength = dataSpec.length,
             durationMs = request.durationMs,
-            highWorkerMode = false,
+            highWorkerMode = request.highWorkerMode,
         )
         currentStream = stream
         return length
@@ -183,6 +183,7 @@ class AppleMusicWrapperDataSource(
         val durationMs: Long?,
         val title: String?,
         val resourceName: String?,
+        val highWorkerMode: Boolean,
     ) {
         companion object {
             fun fromUri(uri: Uri): Request {
@@ -206,6 +207,7 @@ class AppleMusicWrapperDataSource(
                     durationMs = uri.getQueryParameter(PARAM_DURATION_MS)?.toLongOrNull(),
                     title = uri.getQueryParameter(PARAM_TITLE),
                     resourceName = resourceName,
+                    highWorkerMode = uri.getQueryParameter(PARAM_HIGH_WORKER_MODE)?.toBooleanStrictOrNull() ?: false,
                 )
             }
 
@@ -228,6 +230,10 @@ class AppleMusicWrapperDataSource(
                         isrc = null,
                         durationMs = uri.getQueryParameter(PARAM_DURATION_MS)?.toLongOrNull(),
                         explicit = uri.getQueryParameter(PARAM_EXPLICIT)?.toBooleanStrictOrNull(),
+                        wrapperHost = uri.getQueryParameter(PARAM_HOST)
+                            ?: AppleMusicWrapperManagerProvider.DEFAULT_HOST,
+                        wrapperSecure = uri.getQueryParameter(PARAM_SECURE)?.toBooleanStrictOrNull() ?: true,
+                        highWorkerMode = uri.getQueryParameter(PARAM_HIGH_WORKER_MODE)?.toBooleanStrictOrNull() ?: false,
                     ),
                 )
                 return fromUri(Uri.parse(resolved.mediaUri)).copy(resourceName = resourceName)
@@ -279,6 +285,7 @@ class AppleMusicWrapperDataSource(
                 host = host,
                 secure = secure,
                 durationMs = durationMs,
+                highWorkerMode = highWorkerMode,
             )
         }
 
@@ -295,6 +302,9 @@ class AppleMusicWrapperDataSource(
                 .appendQueryParameter(PARAM_ISSUED_AT_MS, (issuedAtMs ?: System.currentTimeMillis()).toString())
             durationMs?.let { builder.appendQueryParameter(PARAM_DURATION_MS, it.toString()) }
             title?.takeIf { it.isNotBlank() }?.let { builder.appendQueryParameter(PARAM_TITLE, it) }
+            if (highWorkerMode) {
+                builder.appendQueryParameter(PARAM_HIGH_WORKER_MODE, true.toString())
+            }
             return builder.build().toString()
         }
     }
@@ -309,7 +319,7 @@ class AppleMusicWrapperDataSource(
         private const val TAG = "AppleALAC"
         const val SCHEME = "apple-wrapper"
         private const val AUTHORITY = "alac"
-        private const val DEFAULT_HOST = "wm.wol.moe"
+        private const val DEFAULT_HOST = AppleMusicWrapperManagerProvider.DEFAULT_HOST
         private const val PARAM_ADAM_ID = "adamId"
         private const val PARAM_M3U8 = "m3u8"
         private const val PARAM_HOST = "host"
@@ -321,6 +331,7 @@ class AppleMusicWrapperDataSource(
         private const val PARAM_ALBUM = "album"
         private const val PARAM_EXPLICIT = "explicit"
         private const val PARAM_PENDING = "pending"
+        private const val PARAM_HIGH_WORKER_MODE = "highWorkerMode"
         private const val M3U8_REFRESH_AFTER_MS = 4 * 60 * 1000L
         private const val HLS_MASTER_RESOURCE = "master.m3u8"
         private const val HLS_MEDIA_RESOURCE = "media.m3u8"
@@ -341,17 +352,26 @@ class AppleMusicWrapperDataSource(
                 ?.firstOrNull()
                 ?.takeIf { it.isNotBlank() }
 
-        fun toProgressiveStreamUri(uri: Uri): Uri {
+        fun toProgressiveStreamUri(
+            uri: Uri,
+            highWorkerMode: Boolean = false,
+        ): Uri {
             if (!isAppleUri(uri)) return uri
             val mediaId = mediaIdFromUri(uri) ?: return uri
+            val resolvedHighWorkerMode = highWorkerMode ||
+                (uri.getQueryParameter(PARAM_HIGH_WORKER_MODE)?.toBooleanStrictOrNull() ?: false)
             val builder = Uri.Builder()
                 .scheme(SCHEME)
                 .authority(AUTHORITY)
                 .appendPath(mediaId)
             uri.queryParameterNames.forEach { name ->
+                if (name == PARAM_HIGH_WORKER_MODE) return@forEach
                 uri.getQueryParameters(name).forEach { value ->
                     builder.appendQueryParameter(name, value)
                 }
+            }
+            if (resolvedHighWorkerMode) {
+                builder.appendQueryParameter(PARAM_HIGH_WORKER_MODE, true.toString())
             }
             return builder.build()
         }
@@ -363,6 +383,9 @@ class AppleMusicWrapperDataSource(
             album: String?,
             durationMs: Long?,
             explicit: Boolean?,
+            wrapperHost: String = AppleMusicWrapperManagerProvider.DEFAULT_HOST,
+            wrapperSecure: Boolean = true,
+            highWorkerMode: Boolean = false,
         ): String {
             val builder = Uri.Builder()
                 .scheme(SCHEME)
@@ -371,12 +394,17 @@ class AppleMusicWrapperDataSource(
                 .appendPath(HLS_MASTER_RESOURCE)
                 .appendQueryParameter(PARAM_PENDING, true.toString())
                 .appendQueryParameter(PARAM_TITLE, title)
+                .appendQueryParameter(PARAM_HOST, AppleMusicWrapperManagerProvider.normalizeHost(wrapperHost))
+                .appendQueryParameter(PARAM_SECURE, wrapperSecure.toString())
             artists
                 .filter { it.isNotBlank() }
                 .forEach { builder.appendQueryParameter(PARAM_ARTIST, it) }
             album?.takeIf { it.isNotBlank() }?.let { builder.appendQueryParameter(PARAM_ALBUM, it) }
             durationMs?.takeIf { it > 0L }?.let { builder.appendQueryParameter(PARAM_DURATION_MS, it.toString()) }
             explicit?.let { builder.appendQueryParameter(PARAM_EXPLICIT, it.toString()) }
+            if (highWorkerMode) {
+                builder.appendQueryParameter(PARAM_HIGH_WORKER_MODE, true.toString())
+            }
             return builder.build().toString()
         }
 
@@ -388,6 +416,7 @@ class AppleMusicWrapperDataSource(
             secure: Boolean,
             durationMs: Long?,
             title: String?,
+            highWorkerMode: Boolean = false,
         ): String {
             val builder = Uri.Builder()
                 .scheme(SCHEME)
@@ -401,6 +430,9 @@ class AppleMusicWrapperDataSource(
                 .appendQueryParameter(PARAM_ISSUED_AT_MS, System.currentTimeMillis().toString())
             durationMs?.let { builder.appendQueryParameter(PARAM_DURATION_MS, it.toString()) }
             title?.takeIf { it.isNotBlank() }?.let { builder.appendQueryParameter(PARAM_TITLE, it) }
+            if (highWorkerMode) {
+                builder.appendQueryParameter(PARAM_HIGH_WORKER_MODE, true.toString())
+            }
             return builder.build().toString()
         }
     }

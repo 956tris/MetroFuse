@@ -19,8 +19,8 @@ if (localPropertiesFile.exists()) {
 }
 
 val baseApplicationId = "com.metrofuse.music"
-val metroFuseVersionCode = 410
-val metroFuseVersionName = "4.1"
+val metroFuseVersionCode = 500
+val metroFuseVersionName = "5.0"
 val metroFuseUpdateRepository = "956tris/MetroFuse"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
 val appNameOverride = System.getenv("METROLIST_APP_NAME")?.takeIf { it.isNotBlank() }
@@ -30,6 +30,74 @@ val debugKeyAlias = System.getenv("METROLIST_DEBUG_KEY_ALIAS")?.takeIf { it.isNo
 val debugKeyPassword = System.getenv("METROLIST_DEBUG_KEY_PASSWORD")?.takeIf { it.isNotBlank() } ?: "android"
 val persistentDebugKeystoreFile = file("persistent-debug.keystore")
 val workflowDebugKeystoreFile = debugKeystorePathOverride?.let(::file)
+val releaseSigningFile = rootProject.file("../release-apks/MetroApple-release-keystore-password.txt")
+val releaseSigningFileValues =
+    if (releaseSigningFile.isFile) {
+        releaseSigningFile
+            .readLines()
+            .mapNotNull { line ->
+                val separatorIndex = listOf(line.indexOf('='), line.indexOf(':'))
+                    .filter { it >= 0 }
+                    .minOrNull()
+                if (separatorIndex == null) {
+                    null
+                } else {
+                    val name = line.substring(0, separatorIndex).trim().uppercase()
+                    val value = line.substring(separatorIndex + 1).trim()
+                    name.takeIf { it.isNotBlank() }?.let { it to value }
+                }
+            }.toMap()
+    } else {
+        emptyMap()
+    }
+val releaseApksKeystoreFile = rootProject.file("../release-apks/MetroApple-release.keystore.p12")
+val releaseKeystoreFile =
+    System.getenv("RELEASE_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }?.let(::file)
+        ?: providers.gradleProperty("RELEASE_KEYSTORE_PATH").orNull?.takeIf { it.isNotBlank() }?.let(::file)
+        ?: releaseApksKeystoreFile.takeIf { it.isFile }
+        ?: file("keystore/release.keystore")
+fun releaseSigningValue(name: String): String? =
+    System.getenv(name)?.takeIf { it.isNotBlank() }
+        ?: providers.gradleProperty(name).orNull?.takeIf { it.isNotBlank() }
+        ?: when (name) {
+            "STORE_PASSWORD" -> releaseSigningFileValues["STORE_PASSWORD"] ?: releaseSigningFileValues["PASSWORD"]
+            "KEY_ALIAS" -> releaseSigningFileValues["KEY_ALIAS"] ?: releaseSigningFileValues["ALIAS"]
+            "KEY_PASSWORD" -> releaseSigningFileValues["KEY_PASSWORD"] ?: releaseSigningFileValues["PASSWORD"]
+            else -> null
+        }
+
+val releaseSigningEnvironment =
+    mapOf(
+        "STORE_PASSWORD" to releaseSigningValue("STORE_PASSWORD"),
+        "KEY_ALIAS" to releaseSigningValue("KEY_ALIAS"),
+        "KEY_PASSWORD" to releaseSigningValue("KEY_PASSWORD"),
+    )
+val releaseBuildRequested =
+    gradle.startParameter.taskNames.any { taskName ->
+        val task = taskName.substringAfterLast(':')
+        task.equals("assemble", ignoreCase = true) ||
+            task.equals("bundle", ignoreCase = true) ||
+            task.equals("build", ignoreCase = true) ||
+            task.endsWith("Release", ignoreCase = true)
+    }
+if (releaseBuildRequested) {
+    if (!releaseKeystoreFile.isFile) {
+        throw org.gradle.api.GradleException(
+            "Release signing keystore not found at ${releaseKeystoreFile.path}.",
+        )
+    }
+    val missingSigningValues = releaseSigningEnvironment.filterValues { it == null }.keys
+    if (missingSigningValues.isNotEmpty()) {
+        throw org.gradle.api.GradleException(
+            "Missing release signing environment values: ${missingSigningValues.joinToString()}. " +
+                "Set them as environment variables or Gradle properties. " +
+                "Release APKs must be signed with ${releaseKeystoreFile.path}.",
+        )
+    }
+}
+val releaseStorePassword = releaseSigningEnvironment.getValue("STORE_PASSWORD")
+val releaseKeyAlias = releaseSigningEnvironment.getValue("KEY_ALIAS")
+val releaseKeyPassword = releaseSigningEnvironment.getValue("KEY_PASSWORD")
 
 plugins {
     id("com.android.application")
@@ -153,10 +221,10 @@ android {
             keyPassword = debugKeyPassword
         }
         create("release") {
-            storeFile = file("keystore/release.keystore")
-            storePassword = System.getenv("STORE_PASSWORD")
-            keyAlias = System.getenv("KEY_ALIAS")
-            keyPassword = System.getenv("KEY_PASSWORD")
+            storeFile = releaseKeystoreFile
+            storePassword = releaseStorePassword
+            keyAlias = releaseKeyAlias
+            keyPassword = releaseKeyPassword
         }
         getByName("debug") {
             keyAlias = "androiddebugkey"
@@ -172,6 +240,7 @@ android {
             isShrinkResources = true
             isCrunchPngs = false
             isDebuggable = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

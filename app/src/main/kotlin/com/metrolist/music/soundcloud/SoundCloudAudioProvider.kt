@@ -35,6 +35,8 @@ object SoundCloudAudioProvider {
     private const val SEARCH_LIMIT = 20
     private const val DEFAULT_BITRATE = 128_000
     private const val DEFAULT_SAMPLE_RATE = 44_100
+    private val assetScriptRegex = Regex("""https://a-v2\.sndcdn\.com/assets/[^"'<>]+\.js""")
+    private val clientIdRegex = Regex("""client_id["']?\s*[:=]\s*["']([A-Za-z0-9]{16,})["']""")
 
     data class Query(
         val mediaId: String,
@@ -230,12 +232,62 @@ object SoundCloudAudioProvider {
                     ?: throw SoundCloudResolutionException(root.stringOrNull("error") ?: "SoundCloud client-id missing")
             }
         }.getOrElse { error ->
-            if (error is SoundCloudResolutionException) throw error
-            throw SoundCloudResolutionException("SoundCloud client-id request failed", error)
+            runCatching { scrapeClientId() }
+                .getOrElse { fallbackError ->
+                    fallbackError.addSuppressed(error)
+                    throw SoundCloudResolutionException("SoundCloud client-id request failed", fallbackError)
+                }
         }
 
         clientIdCache = ClientId(clientId, now + CLIENT_ID_CACHE_MS)
         return clientId
+    }
+
+    private fun scrapeClientId(): String {
+        val homeRequest =
+            Request
+                .Builder()
+                .url("https://soundcloud.com/")
+                .get()
+                .header("Accept", "text/html")
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .build()
+
+        val html =
+            client.newCall(homeRequest).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    throw SoundCloudResolutionException("SoundCloud web HTTP ${response.code}: ${payload.take(160)}")
+                }
+                payload
+            }
+
+        assetScriptRegex
+            .findAll(html)
+            .map { it.value }
+            .distinct()
+            .forEach { scriptUrl ->
+                val scriptRequest =
+                    Request
+                        .Builder()
+                        .url(scriptUrl)
+                        .get()
+                        .header("Accept", "*/*")
+                        .header("Referer", "https://soundcloud.com/")
+                        .header("User-Agent", BROWSER_USER_AGENT)
+                        .build()
+
+                val script =
+                    runCatching {
+                        client.newCall(scriptRequest).execute().use { response ->
+                            response.body.string().takeIf { response.isSuccessful }.orEmpty()
+                        }
+                    }.getOrDefault("")
+
+                clientIdRegex.find(script)?.groups?.get(1)?.value?.let { return it }
+            }
+
+        throw SoundCloudResolutionException("SoundCloud web client-id missing")
     }
 
     private fun findBestTrack(

@@ -21,7 +21,13 @@ val DarkModeKey = stringPreferencesKey("darkMode")
 val PureBlackKey = booleanPreferencesKey("pureBlack")
 val PureBlackMiniPlayerKey = booleanPreferencesKey("pureBlackMiniPlayer")
 val MiniPlayerOutlineKey = booleanPreferencesKey("miniPlayerOutline")
+val AppBackgroundStyleKey = stringPreferencesKey("appBackgroundStyle")
 val MiniPlayerBackgroundStyleKey = stringPreferencesKey("miniPlayerBackgroundStyle")
+
+enum class AppBackgroundStyle {
+    DEFAULT,
+    GALAXY,
+}
 
 enum class MiniPlayerBackgroundStyle {
     DEFAULT,
@@ -158,23 +164,28 @@ enum class AudioQuality {
 }
 
 val AppleMusicFallbackEnabledKey = booleanPreferencesKey("appleMusicFallbackEnabled")
-val PreferAppleMusicKey = booleanPreferencesKey("preferAppleMusic")
-val PreferTidalAudioKey = booleanPreferencesKey("preferTidalAudio")
+val AppleMusicForceAlacKey = booleanPreferencesKey("appleMusicForceAlac")
+val AppleMusicSuperFastKey = booleanPreferencesKey("appleMusicSuperFast")
+val AppleMusicWrapperHostKey = stringPreferencesKey("appleMusicWrapperHost")
+val AppleMusicWrapperSecureKey = booleanPreferencesKey("appleMusicWrapperSecure")
 val TidalAudioQualityKey = stringPreferencesKey("tidalAudioQuality")
-val PreferDeezerAudioKey = booleanPreferencesKey("preferDeezerAudio")
+val TidalAnimatedCoversEnabledKey = booleanPreferencesKey("tidalAnimatedCoversEnabled")
 val DeezerResolverUrlKey = stringPreferencesKey("deezerResolverUrl")
 val DeezerAudioQualityKey = stringPreferencesKey("deezerAudioQuality")
+val DeezerFastModeKey = booleanPreferencesKey("deezerFastMode")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
 
 enum class TidalAudioQuality {
     AAC_320,
+    FLAC,
     HI_RES_LOSSLESS,
 }
 
 val TidalAudioQualityOptions =
     listOf(
         TidalAudioQuality.AAC_320,
+        TidalAudioQuality.FLAC,
         TidalAudioQuality.HI_RES_LOSSLESS,
     )
 
@@ -358,13 +369,10 @@ val TidalCookieKey = stringPreferencesKey("tidalCookie")
 val TidalArtworkFallbackEnabledKey = booleanPreferencesKey("tidalArtworkFallbackEnabled")
 val DeezerCookieKey = stringPreferencesKey("deezerCookie")
 val SoundCloudAuthTokenKey = stringPreferencesKey("soundCloudAuthToken")
-val PreferSoundCloudAudioKey = booleanPreferencesKey("preferSoundCloudAudio")
 val InstagramCookieKey = stringPreferencesKey("instagramCookie")
 val InstagramUserAgentKey = stringPreferencesKey("instagramUserAgent")
 val InstagramAppIdKey = stringPreferencesKey("instagramAppId")
 val InstagramUuidKey = stringPreferencesKey("instagramUuid")
-val PreferInstagramAudioKey = booleanPreferencesKey("preferInstagramAudio")
-val PreferYouTubeMusicAudioKey = booleanPreferencesKey("preferYouTubeMusicAudio")
 
 val ScrobbleDelayPercentKey = floatPreferencesKey("scrobbleDelayPercent")
 val ScrobbleMinSongDurationKey = intPreferencesKey("scrobbleMinSongDuration")
@@ -618,6 +626,8 @@ val HistoryDuration = floatPreferencesKey("historyDuration")
 val PlayerButtonsStyleKey = stringPreferencesKey("player_buttons_style")
 val PlayerBackgroundStyleKey = stringPreferencesKey("playerBackgroundStyle")
 val PlayerInlineLyricsKey = booleanPreferencesKey("playerInlineLyrics")
+val ExperimentalAppleMusicCoverFadeKey = booleanPreferencesKey("experimentalAppleMusicCoverFade")
+val ExperimentalSmoothInlineLyricsKey = booleanPreferencesKey("experimentalSmoothInlineLyrics")
 val ShowLyricsKey = booleanPreferencesKey("showLyrics")
 val LyricsTextPositionKey = stringPreferencesKey("lyricsTextPosition")
 val LyricsClickKey = booleanPreferencesKey("lyricsClick")

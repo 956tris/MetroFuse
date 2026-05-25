@@ -56,6 +56,8 @@ import androidx.core.content.edit
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
+import com.metrolist.music.constants.AppBackgroundStyle
+import com.metrolist.music.constants.AppBackgroundStyleKey
 import com.metrolist.music.constants.ChipSortTypeKey
 import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.DefaultOpenTabKey
@@ -138,6 +140,11 @@ fun AppearanceSettings(
         rememberPreference(
             EnableDynamicIconKey,
             defaultValue = true,
+        )
+    val (appBackgroundStyle, onAppBackgroundStyleChange) =
+        rememberEnumPreference(
+            AppBackgroundStyleKey,
+            defaultValue = AppBackgroundStyle.DEFAULT,
         )
     val (enableHighRefreshRate, onEnableHighRefreshRateChange) =
         rememberPreference(
@@ -375,6 +382,10 @@ fun AppearanceSettings(
         mutableStateOf(false)
     }
 
+    var showAppBackgroundDialog by rememberSaveable {
+        mutableStateOf(false)
+    }
+
     var showPlayerButtonsStyleDialog by rememberSaveable {
         mutableStateOf(false)
     }
@@ -567,6 +578,25 @@ fun AppearanceSettings(
                     PlayerButtonsStyle.DEFAULT -> stringResource(R.string.default_style)
                     PlayerButtonsStyle.PRIMARY -> stringResource(R.string.primary_color_style)
                     PlayerButtonsStyle.TERTIARY -> stringResource(R.string.tertiary_color_style)
+                }
+            },
+        )
+    }
+
+    if (showAppBackgroundDialog) {
+        EnumDialog(
+            onDismiss = { showAppBackgroundDialog = false },
+            onSelect = {
+                onAppBackgroundStyleChange(it)
+                showAppBackgroundDialog = false
+            },
+            title = stringResource(R.string.app_background_style),
+            current = appBackgroundStyle,
+            values = AppBackgroundStyle.values().toList(),
+            valueText = {
+                when (it) {
+                    AppBackgroundStyle.DEFAULT -> stringResource(R.string.app_background_default)
+                    AppBackgroundStyle.GALAXY -> stringResource(R.string.app_background_galaxy)
                 }
             },
         )
@@ -1063,6 +1093,21 @@ fun AppearanceSettings(
                             title = { Text(stringResource(R.string.theme)) },
                             description = { Text(stringResource(R.string.theme_desc)) },
                             onClick = { navController.navigate("settings/appearance/theme") },
+                        ),
+                    )
+                    add(
+                        Material3SettingsItem(
+                            icon = painterResource(R.drawable.gradient),
+                            title = { Text(stringResource(R.string.app_background_style)) },
+                            description = {
+                                Text(
+                                    when (appBackgroundStyle) {
+                                        AppBackgroundStyle.DEFAULT -> stringResource(R.string.app_background_default)
+                                        AppBackgroundStyle.GALAXY -> stringResource(R.string.app_background_galaxy_desc)
+                                    },
+                                )
+                            },
+                            onClick = { showAppBackgroundDialog = true },
                         ),
                     )
                 },

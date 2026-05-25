@@ -127,6 +127,7 @@ fun SongMenu(
     val listenTogetherManager = LocalListenTogetherManager.current
     val scope = rememberCoroutineScope()
     var refetchIconDegree by remember { mutableFloatStateOf(0f) }
+    var showShareSongLinkDialog by rememberSaveable { mutableStateOf(false) }
 
     val cacheViewModel = hiltViewModel<CachePlaylistViewModel>()
 
@@ -501,6 +502,14 @@ fun SongMenu(
 
     val isGuest = listenTogetherManager?.isInRoom == true && !listenTogetherManager.isHost
 
+    if (showShareSongLinkDialog) {
+        ShareSongLinkDialog(
+            mediaMetadata = song.toMediaMetadata(),
+            onDismiss = { showShareSongLinkDialog = false },
+            onShared = onDismiss,
+        )
+    }
+
     LazyColumn(
         contentPadding =
             PaddingValues(
@@ -549,14 +558,7 @@ fun SongMenu(
                             },
                             text = stringResource(R.string.share),
                             onClick = {
-                                onDismiss()
-                                val intent =
-                                    Intent().apply {
-                                        action = Intent.ACTION_SEND
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, "https://music.youtube.com/watch?v=${song.id}")
-                                    }
-                                context.startActivity(Intent.createChooser(intent, null))
+                                showShareSongLinkDialog = true
                             },
                         ),
                     ),

@@ -49,6 +49,7 @@ class DiscordRPC(
         button2Visible: Boolean = true,
         activityType: String = "listening",
         activityName: String = "",
+        artworkUrl: String? = null,
     ) = runCatching {
         val currentTime = System.currentTimeMillis()
 
@@ -90,6 +91,12 @@ class DiscordRPC(
         val name = activityName.ifEmpty {
             context.getString(R.string.app_name).removeSuffix(" Debug")
         }
+        val largeImageUrl =
+            listOf(
+                artworkUrl,
+                song.album?.thumbnailUrl,
+                song.song.thumbnailUrl,
+            ).firstNotNullOfOrNull { it.normalizedRpcArtworkUrl() }
         connection.setActivity(
             name = name,
             type = type,
@@ -99,8 +106,8 @@ class DiscordRPC(
                 start = calculatedStartTime,
                 end = currentTime + adjustedRemainingDuration,
             ),
-            largeImage = song.song.thumbnailUrl,
-            smallImage = song.artists.firstOrNull()?.thumbnailUrl,
+            largeImage = largeImageUrl,
+            smallImage = song.artists.firstOrNull()?.thumbnailUrl.normalizedRpcArtworkUrl(),
             largeText = song.album?.title,
             smallText = song.artists.firstOrNull()?.name,
             buttons = buttonsList.ifEmpty { null },
@@ -116,6 +123,27 @@ class DiscordRPC(
 
     companion object {
         private const val APPLICATION_ID = "1411019391843172514"
+
+        private fun String?.normalizedRpcArtworkUrl(): String? {
+            val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
+            if (!value.startsWith("http", ignoreCase = true) && !value.startsWith("mp:", ignoreCase = true)) {
+                return null
+            }
+            if (!value.contains("googleusercontent.com", ignoreCase = true) &&
+                !value.contains("ggpht.com", ignoreCase = true)
+            ) {
+                return value
+            }
+            val base =
+                value
+                    .substringBefore("=w")
+                    .substringBefore("=s")
+            return when {
+                base.contains("googleusercontent.com", ignoreCase = true) -> "$base=w640-h640-p-l90-rj"
+                base.contains("ggpht.com", ignoreCase = true) -> "$base=s640"
+                else -> value
+            }
+        }
 
         fun resolveVariables(text: String, song: Song): String {
             return text

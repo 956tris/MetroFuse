@@ -52,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -192,6 +193,18 @@ fun OnlinePlaylistScreen(
         }
     } else if (inSelectMode) {
         BackHandler(onBack = onExitSelectionMode)
+    }
+
+    LaunchedEffect(lazyListState, isSearching) {
+        snapshotFlow {
+            val layoutInfo = lazyListState.layoutInfo
+            val lastVisibleIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            layoutInfo.totalItemsCount > 0 && lastVisibleIndex >= layoutInfo.totalItemsCount - 6
+        }.collect { isNearEnd ->
+            if (isNearEnd && !isSearching) {
+                viewModel.loadMoreSongs()
+            }
+        }
     }
 
     Box(Modifier.fillMaxSize()) {

@@ -56,6 +56,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
@@ -136,6 +137,7 @@ fun OnlineSearchResult(
     val coroutineScope = rememberCoroutineScope()
     val lazyListState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
+    val uriHandler = LocalUriHandler.current
     val focusRequester = remember { FocusRequester() }
     val scrollToTopCount by savedStateHandle
         ?.getStateFlow("scrollToTopCount", 0)
@@ -165,7 +167,8 @@ fun OnlineSearchResult(
     val isSoundCloudSearch = viewModel.isSoundCloudSearch
     val isTidalSearch = viewModel.isTidalSearch
     val isDeezerSearch = viewModel.isDeezerSearch
-    val isExternalSearch = isSoundCloudSearch || isTidalSearch || isDeezerSearch
+    val isSpotifySearch = viewModel.isSpotifySearch
+    val isExternalSearch = isSpotifySearch || isSoundCloudSearch || isTidalSearch || isDeezerSearch
 
     BackHandler(enabled = isSearchFocused) {
         isSearchFocused = false
@@ -249,6 +252,7 @@ fun OnlineSearchResult(
         }
 
         if (
+            ExternalHomeItemIds.isExternal(item) ||
             SoundCloudAudioProvider.isSoundCloudUrl(item.id) ||
             TidalAudioProvider.isTidalTrackId(item.id) ||
             DeezerAudioProvider.isDeezerTrackId(item.id)
@@ -269,59 +273,81 @@ fun OnlineSearchResult(
         }
     }
 
+    fun openExternalItem(item: YTItem): Boolean {
+        ExternalHomeItemIds.externalMetroRoute(item)
+            ?.let { route ->
+                navController.navigate(route)
+                return true
+            }
+
+        ExternalHomeItemIds.externalUrl(item)
+            ?.let { url ->
+                if (runCatching { uriHandler.openUri(url) }.isSuccess) {
+                    return true
+                }
+            }
+
+        return false
+    }
+
     val ytItemContent: @Composable LazyItemScope.(YTItem) -> Unit = { item: YTItem ->
-        val longClick = {
+        val longClick: () -> Unit = {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-            menuState.show {
-                when (item) {
-                    is SongItem -> {
-                        YouTubeSongMenu(
-                            song = item,
-                            navController = navController,
-                            onDismiss = menuState::dismiss,
-                        )
-                    }
+            if (ExternalHomeItemIds.isExternal(item)) {
+                openExternalItem(item)
+            } else {
+                menuState.show {
+                    when (item) {
+                        is SongItem -> {
+                            YouTubeSongMenu(
+                                song = item,
+                                navController = navController,
+                                onDismiss = menuState::dismiss,
+                            )
+                        }
 
-                    is AlbumItem -> {
-                        YouTubeAlbumMenu(
-                            albumItem = item,
-                            navController = navController,
-                            onDismiss = menuState::dismiss,
-                        )
-                    }
+                        is AlbumItem -> {
+                            YouTubeAlbumMenu(
+                                albumItem = item,
+                                navController = navController,
+                                onDismiss = menuState::dismiss,
+                            )
+                        }
 
-                    is ArtistItem -> {
-                        YouTubeArtistMenu(
-                            artist = item,
-                            onDismiss = menuState::dismiss,
-                        )
-                    }
+                        is ArtistItem -> {
+                            YouTubeArtistMenu(
+                                artist = item,
+                                onDismiss = menuState::dismiss,
+                            )
+                        }
 
-                    is PlaylistItem -> {
-                        YouTubePlaylistMenu(
-                            playlist = item,
-                            coroutineScope = coroutineScope,
-                            onDismiss = menuState::dismiss,
-                        )
-                    }
+                        is PlaylistItem -> {
+                            YouTubePlaylistMenu(
+                                playlist = item,
+                                coroutineScope = coroutineScope,
+                                onDismiss = menuState::dismiss,
+                            )
+                        }
 
-                    is PodcastItem -> {
-                        YouTubePlaylistMenu(
-                            playlist = item.asPlaylistItem(),
-                            coroutineScope = coroutineScope,
-                            onDismiss = menuState::dismiss,
-                        )
-                    }
+                        is PodcastItem -> {
+                            YouTubePlaylistMenu(
+                                playlist = item.asPlaylistItem(),
+                                coroutineScope = coroutineScope,
+                                onDismiss = menuState::dismiss,
+                            )
+                        }
 
-                    is EpisodeItem -> {
-                        YouTubeSongMenu(
-                            song = item.asSongItem(),
-                            navController = navController,
-                            onDismiss = menuState::dismiss,
-                        )
+                        is EpisodeItem -> {
+                            YouTubeSongMenu(
+                                song = item.asSongItem(),
+                                navController = navController,
+                                onDismiss = menuState::dismiss,
+                            )
+                        }
                     }
                 }
             }
+            Unit
         }
         YouTubeListItem(
             item = item,
@@ -353,21 +379,21 @@ fun OnlineSearchResult(
                                 }
 
                                 is AlbumItem -> {
-                                    ExternalHomeItemIds.externalMetroRoute(item)
-                                        ?.let(navController::navigate)
-                                        ?: navController.navigate("album/${item.id}")
+                                    if (!openExternalItem(item)) {
+                                        navController.navigate("album/${item.id}")
+                                    }
                                 }
 
                                 is ArtistItem -> {
-                                    ExternalHomeItemIds.externalMetroRoute(item)
-                                        ?.let(navController::navigate)
-                                        ?: navController.navigate("artist/${item.id}")
+                                    if (!openExternalItem(item)) {
+                                        navController.navigate("artist/${item.id}")
+                                    }
                                 }
 
                                 is PlaylistItem -> {
-                                    ExternalHomeItemIds.externalMetroRoute(item)
-                                        ?.let(navController::navigate)
-                                        ?: navController.navigate("online_playlist/${item.id}")
+                                    if (!openExternalItem(item)) {
+                                        navController.navigate("online_playlist/${item.id}")
+                                    }
                                 }
 
                                 is PodcastItem -> {
@@ -414,6 +440,8 @@ fun OnlineSearchResult(
                                 R.string.search_soundcloud
                             } else if (isTidalSearch) {
                                 R.string.search_tidal
+                            } else if (isSpotifySearch) {
+                                R.string.search_spotify
                             } else if (isDeezerSearch) {
                                 R.string.search_deezer
                             } else {
@@ -502,10 +530,10 @@ fun OnlineSearchResult(
                             add(null to stringResource(R.string.filter_all))
                             add(FILTER_SONG to stringResource(R.string.filter_songs))
                             add(FILTER_ALBUM to stringResource(R.string.filter_albums))
-                            if (isTidalSearch || isDeezerSearch) {
+                            if (isSpotifySearch || isTidalSearch || isDeezerSearch) {
                                 add(FILTER_ARTIST to stringResource(R.string.filter_artists))
                             }
-                            add(FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_community_playlists))
+                            add(FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_playlists))
                         }
                     } else {
                         listOf(

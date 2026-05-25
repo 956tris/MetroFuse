@@ -60,7 +60,7 @@ class OnlinePlaylistViewModel @Inject constructor(
             .externalProviderId(playlistId)
             ?.takeIf { (provider, type, _) ->
                 type == "playlist" ||
-                    (provider == "spotify" && type == "album") ||
+                    (provider == "spotify" && type in setOf("album", "artist", "collection", "show", "mix")) ||
                     (provider == "tidal" && type in setOf("album", "mix")) ||
                     (provider == "soundcloud" && type in setOf("album", "mix")) ||
                     (provider == "deezer" && type in setOf("album", "artist"))
@@ -86,6 +86,8 @@ class OnlinePlaylistViewModel @Inject constructor(
         private set
 
     private var proactiveLoadJob: Job? = null
+    private var externalContinuation: ExternalContinuation? = null
+    private val externalEmptyPageSkipLimit = 3
 
     init {
         fetchInitialPlaylistData()
@@ -96,6 +98,7 @@ class OnlinePlaylistViewModel @Inject constructor(
             _isLoading.value = true
             _error.value = null
             continuation = null
+            externalContinuation = null
             proactiveLoadJob?.cancel() // Cancel any ongoing proactive load
 
             if (isExternalPlaylist) {
@@ -123,11 +126,35 @@ class OnlinePlaylistViewModel @Inject constructor(
             "spotify" -> {
                 val cookie = context.dataStore.get(SpotifyCookieKey, "")
                 runCatching {
+                    if (cookie.isBlank()) error("Spotify login cookie is missing")
                     when (type) {
                         "album" -> SpotifyCanvasClient.resolveAlbum(externalId, cookie)
-                        else -> SpotifyCanvasClient.resolvePlaylist(externalId, cookie)
-                    } ?: error("Spotify login cookie is missing or expired")
-                }.onSuccess(::setExternalPlaylist)
+                        "artist" -> SpotifyCanvasClient.resolveArtist(externalId, cookie)
+                        "collection" -> SpotifyCanvasClient.resolvePlaylist(externalId, cookie)
+                        "show" -> SpotifyCanvasClient.resolveShowPage(externalId, cookie)
+                        "playlist", "mix" ->
+                            SpotifyCanvasClient.resolvePlaylist(
+                                playlistId = externalId,
+                                cookie = cookie,
+                            )
+                        else -> null
+                    } ?: error("Failed to load Spotify $type")
+                }.onSuccess { page ->
+                    setExternalPlaylist(
+                        page = page,
+                        continuation =
+                            page.continuation
+                                ?.toIntOrNull()
+                                ?.let { offset ->
+                                    ExternalContinuation(
+                                        provider = provider,
+                                        type = type,
+                                        id = externalId,
+                                        offset = offset,
+                                    )
+                                },
+                    )
+                }
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load Spotify $type"
                         _isLoading.value = false
@@ -139,7 +166,7 @@ class OnlinePlaylistViewModel @Inject constructor(
                 val cookie = context.dataStore.get(TidalCookieKey, "")
                 TidalHomeFeedProvider
                     .loadCollection(externalId, type, cookie)
-                    .onSuccess(::setExternalPlaylist)
+                    .onSuccess { page -> setExternalPlaylist(page) }
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load TIDAL $type"
                         _isLoading.value = false
@@ -151,7 +178,7 @@ class OnlinePlaylistViewModel @Inject constructor(
                 val token = context.dataStore.get(SoundCloudAuthTokenKey, "")
                 SoundCloudHomeFeedProvider
                     .loadCollection(externalId, type, token)
-                    .onSuccess(::setExternalPlaylist)
+                    .onSuccess { page -> setExternalPlaylist(page) }
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load SoundCloud $type"
                         _isLoading.value = false
@@ -163,7 +190,7 @@ class OnlinePlaylistViewModel @Inject constructor(
                 val cookie = context.dataStore.get(DeezerCookieKey, "")
                 DeezerHomeFeedProvider
                     .loadCollection(externalId, type, cookie)
-                    .onSuccess(::setExternalPlaylist)
+                    .onSuccess { page -> setExternalPlaylist(page) }
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load Deezer $type"
                         _isLoading.value = false
@@ -178,10 +205,14 @@ class OnlinePlaylistViewModel @Inject constructor(
         }
     }
 
-    private fun setExternalPlaylist(page: ExternalPlaylistPage) {
+    private fun setExternalPlaylist(
+        page: ExternalPlaylistPage,
+        continuation: ExternalContinuation? = null,
+    ) {
         playlist.value = page.playlist
         playlistSongs.value = applySongFilters(page.songs)
-        continuation = null
+        this.continuation = null
+        externalContinuation = continuation
         _isLoading.value = false
     }
 
@@ -333,6 +364,11 @@ class OnlinePlaylistViewModel @Inject constructor(
 
     fun loadMoreSongs() {
         if (_isLoadingMore.value) return // Already loading more (manually)
+
+        externalContinuation?.let { continuation ->
+            loadMoreExternalSongs(continuation)
+            return
+        }
         
         val tokenForManualLoad = continuation ?: return // No more songs to load
 
@@ -358,6 +394,91 @@ class OnlinePlaylistViewModel @Inject constructor(
         }
     }
 
+    private fun loadMoreExternalSongs(token: ExternalContinuation) {
+        proactiveLoadJob?.cancel()
+        _isLoadingMore.value = true
+
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                val seenSongIds = playlistSongs.value.mapTo(mutableSetOf()) { it.id }
+                var cursor: ExternalContinuation? = token
+                var selectedResult: Triple<ExternalPlaylistPage, List<SongItem>, ExternalContinuation?>? = null
+                var attempts = 0
+
+                while (attempts < externalEmptyPageSkipLimit) {
+                    val currentToken = cursor ?: break
+                    val page =
+                        when (currentToken.provider) {
+                            "spotify" -> {
+                                val cookie = context.dataStore.get(SpotifyCookieKey, "")
+                                when (currentToken.type) {
+                                    "album" ->
+                                        SpotifyCanvasClient.resolveAlbumPage(
+                                            albumId = currentToken.id,
+                                            cookie = cookie,
+                                            offset = currentToken.offset,
+                                        )
+                                    "playlist", "mix", "collection" ->
+                                        SpotifyCanvasClient.resolvePlaylistPage(
+                                            playlistId = currentToken.id,
+                                            cookie = cookie,
+                                            offset = currentToken.offset,
+                                        )
+                                    "show" ->
+                                        SpotifyCanvasClient.resolveShowPage(
+                                            showId = currentToken.id,
+                                            cookie = cookie,
+                                            offset = currentToken.offset,
+                                        )
+                                    else -> null
+                                }
+                            }
+                            else -> null
+                        }
+                    attempts += 1
+                    if (page == null) {
+                        cursor = null
+                        selectedResult = null
+                        continue
+                    }
+
+                    val nextContinuation =
+                        page.continuation
+                            ?.toIntOrNull()
+                            ?.takeIf { offset -> offset > currentToken.offset }
+                            ?.let { offset -> currentToken.copy(offset = offset) }
+                    val freshSongs = page.songs.filter { song -> seenSongIds.add(song.id) }
+                    selectedResult = Triple(page, freshSongs, nextContinuation)
+                    cursor =
+                        if (freshSongs.isEmpty() && nextContinuation != null) {
+                            nextContinuation
+                        } else {
+                            null
+                        }
+                }
+
+                selectedResult
+            }.onSuccess { result ->
+                if (result != null) {
+                    val (_, freshSongs, nextContinuation) = result
+                    val currentSongs = playlistSongs.value.toMutableList()
+                    currentSongs.addAll(freshSongs)
+                    if (freshSongs.isNotEmpty()) {
+                        playlistSongs.value = applySongFilters(currentSongs)
+                    }
+                    externalContinuation = nextContinuation
+                } else {
+                    externalContinuation = null
+                }
+            }.onFailure { throwable ->
+                reportException(throwable)
+                externalContinuation = null
+            }.also {
+                _isLoadingMore.value = false
+            }
+        }
+    }
+
     fun retry() {
         proactiveLoadJob?.cancel()
         fetchInitialPlaylistData() // This will also restart proactive loading if applicable
@@ -375,3 +496,10 @@ class OnlinePlaylistViewModel @Inject constructor(
         proactiveLoadJob?.cancel()
     }
 }
+
+private data class ExternalContinuation(
+    val provider: String,
+    val type: String,
+    val id: String,
+    val offset: Int,
+)

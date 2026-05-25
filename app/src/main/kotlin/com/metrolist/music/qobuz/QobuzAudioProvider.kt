@@ -11,8 +11,13 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.Normalizer
+import java.util.Collections
 import java.util.Locale
+import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorCompletionService
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -94,6 +99,9 @@ object QobuzAudioProvider {
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(25, TimeUnit.SECONDS)
         .build()
+    private val raceExecutor = Executors.newFixedThreadPool(4) { runnable ->
+        Thread(runnable, "QobuzAudioRace").apply { isDaemon = true }
+    }
 
     private val trackCache = ConcurrentHashMap<String, MatchedTrack>()
     private val streamCache = ConcurrentHashMap<String, Resolved>()
@@ -132,30 +140,13 @@ object QobuzAudioProvider {
 
         var lastError: String? = null
         for (quality in buildQualityFallbackOrder(query.qualityCode)) {
-            for (backend in streamBackendOrder(query.backend)) {
-                val attempt = when (backend) {
-                    ResolverBackend.JUMO -> requestJumoStream(
-                        track = track,
-                        qualityCode = quality,
-                        region = normalizeResolverRegion(query.countryCode, ResolverBackend.JUMO),
-                        durationMs = query.durationMs,
-                    )
-                    ResolverBackend.KENNY -> requestKennyStream(track, quality, query.durationMs)
-                    ResolverBackend.SQUID -> requestSquidStream(track, query.countryCode, quality, query.durationMs)
-                    ResolverBackend.TRYPT -> requestTrypTStream(
-                        track = track,
-                        qualityCode = quality,
-                        region = normalizeResolverRegion(query.countryCode, ResolverBackend.TRYPT),
-                        durationMs = query.durationMs,
-                    )
-                }
-                attempt.resolved?.let { resolved ->
-                    streamCache[streamCacheKey] = resolved
-                    return resolved
-                }
-                if (!attempt.error.isNullOrBlank()) {
-                    lastError = attempt.error
-                }
+            val attempt = requestRacedStream(track, quality, query)
+            attempt.resolved?.let { resolved ->
+                streamCache[streamCacheKey] = resolved
+                return resolved
+            }
+            if (!attempt.error.isNullOrBlank()) {
+                lastError = attempt.error
             }
         }
 
@@ -174,13 +165,11 @@ object QobuzAudioProvider {
     ): List<CandidateMetadata> {
         val results = linkedMapOf<String, CandidateMetadata>()
         for (term in searchTerms(query)) {
-            for (backend in searchBackendOrder(query.backend)) {
-                val array = searchTracks(term, query.countryCode, backend) ?: continue
-                for (index in 0 until array.length()) {
-                    val candidate = array.optJSONObject(index)?.toCandidateMetadata() ?: continue
-                    results.putIfAbsent(candidate.trackId, candidate)
-                    if (results.size >= limit) return results.values.toList()
-                }
+            val array = raceSearchTracks(term, query) ?: continue
+            for (index in 0 until array.length()) {
+                val candidate = array.optJSONObject(index)?.toCandidateMetadata() ?: continue
+                results.putIfAbsent(candidate.trackId, candidate)
+                if (results.size >= limit) return results.values.toList()
             }
         }
         return results.values.toList()
@@ -206,12 +195,112 @@ object QobuzAudioProvider {
 
     private fun findBestTrack(query: Query): MatchedTrack? {
         for (term in searchTerms(query)) {
-            for (backend in searchBackendOrder(query.backend)) {
-                val results = searchTracks(term, query.countryCode, backend) ?: continue
-                selectBestTrack(results, query)?.let { return it }
-            }
+            raceBestTrack(term, query)?.let { return it }
         }
         return null
+    }
+
+    private fun raceSearchTracks(
+        term: String,
+        query: Query,
+    ): JSONArray? =
+        raceFirstNotNull(
+            searchBackendOrder(query.backend).map { backend ->
+                {
+                    searchTracks(term, query.countryCode, backend)
+                        ?.takeIf { it.length() > 0 }
+                }
+            },
+        )
+
+    private fun raceBestTrack(
+        term: String,
+        query: Query,
+    ): MatchedTrack? =
+        raceFirstNotNull(
+            searchBackendOrder(query.backend).map { backend ->
+                {
+                    searchTracks(term, query.countryCode, backend)
+                        ?.let { selectBestTrack(it, query) }
+                }
+            },
+        )
+
+    private fun requestRacedStream(
+        track: MatchedTrack,
+        qualityCode: Int,
+        query: Query,
+    ): StreamAttempt {
+        val errors = Collections.synchronizedList(mutableListOf<String>())
+        return raceFirstNotNull(
+            streamBackendOrder(query.backend).map { backend ->
+                {
+                    requestStream(
+                        backend = backend,
+                        track = track,
+                        qualityCode = qualityCode,
+                        query = query,
+                    ).also { attempt ->
+                        if (attempt.resolved == null && !attempt.error.isNullOrBlank()) {
+                            errors.add(attempt.error)
+                        }
+                    }.takeIf { it.resolved != null }
+                }
+            },
+        ) ?: StreamAttempt(error = errors.lastOrNull())
+    }
+
+    private fun requestStream(
+        backend: ResolverBackend,
+        track: MatchedTrack,
+        qualityCode: Int,
+        query: Query,
+    ): StreamAttempt =
+        when (backend) {
+            ResolverBackend.JUMO -> requestJumoStream(
+                track = track,
+                qualityCode = qualityCode,
+                region = normalizeResolverRegion(query.countryCode, ResolverBackend.JUMO),
+                durationMs = query.durationMs,
+            )
+            ResolverBackend.KENNY -> requestKennyStream(track, qualityCode, query.durationMs)
+            ResolverBackend.SQUID -> requestSquidStream(track, query.countryCode, qualityCode, query.durationMs)
+            ResolverBackend.TRYPT -> requestTrypTStream(
+                track = track,
+                qualityCode = qualityCode,
+                region = normalizeResolverRegion(query.countryCode, ResolverBackend.TRYPT),
+                durationMs = query.durationMs,
+            )
+        }
+
+    private fun <T : Any> raceFirstNotNull(tasks: List<() -> T?>): T? {
+        if (tasks.isEmpty()) return null
+        val completion = ExecutorCompletionService<T?>(raceExecutor)
+        val futures = tasks.map { task ->
+            completion.submit(Callable { task() })
+        }
+
+        try {
+            repeat(tasks.size) {
+                val completed = runCatching { completion.take() }.getOrNull() ?: return@repeat
+                val value = runCatching { completed.get() }.getOrNull()
+                if (value != null) {
+                    futures.cancelExcept(completed)
+                    return value
+                }
+            }
+        } finally {
+            futures.cancelExcept(null)
+        }
+        return null
+    }
+
+    private fun <T> List<Future<T>>.cancelExcept(winner: Future<T>?) {
+        forEach { future ->
+            if (future !== winner && !future.isDone) {
+                future.cancel(true)
+            }
+        }
     }
 
     private fun searchTracks(

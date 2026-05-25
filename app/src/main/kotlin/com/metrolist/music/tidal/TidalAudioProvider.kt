@@ -50,6 +50,7 @@ object TidalAudioProvider {
     private const val TEMP_FILE_MAX_AGE_MS = 6 * 60 * 60 * 1000L
     private const val RATE_LIMIT_COOLDOWN_MS = 8 * 60 * 1000L
     private const val SEARCH_LIMIT = 8
+    private const val SEARCH_CACHE_MS = 10 * 60 * 1000L
     private const val MAX_STREAM_CANDIDATES = 2
     private const val MAX_DIRECT_STREAM_CANDIDATES = 3
     private const val MIN_MATCH_SCORE = 90
@@ -111,6 +112,11 @@ object TidalAudioProvider {
 
     private data class CachedFailure(
         val message: String,
+        val expiresAtMs: Long,
+    )
+
+    private data class CachedSearch(
+        val results: JSONArray,
         val expiresAtMs: Long,
     )
 
@@ -216,6 +222,7 @@ object TidalAudioProvider {
             .build()
 
     private val trackCache = ConcurrentHashMap<String, CachedTrack>()
+    private val searchCache = ConcurrentHashMap<String, CachedSearch>()
     private val streamCache = ConcurrentHashMap<String, Resolved>()
     private val streamFailureCache = ConcurrentHashMap<String, CachedFailure>()
 
@@ -427,22 +434,8 @@ object TidalAudioProvider {
         val wantedAlbum = query.album.normalized()
         val wantedIsrc = normalizeIsrc(query.isrc)
         val wantedDurationMs = query.durationMs?.takeIf { it > 0L }
-        resolveSongLinkTidalTrackId(query)?.let { tidalId ->
-            val track = resolveTrackById(tidalId) ?: query.toDirectMatchedTrack(tidalId)
-            val score = scoreTrack(track, wantedTitle, wantedArtists, wantedAlbum, wantedIsrc, wantedDurationMs)
-            if (score >= MIN_MATCH_SCORE) {
-                if (track.losslessRank() > 0) {
-                    return listOf(track)
-                }
-                candidates += ScoredTrack(track, score)
-                Timber.tag("TidalAudio").w("Deferred lossy song.link TIDAL match $tidalId for ${query.title}: score=$score")
-            } else {
-                Timber.tag("TidalAudio").w("Ignored weak song.link TIDAL match $tidalId for ${query.title}: score=$score")
-            }
-        }
-
         normalizeIsrc(query.isrc)?.let { isrc ->
-            searchTracks(isrc)
+            searchTracks(isrc, exactIsrc = true)
                 ?.let { selectCandidateTracks(it, query, exactIsrcOnly = true) }
                 ?.losslessFirst()
                 ?.firstOrNull()
@@ -459,6 +452,19 @@ object TidalAudioProvider {
                 ?.takeIf { it.score >= STRONG_MATCH_SCORE && it.track.losslessRank() > 0 }
                 ?.let { return listOf(it.track) }
         }
+        resolveSongLinkTidalTrackId(query)?.let { tidalId ->
+            val track = resolveTrackById(tidalId) ?: query.toDirectMatchedTrack(tidalId)
+            val score = scoreTrack(track, wantedTitle, wantedArtists, wantedAlbum, wantedIsrc, wantedDurationMs)
+            if (score >= MIN_MATCH_SCORE) {
+                if (track.losslessRank() > 0) {
+                    return listOf(track)
+                }
+                candidates += ScoredTrack(track, score)
+                Timber.tag("TidalAudio").w("Deferred lossy song.link TIDAL match $tidalId for ${query.title}: score=$score")
+            } else {
+                Timber.tag("TidalAudio").w("Ignored weak song.link TIDAL match $tidalId for ${query.title}: score=$score")
+            }
+        }
         return candidates
             .groupBy { it.track.trackId }
             .mapNotNull { (_, matches) -> matches.maxByOrNull { it.score } }
@@ -466,8 +472,59 @@ object TidalAudioProvider {
             .map { it.track }
     }
 
-    private fun searchTracks(term: String): JSONArray? {
+    private fun searchTracks(
+        term: String,
+        exactIsrc: Boolean = false,
+    ): JSONArray? {
         if (term.isBlank()) return null
+        searchTracksFromDirectApi(term, exactIsrc)?.takeIf { it.length() > 0 }?.let { return it }
+        return searchTracksFromTidalApi(term)
+    }
+
+    private fun searchTracksFromDirectApi(
+        term: String,
+        exactIsrc: Boolean,
+    ): JSONArray? {
+        val cacheKey = "direct:${if (exactIsrc) "isrc" else "query"}:${term.lowercase(Locale.US)}"
+        val now = System.currentTimeMillis()
+        searchCache[cacheKey]?.takeIf { it.expiresAtMs > now }?.let { return it.results }
+        val parameter = if (exactIsrc) "i" else "s"
+        for (endpoint in DOWNLOAD_API_ENDPOINTS) {
+            val url =
+                endpoint.baseUrl
+                    .toHttpUrl()
+                    .newBuilder()
+                    .addPathSegment("search")
+                    .addQueryParameter(parameter, term)
+                    .addQueryParameter("limit", SEARCH_LIMIT.toString())
+                    .addQueryParameter("offset", "0")
+                    .build()
+            val request =
+                Request
+                    .Builder()
+                    .url(url)
+                    .get()
+                    .header("Accept", "application/json")
+                    .header("User-Agent", DOWNLOAD_USER_AGENT)
+                    .build()
+
+            runCatching {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    val body = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
+                    val root = JSONObject(body)
+                    root.optJSONObject("data")?.optJSONArray("items")
+                        ?: root.optJSONArray("items")
+                }
+            }.getOrNull()?.let { results ->
+                searchCache[cacheKey] = CachedSearch(results, now + SEARCH_CACHE_MS)
+                return results
+            }
+        }
+        return null
+    }
+
+    private fun searchTracksFromTidalApi(term: String): JSONArray? {
         val url =
             "$API_BASE_URL/search/tracks"
                 .toHttpUrl()
@@ -923,6 +980,12 @@ object TidalAudioProvider {
             }
             when (audioQuality) {
                 TidalAudioQuality.AAC_320 -> add("HIGH")
+                TidalAudioQuality.FLAC -> {
+                    if (track.supportsHiResLossless() || track.supportsLossless()) {
+                        add("LOSSLESS")
+                    }
+                    add("HIGH")
+                }
                 TidalAudioQuality.HI_RES_LOSSLESS -> {
                     if (track.supportsHiResLossless()) {
                         add("HI_RES_LOSSLESS")

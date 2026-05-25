@@ -63,6 +63,7 @@ object DeezerAudioProvider {
         val durationMs: Long?,
         val resolverUrl: String,
         val quality: DeezerAudioQuality,
+        val fastMode: Boolean = false,
     )
 
     data class Resolved(
@@ -126,11 +127,13 @@ object DeezerAudioProvider {
                 ?: throw DeezerResolutionException("Deezer match not found for ${query.title}")
         }
 
-        val errors = mutableListOf<String>()
         val now = System.currentTimeMillis()
-        for (quality in qualityFallbackOrder(query.quality)) {
-            val streamCacheKey = listOf(query.mediaId, track.trackId, quality.name, resolverUrl.toString().hashCode())
-                .joinToString("::")
+        val errors = mutableListOf<String>()
+        if (query.fastMode) {
+            val qualities = qualityFallbackOrder(query.quality)
+            val streamCacheKey =
+                listOf(query.mediaId, track.trackId, query.quality.name, "fast", resolverUrl.toString().hashCode())
+                    .joinToString("::")
             streamCache[streamCacheKey]
                 ?.takeIf { it.expiresAtMs > now + 20_000L }
                 ?.let { return it }
@@ -139,14 +142,39 @@ object DeezerAudioProvider {
                 resolverUrl = resolverUrl,
                 mediaId = query.mediaId,
                 trackId = track.trackId,
-                quality = quality,
+                preferredQuality = query.quality,
+                qualities = qualities,
                 durationMs = query.durationMs ?: track.durationMs,
+                fastMode = true,
             )
             attempt.resolved?.let { resolved ->
                 streamCache[streamCacheKey] = resolved
                 return resolved
             }
             attempt.error?.takeIf { it.isNotBlank() }?.let(errors::add)
+        } else {
+            for (quality in qualityFallbackOrder(query.quality)) {
+                val streamCacheKey = listOf(query.mediaId, track.trackId, quality.name, resolverUrl.toString().hashCode())
+                    .joinToString("::")
+                streamCache[streamCacheKey]
+                    ?.takeIf { it.expiresAtMs > now + 20_000L }
+                    ?.let { return it }
+
+                val attempt = requestResolverStream(
+                    resolverUrl = resolverUrl,
+                    mediaId = query.mediaId,
+                    trackId = track.trackId,
+                    preferredQuality = quality,
+                    qualities = listOf(quality),
+                    durationMs = query.durationMs ?: track.durationMs,
+                    fastMode = false,
+                )
+                attempt.resolved?.let { resolved ->
+                    streamCache[streamCacheKey] = resolved
+                    return resolved
+                }
+                attempt.error?.takeIf { it.isNotBlank() }?.let(errors::add)
+            }
         }
 
         throw DeezerResolutionException(
@@ -203,11 +231,13 @@ object DeezerAudioProvider {
             Timber.tag("DeezerAudio").i("Resolved Deezer track ${track.trackId} through ISRC for ${query.title}")
             return track
         }
-        resolveSongLinkDeezerTrackId(query)?.let { trackId ->
-            Timber.tag("DeezerAudio").i("Resolved Deezer track $trackId through song.link for ${query.title}")
-            return query.toDirectMatchedTrack(trackId)
+        if (!query.fastMode) {
+            resolveSongLinkDeezerTrackId(query)?.let { trackId ->
+                Timber.tag("DeezerAudio").i("Resolved Deezer track $trackId through song.link for ${query.title}")
+                return query.toDirectMatchedTrack(trackId)
+            }
         }
-        for (term in searchTerms(query)) {
+        for (term in searchTerms(query).let { terms -> if (query.fastMode) terms.take(1) else terms }) {
             val results = searchTracks(term) ?: continue
             selectBestTrack(results, query)?.let { return it }
         }
@@ -363,11 +393,18 @@ object DeezerAudioProvider {
         resolverUrl: HttpUrl,
         mediaId: String,
         trackId: String,
-        quality: DeezerAudioQuality,
+        preferredQuality: DeezerAudioQuality,
+        qualities: List<DeezerAudioQuality>,
         durationMs: Long?,
+        fastMode: Boolean,
     ): StreamAttempt {
         val bodyJson = JSONObject()
-            .put("formats", JSONArray().put(quality.formatId))
+            .put(
+                "formats",
+                JSONArray().also { formats ->
+                    qualities.distinct().forEach { formats.put(it.formatId) }
+                },
+            )
             .put("ids", JSONArray().put(trackId.toLongOrNull() ?: trackId))
         val request =
             Request
@@ -388,7 +425,7 @@ object DeezerAudioProvider {
                 val media = root.optJSONArray("data")
                     ?.optJSONObject(0)
                     ?.optJSONArray("media")
-                    ?.selectMedia(quality)
+                    ?.selectMedia(preferredQuality)
                     ?: return@use StreamAttempt(error = "Deezer resolver returned no media for $trackId")
                 val source = media.optJSONArray("sources")
                     ?.let { sources ->
@@ -403,8 +440,8 @@ object DeezerAudioProvider {
                 }
 
                 val resolvedQuality = deezerQualityFromFormatId(media.stringOrNull("format"))
-                    ?: quality
-                val contentLength = media.longOrNull("filesize") ?: fetchContentLength(streamUrl)
+                    ?: preferredQuality
+                val contentLength = media.longOrNull("filesize") ?: if (fastMode) null else fetchContentLength(streamUrl)
                 val bitrate = resolvedQuality.estimatedBitrate(contentLength, durationMs)
                 val expiresAtMs = media.longOrNull("exp")
                     ?.times(1000L)
@@ -646,6 +683,7 @@ object DeezerAudioProvider {
             album.normalized(),
             isrc?.trim()?.uppercase(Locale.US).orEmpty(),
             durationMs?.div(1000L)?.toString().orEmpty(),
+            "fast=$fastMode",
         ).joinToString("::")
 
     private fun String.toDeezerTrackIdOrNull(allowPlainNumeric: Boolean): String? {

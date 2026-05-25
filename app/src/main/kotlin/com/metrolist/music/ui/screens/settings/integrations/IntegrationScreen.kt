@@ -63,6 +63,14 @@ fun IntegrationScreen(
                     }
                 ),
                 IntegrationCardItem(
+                    icon = painterResource(R.drawable.library_music),
+                    title = { Text(stringResource(R.string.apple_music_integration)) },
+                    description = { Text(stringResource(R.string.apple_music_integration_desc)) },
+                    onClick = {
+                        navController.navigate("settings/integrations/apple_music")
+                    }
+                ),
+                IntegrationCardItem(
                     icon = painterResource(R.drawable.music_note),
                     title = { Text(stringResource(R.string.tidal_integration)) },
                     onClick = {

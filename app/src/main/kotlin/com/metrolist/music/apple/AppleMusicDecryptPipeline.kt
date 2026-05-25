@@ -24,15 +24,16 @@ object AppleMusicDecryptPipeline {
     private const val PREFETCH_KEY = "skd://itunes.apple.com/P000000000/s1/e1"
     private const val KEY_SUFFIX_ALAC = "c23"
     private const val KEY_SUFFIX_DEFAULT = "c6"
-    private const val DEFAULT_PREFETCH_WINDOW_SEGMENTS = 4
-    private const val DEFAULT_PREFETCH_CONCURRENCY = 3
-    private const val DEFAULT_STARTUP_PREFETCH_WINDOW_SEGMENTS = 3
+    private const val DEFAULT_PREFETCH_WINDOW_SEGMENTS = 3
+    private const val DEFAULT_PREFETCH_CONCURRENCY = 2
+    private const val DEFAULT_STARTUP_PREFETCH_WINDOW_SEGMENTS = 2
     private const val DEFAULT_STARTUP_READY_SEGMENTS = 0
     private const val HIGH_PREFETCH_WINDOW_SEGMENTS = 5
-    private const val HIGH_PREFETCH_CONCURRENCY = 4
-    private const val HIGH_STARTUP_PREFETCH_WINDOW_SEGMENTS = 4
+    private const val HIGH_PREFETCH_CONCURRENCY = 3
+    private const val HIGH_STARTUP_PREFETCH_WINDOW_SEGMENTS = 3
     private const val HIGH_STARTUP_READY_SEGMENTS = 0
-    private const val MAX_ROLLING_CACHE_BYTES = 24 * 1024 * 1024
+    private const val MAX_ROLLING_CACHE_BYTES = 8 * 1024 * 1024
+    private const val MAX_ENCRYPTED_SEGMENT_CACHE_BYTES = 4 * 1024 * 1024
     private const val SEGMENT_SLOW_MS = 4_000L
     private const val SEGMENT_TIMEOUT_MS = 10_000L
     private const val SEGMENT_INTEGRITY_RETRY_COUNT = 2
@@ -46,8 +47,8 @@ object AppleMusicDecryptPipeline {
     private const val VIRTUAL_HLS_INIT_RESOURCE = "init.mp4"
     private const val VIRTUAL_HLS_SEGMENT_PREFIX = "seg-"
     private const val VIRTUAL_HLS_SEGMENT_SUFFIX = ".m4s"
-    private const val VIRTUAL_HLS_SESSION_TTL_MS = 12 * 60 * 1000L
-    private const val MAX_VIRTUAL_HLS_SESSIONS = 4
+    private const val VIRTUAL_HLS_SESSION_TTL_MS = 2 * 60 * 1000L
+    private const val MAX_VIRTUAL_HLS_SESSIONS = 2
     private val segmentSampleCountCache = ConcurrentHashMap<String, Int>()
     private val segmentLengthCache = ConcurrentHashMap<String, Long>()
     private val encryptedSegmentCache = ConcurrentHashMap<String, ByteArray>()
@@ -128,6 +129,7 @@ object AppleMusicDecryptPipeline {
         val host: String,
         val secure: Boolean,
         val durationMs: Long?,
+        val highWorkerMode: Boolean,
     )
 
     fun clearMemoryCaches() {
@@ -943,7 +945,9 @@ object AppleMusicDecryptPipeline {
         }
 
         private fun masterPlaylistBytes(): ByteArray {
-            val bandwidth = estimateAverageBandwidth(playlist, null) ?: 4_000_000L
+            val bandwidth = estimateAverageBandwidth(playlist, null)
+                ?.takeIf { isPlausibleAlacBandwidth(it, null) }
+                ?: DEFAULT_ALAC_MASTER_BANDWIDTH
             return buildString {
                 appendLine("#EXTM3U")
                 appendLine("#EXT-X-VERSION:7")
@@ -984,7 +988,8 @@ object AppleMusicDecryptPipeline {
             }
             lastRequestedSegment = max(lastRequestedSegment, index)
             schedulePrefetch(index)
-            val future = ensurePrefetch(index)
+            val future = prefetched.remove(index)
+                ?: ensurePrefetch(index).also { prefetched.remove(index) }
             val segment = awaitSegment(index, future)
             firstSegmentReturned = true
             firstSampleIndexCache[index + 1] = segment.firstSampleIndex + segment.sampleCount
@@ -1611,7 +1616,6 @@ object AppleMusicDecryptPipeline {
         for (segment in segments) {
             val length = segment.range?.length
                 ?: getSegmentContentLength(client, segment)
-                ?: getEncryptedSegmentBytes(client, segment, consumeCached = false).size.toLong().takeIf { it > 0L }
                 ?: return null
             lengths += length
         }
@@ -1748,7 +1752,8 @@ object AppleMusicDecryptPipeline {
             encryptedSegmentCache[key]?.let { return it }
         }
         return downloadBytes(client, segment.url, segment.range).also { bytes ->
-            if (!consumeCached && bytes.size <= 8 * 1024 * 1024) {
+            if (!consumeCached && bytes.size <= MAX_ENCRYPTED_SEGMENT_CACHE_BYTES) {
+                encryptedSegmentCache.clear()
                 encryptedSegmentCache[key] = bytes
             }
         }
@@ -2968,13 +2973,15 @@ object AppleMusicDecryptPipeline {
         return AlacQualityInfo(
             sampleRate = sampleRate ?: other.sampleRate,
             bitDepth = bitDepth ?: other.bitDepth,
-            bandwidth = bandwidth ?: other.bandwidth
+            bandwidth = other.bandwidth ?: bandwidth
         ).takeIf { it.hasAny() }
     }
 
     private fun AlacQualityInfo.toMetadata(): AlacQualityMetadata? {
+        val filteredBandwidth = bandwidth
+            ?.takeIf { isPlausibleAlacBandwidth(it, sampleRate) }
         return AlacQualityMetadata(
-            bitrate = bandwidth
+            bitrate = filteredBandwidth
                 ?.takeIf { it > 0L }
                 ?.coerceAtMost(Int.MAX_VALUE.toLong())
                 ?.toInt()
@@ -2988,8 +2995,23 @@ object AppleMusicDecryptPipeline {
         return listOfNotNull(
             sampleRate?.let { "sampleRate=$it" },
             bitDepth?.let { "bitDepth=$it" },
-            bandwidth?.let { "bitrate=$it" },
+            bandwidth?.takeIf { isPlausibleAlacBandwidth(it, sampleRate) }?.let { "bitrate=$it" },
         ).joinToString(" ")
+    }
+
+    private fun isPlausibleAlacBandwidth(
+        bandwidth: Long,
+        sampleRate: Int?,
+    ): Boolean {
+        if (bandwidth <= 0L) return false
+        if (bandwidth == LEGACY_ALAC_PLACEHOLDER_BANDWIDTH) return false
+        val max = when {
+            sampleRate == null -> 6_500_000L
+            sampleRate <= 48_000 -> 2_400_000L
+            sampleRate <= 96_000 -> 5_500_000L
+            else -> 10_000_000L
+        }
+        return bandwidth in 128_000L..max
     }
 
     private fun readUInt32(data: ByteArray, offset: Int): Long {
@@ -3091,7 +3113,9 @@ object AppleMusicDecryptPipeline {
         fun toLabel(): String? {
             val parts = listOfNotNull(
                 sampleRate?.let { "${formatKhz(it)}kHz" },
-                bandwidth?.let { "${(it / 1000L).coerceAtLeast(1L)}kbps" },
+                bandwidth
+                    ?.takeIf { isPlausibleAlacBandwidth(it, sampleRate) }
+                    ?.let { "${(it / 1000L).coerceAtLeast(1L)}kbps" },
                 bitDepth?.let { "${it}-bit" }
             )
             return parts.takeIf { it.isNotEmpty() }?.joinToString(" ")
@@ -3106,6 +3130,9 @@ object AppleMusicDecryptPipeline {
             }
         }
     }
+
+    private const val DEFAULT_ALAC_MASTER_BANDWIDTH = 1_200_000L
+    private const val LEGACY_ALAC_PLACEHOLDER_BANDWIDTH = 4_000_000L
 
     private data class MediaPlaylist(
         val init: InitSegment,

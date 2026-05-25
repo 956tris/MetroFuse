@@ -19,7 +19,6 @@ import kotlin.math.abs
 object AppleMusicSongResolver {
     private const val TAG = "AppleALAC"
     private const val DEFAULT_STOREFRONT = "US"
-    private const val DEFAULT_HOST = "wm.wol.moe"
     private const val AMP_BASE_URL = "https://amp-api.music.apple.com"
     private const val APPLE_MUSIC_TOKEN =
         "eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IldlYlBsYXlLaWQifQ" +
@@ -45,6 +44,9 @@ object AppleMusicSongResolver {
         val durationMs: Long?,
         val explicit: Boolean?,
         val storefront: String = DEFAULT_STOREFRONT,
+        val wrapperHost: String = AppleMusicWrapperManagerProvider.DEFAULT_HOST,
+        val wrapperSecure: Boolean = true,
+        val highWorkerMode: Boolean = false,
     )
 
     data class Resolved(
@@ -66,6 +68,7 @@ object AppleMusicSongResolver {
         val album: String?,
         val isrc: String?,
         val durationMs: Long?,
+        val url: String?,
     )
 
     private data class Candidate(
@@ -76,6 +79,7 @@ object AppleMusicSongResolver {
         val isrc: String?,
         val durationMs: Long?,
         val explicit: Boolean?,
+        val url: String?,
     )
 
     fun resolve(query: Query): Resolved {
@@ -93,15 +97,15 @@ object AppleMusicSongResolver {
             )
         val wrapper = AppleMusicWrapperManagerProvider.getM3u8WithFallback(
             adamId = track.adamId,
-            preferredHost = DEFAULT_HOST,
-            preferredSecure = true,
+            preferredHost = query.wrapperHost,
+            preferredSecure = query.wrapperSecure,
             mode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
         )
         val quality = runCatching {
             AppleMusicDecryptPipeline.readAlacQualityMetadata(
                 client = client,
                 initialUrl = wrapper.url,
-                preferFast = true,
+                preferFast = false,
             )
         }.onFailure { error ->
             Timber.tag(TAG).w(error, "Failed to read ALAC quality metadata for adamId=${track.adamId}")
@@ -115,6 +119,7 @@ object AppleMusicSongResolver {
             secure = wrapper.secure,
             durationMs = query.durationMs ?: track.durationMs,
             title = track.title,
+            highWorkerMode = query.highWorkerMode,
         )
         return Resolved(
             mediaUri = mediaUri,
@@ -123,7 +128,7 @@ object AppleMusicSongResolver {
             artist = track.artist,
             album = track.album,
             durationMs = query.durationMs ?: track.durationMs,
-            bitrate = 0,
+            bitrate = quality?.bitrate ?: 0,
             sampleRate = quality?.sampleRate,
             expiresAtMs = now + STREAM_CACHE_MS,
         ).also { resolvedCache[cacheKey] = it }
@@ -312,6 +317,7 @@ object AppleMusicSongResolver {
                 "clean" -> false
                 else -> null
             },
+            url = attributes.optString("url").takeIf { it.isNotBlank() },
         )
     }
 
@@ -333,6 +339,7 @@ object AppleMusicSongResolver {
                     else -> null
                 }
             },
+            url = optString("trackViewUrl").takeIf { it.isNotBlank() },
         )
     }
 
@@ -440,6 +447,9 @@ object AppleMusicSongResolver {
             durationMs?.toString().orEmpty(),
             explicit?.toString().orEmpty(),
             storefront.uppercase(Locale.US),
+            AppleMusicWrapperManagerProvider.normalizeHost(wrapperHost),
+            wrapperSecure.toString(),
+            highWorkerMode.toString(),
         ).joinToString("::")
     }
 
@@ -452,6 +462,7 @@ object AppleMusicSongResolver {
             isrc = isrc,
             durationMs = durationMs,
             explicit = explicit,
+            url = null,
         )
 
     private fun Candidate.toCandidateMetadata(): CandidateMetadata =
@@ -462,6 +473,7 @@ object AppleMusicSongResolver {
             album = album,
             isrc = isrc,
             durationMs = durationMs,
+            url = url,
         )
 
     private fun String.toAppleAdamIdOrNull(): String? {

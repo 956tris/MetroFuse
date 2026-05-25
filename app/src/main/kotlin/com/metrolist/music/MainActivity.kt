@@ -27,6 +27,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -50,6 +51,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialogDefaults
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -91,7 +94,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -123,6 +128,8 @@ import coil3.toBitmap
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.WatchEndpoint
+import com.metrolist.music.constants.AppBackgroundStyle
+import com.metrolist.music.constants.AppBackgroundStyleKey
 import com.metrolist.music.constants.AppBarHeight
 import com.metrolist.music.constants.AppLanguageKey
 import com.metrolist.music.constants.CheckForUpdatesKey
@@ -132,6 +139,8 @@ import com.metrolist.music.constants.DisableScreenshotKey
 import com.metrolist.music.constants.DynamicThemeKey
 import com.metrolist.music.constants.EnableHighRefreshRateKey
 import com.metrolist.music.constants.ExperimentalLyricsKey
+import com.metrolist.music.constants.HomeFeedSource
+import com.metrolist.music.constants.HomeFeedSourceKey
 import com.metrolist.music.constants.LastSeenVersionKey
 import com.metrolist.music.constants.ListenTogetherInTopBarKey
 import com.metrolist.music.constants.ListenTogetherUsernameKey
@@ -174,6 +183,7 @@ import com.metrolist.music.ui.component.rememberBottomSheetState
 import com.metrolist.music.ui.component.shimmer.ShimmerTheme
 import com.metrolist.music.ui.menu.YouTubeSongMenu
 import com.metrolist.music.ui.player.BottomSheetPlayer
+import com.metrolist.music.ui.player.GalaxyStarOverlay
 import com.metrolist.music.ui.screens.Screens
 import com.metrolist.music.ui.screens.navigationBuilder
 import com.metrolist.music.ui.screens.settings.ChangelogScreen
@@ -209,6 +219,16 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import java.util.Locale
 import javax.inject.Inject
+
+private fun homeFeedSourceIcon(source: HomeFeedSource): Int =
+    when (source) {
+        HomeFeedSource.YOUTUBE_MUSIC -> R.drawable.provider_youtube_music
+        HomeFeedSource.TIDAL -> R.drawable.provider_tidal
+        HomeFeedSource.SPOTIFY -> R.drawable.provider_spotify
+        HomeFeedSource.SOUNDCLOUD -> R.drawable.provider_soundcloud
+        HomeFeedSource.DEEZER -> R.drawable.provider_deezer
+        HomeFeedSource.OFFLINE -> R.drawable.offline
+    }
 
 @Suppress("DEPRECATION", "ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
 @AndroidEntryPoint
@@ -916,6 +936,22 @@ class MainActivity : ComponentActivity() {
                             else -> null
                         }
                     }
+                val isHomeRoute = navBackStackEntry?.destination?.route == Screens.Home.route
+                var homeFeedSource by rememberEnumPreference(HomeFeedSourceKey, HomeFeedSource.YOUTUBE_MUSIC)
+                val homeFeedSources =
+                    listOf(
+                        HomeFeedSource.YOUTUBE_MUSIC to stringResource(R.string.home_source_youtube_music),
+                        HomeFeedSource.TIDAL to stringResource(R.string.home_source_tidal),
+                        HomeFeedSource.SPOTIFY to stringResource(R.string.home_source_spotify),
+                        HomeFeedSource.SOUNDCLOUD to stringResource(R.string.home_source_soundcloud),
+                        HomeFeedSource.DEEZER to stringResource(R.string.home_source_deezer),
+                        HomeFeedSource.OFFLINE to stringResource(R.string.home_source_offline),
+                    )
+                val homeFeedSourceTitle =
+                    homeFeedSources.firstOrNull { it.first == homeFeedSource }?.second
+                        ?: stringResource(R.string.home)
+                val homeFeedSourceIcon = homeFeedSourceIcon(homeFeedSource)
+                var homeFeedSourceMenuExpanded by rememberSaveable { mutableStateOf(false) }
 
                 var showAccountDialog by remember { mutableStateOf(false) }
 
@@ -927,6 +963,12 @@ class MainActivity : ComponentActivity() {
                     }
 
                 val baseBg = if (pureBlack) Color.Black else MaterialTheme.colorScheme.surfaceContainer
+                val appBackgroundStyle by rememberEnumPreference(
+                    AppBackgroundStyleKey,
+                    defaultValue = AppBackgroundStyle.DEFAULT,
+                )
+                val useGalaxyAppBackground = appBackgroundStyle == AppBackgroundStyle.GALAXY
+                val chromeBg = if (useGalaxyAppBackground) Color.Transparent else baseBg
 
                 CompositionLocalProvider(
                     LocalDatabase provides database,
@@ -943,7 +985,29 @@ class MainActivity : ComponentActivity() {
                         ChangelogScreen(onDismiss = { showChangelog.value = false })
                     }
 
+                    if (useGalaxyAppBackground) {
+                        GalaxyStarOverlay(
+                            modifier = Modifier.fillMaxSize(),
+                            intensity = 0.72f,
+                            skyColors =
+                                listOf(
+                                    Color(0xFF090414),
+                                    Color(0xFF160921),
+                                    Color(0xFF010205),
+                                    MaterialTheme.colorScheme.primary,
+                                ),
+                            animated = false,
+                        )
+                        Box(
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.36f)),
+                        )
+                    }
+
                     Scaffold(
+                        containerColor = chromeBg,
                         snackbarHost = { SnackbarHost(snackbarHostState) },
                         topBar = {
                             AnimatedVisibility(
@@ -954,10 +1018,86 @@ class MainActivity : ComponentActivity() {
                                 Row {
                                     TopAppBar(
                                         title = {
-                                            Text(
-                                                text = currentTitleRes?.let { stringResource(it) } ?: "",
-                                                style = MaterialTheme.typography.titleLarge,
-                                            )
+                                            if (isHomeRoute) {
+                                                Box {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        modifier =
+                                                            Modifier
+                                                                .clip(RoundedCornerShape(8.dp))
+                                                                .clickable { homeFeedSourceMenuExpanded = true }
+                                                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                                                    ) {
+                                                        Icon(
+                                                            painter = painterResource(homeFeedSourceIcon),
+                                                            contentDescription = null,
+                                                            tint = MaterialTheme.colorScheme.onSurface,
+                                                            modifier =
+                                                                Modifier
+                                                                    .padding(end = 8.dp)
+                                                                    .size(22.dp),
+                                                        )
+                                                        Text(
+                                                            text = homeFeedSourceTitle,
+                                                            style =
+                                                                MaterialTheme.typography.titleLarge.copy(
+                                                                    fontSize = 20.sp,
+                                                                    lineHeight = 24.sp,
+                                                                ),
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                        )
+                                                        Icon(
+                                                            painter =
+                                                                painterResource(
+                                                                    if (homeFeedSourceMenuExpanded) {
+                                                                        R.drawable.expand_less
+                                                                    } else {
+                                                                        R.drawable.expand_more
+                                                                    },
+                                                                ),
+                                                            contentDescription = null,
+                                                            modifier = Modifier.size(24.dp),
+                                                        )
+                                                    }
+                                                    DropdownMenu(
+                                                        expanded = homeFeedSourceMenuExpanded,
+                                                        onDismissRequest = { homeFeedSourceMenuExpanded = false },
+                                                    ) {
+                                                        homeFeedSources.forEach { (source, title) ->
+                                                            DropdownMenuItem(
+                                                                text = { Text(title) },
+                                                                leadingIcon = {
+                                                                    Icon(
+                                                                        painter = painterResource(homeFeedSourceIcon(source)),
+                                                                        contentDescription = null,
+                                                                    )
+                                                                },
+                                                                trailingIcon =
+                                                                    if (source == homeFeedSource) {
+                                                                        {
+                                                                            Icon(
+                                                                                painter = painterResource(R.drawable.check),
+                                                                                contentDescription = null,
+                                                                            )
+                                                                        }
+                                                                    } else {
+                                                                        null
+                                                                    },
+                                                                onClick = {
+                                                                    homeFeedSourceMenuExpanded = false
+                                                                    homeFeedSource = source
+                                                                },
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            } else {
+                                                Text(
+                                                    text = currentTitleRes?.let { stringResource(it) } ?: "",
+                                                    style = MaterialTheme.typography.titleLarge,
+                                                )
+                                            }
                                         },
                                         actions = {
                                             if (showHistoryButton) {
@@ -1010,8 +1150,13 @@ class MainActivity : ComponentActivity() {
                                         scrollBehavior = topAppBarScrollBehavior,
                                         colors =
                                             TopAppBarDefaults.topAppBarColors(
-                                                containerColor = if (pureBlack) Color.Black else MaterialTheme.colorScheme.surfaceContainer,
-                                                scrolledContainerColor = if (pureBlack) Color.Black else MaterialTheme.colorScheme.surfaceContainer,
+                                                containerColor = chromeBg,
+                                                scrolledContainerColor =
+                                                    if (useGalaxyAppBackground) {
+                                                        baseBg.copy(alpha = 0.86f)
+                                                    } else {
+                                                        baseBg
+                                                    },
                                                 titleContentColor = MaterialTheme.colorScheme.onSurface,
                                                 actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 navigationIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1150,7 +1295,7 @@ class MainActivity : ComponentActivity() {
                                                         } else {
                                                             1f
                                                         }
-                                                }.background(baseBg),
+                                                }.background(chromeBg),
                                     )
                                 }
                             } else {
@@ -1173,7 +1318,7 @@ class MainActivity : ComponentActivity() {
                                                 val progress = playerBottomSheetState.progress
                                                 alpha =
                                                     if (progress > 0f || (useNewMiniPlayerDesign && !shouldShowNavigationBar)) 0f else 1f
-                                            }.background(baseBg),
+                                            }.background(chromeBg),
                                 )
                             }
                         },

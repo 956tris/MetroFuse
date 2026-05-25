@@ -8,7 +8,6 @@ package com.metrolist.music.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
@@ -173,6 +172,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.URLEncoder
+import java.util.Calendar
 import kotlin.math.min
 import kotlin.random.Random
 
@@ -503,38 +503,20 @@ private fun SpotifyHomeHeader(
     accountName: String?,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     Row(
         modifier =
             modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Image(
-            painter = painterResource(R.drawable.app_logo),
-            contentDescription = null,
-            modifier =
-                Modifier
-                    .size(54.dp)
-                    .clip(CircleShape),
-        )
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        Text(
-            text = "Spotify",
-            style = MaterialTheme.typography.headlineMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-
-        Spacer(modifier = Modifier.weight(1f))
-
         if (!accountImageUrl.isNullOrBlank()) {
             AsyncImage(
                 model =
                     ImageRequest
-                        .Builder(LocalContext.current)
+                        .Builder(context)
                         .data(accountImageUrl)
                         .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
@@ -544,26 +526,59 @@ private fun SpotifyHomeHeader(
                 contentScale = ContentScale.Crop,
                 modifier =
                     Modifier
-                        .size(54.dp)
+                        .size(38.dp)
                         .clip(CircleShape),
             )
         } else {
             Box(
                 modifier =
                     Modifier
-                        .size(54.dp)
+                        .size(38.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.surfaceColorAtElevation(6.dp)),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = accountName?.firstOrNull()?.uppercaseChar()?.toString() ?: "S",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+
+        Text(
+            text = spotifyGreeting(),
+            style = MaterialTheme.typography.headlineSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+
+        listOf(R.drawable.notification, R.drawable.history, R.drawable.settings).forEach { icon ->
+            IconButton(
+                onClick = {},
+                modifier =
+                    Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).copy(alpha = 0.72f)),
+            ) {
+                Icon(
+                    painter = painterResource(icon),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }
     }
 }
+
+private fun spotifyGreeting(): String =
+    when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+        in 5..11 -> "Good morning"
+        in 12..17 -> "Good afternoon"
+        else -> "Good evening"
+    }
 
 @Composable
 private fun SpotifyCompactHomeItem(
@@ -582,9 +597,9 @@ private fun SpotifyCompactHomeItem(
     Row(
         modifier =
             modifier
-                .height(68.dp)
+                .height(64.dp)
                 .padding(horizontal = 6.dp, vertical = 4.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(8.dp))
                 .background(background)
                 .padding(end = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -593,11 +608,11 @@ private fun SpotifyCompactHomeItem(
             item = item,
             isActive = isActive,
             isPlaying = isPlaying,
-            modifier = Modifier.size(60.dp),
+            modifier = Modifier.size(56.dp),
         )
 
         Column(
-            modifier = Modifier.padding(start = 12.dp),
+            modifier = Modifier.padding(start = 10.dp),
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
@@ -606,15 +621,6 @@ private fun SpotifyCompactHomeItem(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            item.spotifyHomeSubtitle()?.let { subtitle ->
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
     }
 }
@@ -928,8 +934,7 @@ fun HomeScreen(
     val accountName by viewModel.accountName.collectAsStateWithLifecycle()
     val accountImageUrl by viewModel.accountImageUrl.collectAsStateWithLifecycle()
     val innerTubeCookie by rememberPreference(InnerTubeCookieKey, "")
-    val (homeFeedSource, onHomeFeedSourceChange) =
-        rememberEnumPreference(HomeFeedSourceKey, HomeFeedSource.YOUTUBE_MUSIC)
+    val homeFeedSource by rememberEnumPreference(HomeFeedSourceKey, HomeFeedSource.YOUTUBE_MUSIC)
 
     val shouldShowWrappedCard by viewModel.showWrappedCard.collectAsStateWithLifecycle()
     val wrappedState by viewModel.wrappedManager.state.collectAsStateWithLifecycle()
@@ -1459,22 +1464,6 @@ fun HomeScreen(
                 state = lazylistState,
                 contentPadding = LocalPlayerAwareWindowInsets.current.asPaddingValues(),
             ) {
-                item(key = "home_feed_source") {
-                    ChipsRow(
-                        chips =
-                            listOf(
-                                HomeFeedSource.YOUTUBE_MUSIC to stringResource(R.string.home_source_youtube_music),
-                                HomeFeedSource.TIDAL to stringResource(R.string.home_source_tidal),
-                                HomeFeedSource.SPOTIFY to stringResource(R.string.home_source_spotify),
-                                HomeFeedSource.SOUNDCLOUD to stringResource(R.string.home_source_soundcloud),
-                                HomeFeedSource.DEEZER to stringResource(R.string.home_source_deezer),
-                                HomeFeedSource.OFFLINE to stringResource(R.string.home_source_offline),
-                            ),
-                        currentValue = homeFeedSource,
-                        onValueUpdate = onHomeFeedSourceChange,
-                    )
-                }
-
                 if (homeFeedSource == HomeFeedSource.SPOTIFY) {
                     item(key = "spotify_home_header") {
                         SpotifyHomeHeader(
@@ -2747,21 +2736,32 @@ fun HomeScreen(
                                             ?.take(section.index)
                                             ?.count(::shouldShowSpotifySection)
                                             ?: section.index
-                                    val distinctItems = sectionData.items.distinctBy { it.id }
+                                    val distinctItems =
+                                        sectionData.items
+                                            .distinctBy { it.id }
+                                            .let { items ->
+                                                if (spotifyDisplayIndex == 0) {
+                                                    items.take(6)
+                                                } else {
+                                                    items
+                                                }
+                                            }
 
-                                    item(key = "spotify_home_section_title_${section.index}") {
-                                        NavigationTitle(
-                                            title = if (spotifyDisplayIndex == 0) "Good evening" else sectionData.title,
-                                            label = if (spotifyDisplayIndex == 0) null else sectionData.label,
-                                            modifier = Modifier.animateItem(),
-                                        )
+                                    if (spotifyDisplayIndex != 0) {
+                                        item(key = "spotify_home_section_title_${section.index}") {
+                                            NavigationTitle(
+                                                title = sectionData.title,
+                                                label = sectionData.label,
+                                                modifier = Modifier.animateItem(),
+                                            )
+                                        }
                                     }
 
                                     if (spotifyDisplayIndex == 0) {
                                         item(key = "spotify_home_section_grid_${section.index}") {
                                             LazyHorizontalGrid(
                                                 state = rememberLazyGridState(),
-                                                rows = GridCells.Fixed(4),
+                                                rows = GridCells.Fixed(3),
                                                 contentPadding =
                                                     WindowInsets.systemBars
                                                         .only(WindowInsetsSides.Horizontal)
@@ -2769,7 +2769,7 @@ fun HomeScreen(
                                                 modifier =
                                                     Modifier
                                                         .fillMaxWidth()
-                                                        .height(76.dp * 4)
+                                                        .height(72.dp * 3)
                                                         .animateItem(),
                                             ) {
                                                 items(

@@ -34,7 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
-import com.metrolist.music.constants.PreferTidalAudioKey
+import com.metrolist.music.constants.TidalAnimatedCoversEnabledKey
 import com.metrolist.music.constants.TidalArtworkFallbackEnabledKey
 import com.metrolist.music.constants.TidalAudioQuality
 import com.metrolist.music.constants.TidalAudioQualityKey
@@ -57,11 +57,11 @@ import com.metrolist.music.utils.tidal.normalizeTidalCookieInput
 fun TidalSettings(
     navController: NavController,
 ) {
-    val (preferTidalAudio, onPreferTidalAudioChange) =
-        rememberPreference(PreferTidalAudioKey, false)
     var audioQuality by rememberEnumPreference(TidalAudioQualityKey, TidalAudioQuality.AAC_320)
     val (tidalArtworkFallbackEnabled, onTidalArtworkFallbackEnabledChange) =
         rememberPreference(TidalArtworkFallbackEnabledKey, false)
+    val (tidalAnimatedCoversEnabled, onTidalAnimatedCoversEnabledChange) =
+        rememberPreference(TidalAnimatedCoversEnabledKey, false)
     var tidalCookie by rememberPreference(TidalCookieKey, "")
     val cookieConfigured = isTidalCookieConfigured(tidalCookie)
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
@@ -123,30 +123,6 @@ fun TidalSettings(
             items =
                 listOf(
                     Material3SettingsItem(
-                        title = { Text(stringResource(R.string.prefer_tidal_audio)) },
-                        description = { Text(stringResource(R.string.prefer_tidal_audio_desc)) },
-                        trailingContent = {
-                            Switch(
-                                checked = preferTidalAudio,
-                                onCheckedChange = onPreferTidalAudioChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter =
-                                            painterResource(
-                                                id = if (preferTidalAudio) R.drawable.check else R.drawable.close,
-                                            ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                                    )
-                                },
-                            )
-                        },
-                        icon = painterResource(R.drawable.album),
-                        onClick = {
-                            onPreferTidalAudioChange(!preferTidalAudio)
-                        },
-                    ),
-                    Material3SettingsItem(
                         title = { Text(stringResource(R.string.tidal_audio_quality)) },
                         description = { Text(audioQuality.labelText()) },
                         icon = painterResource(R.drawable.equalizer),
@@ -176,6 +152,30 @@ fun TidalSettings(
                         icon = painterResource(R.drawable.album),
                         onClick = {
                             onTidalArtworkFallbackEnabledChange(!tidalArtworkFallbackEnabled)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.tidal_animated_covers)) },
+                        description = { Text(stringResource(R.string.tidal_animated_covers_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = tidalAnimatedCoversEnabled,
+                                onCheckedChange = onTidalAnimatedCoversEnabledChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (tidalAnimatedCoversEnabled) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.slow_motion_video),
+                        onClick = {
+                            onTidalAnimatedCoversEnabledChange(!tidalAnimatedCoversEnabled)
                         },
                     ),
                     Material3SettingsItem(
@@ -246,5 +246,6 @@ fun TidalSettings(
 private fun TidalAudioQuality.labelText(): String =
     when (this) {
         TidalAudioQuality.AAC_320 -> stringResource(R.string.tidal_quality_aac_320)
+        TidalAudioQuality.FLAC -> stringResource(R.string.tidal_quality_flac)
         TidalAudioQuality.HI_RES_LOSSLESS -> stringResource(R.string.tidal_quality_hires)
     }

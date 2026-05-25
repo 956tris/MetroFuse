@@ -25,16 +25,21 @@ import java.util.concurrent.atomic.AtomicInteger
 
 object AppleMusicWrapperManagerProvider {
     private const val TAG = "AppleALAC"
+    const val DEFAULT_HOST = "wm.wol.moe"
     private const val DECRYPT_BATCH_SIZE = 96
     private const val DECRYPT_RETRY_BATCH_SIZE = 12
-    private const val DECRYPT_MISSING_RETRY_COUNT = 4
-    private const val DECRYPT_SINGLE_SAMPLE_DUPLICATES = 5
-    private const val DECRYPT_FINAL_SINGLE_ROUNDS = 2
-    private const val DECRYPT_MISSING_RETRY_DELAY_MS = 140L
+    private const val DECRYPT_MISSING_RETRY_COUNT = 10
+    private const val DECRYPT_SINGLE_SAMPLE_DUPLICATES = 6
+    private const val DECRYPT_FINAL_SINGLE_ROUNDS = 6
+    private const val DECRYPT_MISSING_RETRY_DELAY_MS = 180L
     private const val MIN_UNDECRYPTED_COMPARE_BYTES = 32
     private const val WRAPPER_CONNECT_TIMEOUT_SECONDS = 10L
     private const val WRAPPER_READ_TIMEOUT_SECONDS = 25L
     private const val WRAPPER_CALL_TIMEOUT_SECONDS = 30L
+    private const val WRAPPER_UNARY_CONNECT_TIMEOUT_SECONDS = 3L
+    private const val WRAPPER_UNARY_READ_TIMEOUT_SECONDS = 6L
+    private const val WRAPPER_UNARY_CALL_TIMEOUT_SECONDS = 7L
+    private const val WRAPPER_STATUS_CACHE_MS = 20_000L
     private const val DECRYPT_HEDGE_DELAY_MS = 1_800L
     private const val STREAMING_FIRST_REPLY_TIMEOUT_MS = 1_200L
     private const val STREAMING_SAMPLE_TIMEOUT_MS = 8_000L
@@ -77,6 +82,11 @@ object AppleMusicWrapperManagerProvider {
         val host: String,
         val secure: Boolean,
         val url: String,
+    )
+
+    data class WrapperInstance(
+        val host: String,
+        val secure: Boolean,
     )
 
     data class DecryptSample(
@@ -125,9 +135,26 @@ object AppleMusicWrapperManagerProvider {
         .callTimeout(WRAPPER_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         .build()
     private val defaultGrpcClients = GrpcClients(client, h2cGrpcClient)
+    private val unaryGrpcClient = client.newBuilder()
+        .connectTimeout(WRAPPER_UNARY_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .readTimeout(WRAPPER_UNARY_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .callTimeout(WRAPPER_UNARY_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .build()
+    private val unaryH2cGrpcClient = h2cGrpcClient.newBuilder()
+        .connectTimeout(WRAPPER_UNARY_CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .readTimeout(WRAPPER_UNARY_READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .callTimeout(WRAPPER_UNARY_CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        .build()
+    private val unaryGrpcClients = GrpcClients(unaryGrpcClient, unaryH2cGrpcClient)
     private val decryptRaceExecutor = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "AppleWrapperDecryptRace").apply { isDaemon = true }
     }
+    private val statusCache = ConcurrentHashMap<String, CachedStatus>()
+
+    private data class CachedStatus(
+        val status: WrapperStatus,
+        val expiresAtMs: Long,
+    )
 
     private data class GrpcClients(
         val https: OkHttpClient,
@@ -157,7 +184,7 @@ object AppleMusicWrapperManagerProvider {
             .removePrefix("http://")
             .trim('/')
             .takeIf { it.isNotBlank() }
-            ?: "wm.wol.moe"
+            ?: DEFAULT_HOST
     }
 
     fun buildUrl(host: String, secure: Boolean, path: String): String {
@@ -165,6 +192,9 @@ object AppleMusicWrapperManagerProvider {
         val scheme = if (secure) "https" else "http"
         return "$scheme://$normalized$path"
     }
+
+    fun defaultInstances(): List<WrapperInstance> =
+        DEFAULT_INSTANCES.map { (host, secure) -> WrapperInstance(host, secure) }
 
     fun getM3u8(
         adamId: String,
@@ -178,7 +208,8 @@ object AppleMusicWrapperManagerProvider {
         }
         val responseBytes = callUnary(
             url = buildUrl(host, secure, mode.m3u8RpcPath),
-            payload = payload
+            payload = payload,
+            grpcClients = unaryGrpcClients,
         )
         val reply = parseM3u8LikeReply(responseBytes)
         if (reply.code != 0) {
@@ -263,9 +294,25 @@ object AppleMusicWrapperManagerProvider {
     fun status(host: String, secure: Boolean): WrapperStatus {
         val responseBytes = callUnary(
             url = buildUrl(host, secure, "/manager.v1.WrapperManagerService/Status"),
-            payload = ByteArray(0)
+            payload = ByteArray(0),
+            grpcClients = unaryGrpcClients,
         )
         return parseStatusReply(responseBytes)
+    }
+
+    private fun cachedStatus(host: String, secure: Boolean): WrapperStatus {
+        val normalized = normalizeHost(host)
+        val cacheKey = "${if (secure) "https" else "http"}://$normalized"
+        val now = System.currentTimeMillis()
+        statusCache[cacheKey]
+            ?.takeIf { it.expiresAtMs > now }
+            ?.let { return it.status }
+        return status(normalized, secure).also { status ->
+            statusCache[cacheKey] = CachedStatus(
+                status = status,
+                expiresAtMs = now + WRAPPER_STATUS_CACHE_MS,
+            )
+        }
     }
 
     fun decryptSegment(
@@ -1074,10 +1121,15 @@ object AppleMusicWrapperManagerProvider {
         )
     }
 
-    private fun callUnary(url: String, payload: ByteArray): ByteArray {
+    private fun callUnary(
+        url: String,
+        payload: ByteArray,
+        grpcClients: GrpcClients = unaryGrpcClients,
+    ): ByteArray {
         val frames = callStreaming(
             url = url,
-            framedPayload = frameGrpcMessage(payload)
+            framedPayload = frameGrpcMessage(payload),
+            grpcClients = grpcClients,
         )
         return frames.firstOrNull()
             ?: throw WrapperManagerException("wrapper-manager returned no gRPC messages")
@@ -1379,7 +1431,7 @@ object AppleMusicWrapperManagerProvider {
     )
 
     private val DEFAULT_INSTANCES = listOf(
-        "wm.wol.moe" to true,
+        DEFAULT_HOST to true,
         "wm1.wol.moe" to true,
     )
 

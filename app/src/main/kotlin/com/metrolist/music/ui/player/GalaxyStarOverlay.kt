@@ -47,6 +47,7 @@ fun GalaxyStarOverlay(
     modifier: Modifier = Modifier,
     intensity: Float = 1f,
     skyColors: List<Color> = emptyList(),
+    animated: Boolean = true,
 ) {
     val stars = remember {
         List(StarPoolSize) { index ->
@@ -90,7 +91,8 @@ fun GalaxyStarOverlay(
         label = "galaxyGlowColor",
     )
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(animated) {
+        if (!animated) return@LaunchedEffect
         var lastDrawnFrame = 0L
         while (true) {
             val nextFrame = withFrameMillis { it }

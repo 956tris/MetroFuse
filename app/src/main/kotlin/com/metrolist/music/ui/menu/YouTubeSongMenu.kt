@@ -109,12 +109,21 @@ fun YouTubeSongMenu(
     val syncUtils = LocalSyncUtils.current
     val listenTogetherManager = LocalListenTogetherManager.current
     val isPinned by database.speedDialDao.isPinned(song.id).collectAsStateWithLifecycle(initialValue = false)
+    var showShareSongLinkDialog by rememberSaveable { mutableStateOf(false) }
     val artists = remember {
         song.artists.mapNotNull {
             it.id?.let { artistId ->
                 MediaMetadata.Artist(id = artistId, name = it.name)
             }
         }
+    }
+
+    if (showShareSongLinkDialog) {
+        ShareSongLinkDialog(
+            mediaMetadata = song.toMediaMetadata(),
+            onDismiss = { showShareSongLinkDialog = false },
+            onShared = onDismiss,
+        )
     }
 
     var showChoosePlaylistDialog by rememberSaveable {  
@@ -334,13 +343,7 @@ fun YouTubeSongMenu(
                         },
                         text = stringResource(R.string.share),
                         onClick = {
-                            val intent = Intent().apply {
-                                action = Intent.ACTION_SEND
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_TEXT, song.shareLink)
-                            }
-                            context.startActivity(Intent.createChooser(intent, null))
-                            onDismiss()
+                            showShareSongLinkDialog = true
                         }
                     )
                 ),

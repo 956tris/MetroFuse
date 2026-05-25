@@ -8,6 +8,7 @@ package com.metrolist.music.providers
 import com.metrolist.innertube.models.AlbumItem
 import com.metrolist.innertube.models.ArtistItem
 import com.metrolist.innertube.models.PlaylistItem
+import com.metrolist.innertube.models.PodcastItem
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.YTItem
 import com.metrolist.innertube.models.Album as TubeAlbum
@@ -38,10 +39,12 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
+import java.net.URLDecoder
 
 data class ExternalPlaylistPage(
     val playlist: PlaylistItem,
     val songs: List<SongItem>,
+    val continuation: String? = null,
 )
 
 object TidalHomeFeedProvider {
@@ -187,6 +190,52 @@ object TidalHomeFeedProvider {
                     }
 
                 responseJson.bestTidalArtworkCandidate(
+                    title = title,
+                    artist = artist,
+                    album = album,
+                )
+            }
+        }.getOrNull()
+
+    suspend fun resolveAnimatedArtwork(
+        title: String,
+        artist: String?,
+        album: String?,
+        cookie: String = "",
+    ): String? =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                val normalizedTitle = title.normalizedArtworkMatch()
+                if (normalizedTitle.isBlank()) return@withContext null
+
+                val auth = tidalAuthInput(cookie)
+                if (!auth.hasUserAuth) return@withContext null
+
+                val query =
+                    listOfNotNull(
+                        title.takeIf { it.isNotBlank() },
+                        artist?.takeIf { it.isNotBlank() },
+                        album?.takeIf { it.isNotBlank() },
+                    ).joinToString(" ")
+
+                val responseJson =
+                    client.newCall(
+                        tidalRequest(
+                            path = "v1/search",
+                            params =
+                                mapOf(
+                                    "query" to query,
+                                    "types" to "TRACKS,ALBUMS",
+                                    "limit" to "10",
+                                ),
+                            auth = auth,
+                            authenticated = true,
+                        ),
+                    ).execute().use { response ->
+                        json.parseToJsonElement(response.requireTidalBody("TIDAL animated artwork search")).jsonObject
+                    }
+
+                responseJson.bestTidalAnimatedArtworkCandidate(
                     title = title,
                     artist = artist,
                     album = album,
@@ -379,7 +428,7 @@ object TidalHomeFeedProvider {
             if (pageSongs.isEmpty()) break
 
             songs += pageSongs
-            offset += PLAYLIST_PAGE_SIZE
+            offset += pageSongs.size
 
             val expectedTotal = total
             if (expectedTotal != null && offset >= expectedTotal) break
@@ -427,7 +476,7 @@ object TidalHomeFeedProvider {
             if (pageSongs.isEmpty()) break
 
             songs += pageSongs
-            offset += PLAYLIST_PAGE_SIZE
+            offset += pageSongs.size
 
             val expectedTotal = total
             if (expectedTotal != null && offset >= expectedTotal) break
@@ -1000,6 +1049,13 @@ object TidalHomeFeedProvider {
                 ?.tidalImageUrl(size)
             ?: obj("album")?.tidalArtworkUrl(size)
 
+    private fun JsonObject.tidalVideoCoverUrl(size: String = "1280x1280"): String? =
+        string("videoCover")?.tidalVideoUrl(size)
+            ?: string("videoCoverUrl")?.tidalVideoUrl(size)
+            ?: string("animatedCover")?.tidalVideoUrl(size)
+            ?: string("motionCover")?.tidalVideoUrl(size)
+            ?: obj("album")?.tidalVideoCoverUrl(size)
+
     private fun JsonObject.bestTidalArtworkCandidate(
         title: String,
         artist: String?,
@@ -1038,6 +1094,61 @@ object TidalHomeFeedProvider {
                 .mapNotNull { element ->
                     val tidalAlbum = element.obj?.tidalWrappedContent() ?: return@mapNotNull null
                     val artwork = tidalAlbum.tidalArtworkUrl("1280x1280") ?: return@mapNotNull null
+                    TidalArtworkCandidate(
+                        artwork = artwork,
+                        score =
+                            tidalAlbum.tidalArtworkScore(
+                                normalizedTitle = normalizedAlbum.ifBlank { normalizedTitle },
+                                normalizedArtist = normalizedArtist,
+                                normalizedAlbum = normalizedAlbum,
+                            ),
+                    )
+                }
+
+        return (trackCandidates + albumCandidates)
+            .maxByOrNull { it.score }
+            ?.takeIf { it.score >= threshold }
+            ?.artwork
+    }
+
+    private fun JsonObject.bestTidalAnimatedArtworkCandidate(
+        title: String,
+        artist: String?,
+        album: String?,
+    ): String? {
+        val normalizedTitle = title.normalizedArtworkMatch()
+        val normalizedArtist = artist?.normalizedArtworkMatch().orEmpty()
+        val normalizedAlbum = album?.normalizedArtworkMatch().orEmpty()
+        val threshold = if (normalizedArtist.isBlank()) 5 else 8
+
+        val trackCandidates =
+            obj("tracks")
+                ?.array("items")
+                .orEmpty()
+                .mapNotNull { element ->
+                    val track = element.obj?.tidalWrappedContent() ?: return@mapNotNull null
+                    val artwork =
+                        track.obj("album")?.tidalVideoCoverUrl()
+                            ?: track.tidalVideoCoverUrl()
+                            ?: return@mapNotNull null
+                    TidalArtworkCandidate(
+                        artwork = artwork,
+                        score =
+                            track.tidalArtworkScore(
+                                normalizedTitle = normalizedTitle,
+                                normalizedArtist = normalizedArtist,
+                                normalizedAlbum = normalizedAlbum,
+                            ),
+                    )
+                }
+
+        val albumCandidates =
+            obj("albums")
+                ?.array("items")
+                .orEmpty()
+                .mapNotNull { element ->
+                    val tidalAlbum = element.obj?.tidalWrappedContent() ?: return@mapNotNull null
+                    val artwork = tidalAlbum.tidalVideoCoverUrl() ?: return@mapNotNull null
                     TidalArtworkCandidate(
                         artwork = artwork,
                         score =
@@ -1117,6 +1228,15 @@ object TidalHomeFeedProvider {
             }
         }
 
+    private fun String.tidalVideoUrl(size: String = "1280x1280"): String? =
+        takeIf { it.isNotBlank() }?.let { value ->
+            if (value.startsWith("http", ignoreCase = true)) {
+                value
+            } else {
+                "https://resources.tidal.com/videos/${value.replace("-", "/")}/$size.mp4"
+            }
+        }
+
     private fun MutableList<SearchSummary>.addSummary(
         title: String,
         items: List<YTItem>,
@@ -1133,54 +1253,35 @@ object SpotifyHomeFeedParser {
         val sections =
             extractSections(root)
                 .mapNotNull(::parseSection)
-                .distinctBy { it.title }
+                .distinctBy { section -> section.title to section.items.joinToString("|") { it.id } }
 
         return HomePage(chips = null, sections = sections)
     }
 
     private fun extractSections(root: JsonObject): List<JsonElement> {
         val data = root.obj("data")
-        data
-            ?.obj("homeSections")
-            ?.array("sections")
-            ?.let { return it }
-
-        data
-            ?.obj("home")
-            ?.obj("sectionContainer")
-            ?.obj("sections")
-            ?.array("items")
-            ?.let { return it }
-
-        root
-            .obj("home")
-            ?.obj("sectionContainer")
-            ?.obj("sections")
-            ?.array("items")
-            ?.let { return it }
-
-        return root
-            .obj("sectionContainer")
-            ?.obj("sections")
-            ?.array("items")
-            .orEmpty()
+        return buildList {
+            data?.obj("homeSections")?.array("sections")?.let(::addAll)
+            data?.obj("home")?.obj("sectionContainer")?.obj("sections")?.array("items")?.let(::addAll)
+            data?.obj("home")?.spotifyArrayAt("sections")?.let(::addAll)
+            data?.obj("home")?.spotifyArrayAt("items")?.let(::addAll)
+            data?.obj("homeSection")?.obj("sectionContainer")?.obj("sections")?.array("items")?.let(::addAll)
+            root.obj("home")?.obj("sectionContainer")?.obj("sections")?.array("items")?.let(::addAll)
+            root.obj("sectionContainer")?.obj("sections")?.array("items")?.let(::addAll)
+            root.collectSpotifySections(this)
+        }.distinct()
     }
 
     private fun parseSection(element: JsonElement): HomePage.Section? {
         val section = element.obj ?: return null
         val data = section.obj("data")
-        val sectionType = data?.string("__typename")
-        if (sectionType != null && sectionType != "HomeGenericSectionData") return null
 
         val title =
-            data?.obj("title")?.spotifyLabel()
-                ?: data?.string("title")
-                ?: section.string("title")
+            data?.spotifySectionTitle()
+                ?: section.spotifySectionTitle()
                 ?: return null
         val items =
-            section.obj("sectionItems")
-                ?.array("items")
-                .orEmpty()
+            section.spotifySectionItemElements()
                 .mapNotNull(::parseItem)
                 .distinctBy { it.id }
 
@@ -1189,7 +1290,7 @@ object SpotifyHomeFeedParser {
         } else {
             HomePage.Section(
                 title = title,
-                label = data?.obj("subtitle")?.spotifyLabel() ?: data?.string("subtitle"),
+                label = data?.spotifySectionSubtitle() ?: section.spotifySectionSubtitle(),
                 thumbnail = null,
                 endpoint = null,
                 items = items,
@@ -1199,28 +1300,26 @@ object SpotifyHomeFeedParser {
 
     private fun parseItem(element: JsonElement): YTItem? {
         val item = element.obj ?: return null
-        val content = item.obj("content") ?: item.obj("item") ?: item
-        val data = content.obj("data") ?: content.obj("item")?.obj("data") ?: content
-        val uri = item.string("uri") ?: content.string("uri") ?: data.string("uri")
-        val wrapperType = content.string("__typename") ?: item.string("__typename")
-        val contentType = data.string("__typename")
-        val type =
-            when {
-                wrapperType == "PlaylistResponseWrapper" || contentType == "Playlist" -> "Playlist"
-                wrapperType == "AlbumResponseWrapper" || contentType == "Album" -> "Album"
-                wrapperType == "PreReleaseResponseWrapper" || contentType == "PreRelease" -> "PreRelease"
-                wrapperType == "ArtistResponseWrapper" || contentType == "Artist" -> "Artist"
-                wrapperType == "TrackResponseWrapper" || contentType == "Track" -> "Track"
-                else -> uri?.substringAfter("spotify:")?.substringBefore(":")?.replaceFirstChar { it.uppercase() }
-            }
+        val candidates = item.spotifyContentCandidates()
+        val fallbackUri = candidates.firstNotNullOfOrNull { it.spotifyUri() }
 
-        return when (type) {
-            "Track" -> data.toSpotifySong(uri)
-            "Album", "PreRelease" -> data.toSpotifyAlbum(uri)
-            "Playlist", "PseudoPlaylist" -> data.toSpotifyPlaylist(uri)
-            "Artist" -> data.toSpotifyArtist(uri)
-            else -> null
+        candidates.forEach { candidate ->
+            val uri = candidate.spotifyUri() ?: fallbackUri
+            val type = candidate.spotifyContentType(uri) ?: return@forEach
+            val parsed =
+                when (type) {
+                    "Track" -> candidate.toSpotifySong(uri)
+                    "Album", "PreRelease" -> candidate.toSpotifyAlbum(uri)
+                    "Playlist", "PseudoPlaylist" -> candidate.toSpotifyPlaylist(uri)
+                    "Artist" -> candidate.toSpotifyArtist(uri)
+                    "Show", "Podcast" -> candidate.toSpotifyPodcast(uri)
+                    else -> null
+                }
+            if (parsed != null) {
+                return parsed
+            }
         }
+        return null
     }
 
     private fun JsonObject.toSpotifySong(uri: String?): SongItem? {
@@ -1309,11 +1408,33 @@ object SpotifyHomeFeedParser {
         )
     }
 
+    private fun JsonObject.toSpotifyPodcast(uri: String?): PodcastItem? {
+        val id = spotifyId(uri) ?: return null
+        val title =
+            obj("profile")?.string("name")
+                ?: string("name")
+                ?: return null
+        val publisher =
+            string("publisher")
+                ?: obj("publisher")?.string("name")
+                ?: obj("ownerV2")?.obj("data")?.string("name")
+                ?: obj("owner")?.string("displayName")
+
+        return PodcastItem(
+            id = "spotify:show:$id",
+            title = title,
+            author = publisher?.let { TubeArtist(name = it, id = null) },
+            episodeCountText = obj("episodes")?.long("totalCount")?.let { "$it episodes" }
+                ?: obj("episodes")?.long("total")?.let { "$it episodes" },
+            thumbnail = spotifyArtworkUrl(),
+            playEndpoint = null,
+            shuffleEndpoint = null,
+        )
+    }
+
     private fun JsonObject.spotifyId(uri: String?): String? =
-        string("id")
-            ?: uri
-                ?.substringAfterLast(':')
-                ?.takeIf { it.isNotBlank() }
+        (string("id") ?: uri)
+            ?.spotifyExternalId()
 
     private fun JsonObject.spotifyArtists(): List<TubeArtist> =
         (
@@ -1345,7 +1466,7 @@ object SpotifyHomeFeedParser {
         ).firstNotNullOfOrNull { it?.findSpotifyImageUrl() }
 
     private fun JsonObject.findSpotifyImageUrl(depth: Int = 0): String? {
-        if (depth > 4) return null
+        if (depth > 6) return null
 
         string("url")
             ?.takeIf { it.startsWith("http", ignoreCase = true) }
@@ -1374,6 +1495,151 @@ object SpotifyHomeFeedParser {
         obj("contentRating")
             ?.toString()
             ?.contains("EXPLICIT", ignoreCase = true) == true
+
+    private fun JsonElement.collectSpotifySections(
+        sections: MutableList<JsonElement>,
+        depth: Int = 0,
+    ) {
+        if (depth > 8) return
+        when (this) {
+            is JsonObject -> {
+                if (looksLikeSpotifySection()) {
+                    sections.add(this)
+                }
+                values.forEach { it.collectSpotifySections(sections, depth + 1) }
+            }
+            is JsonArray -> forEach { it.collectSpotifySections(sections, depth + 1) }
+            else -> Unit
+        }
+    }
+
+    private fun JsonObject.looksLikeSpotifySection(): Boolean =
+        spotifySectionTitle() != null && spotifySectionItemElements().isNotEmpty()
+
+    private fun JsonObject.spotifySectionTitle(): String? =
+        obj("title")?.spotifyLabel()
+            ?: obj("header")?.obj("title")?.spotifyLabel()
+            ?: obj("metadata")?.obj("title")?.spotifyLabel()
+            ?: obj("sectionMetadata")?.obj("title")?.spotifyLabel()
+            ?: obj("sectionInfo")?.obj("title")?.spotifyLabel()
+            ?: obj("sectionInfo")?.spotifyLabel()
+            ?: string("title")
+            ?: string("sectionTitle")
+            ?: string("headerTitle")
+            ?: string("name")
+
+    private fun JsonObject.spotifySectionSubtitle(): String? =
+        obj("subtitle")?.spotifyLabel()
+            ?: obj("header")?.obj("subtitle")?.spotifyLabel()
+            ?: obj("metadata")?.obj("subtitle")?.spotifyLabel()
+            ?: obj("sectionInfo")?.obj("subtitle")?.spotifyLabel()
+            ?: string("subtitle")
+            ?: string("description")
+
+    private fun JsonObject.spotifySectionItemElements(): List<JsonElement> =
+        listOfNotNull(
+            spotifyArrayAt("sectionItems"),
+            spotifyArrayAt("data", "sectionItems"),
+            spotifyArrayAt("items"),
+            spotifyArrayAt("data", "items"),
+            spotifyArrayAt("contents"),
+            spotifyArrayAt("data", "contents"),
+            spotifyArrayAt("content"),
+            spotifyArrayAt("data", "content"),
+            spotifyArrayAt("cards"),
+            spotifyArrayAt("data", "cards"),
+            spotifyArrayAt("children"),
+            spotifyArrayAt("data", "children"),
+            spotifyArrayAt("components"),
+            spotifyArrayAt("data", "components"),
+            spotifyArrayAt("slots"),
+            spotifyArrayAt("data", "slots"),
+        ).firstOrNull { it.isNotEmpty() }.orEmpty()
+
+    private fun JsonObject.spotifyArrayAt(vararg path: String): JsonArray? {
+        var current: JsonElement = this
+        path.forEach { key ->
+            current = (current as? JsonObject)?.get(key) ?: return null
+        }
+        return when (val value = current) {
+            is JsonArray -> value
+            is JsonObject -> value.array("items") ?: value.array("sections")
+            else -> null
+        }
+    }
+
+    private fun JsonObject.spotifyContentCandidates(): List<JsonObject> =
+        buildList {
+            collectSpotifyContentCandidates(this)
+        }.distinct()
+
+    private fun JsonObject.collectSpotifyContentCandidates(
+        target: MutableList<JsonObject>,
+        depth: Int = 0,
+    ) {
+        if (depth > 5) return
+        target.add(this)
+        listOf(
+            "content",
+            "contents",
+            "item",
+            "itemV2",
+            "entity",
+            "entityV2",
+            "data",
+            "card",
+            "cards",
+            "cardRepresentation",
+            "representation",
+            "children",
+            "component",
+            "components",
+            "slot",
+        ).forEach { key ->
+            when (val child = this[key]) {
+                is JsonObject -> child.collectSpotifyContentCandidates(target, depth + 1)
+                is JsonArray -> child.forEach { it.obj?.collectSpotifyContentCandidates(target, depth + 1) }
+                else -> Unit
+            }
+        }
+    }
+
+    private fun JsonObject.spotifyUri(): String? =
+        string("uri")
+            ?: string("entityUri")
+            ?: string("targetUri")
+            ?: obj("uri")?.string("uri")
+            ?: obj("navigationAction")?.string("uri")
+            ?: obj("navigationAction")?.obj("target")?.string("uri")
+            ?: obj("target")?.string("uri")
+            ?: obj("target")?.string("entityUri")
+
+    private fun JsonObject.spotifyContentType(uri: String?): String? {
+        val typeText =
+            listOfNotNull(
+                string("__typename"),
+                string("type"),
+                string("mediaType"),
+                obj("data")?.string("__typename"),
+            ).joinToString(" ")
+
+        return when {
+            typeText.contains("Track", ignoreCase = true) -> "Track"
+            typeText.contains("Album", ignoreCase = true) -> "Album"
+            typeText.contains("PreRelease", ignoreCase = true) -> "PreRelease"
+            typeText.contains("Playlist", ignoreCase = true) -> "Playlist"
+            typeText.contains("Artist", ignoreCase = true) -> "Artist"
+            typeText.contains("Show", ignoreCase = true) -> "Show"
+            typeText.contains("Podcast", ignoreCase = true) -> "Podcast"
+            uri?.startsWith("spotify:track:", ignoreCase = true) == true -> "Track"
+            uri?.startsWith("spotify:album:", ignoreCase = true) == true -> "Album"
+            uri?.startsWith("spotify:playlist:", ignoreCase = true) == true -> "Playlist"
+            uri?.startsWith("spotify:user:", ignoreCase = true) == true && uri.contains(":playlist:", ignoreCase = true) -> "Playlist"
+            uri?.startsWith("spotify:artist:", ignoreCase = true) == true -> "Artist"
+            uri?.startsWith("spotify:show:", ignoreCase = true) == true -> "Show"
+            else -> null
+        }
+    }
 }
 
 object ExternalHomeItemIds {
@@ -1411,6 +1677,10 @@ object ExternalHomeItemIds {
             provider == "metrofuse" && type == "playlist" && id.startsWith("LP") -> "local_playlist/$id"
             type == "playlist" -> "online_playlist/$provider:playlist:$id"
             provider == "spotify" && type == "album" -> "online_playlist/$provider:album:$id"
+            provider == "spotify" && type == "artist" -> "online_playlist/$provider:artist:$id"
+            provider == "spotify" && type == "collection" -> "online_playlist/$provider:collection:$id"
+            provider == "spotify" && type == "show" -> "online_playlist/$provider:show:$id"
+            provider == "spotify" && type == "mix" -> "online_playlist/$provider:mix:$id"
             provider == "tidal" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
             provider == "soundcloud" && type in setOf("album", "mix") -> "online_playlist/$provider:$type:$id"
             provider == "deezer" && type == "album" -> "online_playlist/$provider:$type:$id"
@@ -1425,7 +1695,8 @@ object ExternalHomeItemIds {
         return when (provider) {
             "spotify" ->
                 when (type) {
-                    "track", "album", "artist", "playlist" -> "https://open.spotify.com/$type/$id"
+                    "track", "album", "artist", "playlist", "show", "episode" -> "https://open.spotify.com/$type/$id"
+                    "collection" -> "https://open.spotify.com/collection/$id"
                     else -> null
                 }
 
@@ -1469,16 +1740,10 @@ object ExternalHomeItemIds {
         return null
     }
 
-    private fun String.externalIdPart(): String? =
-        substringBefore('?')
-            .substringBefore('#')
-            .trim()
-            .trim('/')
-            .substringBefore('/')
-            .takeIf { it.isNotBlank() && it != "null" }
+    private fun String.externalIdPart(): String? = spotifyExternalId()
 
     private val ExternalProviders = setOf("spotify", "tidal", "soundcloud", "deezer", "metrofuse")
-    private val ExternalTypes = listOf("playlist", "track", "album", "artist", "mix")
+    private val ExternalTypes = listOf("playlist", "track", "album", "artist", "show", "episode", "mix", "collection")
 
     fun searchQuery(item: YTItem): String =
         when (item) {
@@ -1503,6 +1768,46 @@ object ExternalHomeItemIds {
             is ArtistItem -> item.title
             else -> item.title
         }.trim()
+}
+
+private fun String.spotifyExternalId(): String? {
+    val decoded =
+        runCatching { URLDecoder.decode(trim(), "UTF-8") }
+            .getOrDefault(trim())
+            .trim()
+    if (decoded.isBlank()) return null
+
+    val lower = decoded.lowercase()
+    val urlMarkers =
+        listOf(
+            "/playlist/",
+            "/album/",
+            "/artist/",
+            "/track/",
+            "/show/",
+            "/episode/",
+            "/mix/",
+            "/collection/",
+        )
+    val fromUrl =
+        urlMarkers.firstNotNullOfOrNull { marker ->
+            lower
+                .indexOf(marker)
+                .takeIf { it >= 0 }
+                ?.let { index -> decoded.substring(index + marker.length) }
+        }
+    val fromUri =
+        decoded
+            .takeIf { it.contains(':') && !it.startsWith("http", ignoreCase = true) }
+            ?.substringAfterLast(':')
+
+    return (fromUrl ?: fromUri ?: decoded)
+        .substringBefore('?')
+        .substringBefore('#')
+        .trim()
+        .trim('/')
+        .substringBefore('/')
+        .takeIf { it.isNotBlank() && it != "null" }
 }
 
 private val JsonElement.obj: JsonObject?

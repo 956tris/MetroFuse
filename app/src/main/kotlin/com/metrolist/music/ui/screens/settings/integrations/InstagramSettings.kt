@@ -11,14 +11,11 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -38,7 +35,6 @@ import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
-import com.metrolist.music.constants.PreferInstagramAudioKey
 import com.metrolist.music.instagram.InstagramAudioProvider
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
@@ -60,8 +56,6 @@ fun InstagramSettings(
     var instagramAppId by rememberPreference(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
     var instagramUuid by rememberPreference(InstagramUuidKey, "")
     val cookieConfigured = isInstagramCookieConfigured(instagramCookie)
-    val (preferInstagramAudio, onPreferInstagramAudioChange) =
-        rememberPreference(PreferInstagramAudioKey, defaultValue = false)
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
     var showUserAgentDialog by rememberSaveable { mutableStateOf(false) }
     var showAppIdDialog by rememberSaveable { mutableStateOf(false) }
@@ -228,28 +222,6 @@ fun InstagramSettings(
                         },
                         icon = painterResource(R.drawable.settings),
                         onClick = { showUuidDialog = true },
-                    ),
-                    Material3SettingsItem(
-                        title = { Text(stringResource(R.string.prefer_instagram_audio)) },
-                        description = { Text(stringResource(R.string.prefer_instagram_audio_desc)) },
-                        trailingContent = {
-                            Switch(
-                                checked = preferInstagramAudio,
-                                onCheckedChange = onPreferInstagramAudioChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter =
-                                            painterResource(
-                                                id = if (preferInstagramAudio) R.drawable.check else R.drawable.close,
-                                            ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                                    )
-                                },
-                            )
-                        },
-                        icon = painterResource(R.drawable.music_note),
-                        onClick = { onPreferInstagramAudioChange(!preferInstagramAudio) },
                     ),
                     Material3SettingsItem(
                         title = { Text(stringResource(R.string.instagram_clear_cookie)) },

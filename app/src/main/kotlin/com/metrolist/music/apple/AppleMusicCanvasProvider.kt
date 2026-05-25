@@ -96,7 +96,7 @@ object AppleMusicCanvasProvider {
 
         val result = coroutineScope {
             val byIsrc = if (!isrc.isNullOrBlank()) {
-                async { fetchByIsrc(isrc, storefront, preferredAspect) }
+                async { fetchByIsrc(isrc, song, artist, album, explicit, storefront, preferredAspect) }
             } else {
                 null
             }
@@ -230,6 +230,10 @@ object AppleMusicCanvasProvider {
 
     private suspend fun fetchByIsrc(
         isrc: String,
+        song: String,
+        artist: String,
+        album: String?,
+        explicit: Boolean?,
         storefront: String,
         preferredAspect: CanvasAspectPreference,
     ): AppleCanvasArtwork? = runCatching {
@@ -244,9 +248,28 @@ object AppleMusicCanvasProvider {
         val data = root["data"].arr() ?: return@runCatching null
         val included = root["included"].arr()
 
-        data.forEachIndexed { index, item ->
-            val obj = item.obj() ?: return@forEachIndexed
-            val attributes = obj["attributes"].obj() ?: return@forEachIndexed
+        val rankedMatches =
+            data.mapIndexedNotNull { index, item ->
+                val obj = item.obj() ?: return@mapIndexedNotNull null
+                val attributes = obj["attributes"].obj() ?: return@mapIndexedNotNull null
+                scoreSongCandidate(
+                    song = song,
+                    artist = artist,
+                    album = album,
+                    explicit = explicit,
+                    resultName = attributes["name"].str().orEmpty(),
+                    resultArtist = attributes["artistName"].str().orEmpty(),
+                    resultAlbum = attributes["albumName"].str()
+                        ?: attributes["collectionName"].str()
+                        ?: "",
+                    resultExplicit = attributes["contentRating"].str()
+                        ?.equals("explicit", ignoreCase = true),
+                    allowRelaxedTitle = true,
+                ) + (10 - index).coerceAtLeast(0) to obj
+            }.sortedByDescending { it.first }
+
+        rankedMatches.take(5).forEach { (_, obj) ->
+            val attributes = obj["attributes"].obj() ?: return@forEach
 
             attributes["editorialVideo"].obj()?.let { editorialVideo ->
                 val hlsUrl = extractEditorialVideoUrl(editorialVideo, preferredAspect)
@@ -285,17 +308,15 @@ object AppleMusicCanvasProvider {
                         }
                     }
 
-                if (index == 0) {
-                    fetchMotionArtwork(
-                        albumId = albumId,
-                        storefront = storefront,
-                        fallbackArtist = attributes["artistName"].str(),
-                        titleOverride = attributes["name"].str(),
-                        artistOverride = attributes["artistName"].str(),
-                        webUrl = attributes["url"].str(),
-                        preferredAspect = preferredAspect,
-                    )?.let { return@runCatching it }
-                }
+                fetchMotionArtwork(
+                    albumId = albumId,
+                    storefront = storefront,
+                    fallbackArtist = attributes["artistName"].str(),
+                    titleOverride = attributes["name"].str(),
+                    artistOverride = attributes["artistName"].str(),
+                    webUrl = attributes["url"].str(),
+                    preferredAspect = preferredAspect,
+                )?.let { return@runCatching it }
             }
         }
         null
@@ -363,67 +384,37 @@ object AppleMusicCanvasProvider {
             ?.get("data").arr()
             ?: return null
         val included = root["included"].arr()
-        val cleanSong = song.cleanForMatch()
-        val cleanAlbum = album?.cleanForMatch().orEmpty()
         val sourceAllowsMixResult = song.isMixLikeTitle() || album.orEmpty().isAppleEditorialMixAlbum()
 
-        val scoredResults = results.mapNotNull { item ->
-            val obj = item.obj() ?: return@mapNotNull null
-            val attributes = obj["attributes"].obj() ?: return@mapNotNull null
-            val resultArtist = attributes["artistName"].str().orEmpty()
-            val resultName = attributes["name"].str().orEmpty()
-            val resultAlbum = attributes["albumName"].str()
-                ?: attributes["collectionName"].str()
-                ?: ""
+        fun scoreResults(allowRelaxedTitle: Boolean): List<Pair<Int, JsonElement>> =
+            results.mapNotNull { item ->
+                val obj = item.obj() ?: return@mapNotNull null
+                val attributes = obj["attributes"].obj() ?: return@mapNotNull null
+                val resultName = attributes["name"].str().orEmpty()
+                val resultArtist = attributes["artistName"].str().orEmpty()
+                val resultAlbum = attributes["albumName"].str()
+                    ?: attributes["collectionName"].str()
+                    ?: ""
+                if (resultName.isMixLikeTitle() && !sourceAllowsMixResult) return@mapNotNull null
+                if (resultAlbum.isAppleEditorialMixAlbum() && !sourceAllowsMixResult) return@mapNotNull null
 
-            val cleanResultAlbum = resultAlbum.cleanForMatch()
-            val cleanName = resultName.cleanForMatch()
-            val artistMatches = artist.matchesArtist(resultArtist)
-            val albumMatches =
-                cleanAlbum.isBlank() ||
-                    cleanResultAlbum.isBlank() ||
-                    cleanResultAlbum == cleanAlbum ||
-                    cleanResultAlbum.contains(cleanAlbum) ||
-                    cleanAlbum.contains(cleanResultAlbum)
-            if (!artistMatches && !albumMatches) {
-                return@mapNotNull null
-            }
-            if (cleanName.isBlank() || cleanSong.isBlank()) {
-                return@mapNotNull null
-            }
-            if (cleanName != cleanSong && !cleanName.contains(cleanSong) && !cleanSong.contains(cleanName)) {
-                return@mapNotNull null
-            }
-            if (resultName.isMixLikeTitle() && !sourceAllowsMixResult) {
-                return@mapNotNull null
-            }
-            if (!albumMatches && cleanAlbum.isNotBlank()) {
-                return@mapNotNull null
-            }
-            if (resultAlbum.isAppleEditorialMixAlbum() && !sourceAllowsMixResult) {
-                return@mapNotNull null
-            }
-            val resultExplicit = attributes["contentRating"].str()
-                ?.equals("explicit", ignoreCase = true)
+                val score = scoreSongCandidate(
+                    song = song,
+                    artist = artist,
+                    album = album,
+                    explicit = explicit,
+                    resultName = resultName,
+                    resultArtist = resultArtist,
+                    resultAlbum = resultAlbum,
+                    resultExplicit = attributes["contentRating"].str()
+                        ?.equals("explicit", ignoreCase = true),
+                    allowRelaxedTitle = allowRelaxedTitle,
+                ).takeIf { it >= if (allowRelaxedTitle) 16 else 18 } ?: return@mapNotNull null
+                score to item
+            }.sortedByDescending { it.first }
 
-            var score = 0
-            if (cleanName == cleanSong) score += 30
-            else if (cleanName.contains(cleanSong) || cleanSong.contains(cleanName)) score += 15
-
-            if (cleanAlbum.isNotBlank() && cleanResultAlbum.isNotBlank()) {
-                score += when {
-                    cleanResultAlbum == cleanAlbum -> 35
-                    cleanResultAlbum.contains(cleanAlbum) || cleanAlbum.contains(cleanResultAlbum) -> 18
-                    else -> -12
-                }
-            }
-
-            if (artistMatches) score += 15
-            if (explicit == true) {
-                score += if (resultExplicit == true) 40 else -35
-            }
-            score to item
-        }.filter { it.first >= 18 }.sortedByDescending { it.first }
+        val scoredResults = scoreResults(allowRelaxedTitle = false)
+            .ifEmpty { scoreResults(allowRelaxedTitle = true) }
 
         scoredResults.take(5).forEach { (_, item) ->
             val obj = item.obj() ?: return@forEach
@@ -763,6 +754,65 @@ object AppleMusicCanvasProvider {
         return id.takeIf { it.isNotBlank() && it.all(Char::isDigit) }
     }
 
+    private fun scoreSongCandidate(
+        song: String,
+        artist: String,
+        album: String?,
+        explicit: Boolean?,
+        resultName: String,
+        resultArtist: String,
+        resultAlbum: String,
+        resultExplicit: Boolean?,
+        allowRelaxedTitle: Boolean,
+    ): Int {
+        val cleanSong = song.cleanForMatch()
+        val cleanName = resultName.cleanForMatch()
+        if (cleanSong.isBlank() || cleanName.isBlank()) return Int.MIN_VALUE
+
+        val titleOverlap = tokenOverlap(cleanSong, cleanName)
+        val titleScore =
+            when {
+                cleanName == cleanSong -> 35
+                cleanName.contains(cleanSong) || cleanSong.contains(cleanName) -> 24
+                allowRelaxedTitle && titleOverlap >= 0.66 -> 14
+                else -> return Int.MIN_VALUE
+            }
+
+        val cleanAlbum = album?.cleanForMatch().orEmpty()
+        val cleanResultAlbum = resultAlbum.cleanForMatch()
+        val albumMatches =
+            cleanAlbum.isBlank() ||
+                cleanResultAlbum.isBlank() ||
+                cleanResultAlbum == cleanAlbum ||
+                cleanResultAlbum.contains(cleanAlbum) ||
+                cleanAlbum.contains(cleanResultAlbum) ||
+                tokenOverlap(cleanAlbum, cleanResultAlbum) >= 0.72
+        val artistMatches = artist.matchesArtist(resultArtist)
+        val artistOverlap = tokenOverlap(artist.primaryArtistForMatch(), resultArtist.primaryArtistForMatch())
+        val artistLooksClose = artistMatches || artistOverlap >= 0.5
+        if (!artistLooksClose && !albumMatches) return Int.MIN_VALUE
+        if (!albumMatches && cleanAlbum.isNotBlank() && !artistLooksClose && titleOverlap < 0.9) return Int.MIN_VALUE
+
+        var score = titleScore
+        score += when {
+            artistMatches -> 22
+            artistOverlap >= 0.5 -> 12
+            else -> 0
+        }
+        if (cleanAlbum.isNotBlank() && cleanResultAlbum.isNotBlank()) {
+            score += when {
+                cleanResultAlbum == cleanAlbum -> 34
+                cleanResultAlbum.contains(cleanAlbum) || cleanAlbum.contains(cleanResultAlbum) -> 18
+                tokenOverlap(cleanAlbum, cleanResultAlbum) >= 0.72 -> 10
+                else -> -10
+            }
+        }
+        if (explicit == true) {
+            score += if (resultExplicit == true) 24 else -20
+        }
+        return score
+    }
+
     private fun buildSearchQueries(
         song: String,
         artist: String,
@@ -784,7 +834,7 @@ object AppleMusicCanvasProvider {
         Normalizer.normalize(this, Normalizer.Form.NFD)
             .replace(Regex("""\p{Mn}+"""), "")
             .lowercase(Locale.ROOT)
-            .replace(Regex("""(?i)\b(feat|ft|featuring)\.?\b.*"""), "")
+            .replace(Regex("""(?i)\b(feat|ft|featuring|with)\.?\b.*"""), "")
             .replace(Regex("""\s*\(.*?\)"""), "")
             .replace(Regex("""\s*\[.*?]"""), "")
             .replace(Regex("""\s*-\s*.*"""), "")
@@ -792,6 +842,16 @@ object AppleMusicCanvasProvider {
             .replace("&", " and ")
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()
+
+    private fun tokenOverlap(
+        left: String,
+        right: String,
+    ): Double {
+        val leftTokens = left.split(" ").filter { it.isNotBlank() }.toSet()
+        val rightTokens = right.split(" ").filter { it.isNotBlank() }.toSet()
+        if (leftTokens.isEmpty() || rightTokens.isEmpty()) return 0.0
+        return leftTokens.intersect(rightTokens).size.toDouble() / maxOf(leftTokens.size, rightTokens.size).toDouble()
+    }
 
     private fun String.matchesArtist(candidate: String): Boolean {
         val expected = cleanForMatch()

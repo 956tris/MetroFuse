@@ -273,12 +273,16 @@ object SoundCloudHomeFeedProvider {
         limit: Int,
     ): List<SongItem> {
         if (query.isBlank()) return emptyList()
-        SoundCloudAudioProvider
-            .searchMetadata(query, limit = limit)
-            .mapNotNull { it.toSongItem() }
-            .distinctBy { it.id }
-            .takeIf { it.isNotEmpty() }
-            ?.let { return it }
+        runCatching {
+            SoundCloudAudioProvider
+                .searchMetadata(query, limit = limit)
+                .mapNotNull { it.toSongItem() }
+                .distinctBy { it.id }
+        }.onSuccess { items ->
+            items.takeIf { it.isNotEmpty() }?.let { return it }
+        }.onFailure { throwable ->
+            Timber.tag("SoundCloudHome").w(throwable, "SoundCloud metadata search failed; using API search")
+        }
 
         return safeCollectionItems(
             path = "search/tracks",

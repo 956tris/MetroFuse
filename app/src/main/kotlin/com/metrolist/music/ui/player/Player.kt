@@ -140,6 +140,8 @@ import com.metrolist.music.constants.CanvasArtworkPriority
 import com.metrolist.music.constants.CanvasArtworkPriorityKey
 import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.DarkModeKey
+import com.metrolist.music.constants.ExperimentalAppleMusicCoverFadeKey
+import com.metrolist.music.constants.ExperimentalSmoothInlineLyricsKey
 import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.HideStatusBarOnFullscreenKey
 import com.metrolist.music.constants.KeepScreenOn
@@ -179,6 +181,7 @@ import com.metrolist.music.ui.component.SquigglySlider
 import com.metrolist.music.ui.component.WavySlider
 import com.metrolist.music.ui.component.rememberBottomSheetState
 import com.metrolist.music.ui.menu.PlayerMenu
+import com.metrolist.music.ui.menu.ShareSongLinkDialog
 import com.metrolist.music.ui.screens.settings.DarkMode
 import com.metrolist.music.ui.theme.PlayerColorExtractor
 import com.metrolist.music.ui.theme.PlayerSliderColors
@@ -286,9 +289,9 @@ private fun FormatEntity.playerQualityLabel(): String? {
         codecs.contains("mp4a", ignoreCase = true) -> "AAC"
         else -> null
     }
+    val isAlac = codec == "ALAC"
     val bitrate = bitrate
-        .takeIf { it > 0 }
-        ?.takeUnless { codec == "ALAC" }
+        .takeIf { it > 0 && (!isAlac || it.isPlausibleAlacBitrate(sampleRate)) }
         ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
     val sampleRate = sampleRate
         ?.takeIf { it > 0 }
@@ -297,6 +300,32 @@ private fun FormatEntity.playerQualityLabel(): String? {
     if (codec == null && bitrate == null && sampleRate == null) return null
     if (codec == "ALAC" && bitrate == null && sampleRate == null) return null
     return listOfNotNull(codec, bitrate, sampleRate).joinToString(" \u2022 ").takeIf { it.isNotBlank() }
+}
+
+private fun Int.isPlausibleAlacBitrate(sampleRate: Int?): Boolean {
+    if (this == 4_000_000) return false
+    val max = when {
+        sampleRate == null -> 6_500_000
+        sampleRate <= 48_000 -> 2_400_000
+        sampleRate <= 96_000 -> 5_500_000
+        else -> 10_000_000
+    }
+    return this in 128_000..max
+}
+
+private fun blendColors(
+    start: Color,
+    end: Color,
+    fraction: Float,
+): Color {
+    val amount = fraction.coerceIn(0f, 1f)
+    val inverse = 1f - amount
+    return Color(
+        red = start.red * inverse + end.red * amount,
+        green = start.green * inverse + end.green * amount,
+        blue = start.blue * inverse + end.blue * amount,
+        alpha = start.alpha * inverse + end.alpha * amount,
+    )
 }
 
 
@@ -343,8 +372,10 @@ fun BottomSheetPlayer(
         defaultValue = PlayerButtonsStyle.DEFAULT,
     )
     val playerInlineLyricsEnabled by rememberPreference(PlayerInlineLyricsKey, defaultValue = true)
+    val smoothInlineLyricsEnabled by rememberPreference(ExperimentalSmoothInlineLyricsKey, defaultValue = false)
     val spotifyCanvasEnabled by rememberPreference(SpotifyCanvasEnabledKey, false)
     val spotifyCookie by rememberPreference(SpotifyCookieKey, "")
+    val experimentalAppleMusicCoverFade by rememberPreference(ExperimentalAppleMusicCoverFadeKey, false)
     val canvasArtworkPriority by rememberEnumPreference(
         CanvasArtworkPriorityKey,
         CanvasArtworkPriority.APPLE_MUSIC,
@@ -430,15 +461,28 @@ fun BottomSheetPlayer(
 
     val playbackState by playerConnection.playbackState.collectAsStateWithLifecycle()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
+    var showShareSongLinkDialog by rememberSaveable { mutableStateOf(false) }
     val preferredArtworkUrl by playerConnection.service.currentPreferredArtworkUrl.collectAsStateWithLifecycle()
     val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
     val currentLyrics by playerConnection.currentLyrics.collectAsStateWithLifecycle(initialValue = null)
     val appleTallCanvasUrl by playerConnection.service.currentAppleTallCanvasUrl.collectAsStateWithLifecycle()
+    val tidalCanvasUrl by playerConnection.service.currentTidalCanvasUrl.collectAsStateWithLifecycle()
     val embeddedCanvasUrl by playerConnection.service.currentEmbeddedCanvasUrl.collectAsStateWithLifecycle()
     val currentFormat by playerConnection.currentFormat.collectAsStateWithLifecycle(initialValue = null)
+    val serviceCurrentFormat by playerConnection.service.currentPlaybackFormat.collectAsStateWithLifecycle(initialValue = null)
+
+    if (showShareSongLinkDialog) {
+        mediaMetadata?.let { metadata ->
+            ShareSongLinkDialog(
+                mediaMetadata = metadata,
+                onDismiss = { showShareSongLinkDialog = false },
+            )
+        }
+    }
+
     val displayFormat =
-        remember(currentFormat, mediaMetadata?.id) {
-            currentFormat?.takeIf { format ->
+        remember(currentFormat, serviceCurrentFormat, mediaMetadata?.id) {
+            (serviceCurrentFormat ?: currentFormat)?.takeIf { format ->
                 mediaMetadata?.id == null || format.id == mediaMetadata?.id
             }
         }
@@ -483,17 +527,17 @@ fun BottomSheetPlayer(
         }
 
         playerQualityLoadingGraceActive = true
-        delay(6_000)
+        delay(2_500)
         playerQualityLoadingGraceActive = false
     }
+    val isAwaitingPlayerQuality =
+        displayFormat == null ||
+            !displayFormat.hasUsefulPlaybackDetails() ||
+            playerQualityLabel == null
     val isPlayerQualityLoading =
         mediaMetadata != null &&
-            (playbackState == Player.STATE_BUFFERING || playerQualityLoadingGraceActive) &&
-            (
-                displayFormat == null ||
-                    !displayFormat.hasUsefulPlaybackDetails() ||
-                    playerQualityLabel == null
-            )
+            playerQualityLoadingGraceActive &&
+            isAwaitingPlayerQuality
     val displayedPlayerQualityLabel =
         if (isPlayerQualityLoading) "Loading" else playerQualityLabel
     val displayedPlayerSourceLabel =
@@ -553,6 +597,12 @@ fun BottomSheetPlayer(
                 SpotifyCanvasMedia(url = url, headers = AppleMusicCanvasHeaders)
             }
         }
+    val tidalCanvasBackground =
+        remember(tidalCanvasUrl) {
+            tidalCanvasUrl?.takeIf { it.isNotBlank() }?.let { url ->
+                SpotifyCanvasMedia(url = url, headers = emptyMap())
+            }
+        }
     val shouldResolveSpotifyCanvasBackground =
         spotifyCanvasEnabled &&
             state.progress > 0.1f &&
@@ -560,7 +610,7 @@ fun BottomSheetPlayer(
             embeddedCanvasBackground == null &&
             (
                 canvasArtworkPriority == CanvasArtworkPriority.SPOTIFY ||
-                    appleCanvasBackground == null
+                    (appleCanvasBackground == null && tidalCanvasBackground == null)
             )
     val spotifyCanvasBackground =
         rememberSpotifyCanvasMedia(
@@ -571,17 +621,37 @@ fun BottomSheetPlayer(
         )
     val canvasBackground =
         when (canvasArtworkPriority) {
-            CanvasArtworkPriority.APPLE_MUSIC -> embeddedCanvasBackground ?: appleCanvasBackground ?: spotifyCanvasBackground
-            CanvasArtworkPriority.SPOTIFY -> embeddedCanvasBackground ?: spotifyCanvasBackground ?: appleCanvasBackground
+            CanvasArtworkPriority.APPLE_MUSIC ->
+                embeddedCanvasBackground ?: appleCanvasBackground ?: tidalCanvasBackground ?: spotifyCanvasBackground
+            CanvasArtworkPriority.SPOTIFY ->
+                embeddedCanvasBackground ?: spotifyCanvasBackground ?: appleCanvasBackground ?: tidalCanvasBackground
         }
     val isAppleCanvasBackground =
         canvasBackground != null &&
             appleCanvasBackground != null &&
             canvasBackground.url == appleCanvasBackground.url
-    val playerCanvasBackground = canvasBackground?.takeUnless { isAppleCanvasBackground }
+    val isTidalCanvasBackground =
+        canvasBackground != null &&
+            tidalCanvasBackground != null &&
+            canvasBackground.url == tidalCanvasBackground.url
+    val appleLikeCanvasBackground =
+        when {
+            isAppleCanvasBackground -> appleCanvasBackground
+            isTidalCanvasBackground -> tidalCanvasBackground
+            else -> null
+        }
+    val playerCanvasBackground = canvasBackground?.takeUnless { isAppleCanvasBackground || isTidalCanvasBackground }
     val shouldShowCanvasBackground = playerCanvasBackground != null && state.progress > 0.1f
+    val shouldShowAppleMusicFadeBackground =
+        experimentalAppleMusicCoverFade &&
+            appleLikeCanvasBackground != null &&
+            state.progress > 0.1f
+    val shouldReplaceLargeArtworkWithCanvas =
+        shouldShowCanvasBackground || shouldShowAppleMusicFadeBackground
     val effectivePlayerBackground =
         if (shouldShowCanvasBackground) {
+            PlayerBackgroundStyle.BLUR
+        } else if (shouldShowAppleMusicFadeBackground && playerBackground == PlayerBackgroundStyle.DEFAULT) {
             PlayerBackgroundStyle.BLUR
         } else {
             playerBackground
@@ -693,14 +763,79 @@ fun BottomSheetPlayer(
     var galaxyColors by remember {
         mutableStateOf<List<Color>>(emptyList())
     }
+    var appleFadeColor by remember {
+        mutableStateOf<Color?>(null)
+    }
     val gradientColorsCache = remember { mutableMapOf<String, List<Color>>() }
     val galaxyColorsCache = remember { mutableMapOf<String, List<Color>>() }
+    val appleFadeColorCache = remember { mutableMapOf<String, Color>() }
 
     if (!canSkipNext && automix.isNotEmpty()) {
         playerConnection.service.addToQueueAutomix(automix[0], 0)
     }
 
     val fallbackColor = MaterialTheme.colorScheme.surface.toArgb()
+    val appleFadeFallbackColor = MaterialTheme.colorScheme.surfaceVariant
+
+    LaunchedEffect(mediaMetadata?.id, displayArtworkUrl, shouldShowAppleMusicFadeBackground, useDarkTheme) {
+        if (!shouldShowAppleMusicFadeBackground || displayArtworkUrl.isNullOrBlank()) {
+            appleFadeColor = null
+            return@LaunchedEffect
+        }
+
+        val currentMetadata = mediaMetadata ?: return@LaunchedEffect
+        val artworkColorCacheKey = "${currentMetadata.id}:${displayArtworkUrl.hashCode()}:$useDarkTheme"
+        appleFadeColorCache[artworkColorCacheKey]?.let { cached ->
+            appleFadeColor = cached
+            return@LaunchedEffect
+        }
+
+        withContext(Dispatchers.IO) {
+            val request =
+                ImageRequest
+                    .Builder(context)
+                    .data(displayArtworkUrl)
+                    .size(96, 128)
+                    .allowHardware(false)
+                    .memoryCacheKey("apple_fade_color_$artworkColorCacheKey")
+                    .build()
+
+            val result = runCatching { context.imageLoader.execute(request) }.getOrNull()
+            val bitmap = result?.image?.toBitmap()
+            val fadeColor =
+                if (bitmap != null) {
+                    val palette =
+                        withContext(Dispatchers.Default) {
+                            Palette
+                                .from(bitmap)
+                                .maximumColorCount(12)
+                                .resizeBitmapArea(96 * 128)
+                                .generate()
+                        }
+                    val swatchColor =
+                        listOfNotNull(
+                            palette.lightMutedSwatch,
+                            palette.mutedSwatch,
+                            palette.dominantSwatch,
+                            palette.vibrantSwatch,
+                        ).maxByOrNull { it.population }?.rgb
+                            ?: palette.getDominantColor(appleFadeFallbackColor.toArgb())
+                    val base = Color(swatchColor)
+                    blendColors(
+                        start = base,
+                        end = if (useDarkTheme) Color(0xFF2A272C) else Color.White,
+                        fraction = if (useDarkTheme) 0.34f else 0.22f,
+                    )
+                } else {
+                    appleFadeFallbackColor
+                }
+
+            appleFadeColorCache[artworkColorCacheKey] = fadeColor
+            withContext(Dispatchers.Main) {
+                appleFadeColor = fadeColor
+            }
+        }
+    }
 
     LaunchedEffect(mediaMetadata?.id, playerColorArtworkUrl, playerBackground) {
         if (playerBackground != PlayerBackgroundStyle.GRADIENT) gradientColors = emptyList()
@@ -1247,6 +1382,21 @@ fun BottomSheetPlayer(
                         scrimAlpha = 0.16f,
                     )
                 }
+
+                appleLikeCanvasBackground?.takeIf { shouldShowAppleMusicFadeBackground }?.let { media ->
+                    AppleMusicFadedCanvasBackground(
+                        media = media,
+                        artworkUrl = displayArtworkUrl,
+                        shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
+                        surfaceColor = appleFadeColor ?: appleFadeFallbackColor,
+                        fadeColor = appleFadeColor ?: appleFadeFallbackColor,
+                        preservePlayerBackdrop = playerBackground != PlayerBackgroundStyle.DEFAULT,
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .alpha(backgroundAlpha),
+                    )
+                }
             }
         },
         onDismiss =
@@ -1279,6 +1429,7 @@ fun BottomSheetPlayer(
                     lyricsEntity = currentLyrics,
                     positionMs = sliderPosition ?: effectivePosition,
                     textColor = TextBackgroundColor,
+                    smoothSlidingLine = smoothInlineLyricsEnabled,
                     modifier =
                         Modifier
                             .fillMaxWidth()
@@ -1522,16 +1673,7 @@ fun BottomSheetPlayer(
                             } else {
                                 FilledIconButton(
                                     onClick = {
-                                        val intent =
-                                            Intent().apply {
-                                                action = Intent.ACTION_SEND
-                                                type = "text/plain"
-                                                putExtra(
-                                                    Intent.EXTRA_TEXT,
-                                                    "https://music.youtube.com/watch?v=${mediaMetadata.id}",
-                                                )
-                                            }
-                                        context.startActivity(Intent.createChooser(intent, null))
+                                        showShareSongLinkDialog = true
                                     },
                                     shape = shareShape,
                                     colors =
@@ -1644,16 +1786,7 @@ fun BottomSheetPlayer(
                                         .clip(RoundedCornerShape(24.dp))
                                         .background(textButtonColor)
                                         .clickable {
-                                            val intent =
-                                                Intent().apply {
-                                                    action = Intent.ACTION_SEND
-                                                    type = "text/plain"
-                                                    putExtra(
-                                                        Intent.EXTRA_TEXT,
-                                                        "https://music.youtube.com/watch?v=${mediaMetadata.id}",
-                                                    )
-                                                }
-                                            context.startActivity(Intent.createChooser(intent, null))
+                                            showShareSongLinkDialog = true
                                         },
                             ) {
                                 Icon(
@@ -1725,7 +1858,7 @@ fun BottomSheetPlayer(
 
             when (sliderStyle) {
                 SliderStyle.DEFAULT -> {
-                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme)
+                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
                     Slider(
                         value = displayedSliderPosition.toFloat(),
                         valueRange = sliderValueRange,
@@ -1757,7 +1890,7 @@ fun BottomSheetPlayer(
                 }
 
                 SliderStyle.WAVY -> {
-                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme)
+                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
                     if (squigglySlider) {
                         SquigglySlider(
                             value = displayedSliderPosition.toFloat(),
@@ -1806,7 +1939,7 @@ fun BottomSheetPlayer(
                 }
 
                 SliderStyle.SLIM -> {
-                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, playerBackground, useDarkTheme)
+                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
                     Slider(
                         value = displayedSliderPosition.toFloat(),
                         valueRange = sliderValueRange,
@@ -1864,7 +1997,7 @@ fun BottomSheetPlayer(
                 )
             }
 
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(14.dp))
 
             AnimatedVisibility(
                 visible = !isFullScreen,
@@ -2261,7 +2394,7 @@ fun BottomSheetPlayer(
                                     sliderPosition ?: if (isCasting) effectivePosition else null
                                 },
                             )
-                            } else if (shouldShowCanvasBackground) {
+                            } else if (shouldReplaceLargeArtworkWithCanvas) {
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
                                 Thumbnail(
@@ -2328,7 +2461,7 @@ fun BottomSheetPlayer(
                                     sliderPosition ?: if (isCasting) effectivePosition else null
                                 },
                             )
-                            } else if (shouldShowCanvasBackground) {
+                            } else if (shouldReplaceLargeArtworkWithCanvas) {
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
                                 Thumbnail(
@@ -2345,7 +2478,7 @@ fun BottomSheetPlayer(
                         controlsContent(it)
                     }
 
-                    Spacer(Modifier.height(30.dp))
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         }

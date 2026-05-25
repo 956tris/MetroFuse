@@ -690,6 +690,15 @@ class HomeViewModel @Inject constructor(
             HomeFeedSource.SPOTIFY -> {
                 val cookie = context.dataStore.get(SpotifyCookieKey, "")
                 runCatching {
+                    SpotifyCanvasClient.resolveAccountInfo(cookie)
+                }.onSuccess { info ->
+                    info?.let {
+                        accountName.value = it.name
+                        accountImageUrl.value = it.thumbnailUrl
+                    }
+                }.onFailure { reportException(it) }
+
+                runCatching {
                     SpotifyCanvasClient.resolveHomePage(cookie)
                 }.onSuccess { page ->
                     homePage.value = page?.filtered(hideExplicit, hideVideoSongs, hideYoutubeShorts)

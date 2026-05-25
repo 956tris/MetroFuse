@@ -18,22 +18,23 @@ import androidx.media3.exoplayer.offline.DownloadNotificationHelper
 import com.metrolist.music.apple.AppleMusicAwareDataSourceFactory
 import com.metrolist.music.apple.AppleMusicSongResolver
 import com.metrolist.music.apple.AppleMusicWrapperDataSource
+import com.metrolist.music.apple.AppleMusicWrapperManagerProvider
 import com.metrolist.music.constants.AppleMusicFallbackEnabledKey
+import com.metrolist.music.constants.AppleMusicWrapperHostKey
+import com.metrolist.music.constants.AppleMusicWrapperSecureKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
+import com.metrolist.music.constants.AppleMusicForceAlacKey
+import com.metrolist.music.constants.AppleMusicSuperFastKey
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
+import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
-import com.metrolist.music.constants.PreferAppleMusicKey
-import com.metrolist.music.constants.PreferDeezerAudioKey
-import com.metrolist.music.constants.PreferSoundCloudAudioKey
-import com.metrolist.music.constants.PreferInstagramAudioKey
-import com.metrolist.music.constants.PreferYouTubeMusicAudioKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
@@ -209,7 +210,13 @@ constructor(
                 ),
             ),
         ) { dataSpec ->
-            val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey) ?: error("No media id")
+            val mediaId =
+                dataSpec.key?.let(::mediaIdFromDataSpecKey)
+                    ?: dataSpec.uri
+                        .takeIf { it.scheme.isNullOrBlank() }
+                        ?.toString()
+                        ?.takeIf { it.isNotBlank() }
+                    ?: error("No media id")
             val streamSelectionKey = currentStreamSelectionKey(context)
 
             if (AppleMusicWrapperDataSource.isAppleUri(dataSpec.uri)) {
@@ -271,13 +278,13 @@ constructor(
 
     private fun currentStreamSelectionKey(context: Context): String {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
-        val preferAppleMusic = context.dataStore.get(PreferAppleMusicKey, false)
-        val preferDeezerAudio = context.dataStore.get(PreferDeezerAudioKey, false)
+        val appleMusicForceAlac = context.dataStore.get(AppleMusicForceAlacKey, false)
+        val appleMusicSuperFast = context.dataStore.get(AppleMusicSuperFastKey, false)
+        val appleWrapperHost = context.dataStore.get(AppleMusicWrapperHostKey, AppleMusicWrapperManagerProvider.DEFAULT_HOST)
+        val appleWrapperSecure = context.dataStore.get(AppleMusicWrapperSecureKey, true)
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val preferSoundCloudAudio = context.dataStore.get(PreferSoundCloudAudioKey, false)
-        val preferInstagramAudio = context.dataStore.get(PreferInstagramAudioKey, false)
-        val preferYouTubeMusicAudio = context.dataStore.get(PreferYouTubeMusicAudioKey, false)
+        val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
@@ -297,13 +304,13 @@ constructor(
             ?: "US"
         return listOf(
             "appleFallback=$appleMusicFallbackEnabled",
-            "preferApple=$preferAppleMusic",
-            "preferDeezer=$preferDeezerAudio",
+            "appleForceAlac=$appleMusicForceAlac",
+            "appleSuperFast=$appleMusicSuperFast",
+            "appleWrapperHost=${appleWrapperHost.hashCode()}",
+            "appleWrapperSecure=$appleWrapperSecure",
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
-            "preferSoundCloud=$preferSoundCloudAudio",
-            "preferInstagram=$preferInstagramAudio",
-            "preferYouTube=$preferYouTubeMusicAudio",
+            "deezerFast=$deezerFastMode",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "instagramAuth=$instagramCookieConfigured",
             "instagramCookie=${instagramCookie.hashCode()}",
@@ -322,8 +329,13 @@ constructor(
         song: Song?,
     ): DownloadStreamResolution {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
+        val appleMusicForceAlac = context.dataStore.get(AppleMusicForceAlacKey, false)
+        val appleMusicSuperFast = context.dataStore.get(AppleMusicSuperFastKey, false)
+        val appleWrapperHost = context.dataStore.get(AppleMusicWrapperHostKey, AppleMusicWrapperManagerProvider.DEFAULT_HOST)
+        val appleWrapperSecure = context.dataStore.get(AppleMusicWrapperSecureKey, true)
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
+        val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
@@ -339,17 +351,20 @@ constructor(
 
         fun canAttemptOrderedProvider(provider: AudioProviderOrderItem): Boolean =
             when (provider) {
-                AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackEnabled
+                AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackEnabled || appleMusicForceAlac
                 AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
                 else -> true
             }
 
         fun AppleMusicSongResolver.Resolved.toDownloadResolution(): DownloadStreamResolution =
             DownloadStreamResolution(
-                uri = AppleMusicWrapperDataSource.toProgressiveStreamUri(mediaUri.toUri()).toString(),
+                uri = AppleMusicWrapperDataSource.toProgressiveStreamUri(
+                    uri = mediaUri.toUri(),
+                    highWorkerMode = appleMusicSuperFast,
+                ).toString(),
                 expiresAtMs = expiresAtMs,
                 cacheKey = appleWrapperCacheKey(mediaId),
-                format = appleWrapperFormat(mediaId, sampleRate = sampleRate),
+                format = appleWrapperFormat(mediaId, bitrate = bitrate, sampleRate = sampleRate),
             )
 
         fun QobuzAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
@@ -385,7 +400,9 @@ constructor(
             )
 
         var appleAttempt: Result<AppleMusicSongResolver.Resolved> =
-            if (appleMusicFallbackEnabled) {
+            if (appleMusicForceAlac) {
+                Result.failure(IllegalStateException("Apple Music ALAC not attempted yet"))
+            } else if (appleMusicFallbackEnabled) {
                 Result.failure(IllegalStateException("Apple Music not attempted yet"))
             } else {
                 Result.failure(IllegalStateException("Apple Music fallback disabled"))
@@ -401,11 +418,12 @@ constructor(
         var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Qobuz not attempted yet"))
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
-        val orderedProviders = buildList {
-            if (directSoundCloudMediaId) add(AudioProviderOrderItem.SOUNDCLOUD)
-            if (directDeezerMediaId) add(AudioProviderOrderItem.DEEZER)
-            addAll(audioProviderOrder)
-        }.distinct()
+        val orderedProviders =
+            buildList {
+                if (directSoundCloudMediaId) add(AudioProviderOrderItem.SOUNDCLOUD)
+                if (directDeezerMediaId) add(AudioProviderOrderItem.DEEZER)
+                addAll(audioProviderOrder)
+            }.distinct()
 
         suspend fun attemptProvider(provider: AudioProviderOrderItem): DownloadStreamResolution? {
             if (provider in attemptedProviders) return null
@@ -431,6 +449,7 @@ constructor(
                                 song = song,
                                 resolverUrl = deezerResolverUrl,
                                 quality = deezerQuality,
+                                fastMode = deezerFastMode,
                             ),
                         )
                     }
@@ -477,7 +496,15 @@ constructor(
                 AudioProviderOrderItem.APPLE_MUSIC -> {
                     attemptedProviders += provider
                     appleAttempt = runCatching {
-                        AppleMusicSongResolver.resolve(buildAppleMusicQuery(mediaId, song))
+                        AppleMusicSongResolver.resolve(
+                            buildAppleMusicQuery(
+                                mediaId = mediaId,
+                                song = song,
+                                wrapperHost = appleWrapperHost,
+                                wrapperSecure = appleWrapperSecure,
+                                highWorkerMode = appleMusicSuperFast,
+                            ),
+                        )
                     }
                     appleAttempt.getOrNull()?.let { resolved ->
                         return resolved.toDownloadResolution()
@@ -489,6 +516,14 @@ constructor(
 
         for (provider in orderedProviders) {
             attemptProvider(provider)?.let { return it }
+            if (appleMusicForceAlac && provider == AudioProviderOrderItem.APPLE_MUSIC) {
+                val appleError = appleAttempt.exceptionOrNull()
+                    ?: IllegalStateException("Apple Music ALAC did not resolve")
+                throw IllegalStateException(
+                    "Apple Music ALAC failed: ${appleError.message ?: appleError.javaClass.simpleName}",
+                    appleError,
+                )
+            }
         }
 
         if (!attemptedProviders.contains(AudioProviderOrderItem.SOUNDCLOUD) && !directSoundCloudMediaId) {
@@ -548,6 +583,9 @@ constructor(
     private fun buildAppleMusicQuery(
         mediaId: String,
         song: Song?,
+        wrapperHost: String = AppleMusicWrapperManagerProvider.DEFAULT_HOST,
+        wrapperSecure: Boolean = true,
+        highWorkerMode: Boolean = false,
     ): AppleMusicSongResolver.Query {
         return AppleMusicSongResolver.Query(
             mediaId = mediaId,
@@ -560,6 +598,9 @@ constructor(
                 ?.toLong()
                 ?.times(1000L),
             explicit = song?.song?.explicit,
+            wrapperHost = wrapperHost,
+            wrapperSecure = wrapperSecure,
+            highWorkerMode = highWorkerMode,
         )
     }
 
@@ -615,6 +656,7 @@ constructor(
         song: Song?,
         resolverUrl: String,
         quality: DeezerAudioQuality,
+        fastMode: Boolean = false,
     ): DeezerAudioProvider.Query {
         return DeezerAudioProvider.Query(
             mediaId = mediaId,
@@ -628,6 +670,7 @@ constructor(
                 ?.times(1000L),
             resolverUrl = resolverUrl,
             quality = quality,
+            fastMode = fastMode,
         )
     }
 

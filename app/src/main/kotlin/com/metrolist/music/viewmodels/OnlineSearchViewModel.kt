@@ -31,6 +31,7 @@ import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.HideYoutubeShortsKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
+import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.models.ItemsPage
 import com.metrolist.music.providers.DeezerHomeFeedProvider
@@ -39,6 +40,7 @@ import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.utils.reportException
+import com.metrolist.music.utils.spotify.SpotifyCanvasClient
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,6 +69,8 @@ constructor(
         private set
     var isDeezerSearch by mutableStateOf(false)
         private set
+    var isSpotifySearch by mutableStateOf(false)
+        private set
     val viewStateMap = mutableStateMapOf<String, ItemsPage?>()
 
     private suspend fun loadSummaryPage() {
@@ -75,7 +79,21 @@ constructor(
             isSoundCloudSearch = source == HomeFeedSource.SOUNDCLOUD
             isTidalSearch = source == HomeFeedSource.TIDAL
             isDeezerSearch = source == HomeFeedSource.DEEZER
+            isSpotifySearch = source == HomeFeedSource.SPOTIFY
             when {
+                isSpotifySearch -> {
+                    val cookie = context.dataStore.get(SpotifyCookieKey, "")
+                    runCatching {
+                        SpotifyCanvasClient.resolveSearchSummaryPage(query, cookie)
+                    }.onSuccess { page ->
+                        val hideExplicit = context.dataStore.get(HideExplicitKey, false)
+                        summaryPage = (page ?: SearchSummaryPage(emptyList())).filterExplicit(hideExplicit)
+                    }.onFailure { error ->
+                        summaryPage = SearchSummaryPage(emptyList())
+                        reportException(error)
+                    }
+                }
+
                 isSoundCloudSearch -> {
                     val authToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
                     SoundCloudHomeFeedProvider
@@ -133,9 +151,10 @@ constructor(
             filter.collect { filter ->
                 if (filter == null) {
                     loadSummaryPage()
-                } else if (selectedHomeFeedSource() in setOf(HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER)) {
+                } else if (selectedHomeFeedSource() in setOf(HomeFeedSource.SPOTIFY, HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER)) {
                     if (viewStateMap[filter.value] == null) {
                         val source = selectedHomeFeedSource()
+                        isSpotifySearch = source == HomeFeedSource.SPOTIFY
                         isSoundCloudSearch = source == HomeFeedSource.SOUNDCLOUD
                         isTidalSearch = source == HomeFeedSource.TIDAL
                         isDeezerSearch = source == HomeFeedSource.DEEZER
@@ -213,7 +232,7 @@ constructor(
     }
 
     fun loadMore() {
-        if (isSoundCloudSearch || isTidalSearch || isDeezerSearch) return
+        if (isSpotifySearch || isSoundCloudSearch || isTidalSearch || isDeezerSearch) return
         val currentFilter = filter.value
         val filterValue = currentFilter?.value ?: return
         viewModelScope.launch {

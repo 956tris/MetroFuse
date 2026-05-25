@@ -33,6 +33,7 @@ data class ProviderMatchCandidate(
     val album: String?,
     val durationMs: Long?,
     val source: String = provider.displayName(),
+    val shareUrl: String? = null,
 ) {
     val label: String
         get() = listOf(title, artist.takeIf { it.isNotBlank() })

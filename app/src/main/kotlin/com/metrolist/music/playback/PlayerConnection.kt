@@ -585,6 +585,38 @@ class PlayerConnection(
         error.value = player.playerError
     }
 
+    override fun onEvents(
+        player: Player,
+        events: Player.Events,
+    ) {
+        if (
+            events.containsAny(
+                Player.EVENT_PLAYBACK_STATE_CHANGED,
+                Player.EVENT_PLAY_WHEN_READY_CHANGED,
+                Player.EVENT_IS_PLAYING_CHANGED,
+            )
+        ) {
+            playbackState.value = player.playbackState
+            playWhenReady.value = player.playWhenReady
+            error.value = player.playerError
+        }
+
+        if (
+            events.containsAny(
+                Player.EVENT_MEDIA_ITEM_TRANSITION,
+                Player.EVENT_TIMELINE_CHANGED,
+                Player.EVENT_POSITION_DISCONTINUITY,
+            )
+        ) {
+            mediaMetadata.value = player.currentMetadata
+            queueTitle.value = service.queueTitle
+            queueWindows.value = player.getQueueWindows()
+            currentMediaItemIndex.value = player.currentMediaItemIndex
+            currentWindowIndex.value = player.getCurrentQueueIndex()
+            updateCanSkipPreviousAndNext()
+        }
+    }
+
     override fun onPlayWhenReadyChanged(
         newPlayWhenReady: Boolean,
         reason: Int,

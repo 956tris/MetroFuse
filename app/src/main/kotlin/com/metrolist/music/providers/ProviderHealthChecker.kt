@@ -5,6 +5,7 @@
 
 package com.metrolist.music.providers
 
+import com.metrolist.music.apple.AppleMusicWrapperManagerProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
@@ -55,6 +56,7 @@ object ProviderHealthChecker {
         val endpoint: String,
         val detail: String,
         val requestFactory: () -> Request?,
+        val customCheck: ((Target, Long) -> Result)? = null,
     )
 
     data class Result(
@@ -74,8 +76,21 @@ object ProviderHealthChecker {
 
     fun targets(
         deezerResolverUrl: String,
+        appleWrapperHost: String = AppleMusicWrapperManagerProvider.DEFAULT_HOST,
+        appleWrapperSecure: Boolean = true,
     ): List<Target> {
         val deezerResolver = normalizeDeezerResolverUrl(deezerResolverUrl)
+        val appleWrapperInstances = buildList {
+            add(
+                AppleMusicWrapperManagerProvider.WrapperInstance(
+                    host = AppleMusicWrapperManagerProvider.normalizeHost(appleWrapperHost),
+                    secure = appleWrapperSecure,
+                )
+            )
+            AppleMusicWrapperManagerProvider.defaultInstances().forEach { instance ->
+                if (none { it.host == instance.host }) add(instance)
+            }
+        }
         return listOf(
             getTarget(
                 id = "youtube_music",
@@ -105,6 +120,14 @@ object ProviderHealthChecker {
                 endpoint = "https://api.deezer.com/infos",
                 detail = "Search and homepage metadata",
             ),
+            *appleWrapperInstances
+                .map { instance ->
+                    appleWrapperTarget(
+                        host = instance.host,
+                        secure = instance.secure,
+                    )
+                }
+                .toTypedArray(),
             postJsonTarget(
                 id = "deezer_resolver",
                 group = "Deezer",
@@ -176,6 +199,19 @@ object ProviderHealthChecker {
 
     suspend fun check(target: Target): Result =
         withContext(Dispatchers.IO) {
+            target.customCheck?.let { customCheck ->
+                val startedAt = System.nanoTime()
+                return@withContext runCatching {
+                    customCheck(target, startedAt)
+                }.getOrElse { error ->
+                    Result(
+                        target = target,
+                        status = Status.OFFLINE,
+                        latencyMs = null,
+                        message = error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName,
+                    )
+                }
+            }
             val request = target.requestFactory()
                 ?: return@withContext Result(
                     target = target,
@@ -233,6 +269,35 @@ object ProviderHealthChecker {
             },
         )
 
+    private fun appleWrapperTarget(
+        host: String,
+        secure: Boolean,
+    ): Target {
+        val endpoint = AppleMusicWrapperManagerProvider.buildUrl(
+            host = host,
+            secure = secure,
+            path = "/manager.v1.WrapperManagerService/Status",
+        )
+        return Target(
+            id = "apple_wrapper_${host.toTargetId()}",
+            group = "Apple Music",
+            name = host,
+            endpoint = endpoint,
+            detail = "ALAC wrapper-manager status",
+            requestFactory = { null },
+            customCheck = { target, startedAt ->
+                val status = AppleMusicWrapperManagerProvider.status(host, secure)
+                val latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+                Result(
+                    target = target,
+                    status = if (status.ready) Status.ONLINE else Status.REACHABLE,
+                    latencyMs = latencyMs,
+                    message = status.toHealthMessage(),
+                )
+            },
+        )
+    }
+
     private fun postJsonTarget(
         id: String,
         group: String,
@@ -283,4 +348,15 @@ object ProviderHealthChecker {
 
     fun qobuzTargetId(value: String): String =
         "qobuz_${value.lowercase(Locale.US)}"
+
+    private fun String.toTargetId(): String =
+        lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "_").trim('_')
+
+    private fun AppleMusicWrapperManagerProvider.WrapperStatus.toHealthMessage(): String {
+        val regionsText = regions.takeIf { it.isNotEmpty() }
+            ?.joinToString(prefix = ", regions ") { it.uppercase(Locale.US) }
+            .orEmpty()
+        val readyText = if (ready) "ready" else "not ready"
+        return "$readyText, $clientCount clients$regionsText"
+    }
 }

@@ -50,6 +50,7 @@ import com.metrolist.music.ui.screens.settings.BackupAndRestore
 import com.metrolist.music.ui.screens.settings.ContentSettings
 import com.metrolist.music.ui.screens.settings.DarkMode
 import com.metrolist.music.ui.screens.settings.DiscordLoginScreen
+import com.metrolist.music.ui.screens.settings.ExperimentsSettings
 import com.metrolist.music.ui.screens.settings.PlayerSettings
 import com.metrolist.music.ui.screens.settings.PrivacySettings
 import com.metrolist.music.ui.screens.settings.ProviderHealthScreen
@@ -59,6 +60,7 @@ import com.metrolist.music.ui.screens.settings.SettingsScreen
 import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
+import com.metrolist.music.ui.screens.settings.integrations.AppleMusicSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
@@ -371,6 +373,10 @@ fun NavGraphBuilder.navigationBuilder(
         ThemeScreen(navController)
     }
 
+    composable("settings/experiments") {
+        ExperimentsSettings(navController)
+    }
+
     composable("settings/content") {
         ContentSettings(navController)
     }
@@ -425,6 +431,10 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/spotify_canvas/login") {
         SpotifyCanvasLoginScreen(navController)
+    }
+
+    composable("settings/integrations/apple_music") {
+        AppleMusicSettings(navController)
     }
 
     composable("settings/integrations/tidal") {
