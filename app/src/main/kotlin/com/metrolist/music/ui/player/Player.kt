@@ -793,6 +793,32 @@ fun BottomSheetPlayer(
             },
         label = "TextBackgroundColor",
     )
+    val defaultQualityBadgeContainerColor = MaterialTheme.colorScheme.surfaceVariant
+    val defaultQualityBadgeContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val qualityBadgeContainerColor =
+        remember(effectivePlayerBackground, gradientColors, galaxyColors, useDarkTheme, defaultQualityBadgeContainerColor) {
+            when (effectivePlayerBackground) {
+                PlayerBackgroundStyle.DEFAULT -> {
+                    defaultQualityBadgeContainerColor.copy(alpha = if (useDarkTheme) 0.58f else 0.72f)
+                }
+
+                PlayerBackgroundStyle.BLUR,
+                PlayerBackgroundStyle.GRADIENT,
+                PlayerBackgroundStyle.GALAXY_BLUR -> {
+                    val artworkColor = gradientColors.firstOrNull() ?: galaxyColors.firstOrNull() ?: Color.Black
+                    artworkColor.copy(alpha = 0.54f)
+                }
+            }
+        }
+    val qualityBadgeContentColor =
+        remember(effectivePlayerBackground, defaultQualityBadgeContentColor) {
+            when (effectivePlayerBackground) {
+                PlayerBackgroundStyle.DEFAULT -> defaultQualityBadgeContentColor.copy(alpha = 0.9f)
+                PlayerBackgroundStyle.BLUR,
+                PlayerBackgroundStyle.GRADIENT,
+                PlayerBackgroundStyle.GALAXY_BLUR -> Color.White.copy(alpha = 0.82f)
+            }
+        }
 
     val icBackgroundColor by animateColorAsState(
         targetValue =
@@ -1342,6 +1368,15 @@ fun BottomSheetPlayer(
                 Column(
                     modifier = Modifier.weight(1f),
                 ) {
+                    displayedPlayerQualityLabel?.let { label ->
+                        QualityBadge(
+                            label = label,
+                            containerColor = qualityBadgeContainerColor,
+                            contentColor = qualityBadgeContentColor,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                    }
+
                     AnimatedContent(
                         targetState = mediaMetadata.title,
                         transitionSpec = { fadeIn() togetherWith fadeOut() },
@@ -2183,36 +2218,6 @@ fun BottomSheetPlayer(
                             }
                         }
                     }
-                    if (displayedPlayerQualityLabel != null || displayedPlayerSourceLabel != null) {
-                        Spacer(Modifier.height(10.dp))
-                        displayedPlayerQualityLabel?.let { label ->
-                            Text(
-                                text = label,
-                                color = TextBackgroundColor,
-                                style = MaterialTheme.typography.labelLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                        displayedPlayerSourceLabel?.let { source ->
-                            if (displayedPlayerQualityLabel != null) {
-                                Spacer(Modifier.height(2.dp))
-                            }
-                            Text(
-                                text = "Source: $source",
-                                color = TextBackgroundColor.copy(alpha = 0.82f),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Medium,
-                                textAlign = TextAlign.Center,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -2377,6 +2382,39 @@ fun BottomSheetPlayer(
                 },
             )
         }
+    }
+}
+
+@Composable
+private fun QualityBadge(
+    label: String,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(containerColor)
+                .padding(horizontal = 10.dp, vertical = 5.dp),
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.graphic_eq),
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.size(14.dp),
+        )
+        Spacer(modifier = Modifier.width(6.dp))
+        Text(
+            text = label,
+            color = contentColor,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
