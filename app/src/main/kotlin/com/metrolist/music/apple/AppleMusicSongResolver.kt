@@ -46,6 +46,7 @@ object AppleMusicSongResolver {
         val storefront: String = DEFAULT_STOREFRONT,
         val wrapperHost: String = AppleMusicWrapperManagerProvider.DEFAULT_HOST,
         val wrapperSecure: Boolean = true,
+        val audioMode: AppleMusicWrapperManagerProvider.WrapperMode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
         val highWorkerMode: Boolean = false,
     )
 
@@ -58,6 +59,7 @@ object AppleMusicSongResolver {
         val durationMs: Long?,
         val bitrate: Int,
         val sampleRate: Int?,
+        val audioMode: AppleMusicWrapperManagerProvider.WrapperMode,
         val expiresAtMs: Long,
     )
 
@@ -99,17 +101,22 @@ object AppleMusicSongResolver {
             adamId = track.adamId,
             preferredHost = query.wrapperHost,
             preferredSecure = query.wrapperSecure,
-            mode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
+            mode = query.audioMode,
         )
-        val quality = runCatching {
-            AppleMusicDecryptPipeline.readAlacQualityMetadata(
-                client = client,
-                initialUrl = wrapper.url,
-                preferFast = false,
-            )
-        }.onFailure { error ->
-            Timber.tag(TAG).w(error, "Failed to read ALAC quality metadata for adamId=${track.adamId}")
-        }.getOrNull()
+        val quality =
+            if (query.audioMode == AppleMusicWrapperManagerProvider.WrapperMode.ALAC) {
+                runCatching {
+                    AppleMusicDecryptPipeline.readAlacQualityMetadata(
+                        client = client,
+                        initialUrl = wrapper.url,
+                        preferFast = false,
+                    )
+                }.onFailure { error ->
+                    Timber.tag(TAG).w(error, "Failed to read ALAC quality metadata for adamId=${track.adamId}")
+                }.getOrNull()
+            } else {
+                null
+            }
 
         val mediaUri = AppleMusicWrapperDataSource.buildUri(
             mediaId = query.mediaId,
@@ -117,6 +124,7 @@ object AppleMusicSongResolver {
             m3u8Url = wrapper.url,
             host = wrapper.host,
             secure = wrapper.secure,
+            mode = query.audioMode,
             durationMs = query.durationMs ?: track.durationMs,
             title = track.title,
             highWorkerMode = query.highWorkerMode,
@@ -128,8 +136,9 @@ object AppleMusicSongResolver {
             artist = track.artist,
             album = track.album,
             durationMs = query.durationMs ?: track.durationMs,
-            bitrate = quality?.bitrate ?: 0,
+            bitrate = quality?.bitrate ?: query.audioMode.defaultBitrate(),
             sampleRate = quality?.sampleRate,
+            audioMode = query.audioMode,
             expiresAtMs = now + STREAM_CACHE_MS,
         ).also { resolvedCache[cacheKey] = it }
     }
@@ -449,9 +458,17 @@ object AppleMusicSongResolver {
             storefront.uppercase(Locale.US),
             AppleMusicWrapperManagerProvider.normalizeHost(wrapperHost),
             wrapperSecure.toString(),
+            audioMode.name,
             highWorkerMode.toString(),
         ).joinToString("::")
     }
+
+    private fun AppleMusicWrapperManagerProvider.WrapperMode.defaultBitrate(): Int =
+        when (this) {
+            AppleMusicWrapperManagerProvider.WrapperMode.ALAC -> 0
+            AppleMusicWrapperManagerProvider.WrapperMode.AAC -> 256_000
+            AppleMusicWrapperManagerProvider.WrapperMode.DOLBY_ATMOS -> 768_000
+        }
 
     private fun Query.toDirectCandidate(adamId: String): Candidate =
         Candidate(

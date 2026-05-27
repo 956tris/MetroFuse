@@ -171,6 +171,22 @@ object ProviderHealthChecker {
                 detail = "Qobuz stream backend",
             ),
             getTarget(
+                id = "qobuz_monochrome",
+                group = "Qobuz",
+                name = "Monochrome v1.0",
+                endpoint = "https://qdl-api.monochrome.tf/api/get-music?q=test&offset=0",
+                detail = "Qobuz search and stream backend",
+                headers = mapOf("Token-Country" to "US"),
+            ),
+            getTarget(
+                id = "qobuz_scavenger",
+                group = "Qobuz",
+                name = "Scavenger v1.0",
+                endpoint = "https://mono.scavengerfurs.net/api/get-music?q=test&offset=0",
+                detail = "Qobuz search and stream backend",
+                headers = mapOf("Token-Country" to "US"),
+            ),
+            getTarget(
                 id = "qobuz_kenny",
                 group = "Qobuz",
                 name = "Kenny",

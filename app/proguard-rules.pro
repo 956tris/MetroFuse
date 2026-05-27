@@ -198,6 +198,12 @@
     *;
 }
 
+## Discord Social SDK bridge
+-keep class com.metrolist.music.discord.DiscordRpcManager { *; }
+-keepclassmembers class com.metrolist.music.discord.DiscordRpcManager {
+    native <methods>;
+}
+
 ## Kotlinx Serialization
 -keepattributes *Annotation*
 -keepclassmembers class com.metrolist.shazamkit.models.** {

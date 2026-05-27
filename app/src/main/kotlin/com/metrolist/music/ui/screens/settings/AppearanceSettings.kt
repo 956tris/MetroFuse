@@ -73,6 +73,7 @@ import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.HideStatusBarOnFullscreenKey
 import com.metrolist.music.constants.LibraryFilter
 import com.metrolist.music.constants.ListenTogetherInTopBarKey
+import com.metrolist.music.constants.LivePlaybackBitrateKey
 import com.metrolist.music.constants.LyricsAnimationStyle
 import com.metrolist.music.constants.LyricsAnimationStyleKey
 import com.metrolist.music.constants.LyricsClickKey
@@ -189,6 +190,11 @@ fun AppearanceSettings(
     val (useLegacyQualityLabel, onUseLegacyQualityLabelChange) =
         rememberPreference(
             PlayerLegacyQualityLabelKey,
+            defaultValue = false,
+        )
+    val (livePlaybackBitrate, onLivePlaybackBitrateChange) =
+        rememberPreference(
+            LivePlaybackBitrateKey,
             defaultValue = false,
         )
     val (miniPlayerBackground, onMiniPlayerBackgroundChange) =
@@ -1247,6 +1253,28 @@ fun AppearanceSettings(
                             )
                         },
                         onClick = { onUseLegacyQualityLabelChange(!useLegacyQualityLabel) },
+                    ),
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.graphic_eq),
+                        title = { Text(stringResource(R.string.live_playback_bitrate)) },
+                        description = { Text(stringResource(R.string.live_playback_bitrate_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = livePlaybackBitrate,
+                                onCheckedChange = onLivePlaybackBitrateChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (livePlaybackBitrate) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        onClick = { onLivePlaybackBitrateChange(!livePlaybackBitrate) },
                     ),
                     Material3SettingsItem(
                         icon = painterResource(R.drawable.gradient),

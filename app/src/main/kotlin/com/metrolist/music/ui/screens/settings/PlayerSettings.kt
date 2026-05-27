@@ -302,6 +302,8 @@ fun PlayerSettings(
                 when (it) {
                     QobuzBackend.TRYPT -> stringResource(R.string.qobuz_backend_trypt)
                     QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
+                    QobuzBackend.MONOCHROME -> stringResource(R.string.qobuz_backend_monochrome)
+                    QobuzBackend.SCAVENGER -> stringResource(R.string.qobuz_backend_scavenger)
                     QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
                     QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
                 }
@@ -447,6 +449,8 @@ fun PlayerSettings(
                             when (qobuzBackend) {
                                 QobuzBackend.TRYPT -> stringResource(R.string.qobuz_backend_trypt)
                                 QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
+                                QobuzBackend.MONOCHROME -> stringResource(R.string.qobuz_backend_monochrome)
+                                QobuzBackend.SCAVENGER -> stringResource(R.string.qobuz_backend_scavenger)
                                 QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
                                 QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
                             }

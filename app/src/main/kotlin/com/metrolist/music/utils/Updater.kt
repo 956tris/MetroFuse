@@ -14,6 +14,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 data class ReleaseInfo(
     val tagName: String,
@@ -42,6 +43,17 @@ object Updater {
     private const val CHECK_INTERVAL_MILLIS = 2 * 60 * 60 * 1000L // 2 hours
     private val githubApiBase = "https://api.github.com/repos/${BuildConfig.UPDATE_REPOSITORY}"
     private val versionNumberRegex = Regex("\\d+")
+
+    fun currentArchitecture(): String {
+        val arch = System.getProperty("os.arch").orEmpty().lowercase(Locale.US)
+        return when {
+            arch.contains("aarch64") || arch.contains("arm64") -> "arm64-v8a"
+            arch.contains("arm") || arch.contains("armeabi") -> "armeabi-v7a"
+            arch.contains("x86_64") || arch.contains("amd64") -> "x86_64"
+            arch.contains("x86") -> "x86"
+            else -> BuildConfig.ARCHITECTURE
+        }
+    }
 
     /**
      * Compares two version strings.
@@ -84,7 +96,7 @@ object Updater {
      * Get the current app's architecture and variant
      */
     private fun getCurrentAppVariant(): Pair<String, String> {
-        val architecture = BuildConfig.ARCHITECTURE
+        val architecture = currentArchitecture()
         val variant = if (BuildConfig.CAST_AVAILABLE) "gms" else "foss"
         return architecture to variant
     }

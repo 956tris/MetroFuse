@@ -29,6 +29,8 @@ object QobuzAudioProvider {
     private const val SQUID_BASE_URL = "https://qobuz.squid.wtf"
     private const val JUMO_BASE_URL = "https://jumo-dl.pages.dev"
     private const val KENNY_BASE_URL = "https://qobuz.kennyy.com.br"
+    private const val MONOCHROME_BASE_URL = "https://qdl-api.monochrome.tf"
+    private const val SCAVENGER_BASE_URL = "https://mono.scavengerfurs.net"
     private const val TRYPT_BASE_URL = "https://trypt-hifi-dl-456461932686.us-west1.run.app"
     private const val STREAM_CACHE_MS = 5 * 60 * 1000L
     private const val REJECT_SCORE = -1_000_000
@@ -39,12 +41,16 @@ object QobuzAudioProvider {
         JUMO,
         KENNY,
         SQUID,
+        MONOCHROME,
+        SCAVENGER,
         TRYPT,
     }
 
     private enum class SearchBackend {
         KENNY,
         SQUID,
+        MONOCHROME,
+        SCAVENGER,
         TRYPT,
     }
 
@@ -115,6 +121,8 @@ object QobuzAudioProvider {
             ResolverBackend.JUMO -> normalized.takeIf { it in JUMO_SUPPORTED_REGIONS } ?: "FR"
             ResolverBackend.KENNY -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
             ResolverBackend.SQUID -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
+            ResolverBackend.MONOCHROME -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
+            ResolverBackend.SCAVENGER -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
             ResolverBackend.TRYPT -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
         }
     }
@@ -177,19 +185,23 @@ object QobuzAudioProvider {
 
     private fun streamBackendOrder(preferred: ResolverBackend): List<ResolverBackend> {
         return when (preferred) {
-            ResolverBackend.JUMO -> listOf(ResolverBackend.JUMO, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.SQUID)
-            ResolverBackend.KENNY -> listOf(ResolverBackend.KENNY, ResolverBackend.TRYPT, ResolverBackend.JUMO, ResolverBackend.SQUID)
-            ResolverBackend.SQUID -> listOf(ResolverBackend.SQUID, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO)
-            ResolverBackend.TRYPT -> listOf(ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
+            ResolverBackend.JUMO -> listOf(ResolverBackend.JUMO, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.SQUID)
+            ResolverBackend.KENNY -> listOf(ResolverBackend.KENNY, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.JUMO, ResolverBackend.SQUID)
+            ResolverBackend.SQUID -> listOf(ResolverBackend.SQUID, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO)
+            ResolverBackend.MONOCHROME -> listOf(ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
+            ResolverBackend.SCAVENGER -> listOf(ResolverBackend.SCAVENGER, ResolverBackend.MONOCHROME, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
+            ResolverBackend.TRYPT -> listOf(ResolverBackend.TRYPT, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
         }
     }
 
     private fun searchBackendOrder(preferred: ResolverBackend): List<SearchBackend> {
         return when (preferred) {
-            ResolverBackend.JUMO -> listOf(SearchBackend.TRYPT, SearchBackend.SQUID, SearchBackend.KENNY)
-            ResolverBackend.KENNY -> listOf(SearchBackend.KENNY, SearchBackend.TRYPT, SearchBackend.SQUID)
-            ResolverBackend.SQUID -> listOf(SearchBackend.SQUID, SearchBackend.TRYPT, SearchBackend.KENNY)
-            ResolverBackend.TRYPT -> listOf(SearchBackend.TRYPT, SearchBackend.KENNY, SearchBackend.SQUID)
+            ResolverBackend.JUMO -> listOf(SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.SQUID, SearchBackend.KENNY)
+            ResolverBackend.KENNY -> listOf(SearchBackend.KENNY, SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.SQUID)
+            ResolverBackend.SQUID -> listOf(SearchBackend.SQUID, SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.KENNY)
+            ResolverBackend.MONOCHROME -> listOf(SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.KENNY, SearchBackend.SQUID)
+            ResolverBackend.SCAVENGER -> listOf(SearchBackend.SCAVENGER, SearchBackend.MONOCHROME, SearchBackend.TRYPT, SearchBackend.KENNY, SearchBackend.SQUID)
+            ResolverBackend.TRYPT -> listOf(SearchBackend.TRYPT, SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.KENNY, SearchBackend.SQUID)
         }
     }
 
@@ -265,6 +277,22 @@ object QobuzAudioProvider {
             )
             ResolverBackend.KENNY -> requestKennyStream(track, qualityCode, query.durationMs)
             ResolverBackend.SQUID -> requestSquidStream(track, query.countryCode, qualityCode, query.durationMs)
+            ResolverBackend.MONOCHROME -> requestQobuzProxyStream(
+                name = "Monochrome",
+                baseUrl = MONOCHROME_BASE_URL,
+                track = track,
+                qualityCode = qualityCode,
+                region = normalizeResolverRegion(query.countryCode, ResolverBackend.MONOCHROME),
+                durationMs = query.durationMs,
+            )
+            ResolverBackend.SCAVENGER -> requestQobuzProxyStream(
+                name = "Scavenger",
+                baseUrl = SCAVENGER_BASE_URL,
+                track = track,
+                qualityCode = qualityCode,
+                region = normalizeResolverRegion(query.countryCode, ResolverBackend.SCAVENGER),
+                durationMs = query.durationMs,
+            )
             ResolverBackend.TRYPT -> requestTrypTStream(
                 track = track,
                 qualityCode = qualityCode,
@@ -311,6 +339,8 @@ object QobuzAudioProvider {
         val baseUrl = when (backend) {
             SearchBackend.KENNY -> KENNY_BASE_URL
             SearchBackend.SQUID -> SQUID_BASE_URL
+            SearchBackend.MONOCHROME -> MONOCHROME_BASE_URL
+            SearchBackend.SCAVENGER -> SCAVENGER_BASE_URL
             SearchBackend.TRYPT -> TRYPT_BASE_URL
         }
         val url = "$baseUrl/api/get-music".toHttpUrlOrNull()
@@ -326,8 +356,12 @@ object QobuzAudioProvider {
             .header("Accept", "application/json")
             .header("Referer", "$baseUrl/")
             .header("User-Agent", "Mozilla/5.0")
-        if (backend == SearchBackend.SQUID || backend == SearchBackend.TRYPT) {
-            requestBuilder.header("Token-Country", countryCode)
+        when (backend) {
+            SearchBackend.SQUID,
+            SearchBackend.MONOCHROME,
+            SearchBackend.SCAVENGER,
+            SearchBackend.TRYPT -> requestBuilder.header("Token-Country", countryCode)
+            SearchBackend.KENNY -> Unit
         }
         val request = requestBuilder.build()
 
@@ -688,6 +722,94 @@ object QobuzAudioProvider {
             }
         }.getOrElse { error ->
             StreamAttempt(error = "Kenny request failed: ${error.message ?: error.javaClass.simpleName}")
+        }
+    }
+
+    private fun requestQobuzProxyStream(
+        name: String,
+        baseUrl: String,
+        track: MatchedTrack,
+        qualityCode: Int,
+        region: String,
+        durationMs: Long?,
+    ): StreamAttempt {
+        val url = "$baseUrl/api/download-music".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("track_id", track.trackId)
+            ?.addQueryParameter("quality", qualityCode.toString())
+            ?.build()
+            ?: return StreamAttempt(error = "$name request URL could not be built")
+
+        val request = Request.Builder()
+            .url(url)
+            .get()
+            .header("Accept", "application/json,text/plain,*/*")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Token-Country", region)
+            .header("Origin", baseUrl)
+            .header("Referer", "$baseUrl/")
+            .header("User-Agent", BROWSER_USER_AGENT)
+            .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    return@use StreamAttempt(error = "$name HTTP ${response.code}: ${payload.take(160)}")
+                }
+                if (payload.isBlank()) {
+                    return@use StreamAttempt(error = "$name returned an empty response")
+                }
+                val root = JSONObject(payload)
+                if (!root.optBoolean("success", false)) {
+                    val apiError = root.stringOrNull("error")
+                        ?: root.stringOrNull("message")
+                    return@use StreamAttempt(
+                        error = "$name rejected quality $qualityCode: ${apiError ?: "unknown error"}"
+                    )
+                }
+
+                val data = root.optJSONObject("data")
+                val streamUrl = data?.stringOrNull("url")
+                    ?: root.stringOrNull("url")
+                    ?: return@use StreamAttempt(error = "$name did not return a stream URL for quality $qualityCode")
+                val actualQualityCode = data?.intOrNull("format_id")
+                    ?: root.intOrNull("format_id")
+                    ?: streamFormatId(streamUrl)
+                    ?: qualityCode
+                val bitDepth = data?.intOrNull("bit_depth")
+                    ?: data?.intOrNull("bitDepth")
+                    ?: track.bitDepth
+                val samplingRate = data?.doubleOrNull("sampling_rate")
+                    ?: data?.doubleOrNull("sampleRate")
+                    ?: data?.doubleOrNull("samplingRate")
+                    ?: track.samplingRateKhz
+                val mimeType = data?.stringOrNull("mime_type")
+                    ?: data?.stringOrNull("mimeType")
+                    ?: if (actualQualityCode == 5) "audio/mpeg" else "audio/flac"
+                val lossyBitrate = data?.intOrNull("bitrate")
+                    ?: data?.intOrNull("bit_rate")
+                val effectiveDurationMs = durationMs ?: track.durationMs
+                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
+                    ?: normalizeBitrate(data?.intOrNull("average_bitrate")).takeIf { it > 0 }
+                val hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || actualQualityCode >= 7
+                val format = formatFrom(
+                    mimeType = mimeType,
+                    bitDepth = bitDepth,
+                    samplingRateKhz = samplingRate,
+                    bitrate = lossyBitrate,
+                    losslessBitrate = losslessBitrate,
+                    hires = hires,
+                )
+                StreamAttempt(
+                    resolved = format.toResolved(
+                        url = streamUrl,
+                        trackId = track.trackId,
+                    )
+                )
+            }
+        }.getOrElse { error ->
+            StreamAttempt(error = "$name request failed: ${error.message ?: error.javaClass.simpleName}")
         }
     }
 

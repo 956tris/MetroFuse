@@ -22,7 +22,6 @@ import kotlin.math.min
 object AppleMusicDecryptPipeline {
     private const val USER_AGENT = "Echo-TidalPlus/AppleMusicWrapperManager"
     private const val PREFETCH_KEY = "skd://itunes.apple.com/P000000000/s1/e1"
-    private const val KEY_SUFFIX_ALAC = "c23"
     private const val KEY_SUFFIX_DEFAULT = "c6"
     private const val DEFAULT_PREFETCH_WINDOW_SEGMENTS = 3
     private const val DEFAULT_PREFETCH_CONCURRENCY = 2
@@ -128,6 +127,7 @@ object AppleMusicDecryptPipeline {
         val m3u8Url: String,
         val host: String,
         val secure: Boolean,
+        val mode: AppleMusicWrapperManagerProvider.WrapperMode,
         val durationMs: Long?,
         val highWorkerMode: Boolean,
     )
@@ -195,18 +195,12 @@ object AppleMusicDecryptPipeline {
         durationMs: Long? = null,
         highWorkerMode: Boolean = false,
     ): Pair<InputStream, Long> {
-        if (mode != AppleMusicWrapperManagerProvider.WrapperMode.ALAC) {
-            throw AppleMusicWrapperManagerProvider.WrapperManagerException(
-                "${mode.title} is not supported by the ALAC decrypt pipeline"
-            )
-        }
-
         val trace = AlacTrace(adamId = adamId, startOffset = start.coerceAtLeast(0L))
         val mediaDocument = trace.measure("media_playlist_fetch") {
-            resolveToMediaPlaylist(client, m3u8Url)
+            resolveToMediaPlaylist(client, m3u8Url, mode)
         }
         val mediaPlaylist = trace.measure("media_playlist_parse") {
-            parseMediaPlaylist(mediaDocument.url, mediaDocument.text, mediaDocument.qualityInfo)
+            parseMediaPlaylist(mediaDocument.url, mediaDocument.text, mode, mediaDocument.qualityInfo)
         }
         trace.mark("duration_known", mediaPlaylist.durationMs ?: durationMs)
         val segmentLengths = trace.measure("seek_segment_lengths") {
@@ -228,10 +222,16 @@ object AppleMusicDecryptPipeline {
             realQuality
                 ?.bandwidth
                 ?.takeIf { isPlausibleAlacBandwidth(it, realQuality.sampleRate) }
-        val alacRepairParams = readAlacRepairParams(rawInitBytes)
-            ?.also { trace.mark("alac_repair_ready", "sampleSize=${it.sampleSize} channels=${it.channels}") }
+        val alacRepairParams =
+            if (mode == AppleMusicWrapperManagerProvider.WrapperMode.ALAC) {
+                readAlacRepairParams(rawInitBytes)
+                    ?.also { trace.mark("alac_repair_ready", "sampleSize=${it.sampleSize} channels=${it.channels}") }
+            } else {
+                null
+            }
         val patchedInitBytes = patchInitSegment(
             initBytes = rawInitBytes,
+            mode = mode,
             durationMs = durationMs?.takeIf { it > 0L } ?: mediaPlaylist.durationMs,
             averageBitrate = averageBitrate
         )
@@ -248,6 +248,7 @@ object AppleMusicDecryptPipeline {
             playlist = mediaPlaylist,
             segmentLengths = segmentLengths,
             adamId = adamId,
+            mode = mode,
             client = client,
             decryptClient = decryptClient,
             alacRepairParams = alacRepairParams,
@@ -303,7 +304,12 @@ object AppleMusicDecryptPipeline {
         repeat(4) {
             if (!currentText.isMasterPlaylist()) {
                 val mediaQuality = runCatching {
-                    val mediaPlaylist = parseMediaPlaylist(currentUrl, currentText, qualityInfo)
+                    val mediaPlaylist = parseMediaPlaylist(
+                        currentUrl,
+                        currentText,
+                        AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
+                        qualityInfo,
+                    )
                     val initQuality = runCatching {
                         readInitSegmentQuality(
                             downloadBytes(client, mediaPlaylist.init.url, mediaPlaylist.init.range)
@@ -313,7 +319,11 @@ object AppleMusicDecryptPipeline {
                 }.getOrNull()
                 return qualityInfo.mergedWith(mediaQuality)
             }
-            val child = selectAlacChildPlaylist(currentUrl, currentText)
+            val child = selectAppleMusicChildPlaylist(
+                currentUrl,
+                currentText,
+                AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
+            )
                 ?: return qualityInfo
             qualityInfo = qualityInfo.mergedWith(child.qualityInfo)
             if (preferFast && qualityInfo?.sampleRate != null) {
@@ -363,6 +373,7 @@ object AppleMusicDecryptPipeline {
         private val playlist: MediaPlaylist,
         private val segmentLengths: List<Long>?,
         private val adamId: String,
+        private val mode: AppleMusicWrapperManagerProvider.WrapperMode,
         private val client: OkHttpClient,
         private val decryptClient: AppleMusicWrapperManagerProvider.SampleDecryptClient,
         private val alacRepairParams: AlacRepairParams?,
@@ -551,6 +562,7 @@ object AppleMusicDecryptPipeline {
                 samples = encrypted.samples,
                 segmentIndex = index,
                 firstSampleIndex = firstSample,
+                mode = mode,
                 alacRepairParams = alacRepairParams,
                 trace = trace,
             )
@@ -572,6 +584,7 @@ object AppleMusicDecryptPipeline {
                             samples = encrypted.samples,
                             segmentIndex = targetIndex,
                             firstSampleIndex = firstSample,
+                            mode = mode,
                             alacRepairParams = alacRepairParams,
                             trace = trace,
                         )
@@ -874,9 +887,9 @@ object AppleMusicDecryptPipeline {
         private val firstSampleIndexFutures = ConcurrentHashMap<Int, CompletableFuture<Int>>()
 
         private val mediaDocument = trace.measure("virtual_media_playlist_fetch") {
-            resolveToMediaPlaylist(client, request.m3u8Url)
+            resolveToMediaPlaylist(client, request.m3u8Url, request.mode)
         }
-        private val playlist = parseMediaPlaylist(mediaDocument.url, mediaDocument.text, mediaDocument.qualityInfo)
+        private val playlist = parseMediaPlaylist(mediaDocument.url, mediaDocument.text, request.mode, mediaDocument.qualityInfo)
         private val rawInitBytes = trace.measure("virtual_init_fetch") {
             downloadBytes(client, playlist.init.url, playlist.init.range)
         }
@@ -887,17 +900,23 @@ object AppleMusicDecryptPipeline {
             realQuality
                 ?.bandwidth
                 ?.takeIf { isPlausibleAlacBandwidth(it, realQuality.sampleRate) }
-        private val alacRepairParams = readAlacRepairParams(rawInitBytes)
-            ?.also { trace.mark("virtual_alac_repair_ready", "sampleSize=${it.sampleSize} channels=${it.channels}") }
+        private val alacRepairParams =
+            if (request.mode == AppleMusicWrapperManagerProvider.WrapperMode.ALAC) {
+                readAlacRepairParams(rawInitBytes)
+                    ?.also { trace.mark("virtual_alac_repair_ready", "sampleSize=${it.sampleSize} channels=${it.channels}") }
+            } else {
+                null
+            }
         private val initBytes = patchInitSegment(
             initBytes = rawInitBytes,
+            mode = request.mode,
             durationMs = request.durationMs?.takeIf { it > 0L } ?: playlist.durationMs,
             averageBitrate = realAverageBitrate,
         )
         private val decryptClient = AppleMusicWrapperManagerProvider.openSampleDecryptClient(
             host = request.host,
             secure = request.secure,
-            mode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
+            mode = request.mode,
         )
         @Volatile
         var lastAccessMs: Long = System.currentTimeMillis()
@@ -953,7 +972,7 @@ object AppleMusicDecryptPipeline {
                 appendLine("#EXTM3U")
                 appendLine("#EXT-X-VERSION:7")
                 appendLine("#EXT-X-INDEPENDENT-SEGMENTS")
-                appendLine("#EXT-X-STREAM-INF:BANDWIDTH=$bandwidth,CODECS=\"alac\"")
+                appendLine("#EXT-X-STREAM-INF:BANDWIDTH=$bandwidth,CODECS=\"${request.mode.hlsCodecs}\"")
                 appendLine(resourceUri(VIRTUAL_HLS_MEDIA_RESOURCE))
             }.toByteArray(Charsets.UTF_8)
         }
@@ -1031,6 +1050,7 @@ object AppleMusicDecryptPipeline {
                             samples = encrypted.samples,
                             segmentIndex = targetIndex,
                             firstSampleIndex = firstSample,
+                            mode = request.mode,
                             alacRepairParams = alacRepairParams,
                             trace = trace,
                         )
@@ -1250,7 +1270,11 @@ object AppleMusicDecryptPipeline {
         }
     }
 
-    private fun resolveToMediaPlaylist(client: OkHttpClient, initialUrl: String): PlaylistDocument {
+    private fun resolveToMediaPlaylist(
+        client: OkHttpClient,
+        initialUrl: String,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
+    ): PlaylistDocument {
         var currentUrl = initialUrl
         var currentText = downloadText(client, currentUrl)
         var qualityInfo: AlacQualityInfo? = null
@@ -1258,9 +1282,9 @@ object AppleMusicDecryptPipeline {
             if (!currentText.isMasterPlaylist()) {
                 return PlaylistDocument(currentUrl, currentText, qualityInfo)
             }
-            val child = selectAlacChildPlaylist(currentUrl, currentText)
+            val child = selectAppleMusicChildPlaylist(currentUrl, currentText, mode)
                 ?: throw AppleMusicWrapperManagerProvider.WrapperManagerException(
-                    "wrapper-manager M3U8 did not expose an ALAC media playlist"
+                    "wrapper-manager M3U8 did not expose a ${mode.title} media playlist"
                 )
             qualityInfo = qualityInfo.mergedWith(child.qualityInfo)
             currentUrl = child.url
@@ -1279,10 +1303,14 @@ object AppleMusicDecryptPipeline {
         }
     }
 
-    private fun selectAlacChildPlaylist(baseUrl: String, playlist: String): PlaylistSelection? {
+    private fun selectAppleMusicChildPlaylist(
+        baseUrl: String,
+        playlist: String,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
+    ): PlaylistSelection? {
         val lines = playlist.lineSequence().map { it.trim() }.toList()
         val mediaByGroup = mutableMapOf<String, PlaylistSelection>()
-        val alacMediaByGroup = mutableMapOf<String, PlaylistSelection>()
+        val matchingMediaByGroup = mutableMapOf<String, PlaylistSelection>()
         val childPlaylists = mutableListOf<PlaylistSelection>()
 
         lines.forEach { line ->
@@ -1293,8 +1321,8 @@ object AppleMusicDecryptPipeline {
                 val selection = PlaylistSelection(resolveUri(baseUrl, uri), attrs.toQualityInfo())
                 if (groupId.isNotBlank()) {
                     mediaByGroup[groupId] = selection
-                    if (attrs.values.any { it.contains("alac", ignoreCase = true) || it.contains("lossless", ignoreCase = true) }) {
-                        alacMediaByGroup[groupId] = selection
+                    if (attrs.matchesAppleMusicMode(mode)) {
+                        matchingMediaByGroup[groupId] = selection
                     }
                 }
             } else if (line.isNotEmpty() && !line.startsWith("#") && line.endsWith(".m3u8", ignoreCase = true)) {
@@ -1307,13 +1335,13 @@ object AppleMusicDecryptPipeline {
                 val attrs = parseAttributes(line.substringAfter(':'))
                 val streamQuality = attrs.toQualityInfo()
                 val uri = nextPlaylistUri(lines, index + 1)?.let { resolveUri(baseUrl, it) }
-                if (attrs["CODECS"]?.contains("alac", ignoreCase = true) == true && uri != null) {
+                if (attrs.matchesAppleMusicMode(mode) && uri != null) {
                     return PlaylistSelection(uri, streamQuality)
                 }
                 val audioGroup = attrs["AUDIO"]
                 if (audioGroup != null) {
-                    alacMediaByGroup[audioGroup]?.let { return it.withQuality(streamQuality) }
-                    if (audioGroup.contains("alac", ignoreCase = true) || audioGroup.contains("lossless", ignoreCase = true)) {
+                    matchingMediaByGroup[audioGroup]?.let { return it.withQuality(streamQuality) }
+                    if (audioGroup.matchesAppleMusicMode(mode)) {
                         mediaByGroup[audioGroup]?.let { return it.withQuality(streamQuality) }
                         if (uri != null) return PlaylistSelection(uri, streamQuality)
                     }
@@ -1321,8 +1349,33 @@ object AppleMusicDecryptPipeline {
             }
         }
 
-        alacMediaByGroup.values.firstOrNull()?.let { return it }
+        matchingMediaByGroup.values.firstOrNull()?.let { return it }
         return childPlaylists.distinct().singleOrNull()
+    }
+
+    private fun Map<String, String>.matchesAppleMusicMode(
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
+    ): Boolean = values.any { it.matchesAppleMusicMode(mode) }
+
+    private fun String.matchesAppleMusicMode(
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
+    ): Boolean {
+        val value = lowercase(Locale.US)
+        return when (mode) {
+            AppleMusicWrapperManagerProvider.WrapperMode.ALAC ->
+                value.contains("alac") || value.contains("lossless")
+            AppleMusicWrapperManagerProvider.WrapperMode.AAC ->
+                Regex("""audio-stereo-\d{3}($|["',\s])""").containsMatchIn(value) &&
+                    !value.contains("binaural") &&
+                    !value.contains("downmix")
+            AppleMusicWrapperManagerProvider.WrapperMode.DOLBY_ATMOS ->
+                value.contains("audio-atmos") ||
+                    value.contains("audio-ec3") ||
+                    value.contains("audio-ac3") ||
+                    value.contains("ec-3") ||
+                    value.contains("ac-3") ||
+                    value.contains("atmos")
+        }
     }
 
     private fun nextPlaylistUri(lines: List<String>, startIndex: Int): String? {
@@ -1338,6 +1391,7 @@ object AppleMusicDecryptPipeline {
     private fun parseMediaPlaylist(
         baseUrl: String,
         playlist: String,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
         qualityInfo: AlacQualityInfo? = null,
     ): MediaPlaylist {
         val keyRing = mutableListOf(PREFETCH_KEY)
@@ -1361,10 +1415,10 @@ object AppleMusicDecryptPipeline {
                     } else {
                         attrs["URI"]?.let { uri ->
                             val resolved = resolveKeyUri(baseUrl, uri)
-                            if (resolved.isAlacDecryptKey() && resolved !in keyRing) {
+                            if (resolved.isAppleMusicDecryptKey(mode) && resolved !in keyRing) {
                                 keyRing += resolved
                             }
-                            resolved.takeIf { it.isAlacDecryptKey() }
+                            resolved.takeIf { it.isAppleMusicDecryptKey(mode) }
                         }
                     }
                 }
@@ -1449,6 +1503,7 @@ object AppleMusicDecryptPipeline {
             samples = samples,
             segmentIndex = segmentIndex,
             firstSampleIndex = firstSampleIndex,
+            mode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
             alacRepairParams = null,
             trace = trace,
         )
@@ -1464,6 +1519,7 @@ object AppleMusicDecryptPipeline {
         samples: List<SampleRange>,
         segmentIndex: Int,
         firstSampleIndex: Int,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
         alacRepairParams: AlacRepairParams?,
         trace: AlacTrace,
     ): DecryptedSegment {
@@ -1481,6 +1537,7 @@ object AppleMusicDecryptPipeline {
                     samples = samples,
                     segmentIndex = segmentIndex,
                     firstSampleIndex = firstSampleIndex,
+                    mode = mode,
                     alacRepairParams = alacRepairParams,
                     decryptContext = decryptContext,
                     trace = trace,
@@ -1527,6 +1584,7 @@ object AppleMusicDecryptPipeline {
         samples: List<SampleRange>,
         segmentIndex: Int,
         firstSampleIndex: Int,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
         alacRepairParams: AlacRepairParams?,
         decryptContext: String,
         trace: AlacTrace,
@@ -1546,7 +1604,11 @@ object AppleMusicDecryptPipeline {
                 sampleDescriptionIndex = sample.sampleDescriptionIndex
             )
             val encryptedSample = encryptedBytes.copyOfRange(sample.offset, sample.offset + sample.size)
-            val decryptLength = encryptedSample.cbcsDecryptLength()
+            val decryptLength = if (mode == AppleMusicWrapperManagerProvider.WrapperMode.ALAC) {
+                encryptedSample.cbcsDecryptLength()
+            } else {
+                encryptedSample.size
+            }
             preservedTailBytes += encryptedSample.size - decryptLength
             if (decryptLength <= 0) return@mapIndexedNotNull null
             val encryptedPayload = if (decryptLength == encryptedSample.size) {
@@ -1789,8 +1851,10 @@ object AppleMusicDecryptPipeline {
             )
     }
 
-    private fun String.isAlacDecryptKey(): Boolean {
-        return endsWith(KEY_SUFFIX_ALAC) || endsWith(KEY_SUFFIX_DEFAULT)
+    private fun String.isAppleMusicDecryptKey(
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
+    ): Boolean {
+        return endsWith(mode.keySuffix) || endsWith(KEY_SUFFIX_DEFAULT)
     }
 
     private fun parseFragmentSamples(data: ByteArray): List<SampleRange> {
@@ -2075,11 +2139,12 @@ object AppleMusicDecryptPipeline {
 
     private fun patchInitSegment(
         initBytes: ByteArray,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
         durationMs: Long?,
         averageBitrate: Long?,
     ): ByteArray {
         var output = initBytes.copyOf()
-        patchSampleEntries(output, 0, output.size)
+        patchSampleEntries(output, 0, output.size, mode)
         output = patchTimelineDurations(output, durationMs)
         patchBitrateBoxes(output, averageBitrate)
         return output
@@ -2517,27 +2582,35 @@ object AppleMusicDecryptPipeline {
         }
     }
 
-    private fun patchSampleEntries(data: ByteArray, start: Int, end: Int) {
+    private fun patchSampleEntries(
+        data: ByteArray,
+        start: Int,
+        end: Int,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
+    ) {
         forEachChildBox(data, start, end) { box ->
             if (box.type == "stsd") {
-                patchStsdEntries(data, box)
+                patchStsdEntries(data, box, mode)
             }
             if (box.type in containerBoxes) {
-                patchSampleEntries(data, box.payloadStart, box.end)
+                patchSampleEntries(data, box.payloadStart, box.end, mode)
             }
         }
     }
 
-    private fun patchStsdEntries(data: ByteArray, stsd: Mp4Box) {
+    private fun patchStsdEntries(
+        data: ByteArray,
+        stsd: Mp4Box,
+        mode: AppleMusicWrapperManagerProvider.WrapperMode,
+    ) {
         var pos = stsd.payloadStart + 8
         val entryCount = readUInt32(data, stsd.payloadStart + 4).toInt()
         repeat(entryCount) {
             val entry = readBox(data, pos, stsd.end) ?: return
             if (entry.type == "enca") {
-                data[entry.start + 4] = 'a'.code.toByte()
-                data[entry.start + 5] = 'l'.code.toByte()
-                data[entry.start + 6] = 'a'.code.toByte()
-                data[entry.start + 7] = 'c'.code.toByte()
+                mode.sampleEntryType.forEachIndexed { index, char ->
+                    data[entry.start + 4 + index] = char.code.toByte()
+                }
             }
             pos = entry.end
         }
@@ -3082,7 +3155,7 @@ object AppleMusicDecryptPipeline {
     )
 
     private val audioSampleEntryTypes = setOf(
-        "alac", "enca", "mp4a"
+        "alac", "enca", "mp4a", "ec-3", "ac-3"
     )
 
     private val sampleEntryChildContainers = setOf(

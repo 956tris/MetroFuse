@@ -19,6 +19,8 @@ import com.metrolist.music.apple.AppleMusicAwareDataSourceFactory
 import com.metrolist.music.apple.AppleMusicSongResolver
 import com.metrolist.music.apple.AppleMusicWrapperDataSource
 import com.metrolist.music.apple.AppleMusicWrapperManagerProvider
+import com.metrolist.music.constants.AppleMusicAudioQuality
+import com.metrolist.music.constants.AppleMusicAudioQualityKey
 import com.metrolist.music.constants.AppleMusicFallbackEnabledKey
 import com.metrolist.music.constants.AppleMusicWrapperHostKey
 import com.metrolist.music.constants.AppleMusicWrapperSecureKey
@@ -279,6 +281,7 @@ constructor(
     private fun currentStreamSelectionKey(context: Context): String {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
         val appleMusicForceAlac = context.dataStore.get(AppleMusicForceAlacKey, false)
+        val appleMusicAudioMode = context.currentAppleMusicWrapperMode()
         val appleMusicSuperFast = context.dataStore.get(AppleMusicSuperFastKey, false)
         val appleWrapperHost = context.dataStore.get(AppleMusicWrapperHostKey, AppleMusicWrapperManagerProvider.DEFAULT_HOST)
         val appleWrapperSecure = context.dataStore.get(AppleMusicWrapperSecureKey, true)
@@ -305,6 +308,7 @@ constructor(
         return listOf(
             "appleFallback=$appleMusicFallbackEnabled",
             "appleForceAlac=$appleMusicForceAlac",
+            "appleAudioMode=${appleMusicAudioMode.name}",
             "appleSuperFast=$appleMusicSuperFast",
             "appleWrapperHost=${appleWrapperHost.hashCode()}",
             "appleWrapperSecure=$appleWrapperSecure",
@@ -330,6 +334,7 @@ constructor(
     ): DownloadStreamResolution {
         val appleMusicFallbackEnabled = context.dataStore.get(AppleMusicFallbackEnabledKey, true)
         val appleMusicForceAlac = context.dataStore.get(AppleMusicForceAlacKey, false)
+        val appleMusicAudioMode = context.currentAppleMusicWrapperMode()
         val appleMusicSuperFast = context.dataStore.get(AppleMusicSuperFastKey, false)
         val appleWrapperHost = context.dataStore.get(AppleMusicWrapperHostKey, AppleMusicWrapperManagerProvider.DEFAULT_HOST)
         val appleWrapperSecure = context.dataStore.get(AppleMusicWrapperSecureKey, true)
@@ -364,7 +369,7 @@ constructor(
                 ).toString(),
                 expiresAtMs = expiresAtMs,
                 cacheKey = appleWrapperCacheKey(mediaId),
-                format = appleWrapperFormat(mediaId, bitrate = bitrate, sampleRate = sampleRate),
+                format = appleWrapperFormat(mediaId, bitrate = bitrate, sampleRate = sampleRate, audioMode = audioMode),
             )
 
         fun QobuzAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
@@ -502,6 +507,7 @@ constructor(
                                 song = song,
                                 wrapperHost = appleWrapperHost,
                                 wrapperSecure = appleWrapperSecure,
+                                audioMode = appleMusicAudioMode,
                                 highWorkerMode = appleMusicSuperFast,
                             ),
                         )
@@ -585,6 +591,7 @@ constructor(
         song: Song?,
         wrapperHost: String = AppleMusicWrapperManagerProvider.DEFAULT_HOST,
         wrapperSecure: Boolean = true,
+        audioMode: AppleMusicWrapperManagerProvider.WrapperMode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
         highWorkerMode: Boolean = false,
     ): AppleMusicSongResolver.Query {
         return AppleMusicSongResolver.Query(
@@ -600,9 +607,27 @@ constructor(
             explicit = song?.song?.explicit,
             wrapperHost = wrapperHost,
             wrapperSecure = wrapperSecure,
+            audioMode = audioMode,
             highWorkerMode = highWorkerMode,
         )
     }
+
+    private fun Context.currentAppleMusicWrapperMode(): AppleMusicWrapperManagerProvider.WrapperMode {
+        if (dataStore.get(AppleMusicForceAlacKey, false)) {
+            return AppleMusicWrapperManagerProvider.WrapperMode.ALAC
+        }
+        return dataStore
+            .get(AppleMusicAudioQualityKey)
+            .toEnum(AppleMusicAudioQuality.ALAC)
+            .toAppleMusicWrapperMode()
+    }
+
+    private fun AppleMusicAudioQuality.toAppleMusicWrapperMode(): AppleMusicWrapperManagerProvider.WrapperMode =
+        when (this) {
+            AppleMusicAudioQuality.ALAC -> AppleMusicWrapperManagerProvider.WrapperMode.ALAC
+            AppleMusicAudioQuality.AAC -> AppleMusicWrapperManagerProvider.WrapperMode.AAC
+            AppleMusicAudioQuality.DOLBY_ATMOS -> AppleMusicWrapperManagerProvider.WrapperMode.DOLBY_ATMOS
+        }
 
     private fun buildQobuzQuery(
         context: Context,
@@ -629,6 +654,8 @@ constructor(
             backend = when (backend) {
                 QobuzBackend.TRYPT -> QobuzAudioProvider.ResolverBackend.TRYPT
                 QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
+                QobuzBackend.MONOCHROME -> QobuzAudioProvider.ResolverBackend.MONOCHROME
+                QobuzBackend.SCAVENGER -> QobuzAudioProvider.ResolverBackend.SCAVENGER
                 QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
                 QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
             },
@@ -856,11 +883,12 @@ constructor(
             mediaId: String,
             bitrate: Int = 0,
             sampleRate: Int? = null,
+            audioMode: AppleMusicWrapperManagerProvider.WrapperMode = AppleMusicWrapperManagerProvider.WrapperMode.ALAC,
         ) = FormatEntity(
             id = mediaId,
             itag = APPLE_MUSIC_WRAPPER_ITAG,
             mimeType = "audio/mp4",
-            codecs = "alac",
+            codecs = audioMode.formatCodec(),
             bitrate = bitrate,
             sampleRate = sampleRate,
             contentLength = 0L,
@@ -868,6 +896,13 @@ constructor(
             perceptualLoudnessDb = null,
             playbackUrl = null,
         )
+
+        private fun AppleMusicWrapperManagerProvider.WrapperMode.formatCodec(): String =
+            when (this) {
+                AppleMusicWrapperManagerProvider.WrapperMode.ALAC -> "alac"
+                AppleMusicWrapperManagerProvider.WrapperMode.AAC -> "mp4a.40.2"
+                AppleMusicWrapperManagerProvider.WrapperMode.DOLBY_ATMOS -> "ec-3"
+            }
 
         private fun qobuzFallbackFormat(
             mediaId: String,

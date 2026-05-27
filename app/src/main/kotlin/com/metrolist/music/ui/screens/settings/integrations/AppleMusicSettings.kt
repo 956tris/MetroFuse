@@ -35,17 +35,22 @@ import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.apple.AppleMusicWrapperManagerProvider
+import com.metrolist.music.constants.AppleMusicAudioQuality
+import com.metrolist.music.constants.AppleMusicAudioQualityKey
+import com.metrolist.music.constants.AppleMusicAudioQualityOptions
 import com.metrolist.music.constants.AppleMusicFallbackEnabledKey
 import com.metrolist.music.constants.AppleMusicForceAlacKey
 import com.metrolist.music.constants.AppleMusicSuperFastKey
 import com.metrolist.music.constants.AppleMusicWrapperHostKey
 import com.metrolist.music.constants.AppleMusicWrapperSecureKey
+import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
+import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,6 +66,10 @@ fun AppleMusicSettings(
         AppleMusicForceAlacKey,
         defaultValue = false,
     )
+    var appleMusicAudioQuality by rememberEnumPreference(
+        AppleMusicAudioQualityKey,
+        defaultValue = AppleMusicAudioQuality.ALAC,
+    )
     val (appleMusicSuperFast, onAppleMusicSuperFastChange) = rememberPreference(
         AppleMusicSuperFastKey,
         defaultValue = false,
@@ -74,6 +83,7 @@ fun AppleMusicSettings(
         defaultValue = true,
     )
     var showAppleWrapperHostDialog by rememberSaveable { mutableStateOf(false) }
+    var showAppleMusicQualityDialog by rememberSaveable { mutableStateOf(false) }
 
     if (showAppleWrapperHostDialog) {
         TextFieldDialog(
@@ -97,6 +107,23 @@ fun AppleMusicSettings(
             extraContent = {
                 InfoLabel(text = stringResource(R.string.apple_music_wrapper_host_helper))
             },
+        )
+    }
+
+    if (showAppleMusicQualityDialog) {
+        EnumDialog(
+            onDismiss = { showAppleMusicQualityDialog = false },
+            onSelect = { value ->
+                appleMusicAudioQuality = value
+                if (value != AppleMusicAudioQuality.ALAC && appleMusicForceAlac) {
+                    onAppleMusicForceAlacChange(false)
+                }
+                showAppleMusicQualityDialog = false
+            },
+            title = stringResource(R.string.apple_music_audio_quality),
+            current = appleMusicAudioQuality,
+            values = AppleMusicAudioQualityOptions,
+            valueText = { it.labelText() },
         )
     }
 
@@ -142,6 +169,12 @@ fun AppleMusicSettings(
                         onClick = { onAppleMusicFallbackEnabledChange(!appleMusicFallbackEnabled) },
                     ),
                     Material3SettingsItem(
+                        icon = painterResource(R.drawable.equalizer),
+                        title = { Text(stringResource(R.string.apple_music_audio_quality)) },
+                        description = { Text(appleMusicAudioQuality.labelText()) },
+                        onClick = { showAppleMusicQualityDialog = true },
+                    ),
+                    Material3SettingsItem(
                         icon = painterResource(R.drawable.graphic_eq),
                         title = { Text(stringResource(R.string.apple_music_force_alac)) },
                         description = { Text(stringResource(R.string.apple_music_force_alac_desc)) },
@@ -152,6 +185,9 @@ fun AppleMusicSettings(
                                     onAppleMusicForceAlacChange(enabled)
                                     if (enabled && !appleMusicFallbackEnabled) {
                                         onAppleMusicFallbackEnabledChange(true)
+                                    }
+                                    if (enabled) {
+                                        appleMusicAudioQuality = AppleMusicAudioQuality.ALAC
                                     }
                                 },
                                 thumbContent = {
@@ -170,6 +206,9 @@ fun AppleMusicSettings(
                             onAppleMusicForceAlacChange(enabled)
                             if (enabled && !appleMusicFallbackEnabled) {
                                 onAppleMusicFallbackEnabledChange(true)
+                            }
+                            if (enabled) {
+                                appleMusicAudioQuality = AppleMusicAudioQuality.ALAC
                             }
                         },
                     ),
@@ -250,3 +289,11 @@ fun AppleMusicSettings(
         },
     )
 }
+
+@Composable
+private fun AppleMusicAudioQuality.labelText(): String =
+    when (this) {
+        AppleMusicAudioQuality.ALAC -> stringResource(R.string.apple_music_quality_alac)
+        AppleMusicAudioQuality.AAC -> stringResource(R.string.apple_music_quality_aac)
+        AppleMusicAudioQuality.DOLBY_ATMOS -> stringResource(R.string.apple_music_quality_dolby_atmos)
+    }

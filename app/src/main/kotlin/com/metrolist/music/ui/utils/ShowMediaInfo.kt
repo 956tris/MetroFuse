@@ -122,6 +122,16 @@ private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
     return hasBitrate || hasSampleRate
 }
 
+private fun FormatEntity.audioCodecDetailsLabel(): String? =
+    when {
+        codecs.contains("ec-3", ignoreCase = true) ||
+            codecs.contains("eac3", ignoreCase = true) ||
+            codecs.contains("atmos", ignoreCase = true) -> "Dolby Atmos (${codecs})"
+        codecs.contains("mp4a", ignoreCase = true) -> "AAC (${codecs})"
+        codecs.isNotBlank() -> codecs
+        else -> null
+    }
+
 @Composable
 fun ShowMediaInfo(videoId: String) {
     if (videoId.isBlank() || videoId.isEmpty()) return
@@ -234,7 +244,7 @@ fun ShowMediaInfo(videoId: String) {
                             stringResource(R.string.dislikes) to info?.dislike?.let(::numberFormatter).orEmpty(),
                             "Itag" to displayFormatEntity?.itag?.toString(),
                             stringResource(R.string.mime_type) to displayFormatEntity?.mimeType,
-                            stringResource(R.string.codecs) to displayFormatEntity?.codecs,
+                            stringResource(R.string.codecs) to displayFormatEntity?.audioCodecDetailsLabel(),
                             stringResource(R.string.bitrate) to displayFormat?.bitrate?.takeIf { it > 0 }?.let { "${it / 1000} Kbps" },
                             stringResource(R.string.sample_rate) to displayFormat?.sampleRate?.takeIf { it > 0 }?.let { "$it Hz" },
                             stringResource(R.string.loudness) to measuredLufs?.let {

@@ -55,8 +55,11 @@ fun PlayingIndicator(
         animatables.forEach { animatable ->
             launch {
                 while (true) {
-                    animatable.animateTo(Random.nextFloat() * 0.9f + 0.1f)
-                    delay(50)
+                    animatable.animateTo(
+                        targetValue = Random.nextFloat() * 0.9f + 0.1f,
+                        animationSpec = tween(180),
+                    )
+                    delay(90)
                 }
             }
         }

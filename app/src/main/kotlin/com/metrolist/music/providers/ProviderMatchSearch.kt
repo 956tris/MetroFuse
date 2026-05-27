@@ -247,6 +247,8 @@ object ProviderMatchSearch {
         when (this) {
             QobuzBackend.TRYPT -> QobuzAudioProvider.ResolverBackend.TRYPT
             QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
+            QobuzBackend.MONOCHROME -> QobuzAudioProvider.ResolverBackend.MONOCHROME
+            QobuzBackend.SCAVENGER -> QobuzAudioProvider.ResolverBackend.SCAVENGER
             QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
             QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
         }

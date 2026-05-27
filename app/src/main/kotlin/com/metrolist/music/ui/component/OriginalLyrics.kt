@@ -563,7 +563,7 @@ fun OriginalLyrics(
             return@LaunchedEffect
         }
         while (isActive) {
-            delay(8) // Faster update for word-by-word animation
+            delay(8)
             val sliderPosition = sliderPositionProvider()
             isSeeking = sliderPosition != null
             val position = sliderPosition ?: playerConnection.player.currentPosition

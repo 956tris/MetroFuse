@@ -49,6 +49,9 @@ object AppleMusicWrapperManagerProvider {
         val idSuffix: String,
         val title: String,
         val quality: Int,
+        val hlsCodecs: String,
+        val sampleEntryType: String,
+        val keySuffix: String,
         val m3u8RpcPath: String,
         val decryptRpcPath: String,
         val requestKind: RequestKind,
@@ -57,6 +60,9 @@ object AppleMusicWrapperManagerProvider {
             idSuffix = "alac",
             title = "Apple Music ALAC (Wrapper)",
             quality = 11,
+            hlsCodecs = "alac",
+            sampleEntryType = "alac",
+            keySuffix = "c23",
             m3u8RpcPath = "/manager.v1.WrapperManagerService/M3U8",
             decryptRpcPath = "/manager.v1.WrapperManagerService/Decrypt",
             requestKind = RequestKind.M3U8
@@ -65,9 +71,23 @@ object AppleMusicWrapperManagerProvider {
             idSuffix = "aac",
             title = "Apple Music AAC (Wrapper)",
             quality = 8,
-            m3u8RpcPath = "/manager.v1.WrapperManagerService/WebPlayback",
+            hlsCodecs = "mp4a.40.2",
+            sampleEntryType = "mp4a",
+            keySuffix = "c22",
+            m3u8RpcPath = "/manager.v1.WrapperManagerService/M3U8",
             decryptRpcPath = "/manager.v1.WrapperManagerService/Decrypt",
-            requestKind = RequestKind.WEB_PLAYBACK
+            requestKind = RequestKind.M3U8
+        ),
+        DOLBY_ATMOS(
+            idSuffix = "atmos",
+            title = "Apple Music Dolby Atmos (Wrapper)",
+            quality = 10,
+            hlsCodecs = "ec-3",
+            sampleEntryType = "ec-3",
+            keySuffix = "c24",
+            m3u8RpcPath = "/manager.v1.WrapperManagerService/M3U8",
+            decryptRpcPath = "/manager.v1.WrapperManagerService/Decrypt",
+            requestKind = RequestKind.M3U8
         )
     }
 

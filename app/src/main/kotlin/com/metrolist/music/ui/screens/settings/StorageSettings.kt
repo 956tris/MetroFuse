@@ -153,19 +153,19 @@ fun StorageSettings(
 
     LaunchedEffect(imageDiskCache) {
         while (isActive) {
-            delay(500)
+            delay(2_000)
             imageCacheSize = imageDiskCache.size
         }
     }
     LaunchedEffect(playerCache) {
         while (isActive) {
-            delay(500)
+            delay(2_000)
             playerCacheSize = tryOrNull { playerCache.cacheSpace } ?: 0
         }
     }
     LaunchedEffect(downloadCache) {
         while (isActive) {
-            delay(500)
+            delay(2_000)
             downloadCacheSize = tryOrNull { downloadCache.cacheSpace } ?: 0
         }
     }

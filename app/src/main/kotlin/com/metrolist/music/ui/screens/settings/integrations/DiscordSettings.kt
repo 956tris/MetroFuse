@@ -6,6 +6,7 @@
 package com.metrolist.music.ui.screens.settings.integrations
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
@@ -35,9 +36,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SnackbarDuration
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -54,6 +52,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -74,9 +73,13 @@ import coil3.compose.AsyncImage
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
+import com.metrolist.music.constants.DiscordAccessTokenKey
 import com.metrolist.music.constants.DiscordActivityNameKey
 import com.metrolist.music.constants.DiscordActivityTypeKey
 import com.metrolist.music.constants.DiscordAdvancedModeKey
+import com.metrolist.music.constants.DiscordAnimatedCanvasQuality
+import com.metrolist.music.constants.DiscordAnimatedCanvasQualityKey
+import com.metrolist.music.constants.DiscordAnimatedCanvasKey
 import com.metrolist.music.constants.DiscordAvatarKey
 import com.metrolist.music.constants.DiscordButton1TextKey
 import com.metrolist.music.constants.DiscordButton1VisibleKey
@@ -86,11 +89,11 @@ import com.metrolist.music.constants.DiscordInfoDismissedKey
 import com.metrolist.music.constants.DiscordNameKey
 import com.metrolist.music.constants.DiscordShowProviderKey
 import com.metrolist.music.constants.DiscordStatusKey
-import com.metrolist.music.constants.DiscordTokenKey
 import com.metrolist.music.constants.DiscordUseDetailsKey
 import com.metrolist.music.constants.DiscordUsernameKey
 import com.metrolist.music.constants.EnableDiscordRPCKey
 import com.metrolist.music.db.entities.Song
+import com.metrolist.music.discord.DiscordRpcManager
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
@@ -98,15 +101,14 @@ import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
-import com.metrolist.music.discordrpc.DiscordRpcConnection
-import com.metrolist.music.discordrpc.SuperProperties
-import com.metrolist.music.utils.DiscordRPC
 import com.metrolist.music.utils.makeTimeString
+import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class DiscordStatus { ONLINE, IDLE, DND }
 
@@ -116,7 +118,6 @@ private enum class DiscordActivityType { LISTENING, PLAYING, WATCHING, COMPETING
 @Composable
 fun DiscordSettings(
     navController: NavController,
-    snackbarHostState: SnackbarHostState,
 ) {
     val playerConnection = LocalPlayerConnection.current ?: return
     val song by playerConnection.currentSong.collectAsStateWithLifecycle(null)
@@ -127,10 +128,10 @@ fun DiscordSettings(
     }
 
     val coroutineScope = rememberCoroutineScope()
-    val loginSuccessfulStr = stringResource(R.string.login_successful)
+    val context = LocalContext.current
 
     // Preferences
-    var discordToken by rememberPreference(DiscordTokenKey, "")
+    var discordAccessToken by rememberPreference(DiscordAccessTokenKey, "")
     var discordUsername by rememberPreference(DiscordUsernameKey, "")
     var discordName by rememberPreference(DiscordNameKey, "")
     var discordAvatar by rememberPreference(DiscordAvatarKey, "")
@@ -140,6 +141,11 @@ fun DiscordSettings(
     val (useDetails, onUseDetailsChange) = rememberPreference(DiscordUseDetailsKey, false)
     val (showProvider, onShowProviderChange) = rememberPreference(DiscordShowProviderKey, true)
     val (advancedMode, onAdvancedModeChange) = rememberPreference(DiscordAdvancedModeKey, false)
+    val (animatedCanvas, onAnimatedCanvasChange) = rememberPreference(DiscordAnimatedCanvasKey, false)
+    var animatedCanvasQuality by rememberEnumPreference(
+        DiscordAnimatedCanvasQualityKey,
+        DiscordAnimatedCanvasQuality.NORMAL,
+    )
 
     var discordStatus by rememberPreference(DiscordStatusKey, "online")
     var button1Text by rememberPreference(DiscordButton1TextKey, "")
@@ -149,14 +155,26 @@ fun DiscordSettings(
     var activityType by rememberPreference(DiscordActivityTypeKey, "listening")
     var activityName by rememberPreference(DiscordActivityNameKey, "")
 
-    val isLoggedIn = remember(discordToken) { discordToken.isNotEmpty() }
+    val isLoggedIn = remember(discordAccessToken) {
+        discordAccessToken.isNotBlank()
+    }
+    val connectionStatus by DiscordRpcManager.connectionStatus.collectAsState()
+    val statusText =
+        when {
+            connectionStatus == DiscordRpcManager.Status.Connected -> "Connected"
+            connectionStatus == DiscordRpcManager.Status.Authorizing -> "Authorizing..."
+            !DiscordRpcManager.isInitialized() -> "Not initialized"
+            DiscordRpcManager.isAuthorized() -> "Authorized"
+            else -> ""
+        }
+    var isBusy by remember { mutableStateOf(false) }
 
-    var showTokenDialog by rememberSaveable { mutableStateOf(false) }
     var showStatusDialog by rememberSaveable { mutableStateOf(false) }
     var showActivityTypeDialog by rememberSaveable { mutableStateOf(false) }
     var showButton1TextDialog by rememberSaveable { mutableStateOf(false) }
     var showButton2TextDialog by rememberSaveable { mutableStateOf(false) }
     var showActivityNameDialog by rememberSaveable { mutableStateOf(false) }
+    var showCanvasQualityDialog by rememberSaveable { mutableStateOf(false) }
 
     // Map string prefs to enums for dialogs
     val currentStatus =
@@ -173,30 +191,40 @@ fun DiscordSettings(
             else -> DiscordActivityType.LISTENING
         }
 
-    // Fetch user info when token changes
-    LaunchedEffect(discordToken) {
-        val token = discordToken
-        if (token.isEmpty()) {
+    if (!DiscordRpcManager.isInitialized()) {
+        DiscordRpcManager.init()
+    }
+
+    LaunchedEffect(Unit) {
+        DiscordRpcManager.errors.collect { message ->
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    LaunchedEffect(discordAccessToken) {
+        val token = discordAccessToken
+        if (token.isBlank()) {
             discordUsername = ""
             discordName = ""
             discordAvatar = ""
             return@LaunchedEffect
         }
+        if (!DiscordRpcManager.isReady()) {
+            DiscordRpcManager.reconnectWithToken(token)
+        }
         launch(Dispatchers.IO) {
-            DiscordRpcConnection
-                .getUserInfo(
-                    token,
-                    SuperProperties.userAgent,
-                    SuperProperties.superPropertiesBase64,
-                ).onSuccess {
-                    discordUsername = it.username
-                    discordName = it.name
-                    discordAvatar = it.avatar ?: ""
-                }.onFailure {
+            val user = DiscordRpcManager.fetchCurrentUser(token)
+            withContext(Dispatchers.Main) {
+                if (user != null) {
+                    discordUsername = user.username
+                    discordName = user.name
+                    discordAvatar = user.avatar ?: ""
+                } else {
                     discordUsername = ""
                     discordName = ""
                     discordAvatar = ""
                 }
+            }
         }
     }
 
@@ -204,62 +232,10 @@ fun DiscordSettings(
     LaunchedEffect(playbackState) {
         if (playbackState == STATE_READY) {
             while (isActive) {
-                delay(100)
+                delay(250)
                 position = playerConnection.player.currentPosition
             }
         }
-    }
-
-    // Dialogs
-    if (showTokenDialog) {
-        var isVerifying by remember { mutableStateOf(false) }
-        var error by remember { mutableStateOf<String?>(null) }
-
-        TextFieldDialog(
-            onDismiss = { showTokenDialog = false },
-            icon = { Icon(painterResource(R.drawable.token), null) },
-            autoDismiss = false,
-            onDone = { token ->
-                isVerifying = true
-                error = null
-                coroutineScope.launch(Dispatchers.IO) {
-                    DiscordRpcConnection
-                        .getUserInfo(
-                            token,
-                            SuperProperties.userAgent,
-                            SuperProperties.superPropertiesBase64,
-                        ).onSuccess {
-                            discordToken = token
-                            showTokenDialog = false
-                            snackbarHostState.showSnackbar(loginSuccessfulStr)
-                        }.onFailure {
-                            error = "Invalid token"
-                            isVerifying = false
-                        }
-                }
-            },
-            singleLine = true,
-            isInputValid = { it.isNotEmpty() },
-            extraContent = {
-                if (isVerifying) {
-                    LinearProgressIndicator(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(bottom = 8.dp),
-                    )
-                }
-                if (error != null) {
-                    Text(
-                        text = error!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(bottom = 8.dp),
-                    )
-                }
-                InfoLabel(text = stringResource(R.string.token_adv_login_description))
-            },
-        )
     }
 
     if (showStatusDialog) {
@@ -309,6 +285,26 @@ fun DiscordSettings(
                     DiscordActivityType.PLAYING -> stringResource(R.string.discord_activity_playing)
                     DiscordActivityType.WATCHING -> stringResource(R.string.discord_activity_watching)
                     DiscordActivityType.COMPETING -> stringResource(R.string.discord_activity_competing)
+                }
+            },
+        )
+    }
+
+    if (showCanvasQualityDialog) {
+        EnumDialog(
+            onDismiss = { showCanvasQualityDialog = false },
+            onSelect = { selected ->
+                animatedCanvasQuality = selected
+                showCanvasQualityDialog = false
+            },
+            title = stringResource(R.string.discord_animated_canvas_quality),
+            current = animatedCanvasQuality,
+            values = DiscordAnimatedCanvasQuality.entries.toList(),
+            valueText = { quality ->
+                when (quality) {
+                    DiscordAnimatedCanvasQuality.LOW -> stringResource(R.string.discord_animated_canvas_quality_low)
+                    DiscordAnimatedCanvasQuality.NORMAL -> stringResource(R.string.discord_animated_canvas_quality_normal)
+                    DiscordAnimatedCanvasQuality.HIGH -> stringResource(R.string.discord_animated_canvas_quality_high)
                 }
             },
         )
@@ -416,6 +412,15 @@ fun DiscordSettings(
             }
         }
 
+        if (statusText.isNotEmpty()) {
+            Text(
+                text = statusText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+
         // Profile Card (fully rounded)
         Card(
             shape = RoundedCornerShape(28.dp),
@@ -491,7 +496,7 @@ fun DiscordSettings(
                     Text(
                         text =
                             if (isLoggedIn) {
-                                discordName
+                                discordName.ifBlank { stringResource(R.string.discord_logged_in) }
                             } else {
                                 stringResource(R.string.not_logged_in)
                             },
@@ -519,9 +524,12 @@ fun DiscordSettings(
                 if (isLoggedIn) {
                     OutlinedButton(onClick = {
                         discordName = ""
-                        discordToken = ""
+                        discordAccessToken = ""
                         discordUsername = ""
                         discordAvatar = ""
+                        coroutineScope.launch(Dispatchers.IO) {
+                            DiscordRpcManager.disconnect()
+                        }
                     }) {
                         Text(stringResource(R.string.action_logout))
                     }
@@ -538,22 +546,46 @@ fun DiscordSettings(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
                     OutlinedButton(
-                        onClick = { navController.navigate("settings/discord/login") },
+                        enabled = !isBusy,
+                        onClick = {
+                            isBusy = true
+                            DiscordRpcManager.authorize { success ->
+                                coroutineScope.launch {
+                                    isBusy = false
+                                    if (success) {
+                                        val token = DiscordRpcManager.getAccessToken()
+                                        if (token != null) {
+                                            discordAccessToken = token
+                                            val user = withContext(Dispatchers.IO) {
+                                                DiscordRpcManager.fetchCurrentUser(token)
+                                            }
+                                            if (user != null) {
+                                                discordUsername = user.username
+                                                discordName = user.name
+                                                discordAvatar = user.avatar ?: ""
+                                            } else {
+                                                discordUsername = ""
+                                                discordName = ""
+                                                discordAvatar = ""
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
                     ) {
                         Text(stringResource(R.string.action_login))
                     }
-                    OutlinedButton(
-                        onClick = { showTokenDialog = true },
-                    ) {
-                        Icon(
-                            painterResource(R.drawable.token),
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(stringResource(R.string.advanced_login))
-                    }
                 }
+            }
+
+            if (isBusy) {
+                LinearProgressIndicator(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                )
             }
         }
 
@@ -633,6 +665,58 @@ fun DiscordSettings(
                         enabled = isLoggedIn && discordRPC,
                         onClick = {
                             if (isLoggedIn && discordRPC) onShowProviderChange(!showProvider)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.discord_animated_canvas)) },
+                        description = {
+                            Text(stringResource(R.string.discord_animated_canvas_description))
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = animatedCanvas,
+                                onCheckedChange = onAnimatedCanvasChange,
+                                enabled = isLoggedIn && discordRPC,
+                                thumbContent = {
+                                    Icon(
+                                        painter = painterResource(
+                                            id = if (animatedCanvas) R.drawable.check else R.drawable.close
+                                        ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                }
+                            )
+                        },
+                        enabled = isLoggedIn && discordRPC,
+                        onClick = {
+                            if (isLoggedIn && discordRPC) onAnimatedCanvasChange(!animatedCanvas)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.discord_animated_canvas_quality)) },
+                        description = {
+                            Text(
+                                when (animatedCanvasQuality) {
+                                    DiscordAnimatedCanvasQuality.LOW -> {
+                                        stringResource(R.string.discord_animated_canvas_quality_low_description)
+                                    }
+
+                                    DiscordAnimatedCanvasQuality.NORMAL -> {
+                                        stringResource(R.string.discord_animated_canvas_quality_normal_description)
+                                    }
+
+                                    DiscordAnimatedCanvasQuality.HIGH -> {
+                                        stringResource(R.string.discord_animated_canvas_quality_high_description)
+                                    }
+                                },
+                            )
+                        },
+                        enabled = isLoggedIn && discordRPC && animatedCanvas,
+                        onClick = {
+                            if (isLoggedIn && discordRPC && animatedCanvas) {
+                                showCanvasQualityDialog = true
+                            }
                         },
                     ),
                     Material3SettingsItem(
@@ -1016,7 +1100,7 @@ fun RichPresence(
             if (button1Visible) {
                 val resolvedButton1 =
                     if (song != null) {
-                        DiscordRPC.resolveVariables(
+                        resolveDiscordVariables(
                             button1Text.ifEmpty { defaultButton1Text },
                             song,
                         )
@@ -1042,7 +1126,7 @@ fun RichPresence(
             if (button2Visible) {
                 val resolvedButton2 =
                     if (song != null) {
-                        DiscordRPC.resolveVariables(
+                        resolveDiscordVariables(
                             button2Text.ifEmpty { defaultButton2Text },
                             song,
                         )
@@ -1066,6 +1150,12 @@ fun RichPresence(
         }
     }
 }
+
+private fun resolveDiscordVariables(text: String, song: Song): String =
+    text
+        .replace("{song_name}", song.song.title)
+        .replace("{artist_name}", song.artists.joinToString { it.name })
+        .replace("{album_name}", song.album?.title ?: "")
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
