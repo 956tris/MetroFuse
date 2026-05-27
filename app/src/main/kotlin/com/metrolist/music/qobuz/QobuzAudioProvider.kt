@@ -816,11 +816,14 @@ object QobuzAudioProvider {
         hires: Boolean,
     ): String = buildString {
         append("Qobuz ")
-        append(if (hires) "Hi-Res FLAC" else "CD FLAC")
-        if (bitDepth != null && samplingRateKhz != null) {
+        append(if (hires) "Hi-Res Lossless" else "CD Quality")
+        if (bitDepth != null) {
             append(" ")
             append(bitDepth)
-            append("bit/")
+            append("-bit")
+        }
+        if (samplingRateKhz != null) {
+            append(" \u2022 ")
             append(formatSamplingRate(samplingRateKhz))
             append("kHz")
         }

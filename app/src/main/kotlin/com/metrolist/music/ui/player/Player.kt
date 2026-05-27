@@ -277,26 +277,40 @@ private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
 }
 
 private fun FormatEntity.playerQualityLabel(): String? {
-    val codec = when {
-        mimeType.contains("flac", ignoreCase = true) ||
-            codecs.contains("flac", ignoreCase = true) -> "FLAC"
-        codecs.contains("alac", ignoreCase = true) -> "ALAC"
+    val sampleRateLabel = sampleRate
+        ?.takeIf { it > 0 }
+        ?.let(::formatSampleRateLabel)
+    val isLossless = mimeType.contains("flac", ignoreCase = true) ||
+        codecs.contains("flac", ignoreCase = true) ||
+        codecs.contains("alac", ignoreCase = true)
+    val qualityLabel = when {
+        isLossless -> {
+            if (sampleRate?.let { it > 48_000 } == true) "Hi-Res Lossless" else "CD Quality"
+        }
         codecs.contains("mp3", ignoreCase = true) ||
-            mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
-        codecs.contains("mp4a", ignoreCase = true) -> "AAC"
+            mimeType.contains("mpeg", ignoreCase = true) -> {
+            bitrate.takeIf { it > 0 }?.let { "MP3 ${(it / 1000).coerceAtLeast(1)}kbps" } ?: "MP3"
+        }
+        codecs.contains("mp4a", ignoreCase = true) -> {
+            bitrate.takeIf { it > 0 }?.let { "AAC ${(it / 1000).coerceAtLeast(1)}kbps" } ?: "AAC"
+        }
+        bitrate > 0 -> "${(bitrate / 1000).coerceAtLeast(1)}kbps"
         else -> null
     }
-    val bitrate = bitrate
-        .takeIf { it > 0 }
-        ?.takeUnless { codec == "ALAC" }
-        ?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
-    val sampleRate = sampleRate
-        ?.takeIf { it > 0 }
-        ?.let { "$it Hz" }
 
-    if (codec == null && bitrate == null && sampleRate == null) return null
-    if (codec == "ALAC" && bitrate == null && sampleRate == null) return null
-    return listOfNotNull(codec, bitrate, sampleRate).joinToString(" \u2022 ").takeIf { it.isNotBlank() }
+    if (qualityLabel == null && sampleRateLabel == null) return null
+    return listOfNotNull(qualityLabel, sampleRateLabel)
+        .joinToString(" \u2022 ")
+        .takeIf { it.isNotBlank() }
+}
+
+private fun formatSampleRateLabel(sampleRateHz: Int): String {
+    val sampleRateKhz = sampleRateHz / 1000.0
+    return if (sampleRateHz % 1000 == 0) {
+        String.format(java.util.Locale.US, "%.0fkHz", sampleRateKhz)
+    } else {
+        String.format(java.util.Locale.US, "%.1fkHz", sampleRateKhz)
+    }
 }
 
 

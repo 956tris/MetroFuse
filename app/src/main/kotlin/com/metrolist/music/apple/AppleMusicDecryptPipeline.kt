@@ -103,9 +103,9 @@ object AppleMusicDecryptPipeline {
 
         fun toLabel(): String? {
             val parts = listOfNotNull(
-                sampleRate?.let { "${formatKhz(it)}kHz" },
                 bitrate.takeIf { it > 0 }?.let { "${(it / 1000).coerceAtLeast(1)}kbps" },
-                bitDepth?.let { "${it}-bit" }
+                bitDepth?.let { "${it}-bit" },
+                sampleRate?.let { "${formatKhz(it)}kHz" },
             )
             return parts.takeIf { it.isNotEmpty() }?.joinToString(" ")
         }
