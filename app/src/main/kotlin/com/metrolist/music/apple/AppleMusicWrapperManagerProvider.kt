@@ -844,19 +844,51 @@ object AppleMusicWrapperManagerProvider {
         val decryptedByIndex = linkedMapOf<Int, ByteArray>()
         val retryErrors = mutableListOf<String>()
 
-        samples.chunked(DECRYPT_BATCH_SIZE).forEach { chunk ->
-            decryptedByIndex += usableDecryptedSamples(
-                requested = chunk,
-                decrypted = decryptSampleBatch(
-                    host = host,
-                    secure = secure,
-                    mode = mode,
-                    adamId = adamId,
-                    key = key,
-                    samples = chunk,
-                    grpcClients = grpcClients,
+        // Parallelize initial batch decrypts to overlap network latency across chunks.
+        try {
+            val chunkFutures = samples.chunked(DECRYPT_BATCH_SIZE).map { chunk ->
+                CompletableFuture.supplyAsync(
+                    {
+                        usableDecryptedSamples(
+                            requested = chunk,
+                            decrypted = decryptSampleBatch(
+                                host = host,
+                                secure = secure,
+                                mode = mode,
+                                adamId = adamId,
+                                key = key,
+                                samples = chunk,
+                                grpcClients = grpcClients,
+                            )
+                        )
+                    },
+                    decryptRaceExecutor,
                 )
-            )
+            }
+            CompletableFuture.allOf(*chunkFutures.toTypedArray()).get()
+            chunkFutures.forEach { fut ->
+                try {
+                    decryptedByIndex += fut.get()
+                } catch (_: Exception) {
+                    // Individual chunk failures will be handled by existing retry logic below
+                }
+            }
+        } catch (_: Exception) {
+            // Fall back to sequential processing on unexpected parallel failure
+            samples.chunked(DECRYPT_BATCH_SIZE).forEach { chunk ->
+                decryptedByIndex += usableDecryptedSamples(
+                    requested = chunk,
+                    decrypted = decryptSampleBatch(
+                        host = host,
+                        secure = secure,
+                        mode = mode,
+                        adamId = adamId,
+                        key = key,
+                        samples = chunk,
+                        grpcClients = grpcClients,
+                    )
+                )
+            }
         }
 
         for (attempt in 0 until DECRYPT_MISSING_RETRY_COUNT) {
@@ -1019,20 +1051,20 @@ object AppleMusicWrapperManagerProvider {
     ): Map<Int, ByteArray> {
         if (samples.isEmpty()) return emptyMap()
         val framesToSend = samples + samples.last()
-        val framedPayload = ByteArrayOutputStream().apply {
-            framesToSend.forEach { sample ->
-                write(
-                    frameGrpcMessage(
-                        encodeDecryptRequest(
-                            adamId = adamId,
-                            key = key,
-                            sampleIndex = sample.sampleIndex,
-                            sample = sample.data
-                        )
-                    )
-                )
-            }
-        }.toByteArray()
+        // Pre-encode payloads and allocate a single buffer to avoid repeated resizing/copies
+        val payloads = framesToSend.map { sample ->
+            encodeDecryptRequest(
+                adamId = adamId,
+                key = key,
+                sampleIndex = sample.sampleIndex,
+                sample = sample.data
+            )
+        }
+        val totalSize = payloads.sumOf { it.size + 5 }
+        val framedOut = ByteArrayOutputStream(totalSize.coerceAtLeast(0))
+        payloads.forEach { payload -> writeFramedTo(framedOut, payload) }
+        val framedPayload = framedOut.toByteArray()
+
         return callStreaming(
             url = buildUrl(host, secure, mode.decryptRpcPath),
             framedPayload = framedPayload,
@@ -1104,10 +1136,15 @@ object AppleMusicWrapperManagerProvider {
                     "wrapper-manager HTTP ${response.code} at ${request.url.host}: $preview"
                 )
             }
-            val body = (response.body
+            val bodySource = (response.body
                 ?: throw WrapperManagerException("wrapper-manager response had no body"))
-                .bytes()
-            return unframeGrpcMessages(body)
+                .source()
+            val frames = mutableListOf<ByteArray>()
+            while (true) {
+                val frame = readGrpcFrame(bodySource) ?: break
+                frames += frame
+            }
+            return frames
         }
     }
 
@@ -1242,14 +1279,23 @@ object AppleMusicWrapperManagerProvider {
     }
 
     private fun frameGrpcMessage(payload: ByteArray): ByteArray {
-        return ByteArrayOutputStream(payload.size + 5).apply {
-            write(0)
-            write((payload.size ushr 24) and 0xff)
-            write((payload.size ushr 16) and 0xff)
-            write((payload.size ushr 8) and 0xff)
-            write(payload.size and 0xff)
-            write(payload)
-        }.toByteArray()
+        val out = ByteArray(payload.size + 5)
+        out[0] = 0
+        out[1] = ((payload.size ushr 24) and 0xff).toByte()
+        out[2] = ((payload.size ushr 16) and 0xff).toByte()
+        out[3] = ((payload.size ushr 8) and 0xff).toByte()
+        out[4] = (payload.size and 0xff).toByte()
+        System.arraycopy(payload, 0, out, 5, payload.size)
+        return out
+    }
+
+    private fun writeFramedTo(out: ByteArrayOutputStream, payload: ByteArray) {
+        out.write(0)
+        out.write((payload.size ushr 24) and 0xff)
+        out.write((payload.size ushr 16) and 0xff)
+        out.write((payload.size ushr 8) and 0xff)
+        out.write(payload.size and 0xff)
+        out.write(payload)
     }
 
     private fun unframeGrpcMessages(bytes: ByteArray): List<ByteArray> {

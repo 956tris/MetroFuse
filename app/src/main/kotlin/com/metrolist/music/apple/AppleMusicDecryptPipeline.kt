@@ -27,11 +27,11 @@ object AppleMusicDecryptPipeline {
     private const val DEFAULT_PREFETCH_WINDOW_SEGMENTS = 4
     private const val DEFAULT_PREFETCH_CONCURRENCY = 3
     private const val DEFAULT_STARTUP_PREFETCH_WINDOW_SEGMENTS = 3
-    private const val DEFAULT_STARTUP_READY_SEGMENTS = 0
+    private const val DEFAULT_STARTUP_READY_SEGMENTS = 1
     private const val HIGH_PREFETCH_WINDOW_SEGMENTS = 5
     private const val HIGH_PREFETCH_CONCURRENCY = 4
     private const val HIGH_STARTUP_PREFETCH_WINDOW_SEGMENTS = 4
-    private const val HIGH_STARTUP_READY_SEGMENTS = 0
+    private const val HIGH_STARTUP_READY_SEGMENTS = 1
     private const val MAX_ROLLING_CACHE_BYTES = 24 * 1024 * 1024
     private const val SEGMENT_SLOW_MS = 4_000L
     private const val SEGMENT_TIMEOUT_MS = 10_000L
