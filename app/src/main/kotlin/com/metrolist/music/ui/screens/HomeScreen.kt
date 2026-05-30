@@ -116,7 +116,6 @@ import com.metrolist.music.constants.GridItemSize
 import com.metrolist.music.constants.GridItemsSizeKey
 import com.metrolist.music.constants.GridThumbnailHeight
 import com.metrolist.music.constants.HomeFeedSource
-import com.metrolist.music.constants.HomeFeedSourceKey
 import com.metrolist.music.constants.InnerTubeCookieKey
 import com.metrolist.music.constants.ListItemHeight
 import com.metrolist.music.constants.ListThumbnailSize
@@ -941,7 +940,7 @@ fun HomeScreen(
     val accountName by viewModel.accountName.collectAsStateWithLifecycle()
     val accountImageUrl by viewModel.accountImageUrl.collectAsStateWithLifecycle()
     val innerTubeCookie by rememberPreference(InnerTubeCookieKey, "")
-    val homeFeedSource by rememberEnumPreference(HomeFeedSourceKey, HomeFeedSource.YOUTUBE_MUSIC)
+    val homeFeedSource by viewModel.homeFeedSource.collectAsStateWithLifecycle()
 
     val shouldShowWrappedCard by viewModel.showWrappedCard.collectAsStateWithLifecycle()
     val wrappedState by viewModel.wrappedManager.state.collectAsStateWithLifecycle()
@@ -2610,7 +2609,11 @@ fun HomeScreen(
                                 return@forEach
                             }
                             val sectionData = homePage?.sections?.getOrNull(section.index)
-                            if (homeFeedSource == HomeFeedSource.SOUNDCLOUD || homeFeedSource == HomeFeedSource.DEEZER) {
+                            if (
+                                homeFeedSource == HomeFeedSource.SOUNDCLOUD ||
+                                    homeFeedSource == HomeFeedSource.DEEZER ||
+                                    homeFeedSource == HomeFeedSource.OFFLINE
+                            ) {
                                 val externalHomeKey = homeFeedSource.name.lowercase()
                                 if (sectionData != null && sectionData.items.isNotEmpty()) {
                                     val distinctItems = sectionData.items.distinctBy { it.id }

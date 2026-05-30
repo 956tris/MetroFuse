@@ -147,7 +147,7 @@ object LocalMusicScanner {
                         existingSong?.song?.albumName
                             ?: existingSong?.album?.title
                             ?: cursor.getStringOrNull(albumColumn)?.cleanUnknown()
-                            ?: "Metrolist downloads"
+                            ?: "MetroFuse downloads"
                     } else {
                         cursor.getStringOrNull(albumColumn)?.cleanUnknown() ?: "Unknown album"
                 }
@@ -270,19 +270,25 @@ object LocalMusicScanner {
             MediaStore.MediaColumns.DATE_MODIFIED,
             MediaStore.MediaColumns.RELATIVE_PATH,
         )
-        val selection =
-            "(${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ? OR " +
-                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?) AND " +
-                "${MediaStore.MediaColumns.MIME_TYPE} LIKE ?"
-        val selectionArgs = arrayOf(
+        val downloadFolderPaths = arrayOf(
+            "Download/MetroFuse",
+            "Download/MetroFuse/",
+            "Downloads/MetroFuse",
+            "Downloads/MetroFuse/",
             "Download/Metrolist",
             "Download/Metrolist/",
             "Downloads/Metrolist",
             "Downloads/Metrolist/",
-            "audio/%",
         )
+        val selection =
+            downloadFolderPaths.joinToString(
+                separator = " OR ",
+                prefix = "(",
+                postfix = ") AND ${MediaStore.MediaColumns.MIME_TYPE} LIKE ?",
+            ) {
+                "${MediaStore.MediaColumns.RELATIVE_PATH} = ?"
+            }
+        val selectionArgs = downloadFolderPaths + "audio/%"
         val sortOrder = "${MediaStore.MediaColumns.DATE_ADDED} DESC"
         val tracks = mutableListOf<LocalTrack>()
 
@@ -314,7 +320,7 @@ object LocalMusicScanner {
                 val albumName =
                     existingSong?.song?.albumName
                         ?: existingSong?.album?.title
-                        ?: "Metrolist downloads"
+                        ?: "MetroFuse downloads"
                 val dateAdded = cursor.getLongOrNull(dateAddedColumn)?.toLocalDateTime()
                 val dateModified = cursor.getLongOrNull(dateModifiedColumn)?.toLocalDateTime()
                 val durationSeconds = existingSong?.song?.duration?.takeIf { it > 0 } ?: -1
@@ -402,11 +408,12 @@ object LocalMusicScanner {
         this
             ?.replace('\\', '/')
             ?.trim('/')
-            ?.equals("Download/Metrolist", ignoreCase = true) == true ||
-            this
-                ?.replace('\\', '/')
-                ?.trim('/')
-                ?.equals("Downloads/Metrolist", ignoreCase = true) == true
+            ?.let { path ->
+                path.equals("Download/MetroFuse", ignoreCase = true) ||
+                    path.equals("Downloads/MetroFuse", ignoreCase = true) ||
+                    path.equals("Download/Metrolist", ignoreCase = true) ||
+                    path.equals("Downloads/Metrolist", ignoreCase = true)
+            } == true
 
     private fun String?.parseMetrolistDisplayName(): MetrolistDisplayMetadata? {
         val name = this

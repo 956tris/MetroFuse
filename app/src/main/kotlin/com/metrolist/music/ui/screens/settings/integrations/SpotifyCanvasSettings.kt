@@ -36,6 +36,8 @@ import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.constants.CanvasArtworkPriority
 import com.metrolist.music.constants.CanvasArtworkPriorityKey
+import com.metrolist.music.constants.DownloadCanvasMode
+import com.metrolist.music.constants.DownloadCanvasModeKey
 import com.metrolist.music.constants.EmbedAnimatedCanvasKey
 import com.metrolist.music.constants.SpotifyCanvasEnabledKey
 import com.metrolist.music.constants.SpotifyCookieKey
@@ -60,18 +62,23 @@ fun SpotifyCanvasSettings(
 ) {
     val (spotifyCanvasEnabled, onSpotifyCanvasEnabledChange) =
         rememberPreference(SpotifyCanvasEnabledKey, false)
-    val (embedAnimatedCanvas, onEmbedAnimatedCanvasChange) =
+    val (legacyEmbedAnimatedCanvas, onLegacyEmbedAnimatedCanvasChange) =
         rememberPreference(EmbedAnimatedCanvasKey, false)
     val (spotifyListeningHistoryEnabled, onSpotifyListeningHistoryEnabledChange) =
         rememberPreference(SpotifyListeningHistoryEnabledKey, false)
     val (spotifyListeningHistoryGlobal, onSpotifyListeningHistoryGlobalChange) =
         rememberPreference(SpotifyListeningHistoryGlobalKey, false)
     var canvasArtworkPriority by rememberEnumPreference(CanvasArtworkPriorityKey, CanvasArtworkPriority.APPLE_MUSIC)
+    var downloadCanvasMode by rememberEnumPreference(
+        DownloadCanvasModeKey,
+        if (legacyEmbedAnimatedCanvas) DownloadCanvasMode.BOTH else DownloadCanvasMode.OFF,
+    )
     var spotifyCookie by rememberPreference(SpotifyCookieKey, "")
     val cookieConfigured = isSpotifyCookieConfigured(spotifyCookie)
 
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
     var showPriorityDialog by rememberSaveable { mutableStateOf(false) }
+    var showDownloadCanvasDialog by rememberSaveable { mutableStateOf(false) }
 
     fun updateCanvasEnabled(enabled: Boolean) {
         if (enabled && !cookieConfigured) {
@@ -101,6 +108,11 @@ fun SpotifyCanvasSettings(
         } else {
             onSpotifyListeningHistoryGlobalChange(enabled)
         }
+    }
+
+    fun updateDownloadCanvasMode(mode: DownloadCanvasMode) {
+        downloadCanvasMode = mode
+        onLegacyEmbedAnimatedCanvasChange(mode != DownloadCanvasMode.OFF)
     }
 
     if (showCookieDialog) {
@@ -136,6 +148,21 @@ fun SpotifyCanvasSettings(
             title = stringResource(R.string.canvas_artwork_priority),
             current = canvasArtworkPriority,
             values = CanvasArtworkPriority.entries,
+            valueText = { it.labelText() },
+            valueDescription = { it.descriptionText() },
+        )
+    }
+
+    if (showDownloadCanvasDialog) {
+        EnumDialog(
+            onDismiss = { showDownloadCanvasDialog = false },
+            onSelect = { value ->
+                updateDownloadCanvasMode(value)
+                showDownloadCanvasDialog = false
+            },
+            title = stringResource(R.string.embed_animated_canvas),
+            current = downloadCanvasMode,
+            values = DownloadCanvasMode.entries,
             valueText = { it.labelText() },
             valueDescription = { it.descriptionText() },
         )
@@ -203,26 +230,16 @@ fun SpotifyCanvasSettings(
                     ),
                     Material3SettingsItem(
                         title = { Text(stringResource(R.string.embed_animated_canvas)) },
-                        description = { Text(stringResource(R.string.embed_animated_canvas_desc)) },
+                        description = { Text(downloadCanvasMode.descriptionText()) },
                         trailingContent = {
-                            Switch(
-                                checked = embedAnimatedCanvas,
-                                onCheckedChange = onEmbedAnimatedCanvasChange,
-                                thumbContent = {
-                                    Icon(
-                                        painter =
-                                            painterResource(
-                                                id = if (embedAnimatedCanvas) R.drawable.check else R.drawable.close,
-                                            ),
-                                        contentDescription = null,
-                                        modifier = Modifier.size(SwitchDefaults.IconSize),
-                                    )
-                                },
+                            Icon(
+                                painter = painterResource(R.drawable.expand_more),
+                                contentDescription = null,
                             )
                         },
                         icon = painterResource(R.drawable.slow_motion_video),
                         onClick = {
-                            onEmbedAnimatedCanvasChange(!embedAnimatedCanvas)
+                            showDownloadCanvasDialog = true
                         },
                     ),
                     Material3SettingsItem(
@@ -368,4 +385,22 @@ private fun CanvasArtworkPriority.descriptionText(): String =
     when (this) {
         CanvasArtworkPriority.APPLE_MUSIC -> stringResource(R.string.canvas_artwork_priority_apple_desc)
         CanvasArtworkPriority.SPOTIFY -> stringResource(R.string.canvas_artwork_priority_spotify_desc)
+    }
+
+@Composable
+private fun DownloadCanvasMode.labelText(): String =
+    when (this) {
+        DownloadCanvasMode.OFF -> stringResource(R.string.download_canvas_mode_off)
+        DownloadCanvasMode.SPOTIFY -> stringResource(R.string.download_canvas_mode_spotify)
+        DownloadCanvasMode.APPLE_MUSIC -> stringResource(R.string.download_canvas_mode_apple)
+        DownloadCanvasMode.BOTH -> stringResource(R.string.download_canvas_mode_both)
+    }
+
+@Composable
+private fun DownloadCanvasMode.descriptionText(): String =
+    when (this) {
+        DownloadCanvasMode.OFF -> stringResource(R.string.download_canvas_mode_off_desc)
+        DownloadCanvasMode.SPOTIFY -> stringResource(R.string.download_canvas_mode_spotify_desc)
+        DownloadCanvasMode.APPLE_MUSIC -> stringResource(R.string.download_canvas_mode_apple_desc)
+        DownloadCanvasMode.BOTH -> stringResource(R.string.download_canvas_mode_both_desc)
     }

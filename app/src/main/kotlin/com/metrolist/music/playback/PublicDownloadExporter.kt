@@ -18,7 +18,11 @@ import androidx.core.net.toUri
 import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.SimpleCache
 import com.metrolist.music.apple.AppleMusicCanvasProvider
+import com.metrolist.music.constants.CanvasArtworkPriority
+import com.metrolist.music.constants.CanvasArtworkPriorityKey
 import com.metrolist.music.constants.DeezerCookieKey
+import com.metrolist.music.constants.DownloadCanvasMode
+import com.metrolist.music.constants.DownloadCanvasModeKey
 import com.metrolist.music.constants.EmbedAnimatedCanvasKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.TidalCookieKey
@@ -38,7 +42,9 @@ import com.metrolist.music.lyrics.LyricsHelper
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.providers.DeezerHomeFeedProvider
+import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.providers.TidalHomeFeedProvider
+import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.utils.spotify.SpotifyCanvasClient
@@ -67,8 +73,8 @@ object PublicDownloadExporter {
     const val DOWNLOAD_PLAYLIST_ID = "LP_METROLIST_DOWNLOADS"
 
     private const val TAG = "PublicDownloadExporter"
-    private const val PUBLIC_FOLDER_NAME = "Metrolist"
-    private const val DOWNLOAD_PLAYLIST_NAME = "Metrolist downloads"
+    private const val PUBLIC_FOLDER_NAME = "MetroFuse"
+    private const val DOWNLOAD_PLAYLIST_NAME = "MetroFuse downloads"
     private const val PUBLIC_DOWNLOAD_ITAG = -2001
     private const val OLD_APPLE_WRAPPER_CACHE_PREFIX = "apple-wrapper-alac:"
     private const val OLD_APPLE_WRAPPER_CACHE_PREFIX_V2 = "apple-wrapper-alac-v2:"
@@ -802,54 +808,84 @@ object PublicDownloadExporter {
         source: Song,
         mediaMetadata: MediaMetadata,
     ): EmbeddedCanvas? {
-        if (!context.dataStore.get(EmbedAnimatedCanvasKey, false)) return null
+        val downloadCanvasMode = effectiveDownloadCanvasMode(context)
+        if (downloadCanvasMode == DownloadCanvasMode.OFF) return null
         if (mediaMetadata.isEpisode || mediaMetadata.isVideoSong) return null
 
-        val spotifyCookie = normalizeSpotifyCookieInput(context.dataStore.get(SpotifyCookieKey, ""))
-        if (spotifyCookie != null) {
-            val spotifyCanvas = withTimeoutOrNull(5_000L) {
-                runCatching {
-                    SpotifyCanvasClient.resolveBackground(mediaMetadata, spotifyCookie)
-                }.onFailure { error ->
-                    Timber.tag(TAG).d(error, "Failed to resolve Spotify Canvas for ${source.song.id}")
-                }.getOrNull()
-            }
-            spotifyCanvas?.let { canvas ->
-                downloadCanvas(
-                    url = canvas.url,
-                    headers = canvas.headers,
-                    provider = "Spotify",
-                )?.let { return it }
-            }
-        }
-
-        val artist = source.orderedArtists.firstOrNull()?.name?.takeIf { it.isNotBlank() }
-            ?: mediaMetadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() }
-            ?: return null
-        val album = source.song.albumName ?: source.album?.title ?: mediaMetadata.album?.title
-        val appleCanvasUrl =
-            AppleMusicCanvasProvider.getCached(
-                song = mediaMetadata.title,
-                artist = artist,
-                album = album,
-                explicit = source.song.explicit.takeIf { it },
-            )?.animated?.takeIf { it.isNotBlank() }
-                ?: withTimeoutOrNull(6_500L) {
-                    AppleMusicCanvasProvider.getBySongArtist(
-                        song = mediaMetadata.title,
-                        artist = artist,
-                        album = album,
-                        explicit = source.song.explicit.takeIf { it },
-                    )?.animated?.takeIf { it.isNotBlank() }
-                }
-
-        return appleCanvasUrl?.let { url ->
-            downloadCanvas(
-                url = url,
-                headers = emptyMap(),
-                provider = "Apple Music",
+        suspend fun spotifyCanvas(): EmbeddedCanvas? {
+            val spotifyCookie = normalizeSpotifyCookieInput(context.dataStore.get(SpotifyCookieKey, ""))
+                ?: return null
+            val canvas =
+                withTimeoutOrNull(5_000L) {
+                    runCatching {
+                        SpotifyCanvasClient.resolveBackground(mediaMetadata, spotifyCookie)
+                    }.onFailure { error ->
+                        Timber.tag(TAG).d(error, "Failed to resolve Spotify Canvas for ${source.song.id}")
+                    }.getOrNull()
+                } ?: return null
+            return downloadCanvas(
+                url = canvas.url,
+                headers = canvas.headers,
+                provider = "Spotify",
             )
         }
+
+        suspend fun appleCanvas(): EmbeddedCanvas? {
+            val artist = source.orderedArtists.firstOrNull()?.name?.takeIf { it.isNotBlank() }
+                ?: mediaMetadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() }
+                ?: return null
+            val album = source.song.albumName ?: source.album?.title ?: mediaMetadata.album?.title
+            val isrc = ProviderIsrc.firstOf(mediaMetadata.id, source.song.id)
+            val appleCanvasUrl =
+                AppleMusicCanvasProvider.getCached(
+                    song = mediaMetadata.title,
+                    artist = artist,
+                    album = album,
+                    explicit = source.song.explicit.takeIf { it },
+                    isrc = isrc,
+                    preferredAspect = AppleMusicCanvasProvider.CanvasAspectPreference.TALL,
+                )?.animated?.takeIf { it.isNotBlank() }
+                    ?: withTimeoutOrNull(6_500L) {
+                        AppleMusicCanvasProvider.getBySongArtist(
+                            song = mediaMetadata.title,
+                            artist = artist,
+                            album = album,
+                            explicit = source.song.explicit.takeIf { it },
+                            isrc = isrc,
+                            preferredAspect = AppleMusicCanvasProvider.CanvasAspectPreference.TALL,
+                        )?.animated?.takeIf { it.isNotBlank() }
+                    }
+
+            return appleCanvasUrl?.let { url ->
+                downloadCanvas(
+                    url = url,
+                    headers = emptyMap(),
+                    provider = "Apple Music",
+                )
+            }
+        }
+
+        return when (downloadCanvasMode) {
+            DownloadCanvasMode.OFF -> null
+            DownloadCanvasMode.SPOTIFY -> spotifyCanvas()
+            DownloadCanvasMode.APPLE_MUSIC -> appleCanvas()
+            DownloadCanvasMode.BOTH -> {
+                when (context.dataStore.get(CanvasArtworkPriorityKey).toEnum(CanvasArtworkPriority.APPLE_MUSIC)) {
+                    CanvasArtworkPriority.APPLE_MUSIC -> appleCanvas() ?: spotifyCanvas()
+                    CanvasArtworkPriority.SPOTIFY -> spotifyCanvas() ?: appleCanvas()
+                }
+            }
+        }
+    }
+
+    private fun effectiveDownloadCanvasMode(context: Context): DownloadCanvasMode {
+        val legacyDefault =
+            if (context.dataStore.get(EmbedAnimatedCanvasKey, false)) {
+                DownloadCanvasMode.BOTH
+            } else {
+                DownloadCanvasMode.OFF
+            }
+        return context.dataStore.get(DownloadCanvasModeKey).toEnum(legacyDefault)
     }
 
     private fun downloadCanvas(

@@ -126,6 +126,8 @@ import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.DisableLoadMoreWhenRepeatAllKey
+import com.metrolist.music.constants.DownloadCanvasMode
+import com.metrolist.music.constants.DownloadCanvasModeKey
 import com.metrolist.music.constants.EnableLastFMScrobblingKey
 import com.metrolist.music.constants.EnableSongCacheKey
 import com.metrolist.music.constants.EmbedAnimatedCanvasKey
@@ -622,7 +624,7 @@ class MusicService :
     @Volatile
     private var cachedSpotifyCanvasEnabled = false
     @Volatile
-    private var cachedEmbedAnimatedCanvas = false
+    private var cachedDownloadCanvasMode = DownloadCanvasMode.OFF
     @Volatile
     private var cachedAppleMusicCoverFadeEnabled = false
 
@@ -881,17 +883,20 @@ class MusicService :
 
         dataStore.data
             .map { prefs ->
-                listOf(
+                val legacyDownloadCanvasEnabled = prefs[EmbedAnimatedCanvasKey] ?: false
+                Triple(
                     prefs[SpotifyCanvasEnabledKey] ?: false,
-                    prefs[EmbedAnimatedCanvasKey] ?: false,
+                    prefs[DownloadCanvasModeKey].toEnum(
+                        if (legacyDownloadCanvasEnabled) DownloadCanvasMode.BOTH else DownloadCanvasMode.OFF,
+                    ),
                     prefs[ExperimentalAppleMusicCoverFadeKey] ?: false,
                 )
             }
             .distinctUntilChanged()
-            .collectLatest(scope) {
-                cachedSpotifyCanvasEnabled = it[0]
-                cachedEmbedAnimatedCanvas = it[1]
-                cachedAppleMusicCoverFadeEnabled = it[2]
+            .collectLatest(scope) { prefs ->
+                cachedSpotifyCanvasEnabled = prefs.first
+                cachedDownloadCanvasMode = prefs.second
+                cachedAppleMusicCoverFadeEnabled = prefs.third
                 preloadUpcomingAppleCanvases()
                 withContext(Dispatchers.IO + SilentHandler) {
                     updateAppleCanvas(currentMediaMetadata.value)
@@ -5315,7 +5320,8 @@ class MusicService :
 
     private fun shouldResolveAppleCanvas(): Boolean =
         cachedSpotifyCanvasEnabled ||
-            cachedEmbedAnimatedCanvas ||
+            cachedDownloadCanvasMode == DownloadCanvasMode.APPLE_MUSIC ||
+            cachedDownloadCanvasMode == DownloadCanvasMode.BOTH ||
             cachedAppleMusicCoverFadeEnabled
 
     private suspend fun updateTidalCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {

@@ -356,9 +356,17 @@ enum class CanvasArtworkPriority {
     SPOTIFY,
 }
 
+enum class DownloadCanvasMode {
+    OFF,
+    SPOTIFY,
+    APPLE_MUSIC,
+    BOTH,
+}
+
 val SpotifyCanvasEnabledKey = booleanPreferencesKey("spotifyCanvasEnabled")
 val CanvasArtworkPriorityKey = stringPreferencesKey("canvasArtworkPriority")
 val EmbedAnimatedCanvasKey = booleanPreferencesKey("embedAnimatedCanvas")
+val DownloadCanvasModeKey = stringPreferencesKey("downloadCanvasMode")
 val SpotifyCookieKey = stringPreferencesKey("spotifyCanvasCookie")
 val SpotifyListeningHistoryEnabledKey = booleanPreferencesKey("spotifyListeningHistoryEnabled")
 val SpotifyListeningHistoryGlobalKey = booleanPreferencesKey("spotifyListeningHistoryGlobal")

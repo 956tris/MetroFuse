@@ -662,7 +662,15 @@
     <string name="canvas_artwork_priority_spotify">Prefer Spotify</string>
     <string name="canvas_artwork_priority_spotify_desc">Use Spotify Canvas in the player first, then Apple Music motion art if Spotify has no match.</string>
     <string name="embed_animated_canvas">Embed Canvas in downloads</string>
-    <string name="embed_animated_canvas_desc">Embeds available Spotify or Apple Music Canvas video into downloaded tracks. Warning: most offline players cannot read it; MetroFuse can.</string>
+    <string name="embed_animated_canvas_desc">Choose which animated artwork MetroFuse embeds into downloaded tracks. Warning: most offline players cannot read it; MetroFuse can.</string>
+    <string name="download_canvas_mode_off">Off</string>
+    <string name="download_canvas_mode_off_desc">Do not embed animated artwork in downloaded tracks.</string>
+    <string name="download_canvas_mode_spotify">Spotify Canvas</string>
+    <string name="download_canvas_mode_spotify_desc">Embed Spotify Canvas videos when Spotify has a match.</string>
+    <string name="download_canvas_mode_apple">Apple animated covers</string>
+    <string name="download_canvas_mode_apple_desc">Embed Apple Music animated cover art when Apple has a match.</string>
+    <string name="download_canvas_mode_both">Both</string>
+    <string name="download_canvas_mode_both_desc">Try both providers using the current Canvas priority order.</string>
     <string name="spotify_listening_history">Sync Spotify listening history</string>
     <string name="spotify_listening_history_desc">Experimental. Matches MetroFuse plays to Spotify tracks and reports them only when Spotify accepts the history write path.</string>
     <string name="spotify_listening_history_global">Use Spotify history globally</string>

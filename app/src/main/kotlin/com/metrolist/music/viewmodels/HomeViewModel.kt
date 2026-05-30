@@ -513,11 +513,11 @@ class HomeViewModel @Inject constructor(
     private suspend fun load() {
         cancelBackgroundHomeJobs()
         isLoading.value = true
-        val selectedHomeFeedSource = context.dataStore[HomeFeedSourceKey].toEnum(HomeFeedSource.YOUTUBE_MUSIC)
-        homeFeedSource.value = selectedHomeFeedSource
         selectedChip.value = null
         previousHomePage.value = null
         homePage.value = null
+        val selectedHomeFeedSource = context.dataStore[HomeFeedSourceKey].toEnum(HomeFeedSource.YOUTUBE_MUSIC)
+        homeFeedSource.value = selectedHomeFeedSource
         val hideExplicit = context.dataStore.get(HideExplicitKey, false)
         val hideVideoSongs = context.dataStore.get(HideVideoSongsKey, false)
         val hideYoutubeShorts = context.dataStore.get(HideYoutubeShortsKey, false)
