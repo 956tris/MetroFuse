@@ -89,8 +89,10 @@ data class SongEntity(
             likedDate = if (!liked) LocalDateTime.now() else null,
             inLibrary = if (!liked) inLibrary ?: LocalDateTime.now() else inLibrary,
         ).also {
-            CoroutineScope(Dispatchers.IO).launch {
-                YouTube.likeVideo(id, !liked)
+            if (!id.isExternalProviderTrackId()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    YouTube.likeVideo(id, !liked)
+                }
             }
         }
 
@@ -114,3 +116,8 @@ data class SongEntity(
             isUploaded = !isUploaded,
         )
 }
+
+private fun String.isExternalProviderTrackId(): Boolean =
+    startsWith("spotify:track:", ignoreCase = true) ||
+        startsWith("tidal:track:", ignoreCase = true) ||
+        startsWith("deezer:track:", ignoreCase = true)

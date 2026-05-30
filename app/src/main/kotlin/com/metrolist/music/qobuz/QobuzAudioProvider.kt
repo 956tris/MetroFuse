@@ -35,7 +35,7 @@ object QobuzAudioProvider {
     private const val STREAM_CACHE_MS = 5 * 60 * 1000L
     private const val REJECT_SCORE = -1_000_000
 
-    private val JUMO_SUPPORTED_REGIONS = setOf("FR", "NL", "NZ", "JP")
+    private val JUMO_SUPPORTED_REGIONS = setOf("JP", "US")
 
     enum class ResolverBackend {
         JUMO,
@@ -118,7 +118,7 @@ object QobuzAudioProvider {
     ): String {
         val normalized = countryCode.trim().uppercase(Locale.US)
         return when (backend) {
-            ResolverBackend.JUMO -> normalized.takeIf { it in JUMO_SUPPORTED_REGIONS } ?: "FR"
+            ResolverBackend.JUMO -> normalized.takeIf { it in JUMO_SUPPORTED_REGIONS } ?: "US"
             ResolverBackend.KENNY -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
             ResolverBackend.SQUID -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
             ResolverBackend.MONOCHROME -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"

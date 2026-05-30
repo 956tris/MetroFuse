@@ -5,7 +5,6 @@
 
 package com.metrolist.music.providers
 
-import com.metrolist.music.apple.AppleMusicWrapperManagerProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -13,6 +12,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +25,8 @@ object ProviderHealthChecker {
     private const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
     private const val TIDAL_PUBLIC_TOKEN = "49YxDN9a2aFV6RTG"
+    private const val QOBUZ_HEALTH_QUERY = "yes and ariana grande"
+    private const val QOBUZ_HEALTH_TRACK_ID = "256170850"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val TIDAL_RESOLVERS =
         listOf(
@@ -75,23 +77,8 @@ object ProviderHealthChecker {
         val endpoint: String = baseUrl.trimEnd('/') + "/"
     }
 
-    fun targets(
-        deezerResolverUrl: String,
-        appleWrapperHost: String = AppleMusicWrapperManagerProvider.DEFAULT_HOST,
-        appleWrapperSecure: Boolean = true,
-    ): List<Target> {
+    fun targets(deezerResolverUrl: String): List<Target> {
         val deezerResolver = normalizeDeezerResolverUrl(deezerResolverUrl)
-        val appleWrapperInstances = buildList {
-            add(
-                AppleMusicWrapperManagerProvider.WrapperInstance(
-                    host = AppleMusicWrapperManagerProvider.normalizeHost(appleWrapperHost),
-                    secure = appleWrapperSecure,
-                )
-            )
-            AppleMusicWrapperManagerProvider.defaultInstances().forEach { instance ->
-                if (none { it.host == instance.host }) add(instance)
-            }
-        }
         return listOf(
             getTarget(
                 id = "youtube_music",
@@ -128,14 +115,6 @@ object ProviderHealthChecker {
                 endpoint = "https://api.deezer.com/infos",
                 detail = "Search and homepage metadata",
             ),
-            *appleWrapperInstances
-                .map { instance ->
-                    appleWrapperTarget(
-                        host = instance.host,
-                        secure = instance.secure,
-                    )
-                }
-                .toTypedArray(),
             postJsonTarget(
                 id = "deezer_resolver",
                 group = "Deezer",
@@ -163,51 +142,40 @@ object ProviderHealthChecker {
                     )
                 }
                 .toTypedArray(),
-            getTarget(
+            qobuzSearchAndStreamTarget(
                 id = "qobuz_trypt",
-                group = "Qobuz",
                 name = "TrypT",
-                endpoint = "https://trypt-hifi-dl-456461932686.us-west1.run.app/api/get-music?q=test&offset=0",
-                detail = "Qobuz search and stream backend",
-                headers = mapOf("Token-Country" to "US"),
+                baseUrl = "https://trypt-hifi-dl-456461932686.us-west1.run.app",
+                requiresCountry = true,
             ),
-            getTarget(
+            qobuzJumoTarget(
                 id = "qobuz_jumo",
-                group = "Qobuz",
                 name = "JUMO",
-                endpoint = "https://jumo-dl.pages.dev/",
-                detail = "Qobuz stream backend",
+                baseUrl = "https://jumo-dl.pages.dev",
             ),
-            getTarget(
+            qobuzSearchAndStreamTarget(
                 id = "qobuz_monochrome",
-                group = "Qobuz",
                 name = "Monochrome v1.0",
-                endpoint = "https://qdl-api.monochrome.tf/api/get-music?q=test&offset=0",
-                detail = "Qobuz search and stream backend",
-                headers = mapOf("Token-Country" to "US"),
+                baseUrl = "https://qdl-api.monochrome.tf",
+                requiresCountry = true,
             ),
-            getTarget(
+            qobuzSearchAndStreamTarget(
                 id = "qobuz_scavenger",
-                group = "Qobuz",
                 name = "Scavenger v1.0",
-                endpoint = "https://mono.scavengerfurs.net/api/get-music?q=test&offset=0",
-                detail = "Qobuz search and stream backend",
-                headers = mapOf("Token-Country" to "US"),
+                baseUrl = "https://mono.scavengerfurs.net",
+                requiresCountry = true,
             ),
-            getTarget(
+            qobuzSearchAndStreamTarget(
                 id = "qobuz_kenny",
-                group = "Qobuz",
                 name = "Kenny",
-                endpoint = "https://qobuz.kennyy.com.br/api/get-music?q=test&offset=0",
-                detail = "Qobuz search and stream backend",
+                baseUrl = "https://qobuz.kennyy.com.br",
+                requiresCountry = false,
             ),
-            getTarget(
+            qobuzSearchAndStreamTarget(
                 id = "qobuz_squid",
-                group = "Qobuz",
                 name = "Squid",
-                endpoint = "https://qobuz.squid.wtf/api/get-music?q=test&offset=0",
-                detail = "Qobuz search and stream backend",
-                headers = mapOf("Token-Country" to "US"),
+                baseUrl = "https://qobuz.squid.wtf",
+                requiresCountry = true,
             ),
         )
     }
@@ -264,6 +232,224 @@ object ProviderHealthChecker {
             }
         }
 
+    private fun qobuzSearchAndStreamTarget(
+        id: String,
+        name: String,
+        baseUrl: String,
+        requiresCountry: Boolean,
+    ): Target {
+        val headers =
+            if (requiresCountry) {
+                mapOf("Token-Country" to "US")
+            } else {
+                emptyMap()
+            }
+        val endpoint =
+            "$baseUrl/api/get-music".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addQueryParameter("q", QOBUZ_HEALTH_QUERY)
+                ?.addQueryParameter("offset", "0")
+                ?.build()
+                ?.toString()
+                ?: baseUrl
+        return Target(
+            id = id,
+            group = "Qobuz",
+            name = name,
+            endpoint = endpoint,
+            detail = "Qobuz search and stream backend",
+            requestFactory = { qobuzGetRequest(endpoint, baseUrl, headers) },
+            customCheck = { target, startedAt ->
+                checkQobuzSearchAndStream(
+                    target = target,
+                    startedAt = startedAt,
+                    baseUrl = baseUrl,
+                    headers = headers,
+                )
+            },
+        )
+    }
+
+    private fun qobuzJumoTarget(
+        id: String,
+        name: String,
+        baseUrl: String,
+    ): Target {
+        val endpoint =
+            "$baseUrl/fetch".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addQueryParameter("track_id", QOBUZ_HEALTH_TRACK_ID)
+                ?.addQueryParameter("format_id", "5")
+                ?.addQueryParameter("region", "US")
+                ?.build()
+                ?.toString()
+                ?: baseUrl
+        return Target(
+            id = id,
+            group = "Qobuz",
+            name = name,
+            endpoint = endpoint,
+            detail = "Qobuz stream backend",
+            requestFactory = { qobuzGetRequest(endpoint, baseUrl, emptyMap()) },
+            customCheck = { target, startedAt ->
+                checkQobuzDownload(
+                    target = target,
+                    startedAt = startedAt,
+                    request = qobuzGetRequest(endpoint, baseUrl, emptyMap()),
+                    streamName = name,
+                )
+            },
+        )
+    }
+
+    private fun checkQobuzSearchAndStream(
+        target: Target,
+        startedAt: Long,
+        baseUrl: String,
+        headers: Map<String, String>,
+    ): Result {
+        val searchUrl =
+            "$baseUrl/api/get-music".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addQueryParameter("q", QOBUZ_HEALTH_QUERY)
+                ?.addQueryParameter("offset", "0")
+                ?.build()
+                ?: return Result(target, Status.OFFLINE, null, "Invalid search URL")
+        val searchRequest = qobuzGetRequest(searchUrl.toString(), baseUrl, headers)
+            ?: return Result(target, Status.OFFLINE, null, "Invalid search request")
+
+        val trackId =
+            client.newCall(searchRequest).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    return Result(
+                        target = target,
+                        status = response.code.toQobuzProbeStatus(),
+                        latencyMs = elapsedMs(startedAt),
+                        message = "Search HTTP ${response.code}: ${payload.compactHealthBody()}",
+                    )
+                }
+
+                val root =
+                    runCatching { JSONObject(payload) }
+                        .getOrElse {
+                            return Result(
+                                target = target,
+                                status = Status.REACHABLE,
+                                latencyMs = elapsedMs(startedAt),
+                                message = "Search answered without JSON",
+                            )
+                        }
+                if (!root.optBoolean("success", false)) {
+                    return Result(
+                        target = target,
+                        status = Status.REACHABLE,
+                        latencyMs = elapsedMs(startedAt),
+                        message = "Search rejected: ${root.stringOrNull("error") ?: "unknown error"}",
+                    )
+                }
+
+                root.optJSONObject("data")
+                    ?.optJSONObject("tracks")
+                    ?.optJSONArray("items")
+                    ?.firstDownloadableQobuzTrackId()
+                    ?: return Result(
+                        target = target,
+                        status = Status.REACHABLE,
+                        latencyMs = elapsedMs(startedAt),
+                        message = "Search OK, no downloadable test track",
+                    )
+            }
+
+        val downloadUrl =
+            "$baseUrl/api/download-music".toHttpUrlOrNull()
+                ?.newBuilder()
+                ?.addQueryParameter("track_id", trackId)
+                ?.addQueryParameter("quality", "5")
+                ?.build()
+                ?: return Result(target, Status.REACHABLE, elapsedMs(startedAt), "Invalid stream URL")
+        return checkQobuzDownload(
+            target = target,
+            startedAt = startedAt,
+            request = qobuzGetRequest(downloadUrl.toString(), baseUrl, headers),
+            streamName = target.name,
+        )
+    }
+
+    private fun checkQobuzDownload(
+        target: Target,
+        startedAt: Long,
+        request: Request?,
+        streamName: String,
+    ): Result {
+        if (request == null) {
+            return Result(target, Status.OFFLINE, null, "Invalid stream request")
+        }
+
+        return client.newCall(request).execute().use { response ->
+            val payload = response.body.string()
+            if (!response.isSuccessful) {
+                return@use Result(
+                    target = target,
+                    status = response.code.toQobuzProbeStatus(),
+                    latencyMs = elapsedMs(startedAt),
+                    message = "Stream HTTP ${response.code}: ${payload.compactHealthBody()}",
+                )
+            }
+
+            val root =
+                runCatching { JSONObject(payload) }
+                    .getOrElse {
+                        return@use Result(
+                            target = target,
+                            status = Status.REACHABLE,
+                            latencyMs = elapsedMs(startedAt),
+                            message = "$streamName answered without stream JSON",
+                        )
+                    }
+            if (!root.optBoolean("success", true)) {
+                val error = root.stringOrNull("error") ?: root.stringOrNull("message") ?: "unknown error"
+                return@use Result(
+                    target = target,
+                    status = Status.REACHABLE,
+                    latencyMs = elapsedMs(startedAt),
+                    message = "Stream blocked: $error",
+                )
+            }
+
+            val streamUrl =
+                root.optJSONObject("data")?.stringOrNull("url")
+                    ?: root.stringOrNull("url")
+                    ?: root.stringOrNull("directUrl")
+            Result(
+                target = target,
+                status = if (streamUrl.isNullOrBlank()) Status.REACHABLE else Status.ONLINE,
+                latencyMs = elapsedMs(startedAt),
+                message = if (streamUrl.isNullOrBlank()) "Stream response missing URL" else "Search and stream OK",
+            )
+        }
+    }
+
+    private fun qobuzGetRequest(
+        endpoint: String,
+        baseUrl: String,
+        headers: Map<String, String>,
+    ): Request? =
+        endpoint.toHttpUrlOrNull()?.let { url ->
+            Request.Builder()
+                .url(url)
+                .get()
+                .header("Accept", "application/json,text/plain,*/*")
+                .header("Accept-Language", "en-US,en;q=0.9")
+                .header("Origin", baseUrl)
+                .header("Referer", "$baseUrl/")
+                .header("User-Agent", USER_AGENT)
+                .apply {
+                    headers.forEach { (name, value) -> header(name, value) }
+                }
+                .build()
+        }
+
     private fun getTarget(
         id: String,
         group: String,
@@ -292,35 +478,6 @@ object ProviderHealthChecker {
                 }
             },
         )
-
-    private fun appleWrapperTarget(
-        host: String,
-        secure: Boolean,
-    ): Target {
-        val endpoint = AppleMusicWrapperManagerProvider.buildUrl(
-            host = host,
-            secure = secure,
-            path = "/manager.v1.WrapperManagerService/Status",
-        )
-        return Target(
-            id = "apple_wrapper_${host.toTargetId()}",
-            group = "Apple Music",
-            name = host,
-            endpoint = endpoint,
-            detail = "ALAC wrapper-manager status",
-            requestFactory = { null },
-            customCheck = { target, startedAt ->
-                val status = AppleMusicWrapperManagerProvider.status(host, secure)
-                val latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
-                Result(
-                    target = target,
-                    status = if (status.ready) Status.ONLINE else Status.REACHABLE,
-                    latencyMs = latencyMs,
-                    message = status.toHealthMessage(),
-                )
-            },
-        )
-    }
 
     private fun postJsonTarget(
         id: String,
@@ -370,17 +527,35 @@ object ProviderHealthChecker {
             else -> "HTTP $this"
         }
 
+    private fun Int.toQobuzProbeStatus(): Status =
+        when (this) {
+            in 200..299 -> Status.ONLINE
+            in 400..499 -> Status.REACHABLE
+            else -> Status.OFFLINE
+        }
+
+    private fun elapsedMs(startedAt: Long): Long =
+        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
+
+    private fun String.compactHealthBody(): String =
+        replace(Regex("\\s+"), " ")
+            .trim()
+            .take(120)
+            .ifBlank { "empty body" }
+
+    private fun JSONObject.stringOrNull(name: String): String? =
+        optString(name)
+            .takeIf { it.isNotBlank() && it != "null" }
+
+    private fun org.json.JSONArray.firstDownloadableQobuzTrackId(): String? {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            if (!item.optBoolean("downloadable", false) && !item.optBoolean("streamable", false)) continue
+            item.stringOrNull("id")?.let { return it }
+        }
+        return null
+    }
+
     fun qobuzTargetId(value: String): String =
         "qobuz_${value.lowercase(Locale.US)}"
-
-    private fun String.toTargetId(): String =
-        lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), "_").trim('_')
-
-    private fun AppleMusicWrapperManagerProvider.WrapperStatus.toHealthMessage(): String {
-        val regionsText = regions.takeIf { it.isNotEmpty() }
-            ?.joinToString(prefix = ", regions ") { it.uppercase(Locale.US) }
-            .orEmpty()
-        val readyText = if (ready) "ready" else "not ready"
-        return "$readyText, $clientCount clients$regionsText"
-    }
 }

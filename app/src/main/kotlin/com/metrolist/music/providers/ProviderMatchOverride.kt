@@ -6,6 +6,7 @@
 package com.metrolist.music.providers
 
 import com.metrolist.music.constants.AudioProviderOrderItem
+import com.metrolist.music.constants.isPlaybackProvider
 import org.json.JSONObject
 
 data class ProviderMatchOverride(
@@ -19,7 +20,7 @@ data class ProviderMatchOverride(
             AudioProviderOrderItem.TIDAL -> "tidal:track:$providerTrackId"
             AudioProviderOrderItem.DEEZER -> "deezer:track:$providerTrackId"
             AudioProviderOrderItem.QOBUZ -> "qobuz:track:$providerTrackId"
-            AudioProviderOrderItem.APPLE_MUSIC -> "apple:track:$providerTrackId"
+            AudioProviderOrderItem.APPLE_MUSIC -> providerTrackId
             AudioProviderOrderItem.YOUTUBE_MUSIC -> providerTrackId
             AudioProviderOrderItem.INSTAGRAM -> providerTrackId
         }
@@ -52,6 +53,7 @@ object ProviderMatchOverrides {
                     val provider = obj.optString("provider")
                         .takeIf { it.isNotBlank() }
                         ?.let { raw -> AudioProviderOrderItem.entries.find { it.name == raw } }
+                        ?.takeIf { it.isPlaybackProvider() }
                         ?: return@forEach
                     val providerTrackId = obj.optString("trackId").takeIf { it.isNotBlank() } ?: return@forEach
                     put(
@@ -70,6 +72,7 @@ object ProviderMatchOverrides {
     fun encode(overrides: Map<String, ProviderMatchOverride>): String {
         val root = JSONObject()
         overrides.forEach { (mediaId, override) ->
+            if (!override.provider.isPlaybackProvider()) return@forEach
             root.put(
                 mediaId,
                 JSONObject()

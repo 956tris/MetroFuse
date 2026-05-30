@@ -19,9 +19,12 @@ import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.providers.ExternalPlaylistPage
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.providers.SpotifyHomeFeedParser
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -48,18 +51,25 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.math.BigInteger
 import java.net.URLDecoder
+import java.net.URLEncoder
 import java.nio.ByteBuffer
+import java.security.SecureRandom
 import java.util.Base64
 import java.util.Locale
 import java.util.TimeZone
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlin.math.abs
@@ -78,6 +88,18 @@ data class SpotifyMixMetadata(
 private data class SpotifyArtistPageMetadata(
     val imageUrl: String?,
     val statsText: String?,
+)
+
+private data class RankedSpotifyRecommendation(
+    val song: SongItem,
+    var score: Int,
+    val sources: MutableSet<String>,
+    val firstIndex: Int,
+)
+
+private data class CachedSpotifyAutoplayTrack(
+    val trackId: String,
+    val song: SongItem?,
 )
 
 data class SpotifyAccountInfo(
@@ -266,6 +288,19 @@ object SpotifyCanvasClient {
     private const val LIBRARY_ITEM_PAGE_SIZE = 50
     private const val LIBRARY_ITEM_SAFETY_LIMIT = 1_000
     private const val WEB_PLAYER_URL = "https://open.spotify.com/"
+    private const val SPOTIFY_APRESOLVE_URL = "https://apresolve.spotify.com/?type=dealer-g2&type=spclient"
+    private const val SPOTIFY_HISTORY_BATCH_URL = "https://gew1-spclient.spotify.com/melody/v1/msg/batch"
+    private const val SPOTIFY_HISTORY_CLIENT_VERSION_FALLBACK = "0.0.0"
+    private const val SPOTIFY_HISTORY_FINAL_CLIENT_VERSION = "0.0.0"
+    private const val SPOTIFY_HISTORY_FINAL_PLATFORM = "web_player windows 10;chrome 148.0.0.0;desktop"
+    private const val SPOTIFY_HISTORY_FINAL_SDK_ID = "harmony:4.72.0"
+    private const val SPOTIFY_HISTORY_DEVICE_MODEL = "harmony-4.72.0-web-player"
+    private const val SPOTIFY_HISTORY_DEVICE_NAME = "Spotify Web Player"
+    private const val SPOTIFY_HISTORY_BITRATE = 128_000
+    private const val SPOTIFY_HISTORY_SESSION_TTL_MS = 45 * 60 * 1000L
+    private const val SPOTIFY_HISTORY_DEVICE_TTL_MS = 45 * 60 * 1000L
+    private const val SPOTIFY_HISTORY_DEALER_TIMEOUT_MS = 10_000L
+    private const val SPOTIFY_WEB_PLAYER_QUEUE_CACHE_TTL_MS = 10 * 60 * 1000L
     private val CASITA_SLOT_TYPES = setOf(1, 2, 3)
     private val CASITA_EAGERLOAD_COMPONENT_TYPES =
         listOf(2, 3, 4, 6, 7, 8, 11, 12, 13, 15, 16, 17, 18, 23, 24, 25, 27, 28, 31, 33, 35, 36, 37, 39)
@@ -287,6 +322,7 @@ object SpotifyCanvasClient {
     private val WEB_PLAYER_SCRIPT_REGEX = Regex("""<script[^>]+src="([^"]+)"""")
     private val WEBPACK_CHUNK_MAP_REGEX = Regex("""\{(?:\d+:"[^"]+",?)+\}""")
     private val WEBPACK_CHUNK_ID_REGEX = Regex("""(\d+):""")
+    private val SPOTIFY_IMAGE_URL_REGEX = Regex("""https?://[^\s,"'\\]+""")
     private val NEXT_DATA_REGEX =
         Regex(
             """<script id="__NEXT_DATA__" type="application/json"[^>]*>(.*?)</script>""",
@@ -297,6 +333,8 @@ object SpotifyCanvasClient {
             """<script id="initialState" type="text/plain"[^>]*>(.*?)</script>""",
             setOf(RegexOption.DOT_MATCHES_ALL),
         )
+    private val SPOTIFY_DEALER_CONNECTION_REGEX =
+        Regex("""hm://pusher/(?:[^/]+/)?connections/([^/?#]+)""")
 
     private val json = Json { ignoreUnknownKeys = true }
     private val client =
@@ -308,6 +346,12 @@ object SpotifyCanvasClient {
             .followRedirects(true)
             .followSslRedirects(true)
             .build()
+    private val dealerClient =
+        client
+            .newBuilder()
+            .readTimeout(0, TimeUnit.MILLISECONDS)
+            .pingInterval(25, TimeUnit.SECONDS)
+            .build()
     private val tokenMutex = Mutex()
     private var token: String? = null
     private var tokenExpiryMs = 0L
@@ -316,6 +360,10 @@ object SpotifyCanvasClient {
     private var webToken: String? = null
     private var webTokenExpiryMs = 0L
     private var activeWebCookie: String? = null
+    @Volatile
+    private var listeningHistoryBlockedUntilMs = 0L
+    @Volatile
+    private var listeningHistoryFailureReporter: ((String) -> Unit)? = null
     private var cachedNuance: SpotifyNuance? = null
     private val graphHashMutex = Mutex()
     private val graphHashCache = ConcurrentHashMap<String, CachedString>()
@@ -323,7 +371,26 @@ object SpotifyCanvasClient {
     private val libraryPageCache = ConcurrentHashMap<String, CachedValue<HomePage>>()
     private val externalPlaylistCache = ConcurrentHashMap<String, CachedValue<ExternalPlaylistPage>>()
     private val recommendationCache = ConcurrentHashMap<String, CachedValue<List<SongItem>>>()
+    private val webPlayerAutoplayQueueCache = ConcurrentHashMap<String, CachedValue<List<CachedSpotifyAutoplayTrack>>>()
+    private val webPlayerAutoplayQueueRefreshMutex = Mutex()
     private val artistPageMetadataCache = ConcurrentHashMap<String, CachedValue<SpotifyArtistPageMetadata>>()
+
+    fun setListeningHistoryFailureReporter(reporter: ((String) -> Unit)?) {
+        listeningHistoryFailureReporter = reporter
+    }
+
+    fun isListeningHistoryBackedOff(): Boolean = System.currentTimeMillis() < listeningHistoryBlockedUntilMs
+
+    fun deferListeningHistoryRequests(
+        reason: String,
+        retryAfterMs: Long = 120_000L,
+    ) {
+        val blockedUntil = System.currentTimeMillis() + retryAfterMs.coerceAtLeast(15_000L)
+        if (blockedUntil > listeningHistoryBlockedUntilMs) {
+            listeningHistoryBlockedUntilMs = blockedUntil
+        }
+        notifyListeningHistoryFailure(compactListeningHistoryFailure(reason))
+    }
 
     suspend fun resolveSearch(query: String, cookie: String): String? {
         return searchTracks(query, cookie).firstOrNull()?.uri
@@ -508,7 +575,88 @@ object SpotifyCanvasClient {
     private val trackUriCache = ConcurrentHashMap<String, CachedString>()
     private val trackIsrcCache = ConcurrentHashMap<String, CachedString>()
     private val canvasUrlCache = ConcurrentHashMap<String, CachedString>()
+    private val listeningHistorySessions = ConcurrentHashMap<String, SpotifyListeningHistorySession>()
+    private val listeningHistoryDeviceMutex = Mutex()
+    private var listeningHistoryDevice: SpotifyListeningHistoryDevice? = null
+    private val listeningHistoryRandom = SecureRandom()
     private val audioFeaturesCache = ConcurrentHashMap<String, CachedMixMetadata>()
+
+    private data class SpotifyListeningHistorySession(
+        val trackUri: String,
+        @Volatile var stateMachineId: String,
+        @Volatile var stateId: String,
+        @Volatile var statePaused: Boolean = false,
+        @Volatile var playbackId: String,
+        val sessionId: String,
+        val correlationId: String,
+        val startedAtMs: Long,
+        @Volatile var durationMs: Long,
+        val createdAtMs: Long = System.currentTimeMillis(),
+        val startReported: AtomicBoolean = AtomicBoolean(false),
+        val thresholdReported: AtomicBoolean = AtomicBoolean(false),
+        val finalized: AtomicBoolean = AtomicBoolean(false),
+    )
+
+    private data class SpotifyListeningHistoryEndpoints(
+        val dealerUrl: String,
+        val webgateUrl: String,
+    )
+
+    private data class SpotifyDealerConnection(
+        val id: String,
+        val webSocket: WebSocket,
+        val commandQueue: SpotifyDealerCommandQueue,
+    )
+
+    private class SpotifyDealerCommandQueue {
+        @Volatile
+        private var waitingForCommand: CompletableDeferred<JsonObject>? = null
+
+        fun nextCommand(): CompletableDeferred<JsonObject> =
+            CompletableDeferred<JsonObject>().also { waitingForCommand = it }
+
+        fun offer(command: JsonObject) {
+            waitingForCommand
+                ?.takeIf { it.complete(command) }
+                ?.let { waitingForCommand = null }
+        }
+    }
+
+    private data class SpotifyListeningHistoryPlaybackState(
+        val stateMachineId: String,
+        val stateId: String,
+        val paused: Boolean,
+        val durationMs: Long?,
+        val playbackId: String?,
+    )
+
+    private class SpotifyListeningHistoryDevice(
+        val cookieHash: Int,
+        val deviceId: String,
+        val deviceName: String,
+        val webgateUrl: String,
+        val connectionId: String,
+        val observerDeviceId: String?,
+        val webSocket: WebSocket,
+        val commandQueue: SpotifyDealerCommandQueue,
+        initialSequenceNumber: Int,
+        val createdAtMs: Long = System.currentTimeMillis(),
+    ) {
+        private val sequenceNumber = AtomicInteger(initialSequenceNumber)
+
+        @Volatile
+        var closed: Boolean = false
+            private set
+
+        fun nextSequenceNumber(): Int = sequenceNumber.incrementAndGet()
+
+        fun close() {
+            closed = true
+            runCatching {
+                webSocket.close(1000, "history-device-refresh")
+            }
+        }
+    }
 
     private data class CachedMixMetadata(
         val value: SpotifyMixMetadata?,
@@ -598,12 +746,1933 @@ object SpotifyCanvasClient {
         return resolveTrackUri(expectation, normalizedCookie)
     }
 
+    suspend fun resolveTrackUriForHistory(
+        mediaMetadata: MediaMetadata,
+        cookie: String,
+    ): String? = resolveTrackUriForMix(mediaMetadata, cookie)
+
+    suspend fun setTrackLiked(
+        trackUriOrId: String,
+        cookie: String,
+        liked: Boolean,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val trackId = trackUriOrId.spotifyTrackId() ?: return@withContext false
+            val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return@withContext false
+            val webToken =
+                runCatching { ensureWebToken(normalizedCookie) }
+                    .onFailure { error -> Timber.w(error, "Spotify like token refresh failed") }
+                    .getOrNull()
+                    ?: return@withContext false
+            val request =
+                Request
+                    .Builder()
+                    .url(
+                        "https://api.spotify.com/v1/me/tracks"
+                            .toHttpUrl()
+                            .newBuilder()
+                            .addQueryParameter("ids", trackId)
+                            .build(),
+                    )
+                    .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                    .header("Accept", "application/json")
+                    .header("App-Platform", "WebPlayer")
+                    .header("Referer", WEB_REFERER)
+                    .header("Origin", WEB_ORIGIN)
+                    .header("Cookie", normalizedCookie)
+                    .header("Authorization", "Bearer $webToken")
+                    .apply {
+                        if (liked) {
+                            put(ByteArray(0).toRequestBody())
+                        } else {
+                            delete()
+                        }
+                    }
+                    .build()
+
+            runCatching {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Timber.w("Spotify like HTTP %d: %s", response.code, response.body.string().take(180))
+                    }
+                    response.isSuccessful
+                }
+            }.onFailure { error ->
+                Timber.w(error, "Spotify like request failed")
+            }.getOrDefault(false)
+        }
+
+    suspend fun refreshListeningHistoryVersionBestEffort() {
+        SpotifyVersionManager.updateVersion(client)
+    }
+
+    fun newListeningHistoryStateMachineId(): String = randomSpotifyStateMachineId()
+
+    fun newListeningHistoryStateId(): String = randomSpotifyStateId()
+
+    fun listeningHistoryPlaybackId(
+        trackUri: String,
+        startedAtMs: Long,
+    ): String? =
+        listeningHistorySessions[listeningHistorySessionKey(trackUri, startedAtMs)]
+            ?.playbackId
+            ?.takeIf { it.isNotBlank() }
+
+    suspend fun reportListeningHistoryStartBestEffort(
+        trackUri: String,
+        cookie: String,
+        startedAtMs: Long,
+        durationMs: Long,
+        stateMachineId: String? = null,
+        stateId: String? = null,
+        playbackContextUri: String? = null,
+        deviceName: String = SPOTIFY_HISTORY_DEVICE_NAME,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (isListeningHistoryBackedOff()) return@withContext false
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return@withContext false
+        val trackId = trackUri.spotifyTrackId() ?: return@withContext false
+        val session = listeningHistorySession(trackUri, startedAtMs, durationMs, stateMachineId, stateId)
+        if (!session.startReported.compareAndSet(false, true)) return@withContext true
+
+        val webToken =
+            runCatching { ensureWebToken(normalizedCookie) }
+                .onFailure { error ->
+                    Timber.w(error, "Spotify web token refresh failed for history start")
+                    notifyListeningHistoryFailure(
+                        compactListeningHistoryFailure(
+                            "Auth failed: ${error.message ?: error::class.java.simpleName.orEmpty()}",
+                        ),
+                    )
+                }.getOrNull()
+                ?: run {
+                    session.startReported.set(false)
+                    return@withContext false
+                }
+        val device =
+            ensureListeningHistoryDevice(
+                normalizedCookie = normalizedCookie,
+                webToken = webToken,
+                deviceName = deviceName,
+            ) ?: run {
+                session.startReported.set(false)
+                return@withContext false
+            }
+        val playbackState =
+            requestListeningHistoryPlaybackState(
+                normalizedCookie = normalizedCookie,
+                webToken = webToken,
+                trackUri = trackUri,
+                playbackContextUri = playbackContextUri,
+                device = device,
+            )
+        if (playbackState == null) {
+            session.startReported.set(false)
+            return@withContext false
+        }
+        session.applyListeningHistoryPlaybackState(playbackState)
+
+        val batchReported =
+            reportListeningHistoryBatch(
+                normalizedCookie = normalizedCookie,
+                trackId = trackId,
+                operation = "start",
+                events =
+                    listOf(
+                        buildSpotifyPlaybackStartEvent(
+                            session = session,
+                            durationMs = durationMs,
+                        ),
+                    ),
+            )
+        if (!batchReported) {
+            session.startReported.set(false)
+            return@withContext false
+        }
+
+        val beforeLoadReported =
+            reportListeningHistoryState(
+                normalizedCookie = normalizedCookie,
+                trackId = trackId,
+                session = session,
+                operation = "before-track-load",
+                debugSource = "before_track_load",
+                positionMs = 0L,
+                previousPositionMs = 0L,
+                durationMs = session.durationMs,
+                includePlaybackStats = false,
+                webToken = webToken,
+                device = device,
+            )
+        if (!beforeLoadReported) {
+            session.startReported.set(false)
+            return@withContext false
+        }
+
+        val startReported =
+            reportListeningHistoryState(
+                normalizedCookie = normalizedCookie,
+                trackId = trackId,
+                session = session,
+                operation = "start",
+                debugSource = "started_playing",
+                positionMs = session.durationMs.coerceAtLeast(0L).let { duration -> minOf(1_004L, duration) },
+                previousPositionMs = 0L,
+                durationMs = session.durationMs,
+                includePlaybackStats = false,
+                webToken = webToken,
+                device = device,
+            )
+        if (!startReported) {
+            session.startReported.set(false)
+        }
+        startReported
+    }
+
+    suspend fun reportListeningHistoryBestEffort(
+        trackUri: String,
+        cookie: String,
+        startedAtMs: Long,
+        durationMs: Long,
+        positionMs: Long? = null,
+        stateMachineId: String? = null,
+        stateId: String? = null,
+        playbackContextUri: String? = null,
+        deviceName: String = SPOTIFY_HISTORY_DEVICE_NAME,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (isListeningHistoryBackedOff()) return@withContext false
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return@withContext false
+        val trackId = trackUri.spotifyTrackId() ?: return@withContext false
+        val session = listeningHistorySession(trackUri, startedAtMs, durationMs, stateMachineId, stateId)
+        val resolvedPositionMs = positionMs ?: listeningHistoryPositionMs(startedAtMs, session.durationMs)
+        if (!session.thresholdReported.compareAndSet(false, true)) return@withContext true
+
+        if (!session.startReported.get()) {
+            val started =
+                reportListeningHistoryStartBestEffort(
+                    trackUri = trackUri,
+                    cookie = normalizedCookie,
+                    startedAtMs = startedAtMs,
+                    durationMs = durationMs,
+                    stateMachineId = stateMachineId,
+                    stateId = stateId,
+                    playbackContextUri = playbackContextUri,
+                    deviceName = deviceName,
+                )
+            if (!started) {
+                session.thresholdReported.set(false)
+                return@withContext false
+            }
+        }
+
+        val thresholdPositionMs =
+            resolvedPositionMs.coerceAtLeast(30_000L).let { position ->
+                if (session.durationMs > 0L) position.coerceAtMost(session.durationMs) else position
+            }
+        val reported =
+            reportListeningHistoryState(
+                normalizedCookie = normalizedCookie,
+                trackId = trackId,
+                session = session,
+                operation = "threshold",
+                debugSource = "played_threshold_reached",
+                positionMs = thresholdPositionMs,
+                previousPositionMs = resolvedPositionMs,
+                durationMs = session.durationMs,
+                includePlaybackStats = false,
+                pausedOverride = false,
+                deviceName = deviceName,
+            )
+        if (!reported) {
+            session.thresholdReported.set(false)
+        }
+        reported
+    }
+
+    suspend fun reportListeningHistoryFinalizedBestEffort(
+        trackUri: String,
+        cookie: String,
+        startedAtMs: Long,
+        durationMs: Long,
+        positionMs: Long,
+        stateMachineId: String? = null,
+        stateId: String? = null,
+        updateDeviceState: Boolean = true,
+        nextPlaybackId: String? = null,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (isListeningHistoryBackedOff()) return@withContext false
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return@withContext false
+        val trackId = trackUri.spotifyTrackId() ?: return@withContext false
+        val session = listeningHistorySession(trackUri, startedAtMs, durationMs, stateMachineId, stateId)
+        if (!session.startReported.get()) return@withContext false
+        if (!session.finalized.compareAndSet(false, true)) return@withContext true
+
+        val clampedPosition =
+            when {
+                session.durationMs > 0L -> positionMs.coerceIn(0L, session.durationMs)
+                else -> positionMs.coerceAtLeast(0L)
+            }
+        val events =
+            listOf(
+                buildSpotifyTrackStreamVerificationEvent(
+                    session = session,
+                    positionMs = clampedPosition,
+                    nextPlaybackId = nextPlaybackId,
+                ),
+                buildSpotifyPlaybackStatsEvent(
+                    session = session,
+                    positionMs = clampedPosition,
+                    durationMs = session.durationMs,
+                ),
+            )
+
+        val batchReported =
+            reportListeningHistoryFinalizationBatch(
+                normalizedCookie = normalizedCookie,
+                trackId = trackId,
+                events = events,
+            )
+        if (!batchReported) {
+            session.finalized.set(false)
+        }
+        if (!updateDeviceState) {
+            return@withContext batchReported
+        }
+        val stateReported =
+            reportListeningHistoryState(
+                normalizedCookie = normalizedCookie,
+                trackId = trackId,
+                session = session,
+                operation = "finalize",
+                debugSource = "track_data_finalized",
+                positionMs = clampedPosition,
+                previousPositionMs = clampedPosition,
+                durationMs = session.durationMs,
+                includePlaybackStats = true,
+            )
+        batchReported && stateReported
+    }
+
+    suspend fun reportListeningHistoryPlaybackControlBestEffort(
+        trackUri: String,
+        cookie: String,
+        startedAtMs: Long,
+        durationMs: Long,
+        positionMs: Long,
+        paused: Boolean,
+        stateMachineId: String? = null,
+        stateId: String? = null,
+        deviceName: String = SPOTIFY_HISTORY_DEVICE_NAME,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (isListeningHistoryBackedOff()) return@withContext false
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return@withContext false
+        val trackId = trackUri.spotifyTrackId() ?: return@withContext false
+        val session = listeningHistorySession(trackUri, startedAtMs, durationMs, stateMachineId, stateId)
+        if (!session.startReported.get() || session.finalized.get()) return@withContext false
+        val clampedPosition =
+            when {
+                session.durationMs > 0L -> positionMs.coerceIn(0L, session.durationMs)
+                else -> positionMs.coerceAtLeast(0L)
+            }
+        reportListeningHistoryState(
+            normalizedCookie = normalizedCookie,
+            trackId = trackId,
+            session = session,
+            operation = if (paused) "pause" else "resume",
+            debugSource = if (paused) "pause" else "resume",
+            positionMs = clampedPosition,
+            previousPositionMs = clampedPosition,
+            durationMs = session.durationMs,
+            includePlaybackStats = false,
+            pausedOverride = paused,
+            deviceName = deviceName,
+        )
+    }
+
+    suspend fun reportListeningHistorySeekBestEffort(
+        trackUri: String,
+        cookie: String,
+        startedAtMs: Long,
+        durationMs: Long,
+        positionMs: Long,
+        previousPositionMs: Long,
+        paused: Boolean,
+        stateMachineId: String? = null,
+        stateId: String? = null,
+        deviceName: String = SPOTIFY_HISTORY_DEVICE_NAME,
+    ): Boolean = withContext(Dispatchers.IO) {
+        if (isListeningHistoryBackedOff()) return@withContext false
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return@withContext false
+        val trackId = trackUri.spotifyTrackId() ?: return@withContext false
+        val session = listeningHistorySession(trackUri, startedAtMs, durationMs, stateMachineId, stateId)
+        if (!session.startReported.get() || session.finalized.get()) return@withContext false
+        val clampedPosition =
+            when {
+                session.durationMs > 0L -> positionMs.coerceIn(0L, session.durationMs)
+                else -> positionMs.coerceAtLeast(0L)
+            }
+        val clampedPreviousPosition =
+            when {
+                session.durationMs > 0L -> previousPositionMs.coerceIn(0L, session.durationMs)
+                else -> previousPositionMs.coerceAtLeast(0L)
+            }
+        reportListeningHistoryState(
+            normalizedCookie = normalizedCookie,
+            trackId = trackId,
+            session = session,
+            operation = "seek",
+            debugSource = "seek",
+            positionMs = clampedPosition,
+            previousPositionMs = clampedPreviousPosition,
+            durationMs = session.durationMs,
+            includePlaybackStats = false,
+            pausedOverride = paused,
+            deviceName = deviceName,
+        )
+    }
+
+    private suspend fun reportListeningHistoryBatch(
+        normalizedCookie: String,
+        trackId: String,
+        operation: String,
+        events: List<JsonObject>,
+    ): Boolean {
+        val webToken =
+            runCatching { ensureWebToken(normalizedCookie) }
+                .onFailure { error ->
+                    Timber.w(error, "Spotify web token refresh failed for history reporting")
+                    notifyListeningHistoryFailure(
+                        compactListeningHistoryFailure(
+                            "Auth failed: ${error.message ?: error::class.java.simpleName.orEmpty()}",
+                        ),
+                    )
+                }
+                .getOrNull()
+                ?: return false
+
+        val payload =
+            buildJsonObject {
+                put("client_version", SPOTIFY_HISTORY_CLIENT_VERSION_FALLBACK)
+                put("platform", SPOTIFY_HISTORY_FINAL_PLATFORM)
+                put("sdk_id", SPOTIFY_HISTORY_FINAL_SDK_ID)
+                put("messages", JsonArray(events.map { it as JsonElement }))
+            }
+
+        val request =
+            Request
+                .Builder()
+                .url(SPOTIFY_HISTORY_BATCH_URL)
+                .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                .header("Accept", "*/*")
+                .header("Content-Type", "application/json")
+                .header("App-Platform", "WebPlayer")
+                .header("Referer", WEB_REFERER)
+                .header("Origin", WEB_ORIGIN)
+                .header("Cookie", normalizedCookie)
+                .header("Authorization", "Bearer $webToken")
+                .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val success = response.isSuccessful
+                if (success) {
+                    Timber.i(
+                        "Spotify listening history %s batch accepted for %s (%d events)",
+                        operation,
+                        trackId,
+                        events.size,
+                    )
+                } else {
+                    val body = response.body.string()
+                    if (response.code == 429) {
+                        handleListeningHistoryRateLimit(response, "Spotify listening history rate limited")
+                    }
+                    val detail = compactListeningHistoryFailure("HTTP ${response.code}: $body")
+                    Timber.w(
+                        "Spotify listening history %s batch rejected: %d %s",
+                        operation,
+                        response.code,
+                        body,
+                    )
+                    notifyListeningHistoryFailure(detail)
+                }
+                success
+            }
+        }.onFailure { error ->
+            Timber.e(error, "Spotify listening history %s batch request failed", operation)
+            notifyListeningHistoryFailure(
+                compactListeningHistoryFailure(error.message ?: error::class.java.simpleName.orEmpty()),
+            )
+        }.getOrDefault(false)
+    }
+
+    private suspend fun reportListeningHistoryFinalizationBatch(
+        normalizedCookie: String,
+        trackId: String,
+        events: List<JsonObject>,
+    ): Boolean {
+        val webToken =
+            runCatching { ensureWebToken(normalizedCookie) }
+                .onFailure { error ->
+                    Timber.w(error, "Spotify web token refresh failed for history finalization")
+                    notifyListeningHistoryFailure(
+                        compactListeningHistoryFailure(
+                            "Auth failed: ${error.message ?: error::class.java.simpleName.orEmpty()}",
+                        ),
+                    )
+                }.getOrNull()
+                ?: return false
+
+        val payload =
+            buildJsonObject {
+                put("client_version", SPOTIFY_HISTORY_FINAL_CLIENT_VERSION)
+                put("platform", SPOTIFY_HISTORY_FINAL_PLATFORM)
+                put("sdk_id", SPOTIFY_HISTORY_FINAL_SDK_ID)
+                put("messages", JsonArray(events.map { it as JsonElement }))
+            }
+
+        val request =
+            Request
+                .Builder()
+                .url(SPOTIFY_HISTORY_BATCH_URL)
+                .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                .header("Accept", "*/*")
+                .header("Content-Type", "application/json")
+                .header("App-Platform", "WebPlayer")
+                .header("Referer", WEB_REFERER)
+                .header("Origin", WEB_ORIGIN)
+                .header("Cookie", normalizedCookie)
+                .header("Authorization", "Bearer $webToken")
+                .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val success = response.isSuccessful
+                if (success) {
+                    Timber.i(
+                        "Spotify listening history finalization accepted for %s (%d events)",
+                        trackId,
+                        events.size,
+                    )
+                } else {
+                    val body = response.body.string()
+                    if (response.code == 429) {
+                        handleListeningHistoryRateLimit(response, "Spotify listening history finalization rate limited")
+                    }
+                    if (response.code == 410) {
+                        Timber.i(
+                            "Spotify listening history finalization was already gone for %s; treating as stale",
+                            trackId,
+                        )
+                        return@use true
+                    }
+                    val detail = compactListeningHistoryFailure("finalize HTTP ${response.code}: $body")
+                    Timber.w(
+                        "Spotify listening history finalization rejected: %d %s",
+                        response.code,
+                        body,
+                    )
+                    notifyListeningHistoryFailure(detail)
+                }
+                success
+            }
+        }.onFailure { error ->
+            Timber.e(error, "Spotify listening history finalization request failed")
+            notifyListeningHistoryFailure(
+                compactListeningHistoryFailure(error.message ?: error::class.java.simpleName.orEmpty()),
+            )
+        }.getOrDefault(false)
+    }
+
+    private suspend fun reportListeningHistoryState(
+        normalizedCookie: String,
+        trackId: String,
+        session: SpotifyListeningHistorySession,
+        operation: String,
+        debugSource: String,
+        positionMs: Long,
+        previousPositionMs: Long,
+        durationMs: Long,
+        includePlaybackStats: Boolean,
+        pausedOverride: Boolean? = null,
+        deviceName: String = SPOTIFY_HISTORY_DEVICE_NAME,
+        webToken: String? = null,
+        device: SpotifyListeningHistoryDevice? = null,
+    ): Boolean {
+        val resolvedWebToken =
+            webToken
+                ?: runCatching { ensureWebToken(normalizedCookie) }
+                    .onFailure { error ->
+                        Timber.w(error, "Spotify web token refresh failed for history state")
+                        notifyListeningHistoryFailure(
+                            compactListeningHistoryFailure(
+                                "State auth failed: ${error.message ?: error::class.java.simpleName.orEmpty()}",
+                            ),
+                        )
+                    }.getOrNull()
+                ?: return false
+
+        val resolvedDevice =
+            device
+                ?: ensureListeningHistoryDevice(
+                    normalizedCookie = normalizedCookie,
+                    webToken = resolvedWebToken,
+                    deviceName = deviceName,
+                ) ?: return false
+
+        val payload =
+            buildSpotifyPlaybackStatePayload(
+                session = session,
+                debugSource = debugSource,
+                positionMs = positionMs,
+                previousPositionMs = previousPositionMs,
+                durationMs = durationMs,
+                sequenceNumber = resolvedDevice.nextSequenceNumber(),
+                includePlaybackStats = includePlaybackStats,
+                pausedOverride = pausedOverride,
+            )
+        val request =
+            Request
+                .Builder()
+                .url("${resolvedDevice.webgateUrl}/track-playback/v1/devices/${resolvedDevice.deviceId}/state")
+                .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("App-Platform", "WebPlayer")
+                .header("Referer", WEB_REFERER)
+                .header("Origin", WEB_ORIGIN)
+                .header("Cookie", normalizedCookie)
+                .header("Authorization", "Bearer $resolvedWebToken")
+                .put(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val body = response.body.string()
+                val success = response.isSuccessful
+                if (success) {
+                    updateListeningHistorySessionState(session, body)
+                    cacheSpotifyConnectClusterQueueFromEndpoint(
+                        normalizedCookie = normalizedCookie,
+                        webToken = resolvedWebToken,
+                        webgateUrl = resolvedDevice.webgateUrl,
+                        expectedCurrentTrackId = trackId,
+                        attempts =
+                            if (debugSource == "before_track_load" || debugSource == "started_playing") {
+                                3
+                            } else {
+                                1
+                            },
+                    )
+                    Timber.i(
+                        "Spotify listening history %s state accepted for %s",
+                        operation,
+                        trackId,
+                    )
+                } else {
+                    if (response.code == 429) {
+                        handleListeningHistoryRateLimit(response, "Spotify listening history state rate limited")
+                    } else if (response.code == 410) {
+                        if (operation == "finalize") {
+                            Timber.i(
+                                "Spotify listening history final state was already gone for %s; treating as stale",
+                                trackId,
+                            )
+                            return@use true
+                        }
+                    } else if (response.code in listOf(400, 401, 403, 404, 409)) {
+                        clearListeningHistoryDevice(resolvedDevice)
+                    }
+                    val detail = compactListeningHistoryFailure("state HTTP ${response.code}: $body")
+                    Timber.w(
+                        "Spotify listening history %s state rejected: %d %s",
+                        operation,
+                        response.code,
+                        body,
+                    )
+                    notifyListeningHistoryFailure(detail)
+                }
+                success
+            }
+        }.onFailure { error ->
+            Timber.e(error, "Spotify listening history %s state request failed", operation)
+            clearListeningHistoryDevice(resolvedDevice)
+            notifyListeningHistoryFailure(
+                compactListeningHistoryFailure(error.message ?: error::class.java.simpleName.orEmpty()),
+            )
+        }.getOrDefault(false)
+    }
+
+    private suspend fun ensureListeningHistoryDevice(
+        normalizedCookie: String,
+        webToken: String,
+        deviceName: String,
+    ): SpotifyListeningHistoryDevice? =
+        listeningHistoryDeviceMutex.withLock {
+            val now = System.currentTimeMillis()
+            val cookieHash = normalizedCookie.hashCode()
+            listeningHistoryDevice
+                ?.takeIf { device ->
+                    device.cookieHash == cookieHash &&
+                        device.deviceName == deviceName &&
+                        !device.closed &&
+                        now - device.createdAtMs < SPOTIFY_HISTORY_DEVICE_TTL_MS
+                }?.let { return@withLock it }
+
+            listeningHistoryDevice?.close()
+            listeningHistoryDevice = null
+
+            runCatching {
+                val endpoints = fetchListeningHistoryEndpoints()
+                val dealerConnection = connectSpotifyDealer(endpoints.dealerUrl, webToken)
+                registerListeningHistoryDevice(
+                    normalizedCookie = normalizedCookie,
+                    webToken = webToken,
+                    cookieHash = cookieHash,
+                    deviceName = deviceName,
+                    endpoints = endpoints,
+                    dealerConnection = dealerConnection,
+                )
+            }.onFailure { error ->
+                Timber.w(error, "Spotify listening history web device registration failed")
+                notifyListeningHistoryFailure(
+                    compactListeningHistoryFailure(
+                        "Device registration failed: ${error.message ?: error::class.java.simpleName.orEmpty()}",
+                    ),
+                )
+            }.getOrNull()
+                ?.also { device -> listeningHistoryDevice = device }
+        }
+
+    private fun clearListeningHistoryDevice(device: SpotifyListeningHistoryDevice? = null) {
+        val current = listeningHistoryDevice
+        if (device == null || current === device) {
+            current?.close()
+            listeningHistoryDevice = null
+        } else {
+            device.close()
+        }
+    }
+
+    private suspend fun requestListeningHistoryPlaybackState(
+        normalizedCookie: String,
+        webToken: String,
+        trackUri: String,
+        playbackContextUri: String? = null,
+        device: SpotifyListeningHistoryDevice,
+    ): SpotifyListeningHistoryPlaybackState? {
+        val trackId = trackUri.spotifyTrackId()
+        val stationUri = trackId?.let { "spotify:station:track:$it" }
+        val resolvedPlaybackContextUri =
+            playbackContextUri
+                ?.spotifyPlaybackContextUri()
+                ?.takeUnless { it.isSpotifyCollectionTracksUri() }
+                ?.let { contextUri ->
+                    val playlistUri = contextUri.spotifyPlaylistUri()
+                    if (playlistUri != null && !contextUri.isSpotifyPlaylistFormatUri()) {
+                        resolveSpotifyPlaylistFormatUri(
+                            normalizedCookie = normalizedCookie,
+                            webToken = webToken,
+                            webgateUrl = device.webgateUrl,
+                            contextUri = playlistUri,
+                        ) ?: contextUri
+                    } else {
+                        contextUri
+                    }
+                }
+        val contextUris =
+            buildList {
+                resolvedPlaybackContextUri?.let { add(it) }
+                add(trackUri)
+                stationUri?.let { add(it) }
+            }.distinct()
+
+        for ((index, contextUri) in contextUris.withIndex()) {
+            val last = index == contextUris.lastIndex
+            requestListeningHistoryPlaybackStateWithContext(
+                normalizedCookie = normalizedCookie,
+                webToken = webToken,
+                trackUri = trackUri,
+                contextUri = contextUri,
+                device = device,
+                notifyFailures = last,
+                clearDeviceOnClientError = last,
+            )?.let { return it }
+        }
+
+        return null
+    }
+
+    private suspend fun resolveSpotifyPlaylistFormatUri(
+        normalizedCookie: String,
+        webToken: String,
+        webgateUrl: String,
+        contextUri: String,
+    ): String? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val request =
+                    Request
+                        .Builder()
+                        .url(
+                            webgateUrl
+                                .toHttpUrl()
+                                .newBuilder()
+                                .addPathSegments("playlist/v2/resolve-uri")
+                                .addPathSegment(contextUri)
+                                .build(),
+                        )
+                        .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                        .header("Accept", "application/json")
+                        .header("App-Platform", "WebPlayer")
+                        .header("Referer", WEB_REFERER)
+                        .header("Origin", WEB_ORIGIN)
+                        .header("Cookie", normalizedCookie)
+                        .header("Authorization", "Bearer $webToken")
+                        .get()
+                        .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    val root = json.parseToJsonElement(response.body.string()).jsonObject
+                    root.array("resolvedPlaylists")
+                        ?.firstNotNullOfOrNull { item ->
+                            item.obj
+                                ?.string("uri")
+                                ?.spotifyPlaylistUri()
+                        }
+                        ?: root.string("uri")?.spotifyPlaylistUri()
+                }
+            }.onFailure { error ->
+                Timber.w(error, "Spotify playlist-format resolve failed for %s", contextUri)
+            }.getOrNull()
+        }
+
+    private suspend fun requestListeningHistoryPlaybackStateWithContext(
+        normalizedCookie: String,
+        webToken: String,
+        trackUri: String,
+        contextUri: String,
+        device: SpotifyListeningHistoryDevice,
+        notifyFailures: Boolean,
+        clearDeviceOnClientError: Boolean,
+    ): SpotifyListeningHistoryPlaybackState? {
+        val commandWait = device.commandQueue.nextCommand()
+        val payload =
+            buildJsonObject {
+                putJsonObject("command") {
+                    put("endpoint", "play")
+                    putJsonObject("context") {
+                        put("uri", contextUri)
+                        put("url", "context://$contextUri")
+                    }
+                    putJsonObject("play_origin") {
+                        put("feature_identifier", "web-player")
+                        put("feature_version", SPOTIFY_HISTORY_FINAL_SDK_ID)
+                    }
+                    putJsonObject("options") {
+                        put("license", "")
+                        putJsonObject("skip_to") {
+                            put("track_uri", trackUri)
+                        }
+                        put("initially_paused", false)
+                    }
+                    putJsonObject("logging_params") {
+                        put("page_instance_ids", JsonArray(emptyList()))
+                        put("interaction_ids", JsonArray(emptyList()))
+                        put("command_id", randomSpotifyStateId())
+                    }
+                }
+            }
+        val request =
+            Request
+                .Builder()
+                .url("${device.webgateUrl}/connect-state/v1/player/command/from/${device.deviceId}/to/${device.deviceId}")
+                .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("App-Platform", "WebPlayer")
+                .header("Referer", WEB_REFERER)
+                .header("Origin", WEB_ORIGIN)
+                .header("Cookie", normalizedCookie)
+                .header("Authorization", "Bearer $webToken")
+                .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+        val commandSent =
+            runCatching {
+                client.newCall(request).execute().use { response ->
+                    val body = response.body.string()
+                    if (!response.isSuccessful) {
+                        if (response.code == 429) {
+                            handleListeningHistoryRateLimit(response, "Spotify listening history command rate limited")
+                        } else if (clearDeviceOnClientError && response.code in listOf(400, 401, 403, 404, 409)) {
+                            clearListeningHistoryDevice(device)
+                        }
+                        if (notifyFailures) {
+                            notifyListeningHistoryFailure(
+                                compactListeningHistoryFailure("command HTTP ${response.code}: $body"),
+                            )
+                        } else {
+                            Timber.w(
+                                "Spotify listening history command HTTP %d for %s context: %s",
+                                response.code,
+                                contextUri,
+                                body,
+                            )
+                        }
+                        false
+                    } else {
+                        true
+                    }
+                }
+            }.onFailure { error ->
+                Timber.w(error, "Spotify listening history playback command failed")
+                if (clearDeviceOnClientError) clearListeningHistoryDevice(device)
+                if (notifyFailures) {
+                    notifyListeningHistoryFailure(
+                        compactListeningHistoryFailure(error.message ?: error::class.java.simpleName.orEmpty()),
+                    )
+                }
+            }.getOrDefault(false)
+        if (!commandSent) return null
+
+        return withTimeoutOrNull(SPOTIFY_HISTORY_DEALER_TIMEOUT_MS) {
+            commandWait.await()
+        }?.let(::spotifyPlaybackStateFromDealerCommand)
+            ?: run {
+                if (notifyFailures) {
+                    notifyListeningHistoryFailure("command timed out")
+                } else {
+                    Timber.w("Spotify listening history command timed out for %s context", contextUri)
+                }
+                null
+            }
+    }
+
+    private fun fetchListeningHistoryEndpoints(): SpotifyListeningHistoryEndpoints {
+        val request =
+            Request
+                .Builder()
+                .url(SPOTIFY_APRESOLVE_URL)
+                .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                .header("Accept", "application/json")
+                .get()
+                .build()
+
+        client.newCall(request).execute().use { response ->
+            val root = json.parseToJsonElement(response.requireBody("Spotify endpoint resolve")).jsonObject
+            val dealerHost =
+                root.array("dealer-g2")
+                    ?.firstOrNull()
+                    ?.stringValueOrNull()
+                    ?: "dealer.g2.spotify.com"
+            val webgateHost =
+                root.array("spclient")
+                    ?.firstOrNull()
+                    ?.stringValueOrNull()
+                    ?: "spclient.wg.spotify.com"
+            return SpotifyListeningHistoryEndpoints(
+                dealerUrl = "wss://${dealerHost.removeSuffix(":443")}",
+                webgateUrl = "https://${webgateHost.removeSuffix(":443")}",
+            )
+        }
+    }
+
+    private suspend fun connectSpotifyDealer(
+        dealerUrl: String,
+        webToken: String,
+    ): SpotifyDealerConnection {
+        val deferred = CompletableDeferred<SpotifyDealerConnection>()
+        val commandQueue = SpotifyDealerCommandQueue()
+        val encodedToken = URLEncoder.encode(webToken, Charsets.UTF_8.name())
+        lateinit var webSocket: WebSocket
+        val request =
+            Request
+                .Builder()
+                .url("$dealerUrl?access_token=$encodedToken")
+                .build()
+        val listener =
+            object : WebSocketListener() {
+                override fun onMessage(
+                    webSocket: WebSocket,
+                    text: String,
+                ) {
+                    parseSpotifyDealerPlaybackCommand(text)?.let(commandQueue::offer)
+                    parseSpotifyDealerConnectCluster(text)?.let(::cacheSpotifyConnectClusterQueue)
+                    parseSpotifyDealerConnectionId(text)?.let { connectionId ->
+                        if (deferred.complete(SpotifyDealerConnection(connectionId, webSocket, commandQueue))) {
+                            Timber.d("Spotify Dealer connection id received")
+                        }
+                    }
+                }
+
+                override fun onFailure(
+                    webSocket: WebSocket,
+                    t: Throwable,
+                    response: Response?,
+                ) {
+                    deferred.completeExceptionally(t)
+                }
+
+                override fun onClosed(
+                    webSocket: WebSocket,
+                    code: Int,
+                    reason: String,
+                ) {
+                    if (!deferred.isCompleted) {
+                        deferred.completeExceptionally(IllegalStateException("Dealer closed before connection id"))
+                    }
+                }
+            }
+
+        webSocket = dealerClient.newWebSocket(request, listener)
+        return withTimeoutOrNull(SPOTIFY_HISTORY_DEALER_TIMEOUT_MS) {
+            deferred.await()
+        } ?: run {
+            webSocket.close(1000, "history-device-timeout")
+            error("Dealer connection id timed out")
+        }
+    }
+
+    private fun parseSpotifyDealerConnectionId(message: String): String? =
+        runCatching {
+            val root = json.parseToJsonElement(message).jsonObject
+            if (root.string("type") != "message") return@runCatching null
+            val uri = root.string("uri") ?: return@runCatching null
+            root.obj("headers")
+                ?.string("Spotify-Connection-Id")
+                ?: SPOTIFY_DEALER_CONNECTION_REGEX
+                    .find(uri)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.let { URLDecoder.decode(it, Charsets.UTF_8.name()) }
+        }.getOrNull()
+
+    private fun parseSpotifyDealerPlaybackCommand(message: String): JsonObject? =
+        runCatching {
+            val root = json.parseToJsonElement(message).jsonObject
+            if (root.string("type") != "message") return@runCatching null
+            if (root.string("uri") != "hm://track-playback/v1/command") return@runCatching null
+            root.array("payloads")
+                ?.firstOrNull()
+                ?.obj
+                ?.takeIf { it.string("type") == "replace_state" }
+        }.getOrNull()
+
+    private fun parseSpotifyDealerConnectCluster(message: String): JsonObject? =
+        runCatching {
+            val root = json.parseToJsonElement(message).jsonObject
+            if (root.string("type") != "message") return@runCatching null
+            if (root.string("uri")?.endsWith("connect-state/v1/cluster") != true) return@runCatching null
+            root.array("payloads")
+                ?.firstOrNull()
+                ?.obj
+                ?.obj("cluster")
+        }.getOrNull()
+
+    private fun registerListeningHistoryDevice(
+        normalizedCookie: String,
+        webToken: String,
+        cookieHash: Int,
+        deviceName: String,
+        endpoints: SpotifyListeningHistoryEndpoints,
+        dealerConnection: SpotifyDealerConnection,
+    ): SpotifyListeningHistoryDevice {
+        val deviceId = randomSpotifyDeviceId()
+        val observerDeviceId =
+            registerSpotifyConnectObserverDevice(
+                normalizedCookie = normalizedCookie,
+                webToken = webToken,
+                webgateUrl = endpoints.webgateUrl,
+                deviceId = deviceId,
+                connectionId = dealerConnection.id,
+            )
+        val payload =
+            buildJsonObject {
+                put("device", buildSpotifyTrackPlaybackDevice(deviceId, deviceName))
+                put("outro_endcontent_snooping", false)
+                put("connection_id", dealerConnection.id)
+                put("client_version", SPOTIFY_HISTORY_FINAL_SDK_ID)
+                put("volume", 65_535)
+            }
+        val request =
+            Request
+                .Builder()
+                .url("${endpoints.webgateUrl}/track-playback/v1/devices")
+                .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("App-Platform", "WebPlayer")
+                .header("Referer", WEB_REFERER)
+                .header("Origin", WEB_ORIGIN)
+                .header("Cookie", normalizedCookie)
+                .header("Authorization", "Bearer $webToken")
+                .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+        client.newCall(request).execute().use { response ->
+            val body = response.body.string()
+            if (!response.isSuccessful) {
+                dealerConnection.webSocket.close(1000, "history-device-rejected")
+                if (response.code == 429) {
+                    handleListeningHistoryRateLimit(response, "Spotify listening history device rate limited")
+                }
+                error("Device HTTP ${response.code}: ${compactListeningHistoryFailure(body)}")
+            }
+            val initialSequenceNumber =
+                runCatching {
+                    json.parseToJsonElement(body)
+                        .jsonObject
+                        .int("initial_seq_num")
+                }.getOrNull()
+                    ?: 0
+
+            return SpotifyListeningHistoryDevice(
+                cookieHash = cookieHash,
+                deviceId = deviceId,
+                deviceName = deviceName,
+                webgateUrl = endpoints.webgateUrl,
+                connectionId = dealerConnection.id,
+                observerDeviceId = observerDeviceId,
+                webSocket = dealerConnection.webSocket,
+                commandQueue = dealerConnection.commandQueue,
+                initialSequenceNumber = initialSequenceNumber,
+            )
+        }
+    }
+
+    private fun registerSpotifyConnectObserverDevice(
+        normalizedCookie: String,
+        webToken: String,
+        webgateUrl: String,
+        deviceId: String,
+        connectionId: String,
+    ): String? {
+        val observerDeviceId = spotifyConnectObserverDeviceId(deviceId)
+        val payload =
+            buildJsonObject {
+                put("member_type", "CONNECT_STATE")
+                putJsonObject("device") {
+                    putJsonObject("device_info") {
+                        putJsonObject("capabilities") {
+                            put("can_be_player", false)
+                            put("hidden", true)
+                            put("needs_full_player_state", true)
+                        }
+                    }
+                }
+            }
+        val request =
+            Request
+                .Builder()
+                .url("$webgateUrl/connect-state/v1/devices/$observerDeviceId")
+                .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("X-Spotify-Connection-Id", connectionId)
+                .header("App-Platform", "WebPlayer")
+                .header("Referer", WEB_REFERER)
+                .header("Origin", WEB_ORIGIN)
+                .header("Cookie", normalizedCookie)
+                .header("Authorization", "Bearer $webToken")
+                .put(payload.toString().toRequestBody(JSON_MEDIA_TYPE))
+                .build()
+
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                val body = response.body.string()
+                if (!response.isSuccessful) {
+                    if (response.code == 429) {
+                        handleListeningHistoryRateLimit(response, "Spotify Connect observer rate limited")
+                    }
+                    Timber.w("Spotify Connect observer HTTP %d: %s", response.code, body)
+                    null
+                } else {
+                    runCatching {
+                        cacheSpotifyConnectClusterQueue(json.parseToJsonElement(body).jsonObject)
+                    }
+                    observerDeviceId
+                }
+            }
+        }.onFailure { error ->
+            Timber.w(error, "Spotify Connect observer registration failed")
+        }.getOrNull()
+    }
+
+    private fun spotifyConnectObserverDeviceId(deviceId: String): String =
+        "hobs_$deviceId".take(40)
+
+    private fun buildSpotifyTrackPlaybackDevice(
+        deviceId: String,
+        deviceName: String,
+    ): JsonObject =
+        buildJsonObject {
+            put("brand", "SpotifyHarmonyGeneric")
+            putJsonObject("capabilities") {
+                put("change_volume", true)
+                put("enable_play_token", true)
+                put("supports_file_media_type", true)
+                put("play_token_lost_behavior", "pause")
+                put("disable_connect", false)
+                put("audio_podcasts", true)
+                put(
+                    "manifest_formats",
+                    JsonArray(
+                        listOf(
+                            JsonPrimitive("file_ids_mp3"),
+                            JsonPrimitive("file_urls_mp3"),
+                            JsonPrimitive("manifest_urls_audio_ad"),
+                            JsonPrimitive("file_ids_mp4"),
+                            JsonPrimitive("file_ids_mp4_dual"),
+                        ),
+                    ),
+                )
+                put("supports_preferred_media_type", true)
+                put("supports_playback_offsets", true)
+                put("supports_playback_speed", true)
+            }
+            put("device_id", deviceId)
+            put("device_type", "computer")
+            putJsonObject("metadata") { }
+            put("model", SPOTIFY_HISTORY_DEVICE_MODEL)
+            put("name", deviceName)
+            put("platform_name", SPOTIFY_HISTORY_FINAL_PLATFORM)
+            put("platform_identifier", SPOTIFY_HISTORY_FINAL_PLATFORM)
+            put("is_group", false)
+            put("correlation_id", randomSpotifyStateId())
+            put("client_version", SPOTIFY_HISTORY_FINAL_SDK_ID)
+        }
+
+    private fun spotifyPlaybackStateFromDealerCommand(command: JsonObject): SpotifyListeningHistoryPlaybackState? {
+        val stateMachine = command.obj("state_machine") ?: return null
+        val internalStateRef = command.obj("state_ref") ?: return null
+        return spotifyPlaybackStateFromInternalRef(stateMachine, internalStateRef)
+    }
+
+    private fun updateListeningHistorySessionState(
+        session: SpotifyListeningHistorySession,
+        body: String,
+    ) {
+        runCatching {
+            val root = json.parseToJsonElement(body).jsonObject
+            val stateMachine = root.obj("state_machine") ?: return
+            val internalStateRef = root.obj("updated_state_ref") ?: return
+            val playbackState = spotifyPlaybackStateFromInternalRef(stateMachine, internalStateRef) ?: return
+            session.applyListeningHistoryPlaybackState(playbackState)
+        }.onFailure { error ->
+            Timber.d(error, "Spotify listening history state response parse skipped")
+        }
+    }
+
+    private fun spotifyPlaybackStateFromInternalRef(
+        stateMachine: JsonObject,
+        internalStateRef: JsonObject,
+    ): SpotifyListeningHistoryPlaybackState? {
+        val stateIndex = internalStateRef.int("state_index") ?: return null
+        val state =
+            stateMachine.array("states")
+                ?.getOrNull(stateIndex)
+                ?.obj ?: return null
+        val stateMachineId = stateMachine.string("state_machine_id") ?: return null
+        val stateId = state.string("state_id") ?: return null
+        val track =
+            state.int("track")
+                ?.let { trackIndex ->
+                    stateMachine.array("tracks")
+                        ?.getOrNull(trackIndex)
+                        ?.obj
+                }
+        cacheWebPlayerAutoplayQueue(stateMachine, stateIndex)
+        val durationMs =
+            state.long("duration_override")
+                ?: track
+                    ?.obj("metadata")
+                    ?.long("duration")
+        val playbackId =
+            track
+                ?.obj("logData")
+                ?.string("playbackId")
+                ?: track
+                    ?.obj("log_data")
+                    ?.string("playback_id")
+
+        return SpotifyListeningHistoryPlaybackState(
+            stateMachineId = stateMachineId,
+            stateId = stateId,
+            paused = internalStateRef.boolean("paused"),
+            durationMs = durationMs,
+            playbackId = playbackId,
+        )
+    }
+
+    private fun cacheWebPlayerAutoplayQueue(
+        stateMachine: JsonObject,
+        currentStateIndex: Int?,
+    ) {
+        val trackObjects =
+            stateMachine.array("tracks")
+                .orEmpty()
+                .mapNotNull { it.obj }
+        if (trackObjects.size < 2) return
+
+        val states =
+            stateMachine.array("states")
+                .orEmpty()
+                .mapNotNull { it.obj }
+        val currentState = currentStateIndex?.takeIf { it in states.indices }?.let(states::get) ?: return
+        val currentIndex = currentState.int("track")?.takeIf { it in trackObjects.indices } ?: return
+        val currentTrackId =
+            trackObjects
+                .getOrNull(currentIndex)
+                ?.spotifyStateMachineTrackId()
+                ?: return
+        val nextTracks = buildList {
+            val seenStates = mutableSetOf(currentStateIndex)
+            val seenTrackIds = mutableSetOf(currentTrackId)
+            var stateIndex = currentStateIndex
+
+            while (size < 50) {
+                val state = stateIndex?.takeIf { it in states.indices }?.let(states::get) ?: break
+                val nextStateIndex =
+                    state.nextSpotifyVisibleQueueStateIndex()
+                        ?.takeIf { it in states.indices && seenStates.add(it) }
+                        ?: break
+                val nextState = states[nextStateIndex]
+                val trackIndex = nextState.int("track")?.takeIf { it in trackObjects.indices } ?: break
+                trackObjects
+                    .getOrNull(trackIndex)
+                    ?.toCachedSpotifyAutoplayTrack()
+                    ?.takeIf { seenTrackIds.add(it.trackId) }
+                    ?.let(::add)
+                stateIndex = nextStateIndex
+            }
+
+        }
+        if (nextTracks.isEmpty()) return
+
+        webPlayerAutoplayQueueCache[currentTrackId] = CachedValue(nextTracks, System.currentTimeMillis())
+    }
+
+    private suspend fun cacheSpotifyConnectClusterQueueFromEndpoint(
+        normalizedCookie: String,
+        webToken: String,
+        webgateUrl: String,
+        expectedCurrentTrackId: String,
+        attempts: Int = 1,
+    ): Boolean {
+        repeat(attempts.coerceAtLeast(1)) { attempt ->
+            if (
+                fetchSpotifyConnectClusterQueue(
+                    normalizedCookie = normalizedCookie,
+                    webToken = webToken,
+                    webgateUrl = webgateUrl,
+                    expectedCurrentTrackId = expectedCurrentTrackId,
+                )
+            ) {
+                return true
+            }
+            if (attempt < attempts - 1) delay(350L)
+        }
+        return false
+    }
+
+    private suspend fun fetchSpotifyConnectClusterQueue(
+        normalizedCookie: String,
+        webToken: String,
+        webgateUrl: String,
+        expectedCurrentTrackId: String,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val request =
+                Request
+                    .Builder()
+                    .url("$webgateUrl/connect-state/v1/cluster")
+                    .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                    .header("Accept", "application/json")
+                    .header("App-Platform", "WebPlayer")
+                    .header("Referer", WEB_REFERER)
+                    .header("Origin", WEB_ORIGIN)
+                    .header("Cookie", normalizedCookie)
+                    .header("Authorization", "Bearer $webToken")
+                    .get()
+                    .build()
+
+            runCatching {
+                client.newCall(request).execute().use { response ->
+                    val body = response.body.string()
+                    if (!response.isSuccessful) {
+                        if (response.code == 429) {
+                            handleListeningHistoryRateLimit(response, "Spotify Connect cluster rate limited")
+                        }
+                        throw SpotifyApiException(
+                            statusCode = response.code,
+                            message = "Spotify Connect cluster failed: ${body.ifBlank { "${response.code} ${response.message}" }}",
+                        )
+                    }
+
+                    cacheSpotifyConnectClusterQueue(
+                        cluster = json.parseToJsonElement(body).jsonObject,
+                        expectedCurrentTrackId = expectedCurrentTrackId,
+                    )
+                }
+            }.onFailure { error ->
+                Timber.w(error, "Spotify Connect cluster fetch failed")
+            }.getOrDefault(false)
+        }
+
+    private fun cacheSpotifyConnectClusterQueue(
+        cluster: JsonObject,
+        expectedCurrentTrackId: String? = null,
+    ): Boolean {
+        val playerState = cluster.obj("player_state") ?: return false
+        val currentTrackId =
+            playerState
+                .obj("track")
+                ?.spotifyStateMachineTrackId()
+                ?: return false
+        if (expectedCurrentTrackId != null && currentTrackId != expectedCurrentTrackId) return false
+
+        val seenTrackIds = mutableSetOf(currentTrackId)
+        val nextTracks =
+            playerState
+                .array("next_tracks")
+                .orEmpty()
+                .asSequence()
+                .mapNotNull { it.obj?.toCachedSpotifyConnectQueueTrack() }
+                .filter { seenTrackIds.add(it.trackId) }
+                .take(50)
+                .toList()
+        if (nextTracks.isEmpty()) return false
+
+        webPlayerAutoplayQueueCache[currentTrackId] = CachedValue(nextTracks, System.currentTimeMillis())
+        return true
+    }
+
+    private fun JsonObject.toCachedSpotifyConnectQueueTrack(): CachedSpotifyAutoplayTrack? {
+        val trackId =
+            spotifyStateMachineTrackId()
+                ?: string("uri")?.spotifyTrackId()
+                ?: string("id")?.spotifyTrackId()
+                ?: return null
+        return CachedSpotifyAutoplayTrack(
+            trackId = trackId,
+            song =
+                toSpotifyPlaylistSong()
+                    ?: toSpotifyInitialStatePlaylistSong()
+                    ?: toSpotifyStateMachineSongItem(trackId),
+        )
+    }
+
+    private fun JsonObject.nextSpotifyVisibleQueueStateIndex(): Int? {
+        val transitions = obj("transitions") ?: return null
+        return transitions.obj("show_next")?.int("state_index")
+    }
+
+    private fun JsonObject.toCachedSpotifyAutoplayTrack(): CachedSpotifyAutoplayTrack? {
+        val trackId = spotifyStateMachineTrackId() ?: return null
+        return CachedSpotifyAutoplayTrack(
+            trackId = trackId,
+            song = toSpotifyStateMachineSongItem(trackId),
+        )
+    }
+
+    private fun JsonObject.toSpotifyStateMachineSongItem(trackId: String): SongItem? {
+        val metadata = obj("metadata")
+        val title =
+            metadata?.string("name")
+                ?: metadata?.string("title")
+                ?: string("name")
+                ?: string("title")
+                ?: return null
+        val albumName =
+            metadata?.string("group_name")
+                ?: metadata?.string("album_name")
+                ?: metadata?.string("albumName")
+                ?: metadata?.string("album")
+                ?: obj("album")?.string("name")
+                ?: obj("albumOfTrack")?.string("name")
+        val albumUri =
+            metadata?.string("group_uri")
+                ?: metadata?.string("album_uri")
+                ?: metadata?.string("albumUri")
+                ?: obj("album")?.string("uri")
+                ?: obj("album")?.string("id")?.let { "spotify:album:$it" }
+                ?: obj("albumOfTrack")?.string("uri")
+                ?: obj("albumOfTrack")?.string("id")?.let { "spotify:album:$it" }
+
+        return SongItem(
+            id = "spotify:track:$trackId",
+            title = title,
+            artists =
+                metadata?.spotifyStateMachineArtists()
+                    ?.ifEmpty { spotifyStateMachineArtists() }
+                    ?: spotifyStateMachineArtists(),
+            album =
+                albumName
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { name ->
+                        Album(
+                            name = name,
+                            id = albumUri?.takeIf { it.startsWith("spotify:album:", ignoreCase = true) }.orEmpty(),
+                        )
+                    },
+            duration =
+                metadata?.spotifyDurationSeconds()
+                    ?: spotifyDurationSeconds(),
+            thumbnail =
+                metadata?.spotifyStateMachineImageUrl()
+                    ?: spotifyStateMachineImageUrl()
+                    ?: "",
+            explicit =
+                metadata?.spotifyExplicit() == true ||
+                    spotifyExplicit(),
+        )
+    }
+
+    private fun JsonObject.spotifyStateMachineArtists(): List<Artist> {
+        spotifyAnyArtists()
+            .takeIf { it.isNotEmpty() }
+            ?.let { return it }
+
+        val artistUri =
+            string("artist_uri")
+                ?: string("artistUri")
+                ?: string("artist_id")?.let { "spotify:artist:$it" }
+                ?: string("artistId")?.let { "spotify:artist:$it" }
+        val artistNames =
+            listOfNotNull(
+                string("artist_name"),
+                string("artistName"),
+                string("artist"),
+                string("artists"),
+                string("display_artist"),
+                string("displayArtist"),
+            ).firstOrNull()
+                ?.split(Regex("\\s*(?:,|;|\\u2022|\\|)\\s*"))
+                ?.map { it.trim() }
+                ?.filter { it.isNotBlank() }
+                .orEmpty()
+
+        return artistNames.mapIndexed { index, name ->
+            Artist(
+                name = name,
+                id = artistUri.takeIf { index == 0 && !it.isNullOrBlank() },
+            )
+        }
+    }
+
+    private fun JsonObject.spotifyStateMachineImageUrl(): String? =
+        listOfNotNull(
+            string("image_url"),
+            string("imageUrl"),
+            string("cover_url"),
+            string("coverUrl"),
+            string("images")?.spotifyImageUrlFromText(),
+            array("images")
+                ?.firstNotNullOfOrNull { image ->
+                    image.obj?.spotifyInitialStateImageUrl()
+                        ?: image.stringValueOrNull()?.spotifyImageUrlFromText()
+                },
+            obj("images")?.spotifyInitialStateImageUrl(),
+            spotifyInitialStateImageUrl(),
+        ).firstOrNull { it.isNotBlank() }
+
+    private fun JsonObject.spotifyExplicit(): Boolean =
+        boolean("explicit") ||
+            boolean("is_explicit") ||
+            boolean("isExplicit")
+
+    private fun String.spotifyImageUrlFromText(): String? =
+        SPOTIFY_IMAGE_URL_REGEX
+            .find(this)
+            ?.value
+
+    private fun JsonObject.spotifyStateMachineTrackId(): String? =
+        listOfNotNull(
+            string("uri")?.spotifyTrackId(),
+            string("track_uri")?.spotifyTrackId(),
+            string("trackUri")?.spotifyTrackId(),
+            string("id")?.spotifyTrackId(),
+            obj("metadata")?.string("uri")?.spotifyTrackId(),
+            obj("metadata")?.string("track_uri")?.spotifyTrackId(),
+            obj("metadata")?.string("trackUri")?.spotifyTrackId(),
+            obj("metadata")?.string("entity_uri")?.spotifyTrackId(),
+            obj("metadata")?.string("entityUri")?.spotifyTrackId(),
+        ).firstOrNull()
+            ?: collectSpotifyTrackIds(1).firstOrNull()
+
+    private fun SpotifyListeningHistorySession.applyListeningHistoryPlaybackState(
+        playbackState: SpotifyListeningHistoryPlaybackState,
+    ) {
+        stateMachineId = playbackState.stateMachineId
+        stateId = playbackState.stateId
+        statePaused = playbackState.paused
+        playbackState.durationMs
+            ?.takeIf { it > 0L }
+            ?.let { durationMs = it }
+        playbackState.playbackId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { playbackId = it }
+    }
+
+    private fun buildSpotifyPlaybackStatePayload(
+        session: SpotifyListeningHistorySession,
+        debugSource: String,
+        positionMs: Long,
+        previousPositionMs: Long,
+        durationMs: Long,
+        sequenceNumber: Int,
+        includePlaybackStats: Boolean,
+        pausedOverride: Boolean? = null,
+    ): JsonObject =
+        buildJsonObject {
+            val paused = pausedOverride ?: session.statePaused
+            put("seq_num", sequenceNumber)
+            put("debug_source", debugSource)
+            put("previous_position", previousPositionMs.coerceAtLeast(0L))
+            putJsonObject("state_ref") {
+                put("state_machine_id", session.stateMachineId)
+                put("state_id", session.stateId)
+                put("paused", paused)
+            }
+            putJsonObject("sub_state") {
+                put("playback_speed", if (paused) 0 else 1)
+                put("position", positionMs.coerceAtLeast(0L))
+                put("duration", durationMs.coerceAtLeast(0L))
+                put("media_type", "AUDIO")
+                put("bitrate", SPOTIFY_HISTORY_BITRATE)
+                put("audio_quality", "HIGH")
+                put("format", "file_ids_mp4")
+                put("is_video_on", false)
+            }
+            if (includePlaybackStats) {
+                putJsonObject("playback_stats") {
+                    put("ms_total_est", durationMs.coerceAtLeast(0L))
+                    put("ms_metadata_duration", 0)
+                    put("ms_manifest_latency", 0)
+                    put("ms_latency", 98)
+                }
+            }
+        }
+
+    private fun buildSpotifyPlaybackStartEvent(
+        session: SpotifyListeningHistorySession,
+        durationMs: Long,
+    ): JsonObject =
+        buildJsonObject {
+            put("type", "jssdk_playback_start")
+            put(
+                "message",
+                buildJsonObject {
+                    put("play_track", session.trackUri)
+                    put("file_id", "")
+                    put("playback_id", session.playbackId)
+                    put("session_id", session.sessionId)
+                    put("ms_start_position", 0)
+                    put("initially_paused", false)
+                    put("client_id", DEVICE_CLIENT_ID)
+                    put("correlation_id", session.correlationId)
+                    put("feature_identifier", "web-player")
+                },
+            )
+        }
+
+    private fun buildSpotifyPlaybackStatsEvent(
+        session: SpotifyListeningHistorySession,
+        positionMs: Long,
+        durationMs: Long,
+    ): JsonObject =
+        buildJsonObject {
+            put("type", "jssdk_playback_stats")
+            put(
+                "message",
+                buildJsonObject {
+                    put("play_track", session.trackUri)
+                    put("file_id", "")
+                    put("playback_id", session.playbackId)
+                    put("internal_play_id", session.playbackId)
+                    put("memory_cached", false)
+                    put("persistent_cached", false)
+                    put("audio_format", "")
+                    put("video_format", "")
+                    put("manifest_id", "")
+                    put("protected", false)
+                    put("key_system", "")
+                    put("key_system_impl", "")
+                    put("urls_json", "[]")
+                    put("start_time", session.startedAtMs)
+                    put("end_time", session.startedAtMs + positionMs.coerceAtLeast(0L))
+                    put("external_start_time", session.startedAtMs)
+                    put("ms_play_latency", 0)
+                    put("ms_init_latency", 0)
+                    put("ms_head_latency", 0)
+                    put("ms_first_bytes_latency", 0)
+                    put("ms_manifest_latency", 0)
+                    put("ms_resolve_latency", 0)
+                    put("ms_license_session_latency", 0)
+                    put("ms_license_generation_latency", 0)
+                    put("ms_license_request_latency", 0)
+                    put("ms_license_update_latency", 0)
+                    put("ms_played", positionMs)
+                    put("ms_nominal_played", positionMs)
+                    put("ms_file_duration", durationMs)
+                    put("ms_actual_duration", durationMs)
+                    put("ms_metadata_duration", 0)
+                    put("ms_start_position", 0)
+                    put("ms_end_position", positionMs)
+                    put("ms_initial_rebuffer", 0)
+                    put("ms_seek_rebuffer", 0)
+                    put("ms_seek_rebuffer_longest", 0)
+                    put("ms_stall_rebuffer", 0)
+                    put("ms_stall_rebuffer_longest", 0)
+                    put("ms_played_per_surface", buildJsonObject { })
+                    put("ms_played_visible", positionMs)
+                    put("n_stalls", 0)
+                    put("n_rendition_upgrade", 0)
+                    put("n_rendition_downgrade", 0)
+                    put("bps_bandwidth_max", 0)
+                    put("bps_bandwidth_min", 0)
+                    put("bps_bandwidth_avg", 0)
+                    put("n_seekback", 0)
+                    put("n_seekforward", 0)
+                    put("audio_start_bitrate", SPOTIFY_HISTORY_BITRATE)
+                    put("video_start_bitrate", 0)
+                    put("start_bitrate", SPOTIFY_HISTORY_BITRATE)
+                    put("audio_quality", "")
+                    put("time_weighted_bitrate", SPOTIFY_HISTORY_BITRATE)
+                    put("reason_start", "playbtn")
+                    put("reason_end", "endplay")
+                    put("initially_paused", false)
+                    put("had_error", false)
+                    put("n_warnings", 0)
+                    put("n_navigator_offline", 0)
+                    put("session_id", session.sessionId)
+                    put("sequence_id", 1)
+                    put("client_id", DEVICE_CLIENT_ID)
+                    put("correlation_id", session.correlationId)
+                    put("n_dropped_video_frames", 0)
+                    put("n_total_video_frames", 0)
+                    put("resolution_max", 0)
+                    put("resolution_min", 0)
+                    put("total_bytes", 0)
+                    put("strategy", "")
+                    put("ms_played_per_audio_format", buildJsonObject { })
+                    put("ms_played_per_video_format", buildJsonObject { })
+                },
+            )
+        }
+
+    private fun buildSpotifyTrackStreamVerificationEvent(
+        session: SpotifyListeningHistorySession,
+        positionMs: Long,
+        nextPlaybackId: String? = null,
+    ): JsonObject =
+        buildJsonObject {
+            put("type", "track_stream_verification")
+            put(
+                "message",
+                buildJsonObject {
+                    put("play_track", session.trackUri)
+                    put("playback_id", session.playbackId)
+                    put("ms_played", positionMs)
+                    put("ms_nominal_played", positionMs)
+                    put("session_id", session.sessionId)
+                    put("sequence_id", 1)
+                    put("next_playback_id", nextPlaybackId.orEmpty())
+                    put("playback_service", "web_player")
+                },
+            )
+        }
+
+    private fun listeningHistorySession(
+        trackUri: String,
+        startedAtMs: Long,
+        durationMs: Long,
+        stateMachineId: String? = null,
+        stateId: String? = null,
+    ): SpotifyListeningHistorySession {
+        pruneListeningHistorySessions()
+        return listeningHistorySessions.computeIfAbsent(listeningHistorySessionKey(trackUri, startedAtMs)) {
+            SpotifyListeningHistorySession(
+                trackUri = trackUri,
+                stateMachineId = stateMachineId?.takeIf { it.isNotBlank() } ?: randomSpotifyStateMachineId(),
+                stateId = stateId?.takeIf { it.isNotBlank() } ?: randomSpotifyStateId(),
+                playbackId = randomSpotifyStateId(),
+                sessionId = startedAtMs.toString(),
+                correlationId = randomSpotifyStateId(),
+                startedAtMs = startedAtMs,
+                durationMs = durationMs,
+            )
+        }
+    }
+
+    private fun listeningHistorySessionKey(
+        trackUri: String,
+        startedAtMs: Long,
+    ): String = "$trackUri:${startedAtMs / 30_000L}"
+
+    private fun listeningHistoryPositionMs(
+        startedAtMs: Long,
+        durationMs: Long,
+    ): Long {
+        val elapsedMs = System.currentTimeMillis() - startedAtMs
+        return when {
+            durationMs > 0L -> elapsedMs.coerceIn(0L, durationMs)
+            else -> elapsedMs.coerceAtLeast(0L)
+        }
+    }
+
+    private fun pruneListeningHistorySessions() {
+        val now = System.currentTimeMillis()
+        listeningHistorySessions.entries.removeIf { (_, session) ->
+            now - session.createdAtMs > SPOTIFY_HISTORY_SESSION_TTL_MS
+        }
+    }
+
+    private fun randomSpotifyStateMachineId(): String {
+        val chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        return buildString {
+            append("Ch")
+            repeat(28) {
+                val index =
+                    synchronized(listeningHistoryRandom) {
+                        listeningHistoryRandom.nextInt(chars.length)
+                    }
+                append(chars[index])
+            }
+        }
+    }
+
+    private fun randomSpotifyStateId(): String = randomBytes(16).toHex()
+
+    private fun randomSpotifyDeviceId(): String = randomBytes(20).toHex()
+
+    private fun randomBytes(size: Int): ByteArray =
+        ByteArray(size).also { bytes ->
+            synchronized(listeningHistoryRandom) {
+                listeningHistoryRandom.nextBytes(bytes)
+            }
+        }
+
+    private object SpotifyVersionManager {
+        private const val VERSION_CACHE_TTL_MS = 6 * 60 * 60 * 1000L
+        private val mutex = Mutex()
+        private val clientVersionRegexes =
+            listOf(
+                Regex("\"client_version\"\\s*:\\s*\"([^\"]+)\""),
+                Regex("\"clientVersion\"\\s*:\\s*\"([^\"]+)\""),
+            )
+        private val scriptRegex = Regex("""<script[^>]+src="([^"]+)"""")
+
+        @Volatile
+        private var cachedVersion: String? = null
+
+        @Volatile
+        private var cachedAtMs: Long = 0L
+
+        suspend fun clientVersion(client: OkHttpClient): String =
+            withContext(Dispatchers.IO) {
+                mutex.withLock {
+                    val now = System.currentTimeMillis()
+                    cachedVersion
+                        ?.takeIf { now - cachedAtMs < VERSION_CACHE_TTL_MS }
+                        ?.let { return@withLock it }
+
+                    fetchCurrentVersion(client)?.let { version ->
+                        cachedVersion = version
+                        cachedAtMs = now
+                        return@withLock version
+                    }
+
+                    cachedVersion ?: SPOTIFY_HISTORY_CLIENT_VERSION_FALLBACK
+                }
+            }
+
+        suspend fun updateVersion(client: OkHttpClient) {
+            withContext(Dispatchers.IO) {
+                mutex.withLock {
+                    fetchCurrentVersion(client)?.let { version ->
+                        cachedVersion = version
+                        cachedAtMs = System.currentTimeMillis()
+                    }
+                }
+            }
+        }
+
+        private fun fetchCurrentVersion(client: OkHttpClient): String? {
+            val html =
+                fetchText(
+                    client = client,
+                    url = WEB_PLAYER_URL,
+                    accept = "text/html,application/xhtml+xml,*/*",
+                ) ?: return null
+
+            extractVersion(html)?.let { return it }
+
+            return scriptRegex
+                .findAll(html)
+                .mapNotNull { match -> match.groupValues.getOrNull(1) }
+                .map(::normalizeSpotifyScriptUrl)
+                .filter { script -> script.contains("web-player") || script.contains("open.spotifycdn.com") }
+                .take(8)
+                .mapNotNull { script ->
+                    fetchText(
+                        client = client,
+                        url = script,
+                        accept = "application/javascript,text/javascript,*/*",
+                    )?.let(::extractVersion)
+                }.firstOrNull()
+        }
+
+        private fun fetchText(
+            client: OkHttpClient,
+            url: String,
+            accept: String,
+        ): String? {
+            val request =
+                Request
+                    .Builder()
+                    .url(url)
+                    .header("User-Agent", DESKTOP_WEB_USER_AGENT)
+                    .header("Accept", accept)
+                    .header("Referer", WEB_REFERER)
+                    .get()
+                    .build()
+
+            return runCatching {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use null
+                    response.body.string()
+                }
+            }.onFailure { error ->
+                Timber.d(error, "Spotify client-version fetch failed for %s", url)
+            }.getOrNull()
+        }
+
+        private fun extractVersion(text: String): String? =
+            clientVersionRegexes
+                .asSequence()
+                .mapNotNull { regex -> regex.find(text)?.groupValues?.getOrNull(1) }
+                .firstOrNull { version -> version.isNotBlank() }
+
+        private fun normalizeSpotifyScriptUrl(src: String): String =
+            when {
+                src.startsWith("//") -> "https:$src"
+                src.startsWith("/") -> "https://open.spotify.com$src"
+                else -> src
+            }
+    }
+
     suspend fun resolveAutoplayRecommendations(
         mediaMetadata: MediaMetadata,
         cookie: String,
         context: List<MediaMetadata> = emptyList(),
         title: String? = null,
         limit: Int = 25,
+        webPlayerOnly: Boolean = false,
+        deviceName: String = SPOTIFY_HISTORY_DEVICE_NAME,
     ): List<SongItem> {
         if (mediaMetadata.isEpisode || mediaMetadata.isVideoSong || limit <= 0) return emptyList()
         val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return emptyList()
@@ -623,13 +2692,14 @@ object SpotifyCanvasClient {
                     if (uri !in this) add(uri)
                 }
             }
-
         return resolveAutoplayRecommendations(
             seedUri = seedUri,
             contextUris = (listOf(seedUri) + contextUris).distinct(),
             normalizedCookie = normalizedCookie,
             title = title,
             limit = limit,
+            webPlayerOnly = webPlayerOnly,
+            deviceName = deviceName,
         )
     }
 
@@ -639,6 +2709,8 @@ object SpotifyCanvasClient {
         normalizedCookie: String,
         title: String?,
         limit: Int,
+        webPlayerOnly: Boolean,
+        deviceName: String,
     ): List<SongItem> {
         val seedId = seedUri.spotifyTrackId() ?: return emptyList()
         val trackIds =
@@ -655,40 +2727,115 @@ object SpotifyCanvasClient {
                 seedId,
                 contextUris.joinToString(","),
                 targetLimit.toString(),
+                if (webPlayerOnly) "web-player-only" else "ranked",
             )
-        recommendationCache.fresh(cacheKey)?.let { return it.take(targetLimit) }
+        if (!webPlayerOnly) {
+            recommendationCache.fresh(cacheKey)?.let { return it.take(targetLimit) }
+        }
 
-        val candidates = mutableListOf<SongItem>()
+        val webPlayerRecommendations =
+            if (webPlayerOnly) {
+                resolveLiveWebPlayerAutoplayRecommendations(
+                    seedUri = seedUri,
+                    normalizedCookie = normalizedCookie,
+                    deviceName = deviceName,
+                    limit = targetLimit,
+                ).filterNot { it.id.spotifyTrackId() == seedId }
+            } else {
+                resolveCachedWebPlayerAutoplayRecommendations(
+                    seedId = seedId,
+                    normalizedCookie = normalizedCookie,
+                    limit = targetLimit,
+                ).filterNot { it.id.spotifyTrackId() in skipTrackIds }
+            }
+                .distinctBy { it.id.spotifyTrackId() ?: it.id }
+                .take(targetLimit)
+        if (webPlayerOnly) {
+            return webPlayerRecommendations
+        }
+        if (webPlayerRecommendations.size >= targetLimit) {
+            return webPlayerRecommendations
+                .also { recommendationCache.putFresh(cacheKey, it) }
+        }
+
+        val candidates = linkedMapOf<String, RankedSpotifyRecommendation>()
+
+        fun appendRankedRecommendations(
+            source: String,
+            weight: Int,
+            results: List<SongItem>,
+        ) {
+            results
+                .asSequence()
+                .filterNot { it.id.spotifyTrackId() in skipTrackIds }
+                .distinctBy { it.id.spotifyTrackId() ?: it.id }
+                .forEachIndexed { index, item ->
+                    val key = item.id.spotifyTrackId() ?: item.id
+                    if (key.isBlank()) return@forEachIndexed
+                    val rank = weight + (targetLimit - index).coerceAtLeast(0)
+                    val existing = candidates[key]
+                    if (existing == null) {
+                        candidates[key] =
+                            RankedSpotifyRecommendation(
+                                song = item,
+                                score = rank,
+                                sources = mutableSetOf(source),
+                                firstIndex = candidates.size,
+                            )
+                    } else {
+                        existing.score += rank
+                        existing.sources += source
+                    }
+                }
+        }
 
         suspend fun appendRecommendations(
             source: String,
+            weight: Int,
             block: suspend () -> List<SongItem>,
         ) {
-            if (candidates.size >= targetLimit) return
             val results =
                 runCatching { block() }
                     .onFailure { error ->
                         Timber.w(error, "Spotify recommendation source failed: %s", source)
                     }.getOrDefault(emptyList())
 
-            if (results.isNotEmpty()) {
-                val existingTrackIds = candidates.mapNotNullTo(mutableSetOf()) { it.id.spotifyTrackId() }
-                val fresh =
-                    results
-                        .asSequence()
-                        .filterNot { it.id.spotifyTrackId() in skipTrackIds }
-                        .distinctBy { it.id.spotifyTrackId() ?: it.id }
-                        .filter { item ->
-                            val trackId = item.id.spotifyTrackId()
-                            trackId == null || existingTrackIds.add(trackId)
-                        }
-                        .take(targetLimit - candidates.size)
-                        .toList()
-                candidates += fresh
-            }
+            appendRankedRecommendations(source, weight, results)
         }
 
-        appendRecommendations("playlist extender") {
+        appendRecommendations("inspired-by mix", 120) {
+            resolveInspiredByMixRecommendations(
+                seedUri = seedUri,
+                normalizedCookie = normalizedCookie,
+                limit = targetLimit,
+            )
+        }
+        appendRecommendations("playlist extender v2", 115) {
+            resolvePlaylistExtenderV2Recommendations(
+                seedUri = seedUri,
+                contextUris = contextUris,
+                trackIds = trackIds,
+                normalizedCookie = normalizedCookie,
+                title = title,
+                limit = targetLimit,
+            )
+        }
+        appendRecommendations("daily mix", 105) {
+            resolveDailyMixRecommendations(
+                seedUri = seedUri,
+                normalizedCookie = normalizedCookie,
+                limit = targetLimit,
+            )
+        }
+        appendRecommendations("playlist top genres", 100) {
+            resolvePlaylistTopGenreRecommendations(
+                contextUris = contextUris,
+                normalizedCookie = normalizedCookie,
+                title = title,
+                limit = targetLimit,
+            )
+        }
+        appendRecommendations("playlist extender", 90) {
             resolvePlaylistExtenderRecommendations(
                 seedUri = seedUri,
                 trackIds = trackIds,
@@ -697,35 +2844,35 @@ object SpotifyCanvasClient {
                 limit = targetLimit,
             )
         }
-        appendRecommendations("assisted curation") {
+        appendRecommendations("assisted curation", 85) {
             resolveAssistedCurationRecommendations(
                 seedUri = seedUri,
                 normalizedCookie = normalizedCookie,
                 limit = targetLimit,
             )
         }
-        appendRecommendations("assisted curation search") {
+        appendRecommendations("assisted curation search", 80) {
             resolveAssistedCurationSearchRecommendations(
                 seedUri = seedUri,
                 normalizedCookie = normalizedCookie,
                 limit = targetLimit,
             )
         }
-        appendRecommendations("radio apollo") {
+        appendRecommendations("radio apollo", 75) {
             resolveRadioApolloRecommendations(
                 seedUri = seedUri,
                 normalizedCookie = normalizedCookie,
                 limit = targetLimit,
             )
         }
-        appendRecommendations("external integration recs") {
+        appendRecommendations("external integration recs", 70) {
             resolveExternalIntegrationRecommendations(
                 seedUri = seedUri,
                 normalizedCookie = normalizedCookie,
                 limit = targetLimit,
             )
         }
-        appendRecommendations("recommendations api") {
+        appendRecommendations("recommendations api", 65) {
             resolveSpotifyWebRecommendations(
                 seedId = seedId,
                 trackIds = trackIds,
@@ -733,27 +2880,317 @@ object SpotifyCanvasClient {
                 limit = targetLimit,
             )
         }
-        appendRecommendations("related artists") {
+        appendRecommendations("related artists", 45) {
             resolveRelatedArtistRecommendations(
                 seedId = seedId,
                 normalizedCookie = normalizedCookie,
                 limit = targetLimit,
             )
         }
-        appendRecommendations("taste fallback") {
+        appendRecommendations("taste fallback", 25) {
             resolveTasteFallbackRecommendations(
                 normalizedCookie = normalizedCookie,
                 limit = targetLimit,
             )
         }
 
-        return candidates
+        val rankedRecommendations =
+            candidates
+            .values
+            .asSequence()
+            .sortedWith(
+                compareByDescending<RankedSpotifyRecommendation> { it.sources.size }
+                    .thenByDescending { it.score }
+                    .thenBy { it.firstIndex },
+            ).map { it.song }
+            .filterNot { it.id.spotifyTrackId() in skipTrackIds }
+            .distinctBy { it.id.spotifyTrackId() ?: it.id }
+            .toList()
+
+        return (webPlayerRecommendations + rankedRecommendations)
             .asSequence()
             .filterNot { it.id.spotifyTrackId() in skipTrackIds }
             .distinctBy { it.id.spotifyTrackId() ?: it.id }
             .take(targetLimit)
             .toList()
             .also { recommendationCache.putFresh(cacheKey, it) }
+    }
+
+    private suspend fun resolveLiveWebPlayerAutoplayRecommendations(
+        seedUri: String,
+        normalizedCookie: String,
+        deviceName: String,
+        limit: Int,
+    ): List<SongItem> {
+        val seedId = seedUri.spotifyTrackId() ?: return emptyList()
+        resolveCachedWebPlayerAutoplayRecommendations(
+            seedId = seedId,
+            normalizedCookie = normalizedCookie,
+            limit = limit,
+        ).takeIf { it.isNotEmpty() }?.let { return it }
+
+        return webPlayerAutoplayQueueRefreshMutex.withLock {
+            resolveCachedWebPlayerAutoplayRecommendations(
+                seedId = seedId,
+                normalizedCookie = normalizedCookie,
+                limit = limit,
+            ).takeIf { it.isNotEmpty() }?.let { return@withLock it }
+
+            val webToken =
+                runCatching { ensureWebToken(normalizedCookie) }
+                    .onFailure { error ->
+                        Timber.w(error, "Spotify web token refresh failed for Web Player queue")
+                    }.getOrNull()
+                    ?: return@withLock emptyList()
+            val device =
+                ensureListeningHistoryDevice(
+                    normalizedCookie = normalizedCookie,
+                    webToken = webToken,
+                    deviceName = deviceName,
+                ) ?: return@withLock emptyList()
+
+            cacheSpotifyConnectClusterQueueFromEndpoint(
+                normalizedCookie = normalizedCookie,
+                webToken = webToken,
+                webgateUrl = device.webgateUrl,
+                expectedCurrentTrackId = seedId,
+                attempts = 2,
+            )
+
+            resolveCachedWebPlayerAutoplayRecommendations(
+                seedId = seedId,
+                normalizedCookie = normalizedCookie,
+                limit = limit,
+            )
+        }
+    }
+
+    private suspend fun resolveCachedWebPlayerAutoplayRecommendations(
+        seedId: String,
+        normalizedCookie: String,
+        limit: Int,
+    ): List<SongItem> {
+        val cachedTracks =
+            webPlayerAutoplayQueueCache[seedId]
+                ?.takeIf { System.currentTimeMillis() - it.cachedAt < SPOTIFY_WEB_PLAYER_QUEUE_CACHE_TTL_MS }
+                ?.value
+                ?.take(limit)
+                .orEmpty()
+        if (cachedTracks.isEmpty()) return emptyList()
+
+        val incompleteTrackIds =
+            cachedTracks
+                .filter { track ->
+                    track.song == null ||
+                        track.song.title.isBlank() ||
+                        track.song.thumbnail.isBlank() ||
+                        track.song.artists.isEmpty()
+                }
+                .map { it.trackId }
+        val hydrated =
+            if (incompleteTrackIds.isEmpty()) {
+                emptyMap()
+            } else {
+                runCatching {
+                    hydrateSpotifyTrackIds(incompleteTrackIds, normalizedCookie, ::ensureWebToken)
+                }.onFailure { error ->
+                    Timber.w(error, "Spotify Web Player queue hydration failed")
+                }.getOrDefault(emptyMap())
+            }
+
+        return cachedTracks
+            .asSequence()
+            .mapNotNull { track ->
+                track.song.mergeWithHydratedSpotifyTrack(hydrated[track.trackId])
+            }
+            .distinctBy { it.id.spotifyTrackId() ?: it.id }
+            .take(limit)
+            .toList()
+    }
+
+    private fun SongItem?.mergeWithHydratedSpotifyTrack(hydrated: SongItem?): SongItem? {
+        val cached = this ?: return hydrated
+        if (hydrated == null) return cached
+        return cached.copy(
+            artists = cached.artists.ifEmpty { hydrated.artists },
+            album = cached.album ?: hydrated.album,
+            duration = cached.duration ?: hydrated.duration,
+            thumbnail = cached.thumbnail.ifBlank { hydrated.thumbnail },
+            explicit = cached.explicit || hydrated.explicit,
+        )
+    }
+
+    private suspend fun resolvePlaylistExtenderV2Recommendations(
+        seedUri: String,
+        contextUris: List<String>,
+        trackIds: Set<String>,
+        normalizedCookie: String,
+        title: String?,
+        limit: Int,
+    ): List<SongItem> {
+        val playlistUri = contextUris.firstNotNullOfOrNull { it.spotifyPlaylistUri() }
+        val page =
+            spotifySpClientPost(
+                url =
+                    SPOTIFY_WEBGATE_URL
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addPathSegments("playlistextender/v2/extendp")
+                        .build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify playlist extender v2 recommendations",
+                body =
+                    json
+                        .encodeToString(
+                            SpotifyPlaylistExtenderRequest(
+                                playlistUri = playlistUri,
+                                numResults = limit.coerceIn(1, 50),
+                                trackSkipIds = (trackIds + listOfNotNull(seedUri.spotifyTrackId())).toSet(),
+                                trackIds = trackIds,
+                                title = title,
+                            ),
+                        ).toRequestBody(JSON_MEDIA_TYPE),
+            )
+        val typedSongs =
+            runCatching {
+                json.decodeFromString<SpotifyPlaylistExtenderResponse>(page.toString())
+                    .allRecommendedTracks
+                    .mapNotNull { it.toSongItem() }
+            }.getOrDefault(emptyList())
+        return typedSongs.ifEmpty { page.spotifyTrackSongs(limit) }
+            .ifEmpty { hydrateSpotifyTrackIdsFromJson(page, normalizedCookie, limit) }
+            .distinctBy { it.id.spotifyTrackId() ?: it.id }
+            .take(limit)
+    }
+
+    private suspend fun resolvePlaylistTopGenreRecommendations(
+        contextUris: List<String>,
+        normalizedCookie: String,
+        title: String?,
+        limit: Int,
+    ): List<SongItem> {
+        val playlistId =
+            contextUris
+                .firstNotNullOfOrNull { spotifyEntityId(it, "playlist") }
+                ?: return emptyList()
+        val page =
+            spotifySpClientGet(
+                url =
+                    SPOTIFY_WEBGATE_URL
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addPathSegments("playlistextender/v2/top-genre-tracks")
+                        .addQueryParameter("playlist_id", playlistId)
+                        .addQueryParameter("max_genres", "5")
+                        .addQueryParameter("max_artists", "10")
+                        .addQueryParameter("max_tracks", limit.coerceIn(1, 50).toString())
+                        .apply {
+                            title?.takeIf { it.isNotBlank() }?.let { addQueryParameter("title", it) }
+                        }.build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify playlist top genre tracks",
+            )
+
+        return page.spotifyTrackSongs(limit)
+            .ifEmpty { hydrateSpotifyTrackIdsFromJson(page, normalizedCookie, limit) }
+            .distinctBy { it.id.spotifyTrackId() ?: it.id }
+            .take(limit)
+    }
+
+    private suspend fun resolveDailyMixRecommendations(
+        seedUri: String,
+        normalizedCookie: String,
+        limit: Int,
+    ): List<SongItem> {
+        val seedUris =
+            listOf(
+                seedUri,
+                seedUri.spotifyTrackId()?.let { "spotify:station:track:$it" },
+            ).filterNotNull()
+                .distinct()
+        return buildList {
+            for (radioSeedUri in seedUris) {
+                if (size >= limit) break
+                val stations =
+                    runCatching {
+                        spotifySpClientGet(
+                            url =
+                                SPOTIFY_WEBGATE_URL
+                                    .toHttpUrl()
+                                    .newBuilder()
+                                    .addPathSegments("dailymix/v5/dailymix_stations")
+                                    .addPathSegment(radioSeedUri)
+                                    .addQueryParameter("image_style", "gradient_overlay")
+                                    .addQueryParameter("market", "from_token")
+                                    .build(),
+                            normalizedCookie = normalizedCookie,
+                            operation = "Spotify daily mix stations",
+                        )
+                    }.onFailure { error ->
+                        Timber.w(error, "Spotify daily mix stations failed")
+                    }.getOrNull()
+
+                addSpotifySongs(stations, normalizedCookie, limit - size)
+
+                val stationUris =
+                    stations
+                        ?.collectSpotifyUris(prefix = "spotify:station:", limit = 8)
+                        .orEmpty()
+                        .ifEmpty { listOf(radioSeedUri) }
+
+                for (stationUri in stationUris) {
+                    if (size >= limit) break
+                    val page =
+                        runCatching {
+                            spotifySpClientGet(
+                                url =
+                                    SPOTIFY_WEBGATE_URL
+                                        .toHttpUrl()
+                                        .newBuilder()
+                                        .addPathSegments("dailymix/v5/dailymix_tracks")
+                                        .addPathSegment(stationUri)
+                                        .addQueryParameter("limit", limit.coerceIn(1, 50).toString())
+                                        .addQueryParameter("count", limit.coerceIn(1, 50).toString())
+                                        .addQueryParameter("market", "from_token")
+                                        .build(),
+                                normalizedCookie = normalizedCookie,
+                                operation = "Spotify daily mix tracks",
+                            )
+                        }.onFailure { error ->
+                            Timber.w(error, "Spotify daily mix tracks failed")
+                        }.getOrNull()
+
+                    addSpotifySongs(page, normalizedCookie, limit - size)
+                }
+            }
+        }
+            .distinctBy { it.id.spotifyTrackId() ?: it.id }
+            .take(limit)
+    }
+
+    private suspend fun resolveInspiredByMixRecommendations(
+        seedUri: String,
+        normalizedCookie: String,
+        limit: Int,
+    ): List<SongItem> {
+        val page =
+            spotifySpClientGet(
+                url =
+                    SPOTIFY_WEBGATE_URL
+                        .toHttpUrl()
+                        .newBuilder()
+                        .addPathSegments("inspiredby-mix/v2/seed_to_playlist")
+                        .addPathSegment(seedUri)
+                        .addQueryParameter("response-format", "json")
+                        .addQueryParameter("market", "from_token")
+                        .build(),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify inspired-by mix",
+            )
+        return page.spotifyTrackSongs(limit)
+            .ifEmpty { hydrateSpotifyTrackIdsFromJson(page, normalizedCookie, limit) }
+            .distinctBy { it.id.spotifyTrackId() ?: it.id }
+            .take(limit)
     }
 
     private suspend fun resolvePlaylistExtenderRecommendations(
@@ -797,7 +3234,7 @@ object SpotifyCanvasClient {
             }
 
         return response
-            .recommendedTracks
+            .allRecommendedTracks
             .mapNotNull { it.toSongItem() }
             .filterNot { it.id.equals(seedUri, ignoreCase = true) }
             .distinctBy { it.id }
@@ -1110,6 +3547,26 @@ object SpotifyCanvasClient {
                 homePageCache.putFresh(cacheKey, page)
                 page
             }
+    }
+
+    suspend fun resolveRecentlyPlayed(
+        cookie: String,
+        limit: Int = 50,
+    ): List<SongItem> {
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return emptyList()
+        return spotifyApiGet(
+            url =
+                "https://api.spotify.com/v1/me/player/recently-played"
+                    .toHttpUrl()
+                    .newBuilder()
+                    .addQueryParameter("limit", limit.coerceIn(1, 50).toString())
+                    .build(),
+            normalizedCookie = normalizedCookie,
+            operation = "Spotify recently played",
+        ).array("items")
+            .orEmpty()
+            .mapNotNull { it.obj?.obj("track")?.toSpotifyPlaylistSong() }
+            .filterNot { it.id.isBlank() }
     }
 
     private suspend fun resolveHomePageFromSpotubeGraphQl(normalizedCookie: String): HomePage {
@@ -3264,6 +5721,30 @@ object SpotifyCanvasClient {
             }
         }
 
+    private suspend fun spotifySpClientPost(
+        url: HttpUrl,
+        normalizedCookie: String,
+        operation: String,
+        body: RequestBody,
+    ): JsonObject =
+        withContext(Dispatchers.IO) {
+            val request =
+                Request
+                    .Builder()
+                    .url(url)
+                    .header("User-Agent", DESKTOP_USER_AGENT)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json")
+                    .header("Cookie", normalizedCookie)
+                    .header("Authorization", "Bearer ${ensureToken(normalizedCookie)}")
+                    .post(body)
+                    .build()
+
+            client.newCall(request).execute().use { response ->
+                json.parseToJsonElement(response.requireBody(operation)).jsonObject
+            }
+        }
+
     private suspend fun resolveSavedTracksFromWebApi(
         normalizedCookie: String,
         maxTracks: Int,
@@ -4776,6 +7257,30 @@ object SpotifyCanvasClient {
             "Accept" to "*/*",
         )
 
+    private fun notifyListeningHistoryFailure(reason: String) {
+        listeningHistoryFailureReporter?.invoke(reason)
+    }
+
+    private fun handleListeningHistoryRateLimit(
+        response: Response,
+        fallbackReason: String,
+    ) {
+        val retryAfterMs =
+            response
+                .header("Retry-After")
+                ?.toLongOrNull()
+                ?.times(1000L)
+                ?.coerceIn(15_000L, 10 * 60_000L)
+                ?: 120_000L
+        deferListeningHistoryRequests("$fallbackReason; retrying later", retryAfterMs)
+    }
+
+    private fun compactListeningHistoryFailure(reason: String): String =
+        reason
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .take(180)
+
     private fun extractSpDc(cookie: String): String? = extractSpotifyCookieValue(cookie, "sp_dc")
 
     private fun spotifyEntityId(
@@ -5383,6 +7888,135 @@ object SpotifyCanvasClient {
 
         collect(this, 0)
         return songs.values.take(limit)
+    }
+
+    private suspend fun MutableList<SongItem>.addSpotifySongs(
+        page: JsonObject?,
+        normalizedCookie: String,
+        limit: Int,
+    ) {
+        if (page == null || limit <= 0) return
+        val songs =
+            page.spotifyTrackSongs(limit)
+                .ifEmpty { hydrateSpotifyTrackIdsFromJson(page, normalizedCookie, limit) }
+        var added = 0
+        for (song in songs) {
+            if (added >= limit) break
+            val key = song.id.spotifyTrackId() ?: song.id
+            if (none { (it.id.spotifyTrackId() ?: it.id) == key }) {
+                add(song)
+                added++
+            }
+        }
+    }
+
+    private suspend fun hydrateSpotifyTrackIdsFromJson(
+        page: JsonObject,
+        normalizedCookie: String,
+        limit: Int,
+    ): List<SongItem> {
+        val trackIds = page.collectSpotifyTrackIds(limit)
+        if (trackIds.isEmpty()) return emptyList()
+        val hydrated = hydrateSpotifyTrackIds(trackIds, normalizedCookie, ::ensureToken)
+        return trackIds
+            .asSequence()
+            .mapNotNull { hydrated[it] }
+            .distinctBy { it.id.spotifyTrackId() ?: it.id }
+            .take(limit)
+            .toList()
+    }
+
+    private fun JsonObject.collectSpotifyTrackIds(limit: Int): List<String> {
+        val ids = linkedSetOf<String>()
+
+        fun collect(
+            element: JsonElement?,
+            depth: Int,
+        ) {
+            if (element == null || depth > 8 || ids.size >= limit) return
+            when (element) {
+                is JsonArray ->
+                    element.forEach { child ->
+                        if (ids.size < limit) collect(child, depth + 1)
+                    }
+                is JsonObject -> {
+                    val priorityKeys =
+                        listOf(
+                            "uri",
+                            "trackUri",
+                            "track_uri",
+                            "id",
+                            "track",
+                            "item",
+                            "entity",
+                            "data",
+                            "mediaItems",
+                            "recommendedTracks",
+                            "recommended_tracks",
+                            "tracks",
+                            "items",
+                            "genres",
+                            "genre_tracks",
+                        )
+                    priorityKeys.forEach { key ->
+                        if (ids.size < limit) collect(element[key], depth + 1)
+                    }
+                    if (depth <= 4) {
+                        element.values.forEach { child ->
+                            if (ids.size < limit) collect(child, depth + 1)
+                        }
+                    }
+                }
+                is JsonPrimitive ->
+                    element.contentOrNull
+                        ?.spotifyTrackId()
+                        ?.let(ids::add)
+                else -> Unit
+            }
+        }
+
+        collect(this, 0)
+        return ids.take(limit)
+    }
+
+    private fun JsonObject.collectSpotifyUris(
+        prefix: String,
+        limit: Int,
+    ): List<String> {
+        val uris = linkedSetOf<String>()
+
+        fun collect(
+            element: JsonElement?,
+            depth: Int,
+        ) {
+            if (element == null || depth > 7 || uris.size >= limit) return
+            when (element) {
+                is JsonArray ->
+                    element.forEach { child ->
+                        if (uris.size < limit) collect(child, depth + 1)
+                    }
+                is JsonObject -> {
+                    listOf("uri", "station_uri", "stationUri", "id", "data", "item", "entity", "stations", "items")
+                        .forEach { key ->
+                            if (uris.size < limit) collect(element[key], depth + 1)
+                        }
+                    if (depth <= 3) {
+                        element.values.forEach { child ->
+                            if (uris.size < limit) collect(child, depth + 1)
+                        }
+                    }
+                }
+                is JsonPrimitive ->
+                    element
+                        .contentOrNull
+                        ?.takeIf { it.startsWith(prefix, ignoreCase = true) }
+                        ?.let(uris::add)
+                else -> Unit
+            }
+        }
+
+        collect(this, 0)
+        return uris.take(limit)
     }
 
     private fun JsonObject.isProbablySpotifyTrack(wrapper: JsonObject? = null): Boolean {
@@ -6515,8 +9149,12 @@ object SpotifyCanvasClient {
 
     @Serializable
     private data class SpotifyPlaylistExtenderResponse(
-        @SerialName("recommended_tracks") val recommendedTracks: List<SpotifyPlaylistExtenderTrack> = emptyList(),
-    )
+        @SerialName("recommended_tracks") val recommendedTracksSnake: List<SpotifyPlaylistExtenderTrack> = emptyList(),
+        @SerialName("recommendedTracks") val recommendedTracksCamel: List<SpotifyPlaylistExtenderTrack> = emptyList(),
+    ) {
+        val allRecommendedTracks: List<SpotifyPlaylistExtenderTrack>
+            get() = recommendedTracksSnake.ifEmpty { recommendedTracksCamel }
+    }
 
     @Serializable
     private data class SpotifyPlaylistExtenderTrack(
@@ -6679,6 +9317,77 @@ private fun String.spotifyTrackUri(): String? {
     val trackId = spotifyTrackId() ?: return null
     return "spotify:track:$trackId"
 }
+
+private fun String.spotifyPlaylistUri(): String? =
+    runCatching { URLDecoder.decode(trim(), "UTF-8") }
+        .getOrDefault(trim())
+        .let { decoded ->
+            val lower = decoded.lowercase()
+            val marker = "/playlist/"
+            val candidate =
+                if (lower.startsWith("spotify:playlist:")) {
+                    decoded.substringAfterLast(':')
+                } else if (lower.startsWith("spotify:user:") && lower.contains(":playlist:")) {
+                    decoded.substringAfterLast(":playlist:")
+                } else if (lower.contains(marker)) {
+                    decoded.substringAfter(marker)
+                } else if (decoded.matches(Regex("^[A-Za-z0-9]{22}$"))) {
+                    decoded
+                } else {
+                    return@let null
+                }.substringBefore('?')
+                    .substringBefore('#')
+                    .trim()
+                    .trim('/')
+                    .substringBefore('/')
+                    .substringAfterLast(':')
+            candidate.takeIf { it.matches(Regex("^[A-Za-z0-9]{22}$")) }
+        }?.let { "spotify:playlist:$it" }
+
+private fun String.spotifyAlbumUri(): String? =
+    runCatching { URLDecoder.decode(trim(), "UTF-8") }
+        .getOrDefault(trim())
+        .let { decoded ->
+            val lower = decoded.lowercase()
+            val marker = "/album/"
+            val candidate =
+                if (lower.startsWith("spotify:album:")) {
+                    decoded.substringAfterLast(':')
+                } else if (lower.contains(marker)) {
+                    decoded.substringAfter(marker)
+                } else if (decoded.matches(Regex("^[A-Za-z0-9]{22}$"))) {
+                    decoded
+                } else {
+                    return@let null
+                }.substringBefore('?')
+                    .substringBefore('#')
+                    .trim()
+                    .trim('/')
+                    .substringBefore('/')
+                    .substringAfterLast(':')
+            candidate.takeIf { it.matches(Regex("^[A-Za-z0-9]{22}$")) }
+        }?.let { "spotify:album:$it" }
+
+private fun String.spotifyCollectionUri(): String? =
+    trim()
+        .takeIf {
+            it.equals("spotify:collection:tracks", ignoreCase = true) ||
+                it.equals("collection:tracks", ignoreCase = true) ||
+                it.contains("open.spotify.com/collection/tracks", ignoreCase = true)
+        }?.let { "spotify:collection:tracks" }
+
+private fun String.isSpotifyCollectionTracksUri(): Boolean =
+    equals("spotify:collection:tracks", ignoreCase = true)
+
+private fun String.isSpotifyPlaylistFormatUri(): Boolean =
+    startsWith("spotify:playlist-format:", ignoreCase = true)
+
+private fun String.spotifyPlaybackContextUri(): String? =
+    when {
+        isSpotifyPlaylistFormatUri() -> this
+        startsWith("spotify:station:track:", ignoreCase = true) -> this
+        else -> spotifyCollectionUri() ?: spotifyPlaylistUri() ?: spotifyAlbumUri() ?: spotifyTrackUri()
+    }
 
 private fun String.spotifyTrackId(): String? =
     when {

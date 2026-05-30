@@ -169,6 +169,30 @@ object DeezerHomeFeedProvider {
             else -> loadPlaylist(collectionId, cookie)
         }
 
+    suspend fun setTrackLiked(
+        trackUriOrId: String,
+        cookie: String,
+        liked: Boolean,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val trackId = trackUriOrId.deezerTrackId() ?: return@withContext false
+            val normalizedCookie = normalizeDeezerCookieInput(cookie).orEmpty()
+            if (normalizedCookie.isBlank()) return@withContext false
+            runCatching {
+                val session = gatewaySession(normalizedCookie)
+                gatewayCall(
+                    method = if (liked) "song.addFavorite" else "song.deleteFavorite",
+                    cookie = session.cookie,
+                    apiToken = session.token,
+                    userId = session.userId,
+                    gatewayInput = """{"SNG_ID":"$trackId"}""",
+                )
+                true
+            }.onFailure { throwable ->
+                Timber.tag("DeezerHome").w(throwable, "Deezer like request failed")
+            }.getOrDefault(false)
+        }
+
     private fun loadPersonalizedHome(cookie: String): HomePage {
         val session = gatewaySession(cookie)
         val home = gatewayCall(
@@ -928,6 +952,22 @@ object DeezerHomeFeedProvider {
             .replace(Regex("""\([^)]*\)|\[[^]]*]"""), " ")
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()
+
+    private fun String.deezerTrackId(): String? =
+        trim()
+            .let { value ->
+                when {
+                    value.startsWith("deezer:track:", ignoreCase = true) -> value.substringAfterLast(':')
+                    value.contains("deezer.com/track/", ignoreCase = true) ->
+                        value
+                            .substringAfter("deezer.com/track/", "")
+                            .substringBefore('?')
+                            .substringBefore('#')
+                            .substringBefore('/')
+                    value.matches(Regex("^\\d+$")) -> value
+                    else -> null
+                }
+            }?.takeIf { it.matches(Regex("^\\d+$")) }
 
     private fun String.toDeezerFlowTitle(): String =
         if (equals("flow", ignoreCase = true) || equals("FLOW", ignoreCase = true)) {

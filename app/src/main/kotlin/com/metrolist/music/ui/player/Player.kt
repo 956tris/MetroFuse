@@ -480,6 +480,7 @@ fun BottomSheetPlayer(
 
     val playbackState by playerConnection.playbackState.collectAsStateWithLifecycle()
     val mediaMetadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
+    val spotifyHistoryPresenceActive by playerConnection.service.spotifyHistoryPresenceActive.collectAsStateWithLifecycle()
     var showShareSongLinkDialog by rememberSaveable { mutableStateOf(false) }
     val preferredArtworkUrl by playerConnection.service.currentPreferredArtworkUrl.collectAsStateWithLifecycle()
     val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
@@ -2378,6 +2379,35 @@ fun BottomSheetPlayer(
                                     onClick = playerConnection::toggleLike,
                                 )
                             }
+                        }
+                    }
+
+                    AnimatedVisibility(
+                        visible = spotifyHistoryPresenceActive,
+                        enter = fadeIn() + slideInVertically(initialOffsetY = { -it / 2 }),
+                        exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top),
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(
+                                        start = PlayerHorizontalPadding,
+                                        top = 8.dp,
+                                        end = PlayerHorizontalPadding,
+                                    ),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.spotify_connected_tag),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = qualityBadgeContentColor,
+                                modifier =
+                                    Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(qualityBadgeContainerColor)
+                                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
                         }
                     }
 

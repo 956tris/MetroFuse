@@ -39,6 +39,7 @@ import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerAudioQualityOptions
 import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.DeezerFastModeKey
+import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.ui.component.EnumDialog
@@ -59,11 +60,13 @@ fun DeezerSettings(
     navController: NavController,
 ) {
     var resolverUrl by rememberPreference(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
+    var proxyUrl by rememberPreference(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
     var audioQuality by rememberEnumPreference(DeezerAudioQualityKey, DeezerAudioQuality.MP3_128)
     val (fastMode, onFastModeChange) = rememberPreference(DeezerFastModeKey, false)
     var deezerCookie by rememberPreference(DeezerCookieKey, "")
     val cookieConfigured = isDeezerCookieConfigured(deezerCookie)
     var showResolverDialog by rememberSaveable { mutableStateOf(false) }
+    var showProxyDialog by rememberSaveable { mutableStateOf(false) }
     var showQualityDialog by rememberSaveable { mutableStateOf(false) }
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -107,6 +110,27 @@ fun DeezerSettings(
             },
             extraContent = {
                 InfoLabel(text = stringResource(R.string.deezer_resolver_url_helper))
+            },
+        )
+    }
+
+    if (showProxyDialog) {
+        TextFieldDialog(
+            onDismiss = { showProxyDialog = false },
+            icon = { Icon(painterResource(R.drawable.wifi_proxy), contentDescription = null) },
+            title = { Text(stringResource(R.string.deezer_proxy_url)) },
+            initialTextFieldValue = TextFieldValue(proxyUrl),
+            placeholder = { Text(stringResource(R.string.deezer_proxy_url_placeholder)) },
+            singleLine = true,
+            isInputValid = { value ->
+                DeezerAudioProvider.isValidProxyUrl(value)
+            },
+            onDone = { value ->
+                proxyUrl = DeezerAudioProvider.normalizeProxyUrl(value)
+                showProxyDialog = false
+            },
+            extraContent = {
+                InfoLabel(text = stringResource(R.string.deezer_proxy_url_helper))
             },
         )
     }
@@ -180,6 +204,22 @@ fun DeezerSettings(
                         },
                     ),
                     Material3SettingsItem(
+                        title = { Text(stringResource(R.string.deezer_proxy_url)) },
+                        description = {
+                            Text(
+                                if (proxyUrl.isBlank()) {
+                                    stringResource(R.string.deezer_proxy_disabled)
+                                } else {
+                                    stringResource(R.string.deezer_proxy_url_desc, proxyUrl)
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.wifi_proxy),
+                        onClick = {
+                            showProxyDialog = true
+                        },
+                    ),
+                    Material3SettingsItem(
                         title = { Text(stringResource(R.string.deezer_audio_quality)) },
                         description = { Text(audioQuality.labelText()) },
                         icon = painterResource(R.drawable.equalizer),
@@ -215,6 +255,15 @@ fun DeezerSettings(
                         enabled = resolverUrl != DeezerAudioProvider.DEFAULT_RESOLVER_URL,
                         onClick = {
                             resolverUrl = DeezerAudioProvider.DEFAULT_RESOLVER_URL
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.deezer_clear_proxy)) },
+                        description = { Text(stringResource(R.string.deezer_proxy_disabled)) },
+                        icon = painterResource(R.drawable.delete),
+                        enabled = proxyUrl.isNotBlank(),
+                        onClick = {
+                            proxyUrl = DeezerAudioProvider.DEFAULT_PROXY_URL
                         },
                     ),
                     Material3SettingsItem(

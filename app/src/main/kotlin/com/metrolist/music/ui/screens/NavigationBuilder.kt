@@ -59,7 +59,6 @@ import com.metrolist.music.ui.screens.settings.SettingsScreen
 import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
-import com.metrolist.music.ui.screens.settings.integrations.AppleMusicSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
@@ -126,6 +125,10 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("history") {
         HistoryScreen(navController)
+    }
+
+    composable("spotify_listening_history") {
+        SpotifyListeningHistoryScreen(navController)
     }
 
     composable("stats") {
@@ -430,10 +433,6 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/spotify_canvas/login") {
         SpotifyCanvasLoginScreen(navController)
-    }
-
-    composable("settings/integrations/apple_music") {
-        AppleMusicSettings(navController)
     }
 
     composable("settings/integrations/tidal") {

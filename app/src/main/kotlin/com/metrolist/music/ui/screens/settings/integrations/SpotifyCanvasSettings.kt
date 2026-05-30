@@ -39,6 +39,8 @@ import com.metrolist.music.constants.CanvasArtworkPriorityKey
 import com.metrolist.music.constants.EmbedAnimatedCanvasKey
 import com.metrolist.music.constants.SpotifyCanvasEnabledKey
 import com.metrolist.music.constants.SpotifyCookieKey
+import com.metrolist.music.constants.SpotifyListeningHistoryEnabledKey
+import com.metrolist.music.constants.SpotifyListeningHistoryGlobalKey
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
@@ -60,6 +62,10 @@ fun SpotifyCanvasSettings(
         rememberPreference(SpotifyCanvasEnabledKey, false)
     val (embedAnimatedCanvas, onEmbedAnimatedCanvasChange) =
         rememberPreference(EmbedAnimatedCanvasKey, false)
+    val (spotifyListeningHistoryEnabled, onSpotifyListeningHistoryEnabledChange) =
+        rememberPreference(SpotifyListeningHistoryEnabledKey, false)
+    val (spotifyListeningHistoryGlobal, onSpotifyListeningHistoryGlobalChange) =
+        rememberPreference(SpotifyListeningHistoryGlobalKey, false)
     var canvasArtworkPriority by rememberEnumPreference(CanvasArtworkPriorityKey, CanvasArtworkPriority.APPLE_MUSIC)
     var spotifyCookie by rememberPreference(SpotifyCookieKey, "")
     val cookieConfigured = isSpotifyCookieConfigured(spotifyCookie)
@@ -72,6 +78,28 @@ fun SpotifyCanvasSettings(
             navController.navigate("settings/integrations/spotify_canvas/login")
         } else {
             onSpotifyCanvasEnabledChange(enabled)
+        }
+    }
+
+    fun updateListeningHistoryEnabled(enabled: Boolean) {
+        if (enabled && !cookieConfigured) {
+            navController.navigate("settings/integrations/spotify_canvas/login")
+        } else {
+            onSpotifyListeningHistoryEnabledChange(enabled)
+            if (!enabled) {
+                onSpotifyListeningHistoryGlobalChange(false)
+            }
+        }
+    }
+
+    fun updateListeningHistoryGlobal(enabled: Boolean) {
+        if (enabled && !cookieConfigured) {
+            navController.navigate("settings/integrations/spotify_canvas/login")
+        } else if (enabled && !spotifyListeningHistoryEnabled) {
+            updateListeningHistoryEnabled(true)
+            onSpotifyListeningHistoryGlobalChange(true)
+        } else {
+            onSpotifyListeningHistoryGlobalChange(enabled)
         }
     }
 
@@ -198,6 +226,72 @@ fun SpotifyCanvasSettings(
                         },
                     ),
                     Material3SettingsItem(
+                        title = { Text(stringResource(R.string.spotify_listening_history)) },
+                        description = {
+                            Text(
+                                if (cookieConfigured) {
+                                    stringResource(R.string.spotify_listening_history_desc)
+                                } else {
+                                    stringResource(R.string.spotify_canvas_requires_cookie)
+                                },
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = spotifyListeningHistoryEnabled,
+                                onCheckedChange = ::updateListeningHistoryEnabled,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (spotifyListeningHistoryEnabled) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.history),
+                        onClick = {
+                            updateListeningHistoryEnabled(!spotifyListeningHistoryEnabled)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.spotify_listening_history_global)) },
+                        description = {
+                            Text(
+                                if (cookieConfigured) {
+                                    stringResource(R.string.spotify_listening_history_global_desc)
+                                } else {
+                                    stringResource(R.string.spotify_canvas_requires_cookie)
+                                },
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = spotifyListeningHistoryGlobal,
+                                enabled = spotifyListeningHistoryEnabled && cookieConfigured,
+                                onCheckedChange = ::updateListeningHistoryGlobal,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (spotifyListeningHistoryGlobal) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.sync),
+                        enabled = spotifyListeningHistoryEnabled && cookieConfigured,
+                        onClick = {
+                            updateListeningHistoryGlobal(!spotifyListeningHistoryGlobal)
+                        },
+                    ),
+                    Material3SettingsItem(
                         title = { Text(stringResource(R.string.spotify_canvas_web_login)) },
                         description = {
                             Text(
@@ -235,6 +329,8 @@ fun SpotifyCanvasSettings(
                         onClick = {
                             spotifyCookie = ""
                             onSpotifyCanvasEnabledChange(false)
+                            onSpotifyListeningHistoryEnabledChange(false)
+                            onSpotifyListeningHistoryGlobalChange(false)
                         },
                     ),
                 ),

@@ -42,9 +42,6 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
-import com.metrolist.music.apple.AppleMusicWrapperManagerProvider
-import com.metrolist.music.constants.AppleMusicWrapperHostKey
-import com.metrolist.music.constants.AppleMusicWrapperSecureKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
@@ -71,17 +68,8 @@ fun ProviderHealthScreen(
         DeezerAudioProvider.DEFAULT_RESOLVER_URL,
     )
     val qobuzBackend by rememberEnumPreference(QobuzBackendKey, QobuzBackend.JUMO)
-    val appleWrapperHost by rememberPreference(
-        AppleMusicWrapperHostKey,
-        AppleMusicWrapperManagerProvider.DEFAULT_HOST,
-    )
-    val appleWrapperSecure by rememberPreference(AppleMusicWrapperSecureKey, true)
-    val targets = remember(deezerResolverUrl, appleWrapperHost, appleWrapperSecure) {
-        ProviderHealthChecker.targets(
-            deezerResolverUrl = deezerResolverUrl,
-            appleWrapperHost = appleWrapperHost,
-            appleWrapperSecure = appleWrapperSecure,
-        )
+    val targets = remember(deezerResolverUrl) {
+        ProviderHealthChecker.targets(deezerResolverUrl = deezerResolverUrl)
     }
     var refreshCounter by remember { mutableIntStateOf(0) }
     var results by remember { mutableStateOf<List<ProviderHealthChecker.Result>>(emptyList()) }

@@ -12,6 +12,9 @@ import com.metrolist.music.models.MediaMetadata
 interface Queue {
     val preloadItem: MediaMetadata?
 
+    val playbackContextUri: String?
+        get() = null
+
     suspend fun getInitialStatus(): Status
 
     fun hasNextPage(): Boolean
@@ -59,3 +62,53 @@ fun List<MediaItem>.filterVideoSongs(disableVideos: Boolean = false) =
     } else {
         this
     }
+
+fun String?.spotifyPlaybackContextUriOrNull(): String? {
+    val value = this?.trim()?.trim('/')?.takeIf { it.isNotBlank() } ?: return null
+    val normalized =
+        when {
+            value.startsWith("spotify:playlist:", ignoreCase = true) ||
+                value.startsWith("spotify:playlist-format:", ignoreCase = true) ||
+                value.startsWith("spotify:album:", ignoreCase = true) ||
+                value.equals("spotify:collection:tracks", ignoreCase = true) -> value
+            value.startsWith("spotify:user:", ignoreCase = true) &&
+                value.contains(":playlist:", ignoreCase = true) -> {
+                val id =
+                    value
+                        .substringAfterLast(":playlist:")
+                        .substringBefore('?')
+                        .substringBefore('#')
+                        .substringBefore('/')
+                        .takeIf { it.matches(Regex("^[A-Za-z0-9]{22}$")) }
+                id?.let { "spotify:playlist:$it" }
+            }
+            value.equals("collection:tracks", ignoreCase = true) -> "spotify:collection:tracks"
+            value.contains("open.spotify.com/collection/tracks", ignoreCase = true) -> "spotify:collection:tracks"
+            value.contains("open.spotify.com/playlist/", ignoreCase = true) -> {
+                val id =
+                    value
+                        .substringAfter("open.spotify.com/playlist/", "")
+                        .substringBefore('?')
+                        .substringBefore('#')
+                        .substringBefore('/')
+                        .takeIf { it.matches(Regex("^[A-Za-z0-9]{22}$")) }
+                id?.let { "spotify:playlist:$it" }
+            }
+            value.contains("open.spotify.com/album/", ignoreCase = true) -> {
+                val id =
+                    value
+                        .substringAfter("open.spotify.com/album/", "")
+                        .substringBefore('?')
+                        .substringBefore('#')
+                        .substringBefore('/')
+                        .takeIf { it.matches(Regex("^[A-Za-z0-9]{22}$")) }
+                id?.let { "spotify:album:$it" }
+            }
+            else -> null
+        }
+    return normalized?.takeIf { uri ->
+        uri.equals("spotify:collection:tracks", ignoreCase = true) ||
+            uri.startsWith("spotify:playlist-format:", ignoreCase = true) ||
+            uri.substringAfterLast(':').matches(Regex("^[A-Za-z0-9]{22}$"))
+    }
+}

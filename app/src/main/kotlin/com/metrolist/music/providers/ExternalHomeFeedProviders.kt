@@ -88,6 +88,40 @@ object TidalHomeFeedProvider {
             }.getOrNull()?.sections?.isNotEmpty() == true
         }
 
+    suspend fun setTrackLiked(
+        trackUriOrId: String,
+        cookie: String,
+        liked: Boolean,
+    ): Boolean =
+        withContext(Dispatchers.IO) {
+            val trackId = trackUriOrId.tidalTrackId() ?: return@withContext false
+            val auth = tidalAuthInput(cookie)
+            if (!auth.hasUserAuth) return@withContext false
+            val userId = currentUserId(auth) ?: return@withContext false
+            val request =
+                tidalMutationRequest(
+                    path = "v1/users/$userId/favorites/tracks",
+                    params = mapOf("trackId" to trackId),
+                    auth = auth,
+                    liked = liked,
+                )
+
+            runCatching {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        Timber.tag("TidalHome").w(
+                            "TIDAL like HTTP %d: %s",
+                            response.code,
+                            response.body.string().take(180),
+                        )
+                    }
+                    response.isSuccessful
+                }
+            }.onFailure { throwable ->
+                Timber.tag("TidalHome").w(throwable, "TIDAL like request failed")
+            }.getOrDefault(false)
+        }
+
     suspend fun search(
         query: String,
         cookie: String = "",
@@ -564,6 +598,62 @@ object TidalHomeFeedProvider {
                 }
             }.build()
     }
+
+    private suspend fun tidalMutationRequest(
+        path: String,
+        params: Map<String, String> = emptyMap(),
+        auth: TidalAuthInput,
+        liked: Boolean,
+    ): Request {
+        val accessToken = accessToken(auth)
+        val url =
+            "https://api.tidal.com/${path.trimStart('/')}"
+                .toHttpUrl()
+                .newBuilder()
+                .addQueryParameter("deviceType", "BROWSER")
+                .addQueryParameter("platform", "WEB")
+                .addQueryParameter("locale", "en_US")
+                .addQueryParameter("countryCode", "US")
+                .apply {
+                    params.forEach { (key, value) ->
+                        addQueryParameter(key, value)
+                    }
+                }.build()
+
+        return Request
+            .Builder()
+            .url(url)
+            .header("x-tidal-client-version", CLIENT_VERSION)
+            .header("x-tidal-token", USER_CLIENT_TOKEN)
+            .header("Authorization", "Bearer $accessToken")
+            .apply {
+                if (liked) {
+                    post(FormBody.Builder().build())
+                } else {
+                    delete()
+                }
+            }.build()
+    }
+
+    private suspend fun currentUserId(auth: TidalAuthInput): String? =
+        runCatching {
+            client
+                .newCall(
+                    tidalRequest(
+                        path = "v1/sessions",
+                        auth = auth,
+                        authenticated = true,
+                    ),
+                ).execute()
+                .use { response ->
+                    val root = json.parseToJsonElement(response.requireTidalBody("TIDAL session")).jsonObject
+                    root.string("userId")
+                        ?: root.obj("user")?.string("id")
+                        ?: root.obj("profile")?.string("userId")
+                }
+        }.onFailure { throwable ->
+            Timber.tag("TidalHome").w(throwable, "TIDAL session lookup failed")
+        }.getOrNull()
 
     private fun tidalAuthInput(input: String): TidalAuthInput =
         TidalAuthInput(
@@ -1217,6 +1307,22 @@ object TidalHomeFeedProvider {
             .replace(Regex("""\([^)]*\)|\[[^]]*]"""), " ")
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()
+
+    private fun String.tidalTrackId(): String? =
+        trim()
+            .let { value ->
+                when {
+                    value.startsWith("tidal:track:", ignoreCase = true) -> value.substringAfterLast(':')
+                    value.contains("tidal.com/track/", ignoreCase = true) ->
+                        value
+                            .substringAfter("tidal.com/track/", "")
+                            .substringBefore('?')
+                            .substringBefore('#')
+                            .substringBefore('/')
+                    value.matches(Regex("^\\d+$")) -> value
+                    else -> null
+                }
+            }?.takeIf { it.matches(Regex("^\\d+$")) }
 
     private fun String.tidalImageUrl(size: String = "640x640"): String? =
         takeIf { it.isNotBlank() }?.let { value ->

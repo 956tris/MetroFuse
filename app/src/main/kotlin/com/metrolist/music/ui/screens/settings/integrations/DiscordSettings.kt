@@ -85,6 +85,7 @@ import com.metrolist.music.constants.DiscordButton1TextKey
 import com.metrolist.music.constants.DiscordButton1VisibleKey
 import com.metrolist.music.constants.DiscordButton2TextKey
 import com.metrolist.music.constants.DiscordButton2VisibleKey
+import com.metrolist.music.constants.DiscordHideWhenSpotifyHistoryKey
 import com.metrolist.music.constants.DiscordInfoDismissedKey
 import com.metrolist.music.constants.DiscordNameKey
 import com.metrolist.music.constants.DiscordShowProviderKey
@@ -140,6 +141,8 @@ fun DiscordSettings(
     val (discordRPC, onDiscordRPCChange) = rememberPreference(EnableDiscordRPCKey, true)
     val (useDetails, onUseDetailsChange) = rememberPreference(DiscordUseDetailsKey, false)
     val (showProvider, onShowProviderChange) = rememberPreference(DiscordShowProviderKey, true)
+    val (hideWhenSpotifyHistory, onHideWhenSpotifyHistoryChange) =
+        rememberPreference(DiscordHideWhenSpotifyHistoryKey, false)
     val (advancedMode, onAdvancedModeChange) = rememberPreference(DiscordAdvancedModeKey, false)
     val (animatedCanvas, onAnimatedCanvasChange) = rememberPreference(DiscordAnimatedCanvasKey, false)
     var animatedCanvasQuality by rememberEnumPreference(
@@ -665,6 +668,34 @@ fun DiscordSettings(
                         enabled = isLoggedIn && discordRPC,
                         onClick = {
                             if (isLoggedIn && discordRPC) onShowProviderChange(!showProvider)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.discord_hide_when_spotify_history)) },
+                        description = {
+                            Text(stringResource(R.string.discord_hide_when_spotify_history_description))
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = hideWhenSpotifyHistory,
+                                onCheckedChange = onHideWhenSpotifyHistoryChange,
+                                enabled = isLoggedIn && discordRPC,
+                                thumbContent = {
+                                    Icon(
+                                        painter = painterResource(
+                                            id = if (hideWhenSpotifyHistory) R.drawable.check else R.drawable.close
+                                        ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                }
+                            )
+                        },
+                        enabled = isLoggedIn && discordRPC,
+                        onClick = {
+                            if (isLoggedIn && discordRPC) {
+                                onHideWhenSpotifyHistoryChange(!hideWhenSpotifyHistory)
+                            }
                         },
                     ),
                     Material3SettingsItem(

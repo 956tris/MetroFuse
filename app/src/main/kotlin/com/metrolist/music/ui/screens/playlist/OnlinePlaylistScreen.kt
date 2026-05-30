@@ -94,7 +94,9 @@ import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.db.entities.Playlist
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.PlaylistSongMap
+import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.models.toMediaMetadata
+import com.metrolist.music.playback.queues.ListQueue
 import com.metrolist.music.playback.queues.YouTubePlaylistQueue
 import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.ui.component.IconButton
@@ -318,15 +320,32 @@ fun OnlinePlaylistScreen(
                                         } else if (songItem.id == mediaMetadata?.id) {
                                             playerConnection.togglePlayPause()
                                         } else {
-                                            playerConnection.playQueue(
-                                                YouTubePlaylistQueue(
-                                                    playlistId = playlist.id,
-                                                    playlistTitle = playlist.title,
-                                                    initialSongs = filteredSongs.map { it.second },
-                                                    initialContinuation = viewModel.continuation,
-                                                    startIndex = index,
-                                                ),
-                                            )
+                                            val queueSongs = filteredSongs.map { it.second }
+                                            val startIndex =
+                                                queueSongs
+                                                    .indexOfFirst { it.id == songItem.id }
+                                                    .takeIf { it >= 0 }
+                                                    ?: index
+                                            if (isExternalPlaylist) {
+                                                playerConnection.playQueue(
+                                                    ListQueue(
+                                                        title = playlist.title,
+                                                        items = queueSongs.map { it.toMediaMetadata().toMediaItem() },
+                                                        startIndex = startIndex,
+                                                        playbackContextUri = playlist.id,
+                                                    ),
+                                                )
+                                            } else {
+                                                playerConnection.playQueue(
+                                                    YouTubePlaylistQueue(
+                                                        playlistId = playlist.id,
+                                                        playlistTitle = playlist.title,
+                                                        initialSongs = queueSongs,
+                                                        initialContinuation = viewModel.continuation,
+                                                        startIndex = startIndex,
+                                                    ),
+                                                )
+                                            }
                                         }
                                     },
                                     onLongClick = onLongClick@{
@@ -829,14 +848,24 @@ private fun OnlinePlaylistHeader(
             Surface(
                 onClick = {
                     if (!isListenTogetherGuest && songs.isNotEmpty()) {
-                        playerConnection.playQueue(
-                            YouTubePlaylistQueue(
-                                playlistId = playlist.id,
-                                playlistTitle = playlist.title,
-                                initialSongs = songs,
-                                initialContinuation = continuation,
-                            ),
-                        )
+                        if (isExternalPlaylist) {
+                            playerConnection.playQueue(
+                                ListQueue(
+                                    title = playlist.title,
+                                    items = songs.map { it.toMediaMetadata().toMediaItem() },
+                                    playbackContextUri = playlist.id,
+                                ),
+                            )
+                        } else {
+                            playerConnection.playQueue(
+                                YouTubePlaylistQueue(
+                                    playlistId = playlist.id,
+                                    playlistTitle = playlist.title,
+                                    initialSongs = songs,
+                                    initialContinuation = continuation,
+                                ),
+                            )
+                        }
                     }
                 },
                 color = MaterialTheme.colorScheme.primary,

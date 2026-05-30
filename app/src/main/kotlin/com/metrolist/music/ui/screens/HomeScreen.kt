@@ -502,6 +502,7 @@ fun CommunityPlaylistCard(
 private fun SpotifyHomeHeader(
     accountImageUrl: String?,
     accountName: String?,
+    onHistoryClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -554,22 +555,20 @@ private fun SpotifyHomeHeader(
             modifier = Modifier.weight(1f),
         )
 
-        listOf(R.drawable.notification, R.drawable.history, R.drawable.settings).forEach { icon ->
-            IconButton(
-                onClick = {},
-                modifier =
-                    Modifier
-                        .size(38.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).copy(alpha = 0.72f)),
-            ) {
-                Icon(
-                    painter = painterResource(icon),
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+        IconButton(
+            onClick = onHistoryClick,
+            modifier =
+                Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp).copy(alpha = 0.72f)),
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.history),
+                contentDescription = stringResource(R.string.spotify_listening_history_title),
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }
@@ -1460,6 +1459,7 @@ fun HomeScreen(
                         SpotifyHomeHeader(
                             accountImageUrl = accountImageUrl,
                             accountName = accountName,
+                            onHistoryClick = { navController.navigate("spotify_listening_history") },
                             modifier = Modifier.animateItem(),
                         )
                     }

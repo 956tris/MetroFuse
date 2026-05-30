@@ -17,10 +17,13 @@ import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.utils.completed
 import com.metrolist.innertube.utils.parseCookieString
 import com.metrolist.lastfm.LastFM
+import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.InnerTubeCookieKey
 import com.metrolist.music.constants.LastFMUseSendLikes
 import com.metrolist.music.constants.LastFullSyncKey
 import com.metrolist.music.constants.SYNC_COOLDOWN
+import com.metrolist.music.constants.SpotifyCookieKey
+import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.ArtistEntity
 import com.metrolist.music.db.entities.PlaylistEntity
@@ -32,6 +35,10 @@ import com.metrolist.music.extensions.collectLatest
 import com.metrolist.music.extensions.isInternetConnected
 import com.metrolist.music.extensions.isSyncEnabled
 import com.metrolist.music.models.toMediaMetadata
+import com.metrolist.music.providers.DeezerHomeFeedProvider
+import com.metrolist.music.providers.ExternalHomeItemIds
+import com.metrolist.music.providers.TidalHomeFeedProvider
+import com.metrolist.music.utils.spotify.SpotifyCanvasClient
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -568,15 +575,19 @@ class SyncUtils @Inject constructor(
     }
 
     private suspend fun executeLikeSong(s: SongEntity) = withContext(Dispatchers.IO) {
-        if (!isLoggedIn()) {
-            Timber.w("Skipping likeSong - user not logged in")
-            return@withContext
-        }
+        val externalProvider = ExternalHomeItemIds.externalProviderId(s.id)?.first
+        syncExternalProviderLike(s, externalProvider)
 
-        withRetry {
-            YouTube.likeVideo(s.id, s.liked)
-        }.onFailure { e ->
-            Timber.e(e, "Failed to like song on YouTube: ${s.id}")
+        if (externalProvider == null) {
+            if (!isLoggedIn()) {
+                Timber.w("Skipping YouTube likeSong - user not logged in")
+            } else {
+                withRetry {
+                    YouTube.likeVideo(s.id, s.liked)
+                }.onFailure { e ->
+                    Timber.e(e, "Failed to like song on YouTube: ${s.id}")
+                }
+            }
         }
 
         if (lastfmSendLikes) {
@@ -590,6 +601,38 @@ class SyncUtils @Inject constructor(
             } catch (e: Exception) {
                 Timber.e(e, "Failed to update LastFM love status")
             }
+        }
+    }
+
+    private suspend fun syncExternalProviderLike(
+        song: SongEntity,
+        provider: String?,
+    ) {
+        val synced =
+            when (provider) {
+                "spotify" ->
+                    SpotifyCanvasClient.setTrackLiked(
+                        trackUriOrId = song.id,
+                        cookie = context.dataStore.get(SpotifyCookieKey, ""),
+                        liked = song.liked,
+                    )
+                "tidal" ->
+                    TidalHomeFeedProvider.setTrackLiked(
+                        trackUriOrId = song.id,
+                        cookie = context.dataStore.get(TidalCookieKey, ""),
+                        liked = song.liked,
+                    )
+                "deezer" ->
+                    DeezerHomeFeedProvider.setTrackLiked(
+                        trackUriOrId = song.id,
+                        cookie = context.dataStore.get(DeezerCookieKey, ""),
+                        liked = song.liked,
+                    )
+                else -> false
+            }
+
+        if (provider != null && !synced) {
+            Timber.w("Failed to sync %s like for %s", provider, song.id)
         }
     }
 

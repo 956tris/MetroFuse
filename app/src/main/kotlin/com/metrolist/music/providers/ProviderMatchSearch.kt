@@ -6,19 +6,20 @@
 package com.metrolist.music.providers
 
 import android.content.Context
-import com.metrolist.music.apple.AppleMusicSongResolver
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerFastModeKey
+import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.constants.SpotifyCookieKey
+import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.MediaMetadata
@@ -59,6 +60,7 @@ object ProviderMatchSearch {
         limit: Int = 4,
     ): List<ProviderMatchCandidate> =
         withContext(Dispatchers.IO) {
+            if (!provider.isPlaybackProvider()) return@withContext emptyList()
             searchProviderInternal(
                 context = context,
                 metadata = metadata,
@@ -109,7 +111,8 @@ object ProviderMatchSearch {
                 val quality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
                 val resolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
                 val fastMode = context.dataStore.get(DeezerFastModeKey, false)
-                DeezerAudioProvider.searchCandidates(metadata.toDeezerQuery(resolverUrl, quality, fastMode, isrcOverride), limit).map { track ->
+                val proxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+                DeezerAudioProvider.searchCandidates(metadata.toDeezerQuery(resolverUrl, quality, fastMode, proxyUrl, isrcOverride), limit).map { track ->
                     ProviderMatchCandidate(
                         provider = provider,
                         providerTrackId = track.trackId,
@@ -151,18 +154,7 @@ object ProviderMatchSearch {
                     )
                 }
             }
-            AudioProviderOrderItem.APPLE_MUSIC ->
-                AppleMusicSongResolver.searchCandidates(metadata.toAppleQuery(isrcOverride), limit).map { track ->
-                    ProviderMatchCandidate(
-                        provider = provider,
-                        providerTrackId = track.adamId,
-                        title = track.title,
-                        artist = track.artist,
-                        album = track.album,
-                        durationMs = track.durationMs,
-                        shareUrl = track.url,
-                    )
-                }
+            AudioProviderOrderItem.APPLE_MUSIC -> emptyList()
             AudioProviderOrderItem.INSTAGRAM -> emptyList()
         }
 
@@ -193,6 +185,7 @@ object ProviderMatchSearch {
         resolverUrl: String,
         quality: DeezerAudioQuality,
         fastMode: Boolean,
+        proxyUrl: String,
         isrcOverride: String? = null,
     ): DeezerAudioProvider.Query =
         DeezerAudioProvider.Query(
@@ -205,6 +198,7 @@ object ProviderMatchSearch {
             resolverUrl = resolverUrl,
             quality = quality,
             fastMode = fastMode,
+            proxyUrl = proxyUrl,
         )
 
     private fun MediaMetadata.toQobuzQuery(
@@ -225,17 +219,6 @@ object ProviderMatchSearch {
                 .takeIf { it.matches(Regex("[A-Z]{2}")) }
                 ?: "US",
             backend = backend,
-        )
-
-    private fun MediaMetadata.toAppleQuery(isrcOverride: String? = null): AppleMusicSongResolver.Query =
-        AppleMusicSongResolver.Query(
-            mediaId = id,
-            title = title,
-            artists = artists.map { it.name },
-            album = album?.title,
-            isrc = isrcOverride ?: ProviderIsrc.firstOf(id),
-            durationMs = duration.takeIf { it > 0 }?.toLong()?.times(1000L),
-            explicit = explicit,
         )
 
     private fun MediaMetadata.searchTerm(): String =

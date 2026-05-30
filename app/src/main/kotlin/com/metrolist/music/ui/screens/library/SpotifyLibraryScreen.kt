@@ -106,14 +106,26 @@ fun SpotifyLibraryScreen(
         }
     }
 
-    fun playSong(item: SongItem) {
+    fun playSong(
+        item: SongItem,
+        sectionItems: List<YTItem>,
+        sectionTitle: String,
+    ) {
         if (item.id == mediaMetadata?.id) {
             playerConnection.togglePlayPause()
         } else {
+            val sectionSongs = sectionItems.filterIsInstance<SongItem>()
+            val queueSongs = sectionSongs.takeIf { sectionTitle.contains("song", ignoreCase = true) }.orEmpty()
+            val queueItems = queueSongs.ifEmpty { listOf(item) }
+            val startIndex = queueItems.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
             playerConnection.playQueue(
                 ListQueue(
-                    title = item.title,
-                    items = listOf(item.toMediaMetadata().toMediaItem()),
+                    title = sectionTitle.takeIf { queueItems.size > 1 } ?: item.title,
+                    items = queueItems.map { it.toMediaMetadata().toMediaItem() },
+                    startIndex = startIndex,
+                    playbackContextUri =
+                        "spotify:collection:tracks"
+                            .takeIf { sectionTitle.contains("song", ignoreCase = true) },
                 ),
             )
         }
@@ -204,7 +216,7 @@ fun SpotifyLibraryScreen(
                                     .combinedClickable(
                                         onClick = {
                                             when (item) {
-                                                is SongItem -> playSong(item)
+                                                is SongItem -> playSong(item, section.items, section.title)
                                                 is AlbumItem,
                                                 is ArtistItem,
                                                 is PlaylistItem,

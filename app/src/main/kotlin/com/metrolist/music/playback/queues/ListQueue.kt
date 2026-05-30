@@ -13,8 +13,10 @@ class ListQueue(
     val items: List<MediaItem>,
     val startIndex: Int = 0,
     val position: Long = 0L,
+    playbackContextUri: String? = null,
 ) : Queue {
     override val preloadItem: MediaMetadata? = null
+    override val playbackContextUri: String? = playbackContextUri.spotifyPlaybackContextUriOrNull()
 
     override suspend fun getInitialStatus() = Queue.Status(title, items, startIndex, position)
 

@@ -129,6 +129,9 @@ enum class AudioProviderOrderItem {
     APPLE_MUSIC,
 }
 
+fun AudioProviderOrderItem.isPlaybackProvider(): Boolean =
+    this != AudioProviderOrderItem.APPLE_MUSIC
+
 object AudioProviderOrder {
     val Default: List<AudioProviderOrderItem> =
         listOf(
@@ -138,7 +141,6 @@ object AudioProviderOrder {
             AudioProviderOrderItem.INSTAGRAM,
             AudioProviderOrderItem.YOUTUBE_MUSIC,
             AudioProviderOrderItem.QOBUZ,
-            AudioProviderOrderItem.APPLE_MUSIC,
         )
 
     fun serialize(providers: List<AudioProviderOrderItem>): String =
@@ -153,7 +155,9 @@ object AudioProviderOrder {
         )
 
     private fun normalize(providers: List<AudioProviderOrderItem>): List<AudioProviderOrderItem> =
-        (providers + Default).distinct()
+        (providers + Default)
+            .filter { it.isPlaybackProvider() }
+            .distinct()
 }
 
 enum class AudioQuality {
@@ -163,18 +167,12 @@ enum class AudioQuality {
     VERY_HIGH,
 }
 
-val AppleMusicFallbackEnabledKey = booleanPreferencesKey("appleMusicFallbackEnabled")
-val AppleMusicForceAlacKey = booleanPreferencesKey("appleMusicForceAlac")
-val AppleMusicAudioQualityKey = stringPreferencesKey("appleMusicAudioQuality")
-val AppleMusicSuperFastKey = booleanPreferencesKey("appleMusicSuperFast")
-val AppleMusicLowPowerKey = booleanPreferencesKey("appleMusicLowPower")
-val AppleMusicWrapperHostKey = stringPreferencesKey("appleMusicWrapperHost")
-val AppleMusicWrapperSecureKey = booleanPreferencesKey("appleMusicWrapperSecure")
 val TidalAudioQualityKey = stringPreferencesKey("tidalAudioQuality")
 val TidalAnimatedCoversEnabledKey = booleanPreferencesKey("tidalAnimatedCoversEnabled")
 val DeezerResolverUrlKey = stringPreferencesKey("deezerResolverUrl")
 val DeezerAudioQualityKey = stringPreferencesKey("deezerAudioQuality")
 val DeezerFastModeKey = booleanPreferencesKey("deezerFastMode")
+val DeezerProxyUrlKey = stringPreferencesKey("deezerProxyUrl")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
 
@@ -183,19 +181,6 @@ enum class TidalAudioQuality {
     FLAC,
     HI_RES_LOSSLESS,
 }
-
-enum class AppleMusicAudioQuality {
-    ALAC,
-    AAC,
-    DOLBY_ATMOS,
-}
-
-val AppleMusicAudioQualityOptions =
-    listOf(
-        AppleMusicAudioQuality.ALAC,
-        AppleMusicAudioQuality.AAC,
-        AppleMusicAudioQuality.DOLBY_ATMOS,
-    )
 
 val TidalAudioQualityOptions =
     listOf(
@@ -339,6 +324,7 @@ val DiscordNameKey = stringPreferencesKey("discordName")
 val EnableDiscordRPCKey = booleanPreferencesKey("discordRPCEnable")
 val DiscordUseDetailsKey = booleanPreferencesKey("discordUseDetails")
 val DiscordShowProviderKey = booleanPreferencesKey("discordShowProvider")
+val DiscordHideWhenSpotifyHistoryKey = booleanPreferencesKey("discordHideWhenSpotifyHistory")
 val DiscordAvatarKey = stringPreferencesKey("discordAvatar")
 val DiscordStatusKey = stringPreferencesKey("discordStatus")
 val DiscordButton1TextKey = stringPreferencesKey("discordButton1Text")
@@ -419,6 +405,8 @@ val SpotifyCanvasEnabledKey = booleanPreferencesKey("spotifyCanvasEnabled")
 val CanvasArtworkPriorityKey = stringPreferencesKey("canvasArtworkPriority")
 val EmbedAnimatedCanvasKey = booleanPreferencesKey("embedAnimatedCanvas")
 val SpotifyCookieKey = stringPreferencesKey("spotifyCanvasCookie")
+val SpotifyListeningHistoryEnabledKey = booleanPreferencesKey("spotifyListeningHistoryEnabled")
+val SpotifyListeningHistoryGlobalKey = booleanPreferencesKey("spotifyListeningHistoryGlobal")
 val TidalCookieKey = stringPreferencesKey("tidalCookie")
 val TidalArtworkFallbackEnabledKey = booleanPreferencesKey("tidalArtworkFallbackEnabled")
 val DeezerCookieKey = stringPreferencesKey("deezerCookie")
