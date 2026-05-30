@@ -255,6 +255,8 @@ object SpotifyCanvasClient {
     private const val CASITA_DEFAULT_HOME_FEED_ID = "default"
     private const val CASITA_PAGE_LAYOUT_PATH = "casita/v1-beta/page-layout"
     private const val CASITA_SLOT_CONTENT_PATH = "casita/v1-beta/slot-content"
+    private const val SPOTIFY_RECENTLY_PLAYED_STREAM_PATH =
+        "spotify.recently_played_esperanto.proto.RecentlyPlayedService/Stream"
     private const val SPOTIFY_IMAGE_CDN_URL = "https://i.scdn.co/image/"
     private const val WEB_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Mobile Safari/537.36"
@@ -308,6 +310,7 @@ object SpotifyCanvasClient {
     private val CASITA_EAGERLOAD_QUERY = spotifyCasitaEagerloadQuery()
     private val JSON_MEDIA_TYPE = "application/json".toMediaType()
     private val PROTOBUF_MEDIA_TYPE = "application/x-www-form-urlencoded".toMediaType()
+    private val SPOTIFY_PROTOBUF_MEDIA_TYPE = "application/protobuf".toMediaType()
     private val SPOTIFY_HOME_URI_REGEX =
         Regex(
             """^spotify:(track|album|artist|playlist|collection):[A-Za-z0-9:_-]+$""",
@@ -316,6 +319,11 @@ object SpotifyCanvasClient {
     private val SPOTIFY_OPEN_URL_REGEX =
         Regex(
             """https?://open\.spotify\.com/(track|album|artist|playlist)/([A-Za-z0-9]{22})""",
+            RegexOption.IGNORE_CASE,
+        )
+    private val SPOTIFY_TRACK_ID_IN_TEXT_REGEX =
+        Regex(
+            """(?:spotify:track:|open\.spotify\.com/track/)([A-Za-z0-9]{22})""",
             RegexOption.IGNORE_CASE,
         )
     private val SPOTIFY_BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toCharArray()
@@ -3569,6 +3577,152 @@ object SpotifyCanvasClient {
             .filterNot { it.id.isBlank() }
     }
 
+    suspend fun resolveListeningHistory(
+        cookie: String,
+        limit: Int = 50,
+    ): List<SongItem> {
+        val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return emptyList()
+        val streamResult =
+            runCatching {
+                resolveRecentlyPlayedFromSpotifyStream(
+                    normalizedCookie = normalizedCookie,
+                    limit = limit,
+                )
+            }.onFailure { error ->
+                Timber.w(error, "Spotify internal listening history stream failed; falling back to Web API")
+            }.getOrDefault(emptyList())
+
+        return streamResult.takeIf { it.isNotEmpty() }
+            ?: resolveRecentlyPlayed(normalizedCookie, limit)
+    }
+
+    private suspend fun resolveRecentlyPlayedFromSpotifyStream(
+        normalizedCookie: String,
+        limit: Int,
+    ): List<SongItem> {
+        val cappedLimit = limit.coerceIn(1, 50)
+        val response =
+            spotifyWebgatePost(
+                path = SPOTIFY_RECENTLY_PLAYED_STREAM_PATH,
+                body = buildRecentlyPlayedStreamRequest(cappedLimit),
+                normalizedCookie = normalizedCookie,
+                operation = "Spotify listening history stream",
+            )
+        val trackIds =
+            parseRecentlyPlayedTrackIds(response)
+                .distinct()
+                .take(cappedLimit)
+        check(trackIds.isNotEmpty()) { "Spotify listening history stream returned no track ids" }
+
+        val hydrated =
+            runCatching {
+                hydrateSpotifyTrackIds(trackIds, normalizedCookie, ::ensureWebToken)
+            }.getOrElse { webError ->
+                Timber.w(webError, "Spotify listening history Web-token hydration failed; retrying device token")
+                hydrateSpotifyTrackIds(trackIds, normalizedCookie, ::ensureToken)
+            }
+        val songs = trackIds.mapNotNull { id -> hydrated[id] }
+        check(songs.isNotEmpty()) { "Spotify listening history stream returned unhydratable track ids" }
+        return songs
+    }
+
+    private fun buildRecentlyPlayedStreamRequest(limit: Int): ByteArray =
+        ByteArrayOutputStream().apply {
+            writeProtoInt(1, limit.coerceIn(1, 50))
+            writeProtoBytes(14, buildRecentlyPlayedTrackDecorationPolicy())
+        }.toByteArray()
+
+    private fun buildRecentlyPlayedTrackDecorationPolicy(): ByteArray =
+        ByteArrayOutputStream().apply {
+            writeProtoBytes(3, ByteArray(0))
+            writeProtoBool(7, true)
+            writeProtoBool(8, true)
+            writeProtoBytes(9, ByteArray(0))
+            writeProtoBytes(10, ByteArray(0))
+            writeProtoBytes(11, ByteArray(0))
+        }.toByteArray()
+
+    private fun parseRecentlyPlayedTrackIds(bytes: ByteArray): List<String> {
+        val messages = recentlyPlayedProtoMessages(bytes)
+        val uriIds =
+            messages
+                .flatMap { message -> message.collectSpotifyTrackIds() }
+                .distinct()
+        if (uriIds.isNotEmpty()) return uriIds
+
+        return messages
+            .flatMap { message -> message.collectRecentlyPlayedTrackGidIds() }
+            .distinct()
+    }
+
+    private fun recentlyPlayedProtoMessages(bytes: ByteArray): List<ProtoMessage> =
+        buildList {
+            addAll(parseGrpcFramedProtoMessages(bytes))
+            addAll(parseLengthDelimitedProtoMessages(bytes))
+            parseProtoMessageOrNull(bytes)?.let(::add)
+        }.distinctBy { message ->
+            message.fields.joinToString("|") { field ->
+                "${field.number}:${field.wireType}:${field.varint}:${field.bytes?.size}"
+            }
+        }
+
+    private fun parseGrpcFramedProtoMessages(bytes: ByteArray): List<ProtoMessage> {
+        if (bytes.size < 5) return emptyList()
+        val messages = mutableListOf<ProtoMessage>()
+        var index = 0
+        while (index < bytes.size) {
+            if (index + 5 > bytes.size) return emptyList()
+            val compressed = bytes[index].toInt() and 0xff
+            if (compressed != 0) return emptyList()
+            val length =
+                ((bytes[index + 1].toInt() and 0xff) shl 24) or
+                    ((bytes[index + 2].toInt() and 0xff) shl 16) or
+                    ((bytes[index + 3].toInt() and 0xff) shl 8) or
+                    (bytes[index + 4].toInt() and 0xff)
+            if (length < 0 || index + 5 + length > bytes.size) return emptyList()
+            if (length > 0) {
+                parseProtoMessageOrNull(bytes.copyOfRange(index + 5, index + 5 + length))?.let(messages::add)
+            }
+            index += 5 + length
+        }
+        return messages
+    }
+
+    private fun parseLengthDelimitedProtoMessages(bytes: ByteArray): List<ProtoMessage> {
+        val messages = mutableListOf<ProtoMessage>()
+        var index = 0
+        while (index < bytes.size) {
+            val length = readProtoVarint(bytes, index) ?: return emptyList()
+            index = length.nextIndex
+            val end = index + length.value.toInt()
+            if (length.value <= 0 || end > bytes.size) return emptyList()
+            parseProtoMessageOrNull(bytes.copyOfRange(index, end))?.let(messages::add)
+            index = end
+        }
+        return messages.takeIf { index == bytes.size }.orEmpty()
+    }
+
+    private data class ProtoVarintRead(
+        val value: Long,
+        val nextIndex: Int,
+    )
+
+    private fun readProtoVarint(
+        bytes: ByteArray,
+        startIndex: Int,
+    ): ProtoVarintRead? {
+        var index = startIndex
+        var shift = 0
+        var result = 0L
+        while (shift < 64 && index < bytes.size) {
+            val byte = bytes[index++].toInt() and 0xff
+            result = result or ((byte and 0x7f).toLong() shl shift)
+            if ((byte and 0x80) == 0) return ProtoVarintRead(result, index)
+            shift += 7
+        }
+        return null
+    }
+
     private suspend fun resolveHomePageFromSpotubeGraphQl(normalizedCookie: String): HomePage {
         val spTCookie =
             extractSpotifyCookieValue(normalizedCookie, "sp_t")
@@ -6072,6 +6226,22 @@ object SpotifyCanvasClient {
         writeProtoBytes(number, value.toByteArray(Charsets.UTF_8))
     }
 
+    private fun ByteArrayOutputStream.writeProtoInt(
+        number: Int,
+        value: Int,
+    ) {
+        writeProtoVarint(((number shl 3) or 0).toLong())
+        writeProtoVarint(value.toLong())
+    }
+
+    private fun ByteArrayOutputStream.writeProtoBool(
+        number: Int,
+        value: Boolean,
+    ) {
+        writeProtoVarint(((number shl 3) or 0).toLong())
+        writeProtoVarint(if (value) 1L else 0L)
+    }
+
     private fun ByteArrayOutputStream.writeProtoBytes(
         number: Int,
         value: ByteArray,
@@ -6701,6 +6871,83 @@ object SpotifyCanvasClient {
                     )
                 }
                 json.parseToJsonElement(body.ifBlank { error("$operation returned an empty response") }).jsonObject
+            }
+        }
+
+    private suspend fun spotifyWebgatePost(
+        path: String,
+        body: ByteArray,
+        normalizedCookie: String,
+        operation: String,
+    ): ByteArray {
+        val tokenProviders: List<suspend (String) -> String> = listOf(::ensureToken, ::ensureWebToken)
+        var lastError: Throwable? = null
+        tokenProviders.forEach { tokenProvider ->
+            val result =
+                runCatching {
+                    spotifyWebgatePostWithToken(
+                        path = path,
+                        body = body,
+                        normalizedCookie = normalizedCookie,
+                        operation = operation,
+                        bearerToken = tokenProvider(normalizedCookie),
+                    )
+                }
+            result.onSuccess { return it }
+            val error = result.exceptionOrNull() ?: return@forEach
+            lastError = error
+            if (error !is SpotifyApiException || error.statusCode !in setOf(401, 403)) {
+                throw error
+            }
+        }
+        throw (lastError ?: IllegalStateException("$operation failed"))
+    }
+
+    private suspend fun spotifyWebgatePostWithToken(
+        path: String,
+        body: ByteArray,
+        normalizedCookie: String,
+        operation: String,
+        bearerToken: String,
+    ): ByteArray =
+        withContext(Dispatchers.IO) {
+            val requestBuilder =
+                Request
+                    .Builder()
+                    .url(
+                        SPOTIFY_WEBGATE_URL
+                            .toHttpUrl()
+                            .newBuilder()
+                            .addPathSegments(path)
+                            .build(),
+                    )
+                    .header("User-Agent", SPOTIFY_ANDROID_USER_AGENT)
+                    .header("Accept", "application/protobuf")
+                    .header("Content-Type", "application/protobuf")
+                    .header("Referer", WEB_REFERER)
+                    .header("Authorization", "Bearer $bearerToken")
+            if (normalizedCookie.isNotBlank()) {
+                requestBuilder.header("Cookie", normalizedCookie)
+            }
+            val request = requestBuilder
+                .post(body.toRequestBody(SPOTIFY_PROTOBUF_MEDIA_TYPE))
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                val responseBody = response.body.bytes()
+                if (!response.isSuccessful) {
+                    throw SpotifyApiException(
+                        statusCode = response.code,
+                        message =
+                            "$operation failed: ${
+                                responseBody.decodeToStringOrNull()
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: "${response.code} ${response.message}"
+                            }",
+                    )
+                }
+                if (responseBody.isEmpty()) error("$operation returned an empty response")
+                responseBody
             }
         }
 
@@ -8744,6 +8991,56 @@ object SpotifyCanvasClient {
                 bytes.decodeToStringOrNull()?.let(::add)
                 parseProtoMessageOrNull(bytes)
                     ?.let { child -> addAll(child.collectCasitaStrings(depth + 1)) }
+            }
+        }.distinct()
+    }
+
+    private fun ProtoMessage.collectSpotifyTrackIds(depth: Int = 0): List<String> {
+        if (depth > 8) return emptyList()
+        return buildList {
+            fields.forEach { field ->
+                val bytes = field.bytes ?: return@forEach
+                bytes.decodeToStringOrNull()?.let { text ->
+                    text.spotifyTrackId()?.let(::add)
+                    SPOTIFY_TRACK_ID_IN_TEXT_REGEX
+                        .findAll(text)
+                        .mapNotNull { match -> match.groupValues.getOrNull(1) }
+                        .filter { id -> id.matches(Regex("^[A-Za-z0-9]{22}$")) }
+                        .forEach(::add)
+                }
+                parseProtoMessageOrNull(bytes)
+                    ?.let { child -> addAll(child.collectSpotifyTrackIds(depth + 1)) }
+            }
+        }.distinct()
+    }
+
+    private fun ProtoMessage.collectRecentlyPlayedTrackGidIds(): List<String> {
+        val fieldOneMessages = messages(1)
+        val contextTracks = fieldOneMessages.mapNotNull { context -> context.firstMessage(3) }
+        if (contextTracks.isNotEmpty()) {
+            return contextTracks
+                .flatMap { track -> track.collectPossibleSpotifyTrackGids() }
+                .distinct()
+        }
+
+        val entityTracks = fieldOneMessages.mapNotNull { entity -> entity.firstMessage(1) }
+        if (entityTracks.isNotEmpty()) {
+            return entityTracks
+                .flatMap { track -> track.collectPossibleSpotifyTrackGids() }
+                .distinct()
+        }
+
+        return collectPossibleSpotifyTrackGids().distinct()
+    }
+
+    private fun ProtoMessage.collectPossibleSpotifyTrackGids(depth: Int = 0): List<String> {
+        if (depth > 8) return emptyList()
+        return buildList {
+            fields.forEach { field ->
+                val bytes = field.bytes ?: return@forEach
+                bytes.spotifyBase62Id()?.let(::add)
+                parseProtoMessageOrNull(bytes)
+                    ?.let { child -> addAll(child.collectPossibleSpotifyTrackGids(depth + 1)) }
             }
         }.distinct()
     }

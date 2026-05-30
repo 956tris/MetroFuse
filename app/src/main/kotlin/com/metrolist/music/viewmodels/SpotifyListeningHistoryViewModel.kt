@@ -46,7 +46,7 @@ constructor(
             songs.value =
                 if (hasCookie.value) {
                     runCatching {
-                        SpotifyCanvasClient.resolveRecentlyPlayed(cookie)
+                        SpotifyCanvasClient.resolveListeningHistory(cookie)
                     }.onFailure {
                         loadFailed.value = true
                         reportException(it)
