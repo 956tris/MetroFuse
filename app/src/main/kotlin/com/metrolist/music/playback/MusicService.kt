@@ -122,26 +122,10 @@ import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.DeezerFastModeKey
+import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.DisableLoadMoreWhenRepeatAllKey
-import com.metrolist.music.constants.DiscordActivityNameKey
-import com.metrolist.music.constants.DiscordActivityTypeKey
-import com.metrolist.music.constants.DiscordAdvancedModeKey
-import com.metrolist.music.constants.DiscordAccessTokenKey
-import com.metrolist.music.constants.DiscordAnimatedCanvasQuality
-import com.metrolist.music.constants.DiscordAnimatedCanvasQualityKey
-import com.metrolist.music.constants.DiscordAnimatedCanvasHighQualityKey
-import com.metrolist.music.constants.DiscordAnimatedCanvasKey
-import com.metrolist.music.constants.DiscordButton1TextKey
-import com.metrolist.music.constants.DiscordButton1VisibleKey
-import com.metrolist.music.constants.DiscordButton2TextKey
-import com.metrolist.music.constants.DiscordButton2VisibleKey
-import com.metrolist.music.constants.DiscordHideWhenSpotifyHistoryKey
-import com.metrolist.music.constants.DiscordShowProviderKey
-import com.metrolist.music.constants.DiscordStatusKey
-import com.metrolist.music.constants.DiscordUseDetailsKey
-import com.metrolist.music.constants.EnableDiscordRPCKey
 import com.metrolist.music.constants.EnableLastFMScrobblingKey
 import com.metrolist.music.constants.EnableSongCacheKey
 import com.metrolist.music.constants.EmbedAnimatedCanvasKey
@@ -181,6 +165,7 @@ import com.metrolist.music.constants.TidalAudioQualityKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.constants.PlayerVolumeKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
+import com.metrolist.music.constants.ProxyEnabledKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
@@ -215,8 +200,6 @@ import com.metrolist.music.db.entities.RelatedSongMap
 import com.metrolist.music.db.entities.Song
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
-import com.metrolist.music.discord.DiscordActivity
-import com.metrolist.music.discord.DiscordRpcManager
 import com.metrolist.music.eq.EqualizerService
 import com.metrolist.music.eq.audio.CustomEqualizerAudioProcessor
 import com.metrolist.music.eq.data.EQProfileRepository
@@ -262,7 +245,6 @@ import com.metrolist.music.utils.NetworkConnectivityObserver
 import com.metrolist.music.utils.ScrobbleManager
 import com.metrolist.music.utils.SyncUtils
 import com.metrolist.music.utils.dataStore
-import com.metrolist.music.utils.discord.DiscordCanvasRemoteRenderer
 import com.metrolist.music.utils.get
 import com.metrolist.music.utils.reportException
 import com.metrolist.music.widget.MetrolistWidgetManager
@@ -302,9 +284,7 @@ import kotlinx.coroutines.plus
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import timber.log.Timber
 import java.io.File
 import java.io.ObjectInputStream
@@ -313,8 +293,6 @@ import java.time.LocalDateTime
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.math.PI
 import kotlin.math.abs
@@ -450,7 +428,6 @@ class MusicService :
         object : LinkedHashMap<String, String?>(128, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean = size > 128
         }
-    private val appleCanvasLookupFinishedMediaIds = ConcurrentHashMap.newKeySet<String>()
     private val currentSong =
         currentMediaMetadata
             .flatMapLatest { mediaMetadata ->
@@ -584,10 +561,6 @@ class MusicService :
     private var cachedInstagramUserAgent: String = InstagramAudioProvider.DEFAULT_USER_AGENT
 
     @Volatile
-    private var discordRpcEnabled = false
-    @Volatile
-    private var discordHideWhenSpotifyHistory = false
-    @Volatile
     private var spotifyHistoryPresenceActiveValue = false
     @Volatile
     private var spotifyListeningHistoryEnabledValue = false
@@ -596,19 +569,6 @@ class MusicService :
     private var spotifyListeningHistorySourceAllowed = false
     private val _spotifyHistoryPresenceActive = MutableStateFlow(false)
     val spotifyHistoryPresenceActive = _spotifyHistoryPresenceActive.asStateFlow()
-    private var lastPlaybackSpeed = 1.0f
-    private var discordUpdateJob: kotlinx.coroutines.Job? = null
-    private val discordUpdateGeneration = AtomicLong(0L)
-    private val discordAnimatedCanvasRefreshJobs = ConcurrentHashMap<String, Job>()
-    private val discordAnimatedCanvasToastKeys = ConcurrentHashMap.newKeySet<String>()
-    private val discordAnimatedCanvasPrewarmKeys = ConcurrentHashMap.newKeySet<String>()
-    private val discordRpcArtworkOkUrls = ConcurrentHashMap.newKeySet<String>()
-    private val discordRpcArtworkClient =
-        OkHttpClient.Builder()
-            .connectTimeout(2, TimeUnit.SECONDS)
-            .readTimeout(2, TimeUnit.SECONDS)
-            .callTimeout(3, TimeUnit.SECONDS)
-            .build()
 
     @Volatile
     private var latestMediaNotification: Notification? = null
@@ -644,18 +604,6 @@ class MusicService :
         val tempFilePath: String? = null,
     )
 
-    private data class DiscordRpcTrack(
-        val id: String,
-        val title: String,
-        val artistNames: String,
-        val firstArtistName: String?,
-        val firstArtistThumbnailUrl: String?,
-        val albumTitle: String?,
-        val albumThumbnailUrl: String?,
-        val duration: Int,
-        val thumbnailUrl: String?,
-    )
-
     // Cached preferences to avoid runBlocking DataStore reads in hot paths
     @Volatile
     private var cachedPersistentQueue = true
@@ -671,6 +619,12 @@ class MusicService :
     private var cachedShufflePlaylistFirst = false
     @Volatile
     private var cachedAutoLoadMore = true
+    @Volatile
+    private var cachedSpotifyCanvasEnabled = false
+    @Volatile
+    private var cachedEmbedAnimatedCanvas = false
+    @Volatile
+    private var cachedAppleMusicCoverFadeEnabled = false
 
     // URL cache for stream URLs - class-level so it can be invalidated on errors
     private val songUrlCache = Collections.synchronizedMap(
@@ -713,22 +667,12 @@ class MusicService :
                     Intent.ACTION_SCREEN_OFF -> {
                         isScreenInteractiveForLiveBitrate = false
                         stopLivePlaybackBitrateTicker(clearValue = true, clearSamples = false)
-                        if (!player.isPlaying) {
-                            scope.launch(Dispatchers.IO) {
-                                DiscordRpcManager.disconnect()
-                            }
-                        }
                     }
 
                     Intent.ACTION_SCREEN_ON -> {
                         isScreenInteractiveForLiveBitrate = true
                         if (dataStore.get(LivePlaybackBitrateKey, false)) {
                             startLivePlaybackBitrateTicker()
-                        }
-                        if (player.isPlaying) {
-                            scope.launch {
-                                updateCurrentDiscordRPC()
-                            }
                         }
                     }
                 }
@@ -929,9 +873,9 @@ class MusicService :
                 resetLivePlaybackBitrate(metadata?.id)
                 preloadUpcomingAppleCanvases()
                 coroutineScope {
-                    launch { updateAppleCanvas(metadata) }
-                    launch { updateTidalCanvas(metadata) }
-                    launch { updatePreferredArtwork(metadata) }
+                    launch(Dispatchers.IO + SilentHandler) { updateAppleCanvas(metadata) }
+                    launch(Dispatchers.IO + SilentHandler) { updateTidalCanvas(metadata) }
+                    launch(Dispatchers.IO + SilentHandler) { updatePreferredArtwork(metadata) }
                 }
             }
 
@@ -941,13 +885,17 @@ class MusicService :
                     prefs[SpotifyCanvasEnabledKey] ?: false,
                     prefs[EmbedAnimatedCanvasKey] ?: false,
                     prefs[ExperimentalAppleMusicCoverFadeKey] ?: false,
-                    prefs[DiscordAnimatedCanvasKey] ?: false,
                 )
             }
             .distinctUntilChanged()
             .collectLatest(scope) {
+                cachedSpotifyCanvasEnabled = it[0]
+                cachedEmbedAnimatedCanvas = it[1]
+                cachedAppleMusicCoverFadeEnabled = it[2]
                 preloadUpcomingAppleCanvases()
-                updateAppleCanvas(currentMediaMetadata.value)
+                withContext(Dispatchers.IO + SilentHandler) {
+                    updateAppleCanvas(currentMediaMetadata.value)
+                }
             }
 
         // 4. Watch for EQ profile changes
@@ -975,13 +923,6 @@ class MusicService :
                 isNetworkConnected.value = isConnected
                 if (isConnected && waitingForNetworkConnection.value) {
                     triggerRetry()
-                }
-                // Update Discord RPC when network becomes available
-                if (isConnected && discordRpcEnabled && player.isPlaying) {
-                    val mediaId = player.currentMetadata?.id
-                    if (mediaId != null) {
-                        updateCurrentDiscordRPC(expectedMediaId = mediaId)
-                    }
                 }
             }
         }
@@ -1098,14 +1039,6 @@ class MusicService :
             val mediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
             val playbackFormat = format?.takeIf { mediaId == null || it.id == mediaId }
             currentPlaybackFormat.value = playbackFormat
-            if (
-                playbackFormat != null &&
-                discordRpcEnabled &&
-                player.playbackState == Player.STATE_READY &&
-                player.isPlaying
-            ) {
-                updateCurrentDiscordRPC(expectedMediaId = mediaId)
-            }
         }
 
         combine(
@@ -1180,78 +1113,6 @@ class MusicService :
                 player.setOffloadEnabled(useOffload)
                 secondaryPlayer?.setOffloadEnabled(useOffload)
             }
-
-        DiscordRpcManager.init()
-        dataStore.data
-            .map { (it[DiscordAccessTokenKey].orEmpty()) to (it[EnableDiscordRPCKey] ?: true) }
-            .debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) { (accessToken, enabled) ->
-                discordRpcEnabled = accessToken.isNotBlank() && enabled
-                if (discordRpcEnabled) {
-                    if (!DiscordRpcManager.isReady()) {
-                        DiscordRpcManager.reconnectWithToken(accessToken)
-                    }
-                    if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
-                        updateCurrentDiscordRPC(showFeedback = true)
-                    }
-                } else {
-                    DiscordRpcManager.disconnect()
-                }
-            }
-
-        // Watch all Discord customization preferences
-        dataStore.data
-            .map {
-                listOf(
-                    it[DiscordUseDetailsKey],
-                    it[DiscordShowProviderKey],
-                    it[DiscordHideWhenSpotifyHistoryKey],
-                    it[DiscordAnimatedCanvasKey],
-                    it[DiscordAnimatedCanvasQualityKey],
-                    it[DiscordAnimatedCanvasHighQualityKey],
-                    it[DiscordAdvancedModeKey],
-                    it[DiscordStatusKey],
-                    it[DiscordButton1TextKey],
-                    it[DiscordButton1VisibleKey],
-                    it[DiscordButton2TextKey],
-                    it[DiscordButton2VisibleKey],
-                    it[DiscordActivityTypeKey],
-                    it[DiscordActivityNameKey],
-                )
-            }.debounce(300)
-            .distinctUntilChanged()
-            .collect(scope) {
-                if (player.playbackState == Player.STATE_READY && player.playWhenReady) {
-                    updateCurrentDiscordRPC(showFeedback = true)
-                }
-            }
-
-        dataStore.data
-            .map { it[DiscordHideWhenSpotifyHistoryKey] ?: false }
-            .distinctUntilChanged()
-            .collect(scope) { enabled ->
-                discordHideWhenSpotifyHistory = enabled
-                if (shouldSuppressDiscordRpcForSpotifyHistory()) {
-                    suppressDiscordRpcForSpotifyHistory()
-                } else if (player.playbackState == Player.STATE_READY && player.isPlaying) {
-                    updateCurrentDiscordRPC()
-                }
-            }
-
-        scope.launch {
-            DiscordRpcManager.connectionStatus.collect { status ->
-                if (status == DiscordRpcManager.Status.Connected && discordRpcEnabled && player.isPlaying) {
-                    updateCurrentDiscordRPC(showFeedback = true)
-                }
-            }
-        }
-
-        scope.launch {
-            DiscordRpcManager.errors.collect { message ->
-                showPlaybackToast(message)
-            }
-        }
 
         dataStore.data
             .map { it[EnableLastFMScrobblingKey] ?: false }
@@ -1517,13 +1378,6 @@ class MusicService :
             }
         }
 
-        // Save queue more frequently when playing to ensure state is preserved
-        scope.launch {
-            while (isActive) {
-                delay(15.seconds)
-                prewarmNextDiscordAnimatedCanvasIfNeeded()
-            }
-        }
     }
 
     private fun createExoPlayer(publishToUi: Boolean = true): ExoPlayer {
@@ -2967,11 +2821,7 @@ class MusicService :
         }
         previousMediaItemIndex = player.currentMediaItemIndex
 
-        lastPlaybackSpeed = -1.0f // force update song
-
         setupLoudnessEnhancer()
-
-        discordUpdateJob?.cancel()
 
         val transitionDuration = currentPlaybackDurationIfReady()
         scrobbleManager?.onSongStop()
@@ -3193,46 +3043,13 @@ class MusicService :
             updateCurrentAudioFormatFromTracks(player.currentTracks)
         }
 
-        // Widget and Discord RPC updates
+        // Widget updates
         if (events.containsAny(Player.EVENT_IS_PLAYING_CHANGED)) {
             updateWidgetUI(player.isPlaying)
             if (player.isPlaying) {
                 startWidgetUpdates()
             } else {
                 stopWidgetUpdates()
-            }
-            if (!player.isPlaying &&
-                !events.containsAny(
-                    Player.EVENT_POSITION_DISCONTINUITY,
-                    Player.EVENT_MEDIA_ITEM_TRANSITION,
-                )
-            ) {
-                scope.launch(Dispatchers.IO) {
-                    DiscordRpcManager.disconnect()
-                }
-            }
-        }
-
-        // Update Discord RPC when media item changes or playback starts
-        if (events.containsAny(
-                Player.EVENT_MEDIA_ITEM_TRANSITION,
-            Player.EVENT_IS_PLAYING_CHANGED,
-            ) && player.isPlaying
-        ) {
-            if (!DiscordRpcManager.isReady() && discordRpcEnabled) {
-                val accessToken = dataStore.get(DiscordAccessTokenKey, "")
-                if (accessToken.isNotBlank()) {
-                    if (!DiscordRpcManager.isInitialized()) {
-                        DiscordRpcManager.init()
-                    }
-                    DiscordRpcManager.reconnectWithToken(accessToken)
-                }
-            }
-            val mediaId = player.currentMetadata?.id
-            if (mediaId != null) {
-                scope.launch {
-                    updateCurrentDiscordRPC(expectedMediaId = mediaId)
-                }
             }
         }
 
@@ -3435,23 +3252,6 @@ class MusicService :
                 shuffledIndices[currentItemIndexInShuffled] = temp
             }
             player.setShuffleOrder(DefaultShuffleOrder(shuffledIndices, System.currentTimeMillis()))
-        }
-    }
-
-    override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
-        super<Player.Listener>.onPlaybackParametersChanged(playbackParameters)
-        if (playbackParameters.speed != lastPlaybackSpeed) {
-            lastPlaybackSpeed = playbackParameters.speed
-            discordUpdateJob?.cancel()
-
-            // update scheduling thingy
-            discordUpdateJob =
-                scope.launch {
-                    delay(1000)
-                    if (player.playWhenReady && player.playbackState == Player.STATE_READY) {
-                        updateCurrentDiscordRPC()
-                    }
-                }
         }
     }
 
@@ -4308,34 +4108,6 @@ class MusicService :
         }
     }
 
-    private fun updateCurrentDiscordRPC(
-        showFeedback: Boolean = false,
-        expectedMediaId: String? = null,
-    ) {
-        if (shouldSuppressDiscordRpcForSpotifyHistory()) {
-            suppressDiscordRpcForSpotifyHistory()
-            return
-        }
-        val mediaId =
-            expectedMediaId
-                ?: currentMediaMetadata.value?.id
-                ?: player.currentMetadata?.id
-                ?: player.currentMediaItem?.mediaId
-        currentDiscordRpcTrack(mediaId)?.let { track ->
-            updateDiscordRPC(track, showFeedback)
-        }
-    }
-
-    private fun shouldSuppressDiscordRpcForSpotifyHistory(): Boolean =
-        discordHideWhenSpotifyHistory && spotifyHistoryPresenceActiveValue
-
-    private fun suppressDiscordRpcForSpotifyHistory() {
-        discordUpdateGeneration.incrementAndGet()
-        discordUpdateJob?.cancel()
-        discordUpdateJob = null
-        DiscordRpcManager.disconnect()
-    }
-
     private fun setSpotifyHistoryPresenceActive(active: Boolean) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
             scope.launch {
@@ -4346,631 +4118,6 @@ class MusicService :
         if (spotifyHistoryPresenceActiveValue == active) return
         spotifyHistoryPresenceActiveValue = active
         _spotifyHistoryPresenceActive.value = active
-        if (shouldSuppressDiscordRpcForSpotifyHistory()) {
-            suppressDiscordRpcForSpotifyHistory()
-        } else if (player.playbackState == Player.STATE_READY && player.isPlaying) {
-            scope.launch {
-                updateCurrentDiscordRPC()
-            }
-        }
-    }
-
-    private fun currentDiscordRpcTrack(expectedMediaId: String? = null): DiscordRpcTrack? {
-        val song = currentSong.value
-        if (song != null && (expectedMediaId == null || song.song.id == expectedMediaId)) {
-            return song.toDiscordRpcTrack()
-        }
-        val metadata =
-            currentMediaMetadata.value?.takeIf { expectedMediaId == null || it.id == expectedMediaId }
-                ?: player.currentMetadata?.takeIf { expectedMediaId == null || it.id == expectedMediaId }
-                ?: player.currentMediaItem?.metadata?.takeIf { expectedMediaId == null || it.id == expectedMediaId }
-        return metadata?.toDiscordRpcTrack()
-    }
-
-    private fun Song.toDiscordRpcTrack() =
-        DiscordRpcTrack(
-            id = song.id,
-            title = song.title,
-            artistNames = orderedArtists.joinToString { it.name },
-            firstArtistName = orderedArtists.firstOrNull()?.name,
-            firstArtistThumbnailUrl = orderedArtists.firstOrNull()?.thumbnailUrl,
-            albumTitle = album?.title ?: song.albumName,
-            albumThumbnailUrl = album?.thumbnailUrl,
-            duration = song.duration,
-            thumbnailUrl = song.thumbnailUrl,
-        )
-
-    private fun MediaMetadata.toDiscordRpcTrack() =
-        DiscordRpcTrack(
-            id = id,
-            title = title,
-            artistNames = artists.joinToString { it.name },
-            firstArtistName = artists.firstOrNull()?.name,
-            firstArtistThumbnailUrl = null,
-            albumTitle = album?.title,
-            albumThumbnailUrl = null,
-            duration = duration,
-            thumbnailUrl = thumbnailUrl,
-        )
-
-    private fun updateDiscordRPC(
-        song: Song,
-        showFeedback: Boolean = false,
-    ) = updateDiscordRPC(song.toDiscordRpcTrack(), showFeedback)
-
-    private fun updateDiscordRPC(
-        track: DiscordRpcTrack,
-        showFeedback: Boolean = false,
-    ) {
-        if (!discordRpcEnabled) return
-
-        if (!DiscordRpcManager.isInitialized()) {
-            DiscordRpcManager.init()
-        }
-
-        val accessToken = dataStore.get(DiscordAccessTokenKey, "")
-        if (accessToken.isBlank()) {
-            DiscordRpcManager.disconnect()
-            return
-        }
-        if (!DiscordRpcManager.isReady()) {
-            DiscordRpcManager.reconnectWithToken(accessToken)
-        }
-
-        val useDetails = dataStore.get(DiscordUseDetailsKey, false)
-        val showProvider = dataStore.get(DiscordShowProviderKey, true)
-        val advancedMode = dataStore.get(DiscordAdvancedModeKey, false)
-
-        val b1Text = if (advancedMode) dataStore.get(DiscordButton1TextKey, "") else ""
-        val b1Visible = if (advancedMode) dataStore.get(DiscordButton1VisibleKey, true) else true
-        val b2Text = if (advancedMode) dataStore.get(DiscordButton2TextKey, "") else ""
-        val b2Visible = if (advancedMode) dataStore.get(DiscordButton2VisibleKey, true) else true
-        val activityType = if (advancedMode) dataStore.get(DiscordActivityTypeKey, "listening") else "listening"
-        val activityName = if (advancedMode) dataStore.get(DiscordActivityNameKey, "") else ""
-        val mediaId = track.id
-        val updateGeneration = discordUpdateGeneration.incrementAndGet()
-
-        discordUpdateJob?.cancel()
-        discordUpdateJob =
-            scope.launch {
-                val currentMediaId =
-                    currentMediaMetadata.value?.id
-                        ?: player.currentMetadata?.id
-                        ?: player.currentMediaItem?.mediaId
-                if (discordUpdateGeneration.get() != updateGeneration || currentMediaId != mediaId) {
-                    return@launch
-                }
-
-                runCatching {
-                    val currentTime = System.currentTimeMillis()
-                    val safePlaybackSpeed = player.playbackParameters.speed.takeIf { it > 0f } ?: 1.0f
-                    val safePlaybackPosition = player.currentPosition.coerceAtLeast(0L)
-                    val adjustedPlaybackTime = (safePlaybackPosition / safePlaybackSpeed).toLong()
-                    val calculatedStartTime = (currentTime - adjustedPlaybackTime) / 1000
-
-                    val calculatedEndTime =
-                        resolveDiscordRpcDurationMillis(track.duration, safePlaybackPosition)?.let { durationMillis ->
-                            val adjustedRemainingDuration =
-                                ((durationMillis - safePlaybackPosition).coerceAtLeast(1000L) / safePlaybackSpeed)
-                                    .toLong()
-                                    .coerceAtLeast(1000L)
-                            (currentTime + adjustedRemainingDuration) / 1000
-                        }
-
-                    val songTitleWithRate =
-                        if (safePlaybackSpeed != 1.0f) {
-                            "${track.title} [${String.format("%.2fx", safePlaybackSpeed)}]"
-                        } else {
-                            track.title
-                        }
-                    val artistNames = track.artistNames.ifBlank { "Unknown Artist" }
-                    val baseName =
-                        activityName
-                            .takeIf { it.isNotBlank() }
-                            ?.let { resolveDiscordRpcVariables(it, track) }
-                            ?: getString(R.string.app_name).removeSuffix(" Debug")
-                    val audioProvider = currentDiscordRpcAudioProviderLabel(mediaId).takeIf { showProvider }
-                    val providerSuffix =
-                        audioProvider
-                            ?.trim()
-                            ?.takeIf { it.isNotBlank() }
-                            ?.lowercase(Locale.US)
-                            ?.let { " [$it]" }
-                            .orEmpty()
-                    val animatedCanvasEnabled = dataStore.get(DiscordAnimatedCanvasKey, false)
-                    val animatedCanvasQuality = discordAnimatedCanvasQuality()
-                    val fallbackLargeImageCandidates =
-                        listOf(
-                            currentPreferredArtworkUrl.value,
-                            track.albumThumbnailUrl,
-                            track.thumbnailUrl,
-                        ) + youtubeThumbnailArtworkUrls(mediaId)
-                    val renderedCanvasUrl =
-                        if (animatedCanvasEnabled) {
-                            resolveDiscordAnimatedCanvas(mediaId, animatedCanvasQuality)
-                        } else {
-                            null
-                        }
-                    val largeImage =
-                        renderedCanvasUrl
-                            ?: resolveDiscordRpcArtworkUrl(
-                                fallbackLargeImageCandidates,
-                                DISCORD_RPC_LARGE_ARTWORK_SIZE,
-                            )
-                    val smallImage =
-                        resolveDiscordRpcArtworkUrl(
-                            listOf(track.firstArtistThumbnailUrl),
-                            DISCORD_RPC_SMALL_ARTWORK_SIZE,
-                        )
-
-                    val activity =
-                        DiscordActivity(
-                            name = "$baseName$providerSuffix",
-                            type = activityType,
-                            details = if (!useDetails) songTitleWithRate else artistNames,
-                            state = if (!useDetails) artistNames else songTitleWithRate,
-                            startTimestamp = calculatedStartTime,
-                            endTimestamp = calculatedEndTime,
-                            largeImage = largeImage,
-                            largeText = track.albumTitle,
-                            smallImage = smallImage,
-                            smallText = track.firstArtistName,
-                            button1Label =
-                                if (b1Visible) {
-                                    resolveDiscordRpcVariables(
-                                        b1Text.ifEmpty { getString(R.string.discord_default_button_1) },
-                                        track,
-                                    )
-                                } else {
-                                    null
-                                },
-                            button1Url = "https://music.youtube.com/watch?v=${track.id}".takeIf { b1Visible },
-                            button2Label =
-                                if (b2Visible) {
-                                    resolveDiscordRpcVariables(
-                                        b2Text.ifEmpty { getString(R.string.discord_default_button_2) },
-                                        track,
-                                    )
-                                } else {
-                                    null
-                                },
-                            button2Url = getString(R.string.discord_default_button_2_url).takeIf { b2Visible },
-                        )
-                    DiscordRpcManager.setActivity(activity)
-                }.onFailure {
-                    if (showFeedback) {
-                        Handler(Looper.getMainLooper()).post {
-                            Toast
-                                .makeText(
-                                    this@MusicService,
-                                    "Discord RPC update failed: ${it.message}",
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                        }
-                    }
-                }
-            }
-    }
-
-    private fun resolveDiscordRpcDurationMillis(
-        metadataDurationSeconds: Int,
-        playbackPositionMillis: Long,
-    ): Long? {
-        val minimumDurationMillis = playbackPositionMillis + DISCORD_RPC_MIN_REMAINING_DURATION_MS
-        val metadataDurationMillis =
-            metadataDurationSeconds
-                .takeIf { it > 0 }
-                ?.times(1000L)
-                ?.takeIf { it > 0L }
-        val playerDurationMillis =
-            player.duration
-                .takeIf { it != C.TIME_UNSET && it > 0L }
-
-        val durationMillis = when {
-            playerDurationMillis != null &&
-                (
-                    metadataDurationMillis == null ||
-                    shouldPreferPlayerDurationForDiscord(
-                        metadataDurationMillis = metadataDurationMillis,
-                        playerDurationMillis = playerDurationMillis,
-                        playbackPositionMillis = playbackPositionMillis,
-                    )
-                ) -> playerDurationMillis
-
-            metadataDurationMillis != null -> metadataDurationMillis
-            playerDurationMillis != null -> playerDurationMillis
-            else -> null
-        }
-        return durationMillis
-            ?.takeIf { it >= DISCORD_RPC_MIN_REAL_TRACK_DURATION_MS }
-            ?.coerceAtLeast(minimumDurationMillis)
-    }
-
-    private fun shouldPreferPlayerDurationForDiscord(
-        metadataDurationMillis: Long,
-        playerDurationMillis: Long,
-        playbackPositionMillis: Long,
-    ): Boolean {
-        if (metadataDurationMillis < playbackPositionMillis + DISCORD_RPC_DURATION_POSITION_MARGIN_MS) {
-            return true
-        }
-        if (
-            metadataDurationMillis < DISCORD_RPC_MIN_REAL_TRACK_DURATION_MS &&
-            playerDurationMillis >= DISCORD_RPC_MIN_REAL_TRACK_DURATION_MS
-        ) {
-            return true
-        }
-        return playerDurationMillis > metadataDurationMillis &&
-            playerDurationMillis - metadataDurationMillis >= DISCORD_RPC_DURATION_MISMATCH_TOLERANCE_MS
-    }
-
-    private fun resolveDiscordRpcVariables(text: String, track: DiscordRpcTrack): String =
-        text
-            .replace("{song_name}", track.title)
-            .replace("{artist_name}", track.artistNames)
-            .replace("{album_name}", track.albumTitle ?: "")
-
-    private suspend fun resolveDiscordAnimatedCanvas(
-        mediaId: String,
-        quality: DiscordAnimatedCanvasQuality,
-    ): String? {
-        val appleCanvasUrls = currentDiscordAppleCanvasUrls()
-        if (appleCanvasUrls.isEmpty()) {
-            return null
-        }
-
-        appleCanvasUrls.firstNotNullOfOrNull { canvasUrl ->
-            DiscordCanvasRemoteRenderer.cachedUrl(canvasUrl, quality)
-        }?.let { return it }
-
-        val canvasUrl = appleCanvasUrls.first()
-        val render = DiscordCanvasRemoteRenderer.renderAsync(canvasUrl, quality)
-        refreshDiscordRpcWhenCanvasReady(mediaId, canvasUrl, quality, render)
-
-        return null
-    }
-
-    private fun refreshDiscordRpcWhenCanvasReady(
-        mediaId: String,
-        canvasUrl: String,
-        quality: DiscordAnimatedCanvasQuality,
-        render: Deferred<String?>,
-    ) {
-        val refreshKey = "$mediaId|${quality.name}|$canvasUrl"
-        if (discordAnimatedCanvasRefreshJobs.containsKey(refreshKey)) return
-
-        discordAnimatedCanvasRefreshJobs[refreshKey] =
-            scope.launch {
-                val renderedUrl = runCatching { render.await() }.getOrNull()
-                discordAnimatedCanvasRefreshJobs.remove(refreshKey)
-
-                val currentMediaId =
-                    currentMediaMetadata.value?.id
-                        ?: player.currentMetadata?.id
-                        ?: player.currentMediaItem?.mediaId
-                if (currentMediaId != mediaId || !dataStore.get(DiscordAnimatedCanvasKey, false)) {
-                    return@launch
-                }
-
-                if (renderedUrl.isNullOrBlank()) {
-                    showDiscordAnimatedCanvasToastOnce(
-                        mediaId = mediaId,
-                        key = "render-failed|$canvasUrl",
-                        message = discordAnimatedCanvasFailureMessage(canvasUrl, quality),
-                    )
-                    return@launch
-                }
-
-                if (player.playbackState == Player.STATE_READY && player.isPlaying) {
-                    updateCurrentDiscordRPC(expectedMediaId = mediaId)
-                }
-            }
-    }
-
-    private fun prewarmNextDiscordAnimatedCanvasIfNeeded() {
-        if (!dataStore.get(DiscordAnimatedCanvasKey, false)) return
-        if (player.playbackState != Player.STATE_READY || !player.isPlaying) return
-
-        val duration = player.duration
-        if (duration <= 0 || duration == C.TIME_UNSET) return
-
-        val remainingMs = duration - player.currentPosition
-        if (remainingMs !in 1L..DISCORD_CANVAS_PREWARM_WINDOW_MS) return
-
-        val metadata = nextDiscordCanvasMetadata() ?: return
-        if (metadata.isEpisode || metadata.isVideoSong || metadata.id.isLocalMediaId()) return
-
-        val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return
-        val album = metadata.album?.title
-        val isrc = ProviderIsrc.firstOf(metadata.id)
-        val canvasUrls =
-            listOfNotNull(
-                AppleMusicCanvasProvider.getCached(
-                    song = metadata.title,
-                    artist = artist,
-                    album = album,
-                    explicit = metadata.explicit.takeIf { it },
-                    isrc = isrc,
-                )?.animated?.takeIf { it.isNotBlank() },
-                AppleMusicCanvasProvider.getCached(
-                    song = metadata.title,
-                    artist = artist,
-                    album = album,
-                    explicit = metadata.explicit.takeIf { it },
-                    isrc = isrc,
-                    preferredAspect = AppleMusicCanvasProvider.CanvasAspectPreference.TALL,
-                )?.animated?.takeIf { it.isNotBlank() },
-            ).distinct()
-        if (canvasUrls.isEmpty()) return
-
-        val quality = discordAnimatedCanvasQuality()
-        val canvasUrl =
-            canvasUrls.firstOrNull { DiscordCanvasRemoteRenderer.cachedUrl(it, quality) == null }
-                ?: return
-
-        if (discordAnimatedCanvasPrewarmKeys.size > DISCORD_CANVAS_PREWARM_CACHE_LIMIT) {
-            discordAnimatedCanvasPrewarmKeys.clear()
-        }
-
-        val prewarmKey = "${metadata.id}|${quality.name}|$canvasUrl"
-        if (!discordAnimatedCanvasPrewarmKeys.add(prewarmKey)) return
-
-        DiscordCanvasRemoteRenderer.renderAsync(canvasUrl, quality)
-    }
-
-    private fun nextDiscordCanvasMetadata(): com.metrolist.music.models.MediaMetadata? {
-        val timeline = player.currentTimeline
-        if (timeline.isEmpty || player.mediaItemCount <= 1) return null
-
-        val currentIndex = player.currentMediaItemIndex
-        if (currentIndex == C.INDEX_UNSET) return null
-
-        val nextIndex =
-            timeline.getNextWindowIndex(
-                currentIndex,
-                REPEAT_MODE_OFF,
-                player.shuffleModeEnabled,
-            )
-        if (nextIndex == C.INDEX_UNSET) return null
-
-        return player.getMediaItemAt(nextIndex).metadata
-    }
-
-    private fun discordAnimatedCanvasFailureMessage(
-        canvasUrl: String,
-        quality: DiscordAnimatedCanvasQuality,
-    ): String {
-        val host = runCatching { canvasUrl.toUri().host }.getOrNull().orEmpty()
-        val detail =
-            DiscordCanvasRemoteRenderer
-                .lastError(canvasUrl, quality)
-                ?.takeIf { it.isNotBlank() }
-                ?: "renderer returned no WebP URL"
-        return "Discord animated canvas failed (${host.ifBlank { "canvas" }}): $detail"
-    }
-
-    private fun discordAnimatedCanvasQuality(): DiscordAnimatedCanvasQuality =
-        dataStore.get(DiscordAnimatedCanvasQualityKey).toEnum(
-            if (dataStore.get(DiscordAnimatedCanvasHighQualityKey, false)) {
-                DiscordAnimatedCanvasQuality.HIGH
-            } else {
-                DiscordAnimatedCanvasQuality.NORMAL
-            },
-        )
-
-    private fun showDiscordAnimatedCanvasToastOnce(
-        mediaId: String,
-        key: String,
-        message: String,
-    ) {
-        if (discordAnimatedCanvasToastKeys.add("$mediaId|$key")) {
-            showPlaybackToast(message.take(220))
-        }
-    }
-
-    private fun currentDiscordAppleCanvasUrls(): List<String> {
-        return listOfNotNull(
-            currentAppleCanvasUrl.value
-                ?.takeIf { it.startsWith("http", ignoreCase = true) },
-            currentAppleTallCanvasUrl.value
-                ?.takeIf { it.startsWith("http", ignoreCase = true) },
-        ).distinct()
-    }
-
-    private suspend fun resolveDiscordRpcArtworkUrl(
-        candidates: List<String?>,
-        targetSize: Int,
-    ): String? {
-        val urls =
-            candidates
-                .mapNotNull { it.normalizedRpcArtworkUrl(targetSize) }
-                .distinct()
-        for (url in urls) {
-            if (url.startsWith("mp:", ignoreCase = true)) return url
-            if (url.length > DISCORD_RPC_MAX_IMAGE_URL_LENGTH) {
-                Timber.tag(TAG).d("Skipping Discord RPC artwork URL over SDK limit (${url.length})")
-                continue
-            }
-            if (isDiscordRpcArtworkReachable(url)) return url
-        }
-        return null
-    }
-
-    private suspend fun isDiscordRpcArtworkReachable(url: String): Boolean {
-        if (discordRpcArtworkOkUrls.contains(url)) return true
-        if (url.length > DISCORD_RPC_MAX_IMAGE_URL_LENGTH) return false
-        return withContext(Dispatchers.IO) {
-            val reachable =
-                runCatching {
-                    probeDiscordRpcArtworkUrl(url, head = true) ||
-                        probeDiscordRpcArtworkUrl(url, head = false)
-                }.onFailure { error ->
-                    Timber.tag(TAG).d(error, "Discord RPC artwork probe failed")
-                }.getOrDefault(false)
-            if (reachable) discordRpcArtworkOkUrls.add(url)
-            reachable
-        }
-    }
-
-    private fun probeDiscordRpcArtworkUrl(
-        url: String,
-        head: Boolean,
-    ): Boolean {
-        val requestBuilder =
-            Request.Builder()
-                .url(url)
-                .header("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                .header("User-Agent", "MetroFuse")
-        if (head) {
-            requestBuilder.head()
-        } else {
-            requestBuilder.header("Range", "bytes=0-0")
-        }
-        discordRpcArtworkClient.newCall(requestBuilder.build()).execute().use { response ->
-            if (response.code !in 200..299 && response.code != 304) return false
-            val contentLength =
-                response.header("Content-Length")
-                    ?.toLongOrNull()
-                    ?.takeIf { it > 0 }
-            if (contentLength != null && contentLength > DISCORD_RPC_MAX_IMAGE_BYTES) return false
-            val contentType = response.header("Content-Type").orEmpty()
-            return contentType.startsWith("image/", ignoreCase = true) ||
-                url.hasDiscordRpcImageExtension()
-        }
-    }
-
-    private fun String.hasDiscordRpcImageExtension(): Boolean {
-        val path = toHttpUrlOrNull()?.encodedPath.orEmpty()
-        return path.endsWith(".jpg", ignoreCase = true) ||
-            path.endsWith(".jpeg", ignoreCase = true) ||
-            path.endsWith(".png", ignoreCase = true) ||
-            path.endsWith(".webp", ignoreCase = true) ||
-            path.endsWith(".gif", ignoreCase = true)
-    }
-
-    private fun youtubeThumbnailArtworkUrls(mediaId: String): List<String> =
-        mediaId
-            .takeIf { it.matches(YOUTUBE_VIDEO_ID_REGEX) }
-            ?.let {
-                listOf(
-                    "https://i.ytimg.com/vi/$it/maxresdefault.jpg",
-                    "https://i.ytimg.com/vi/$it/hqdefault.jpg",
-                )
-            }.orEmpty()
-
-    private fun String?.normalizedRpcArtworkUrl(targetSize: Int): String? {
-        val value = this?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        if (!value.startsWith("http", ignoreCase = true) && !value.startsWith("mp:", ignoreCase = true)) {
-            return null
-        }
-        if (value.startsWith("mp:", ignoreCase = true)) return value
-
-        val secureValue =
-            if (value.startsWith("http://", ignoreCase = true)) {
-                "https://" + value.substringAfter("://")
-            } else {
-                value
-            }
-        return secureValue.upgradedRpcArtworkUrl(targetSize.coerceAtLeast(DISCORD_RPC_SMALL_ARTWORK_SIZE))
-    }
-
-    private fun String.upgradedRpcArtworkUrl(targetSize: Int): String {
-        val lower = lowercase(Locale.US)
-        return when {
-            lower.contains("googleusercontent.com") -> upgradeGoogleArtworkUrl(targetSize)
-            lower.contains("ggpht.com") -> upgradeGoogleArtworkUrl(targetSize)
-            lower.contains("i.scdn.co/image/") -> upgradeSpotifyArtworkUrl(targetSize)
-            lower.contains("e-cdns-images.dzcdn.net/images/") -> upgradeDeezerArtworkUrl(targetSize.coerceAtMost(1000))
-            lower.contains("sndcdn.com/") -> upgradeSoundCloudArtworkUrl()
-            lower.contains("mzstatic.com/image/thumb/") -> upgradeAppleArtworkUrl(targetSize)
-            lower.contains("resources.tidal.com/images/") -> upgradeTidalArtworkUrl(targetSize.coerceAtLeast(640))
-            lower.contains("static.qobuz.com/images/covers/") -> upgradeQobuzArtworkUrl(targetSize.coerceAtMost(600))
-            else -> this
-        }
-    }
-
-    private fun String.upgradeGoogleArtworkUrl(targetSize: Int): String {
-        val base =
-            this
-                .substringBefore("=w")
-                .substringBefore("=s")
-                .substringBefore("-w")
-                .substringBefore("-s")
-        return when {
-            base.contains("googleusercontent.com", ignoreCase = true) -> "$base=w$targetSize-h$targetSize-p-l90-rj"
-            base.contains("ggpht.com", ignoreCase = true) -> "$base=s$targetSize"
-            else -> this
-        }
-    }
-
-    private fun String.upgradeSpotifyArtworkUrl(targetSize: Int): String {
-        val albumSize = if (targetSize >= 512) "0000b273" else "00001e02"
-        val artistSize = if (targetSize >= 512) "0000e5eb" else "00005174"
-        val playlistSize = if (targetSize >= 512) "0000da84" else "00001e02"
-        return this
-            .replace(Regex("""(ab67616d)(00004851|00001e02|0000b273)""")) {
-                "${it.groupValues[1]}$albumSize"
-            }.replace(Regex("""(ab676161)(0000f178|00005174|0000e5eb)""")) {
-                "${it.groupValues[1]}$artistSize"
-            }.replace(Regex("""(ab67706c)(00004851|00001e02|0000bebb|0000da84)""")) {
-                "${it.groupValues[1]}$playlistSize"
-            }
-    }
-
-    private fun String.upgradeDeezerArtworkUrl(targetSize: Int): String =
-        replace(Regex("""/\d+x\d+(-[^/?#]+)""")) {
-            "/${targetSize}x$targetSize${it.groupValues[1]}"
-        }
-
-    private fun String.upgradeSoundCloudArtworkUrl(): String =
-        replace(Regex("""-(large|t\d+x\d+|original)\.""", RegexOption.IGNORE_CASE), "-t500x500.")
-
-    private fun String.upgradeAppleArtworkUrl(targetSize: Int): String =
-        replace(Regex("""/\d+x\d+[^/?#]*\.(jpg|jpeg|png|webp)(?=($|[?#]))""", RegexOption.IGNORE_CASE)) {
-            "/${targetSize}x${targetSize}bb.${it.groupValues[1]}"
-        }
-
-    private fun String.upgradeTidalArtworkUrl(targetSize: Int): String =
-        replace(Regex("""/\d+x\d+\.(jpg|jpeg|png|webp)(?=($|[?#]))""", RegexOption.IGNORE_CASE)) {
-            "/${targetSize}x$targetSize.${it.groupValues[1]}"
-        }
-
-    private fun String.upgradeQobuzArtworkUrl(targetSize: Int): String =
-        replace(Regex("""/\d+\.(jpg|jpeg|png|webp)(?=($|[?#]))""", RegexOption.IGNORE_CASE)) {
-            "/${targetSize}.${it.groupValues[1]}"
-        }
-
-    private fun currentDiscordRpcAudioProviderLabel(mediaId: String): String? {
-        val format =
-            currentPlaybackFormat.value?.takeIf { it.id == mediaId }
-                ?: songUrlCache[mediaId]?.format
-        return format?.discordRpcAudioProviderLabel()
-            ?: player.currentMediaItem?.localConfiguration?.uri?.discordRpcAudioProviderLabel()
-    }
-
-    private fun FormatEntity.discordRpcAudioProviderLabel(): String? =
-        when (itag) {
-            QOBUZ_FALLBACK_ITAG -> "qobuz"
-            TIDAL_FALLBACK_ITAG -> "tidal"
-            DEEZER_FALLBACK_ITAG -> "deezer"
-            SOUNDCLOUD_FALLBACK_ITAG -> "soundcloud"
-            INSTAGRAM_FALLBACK_ITAG -> "instagram"
-            DIRECT_HTTP_AUDIO_ITAG -> "direct audio"
-            else -> "youtube music".takeIf { itag > 0 }
-        }
-
-    private fun Uri.discordRpcAudioProviderLabel(): String? {
-        val value = toString()
-        return when {
-            value.startsWith(qobuzFallbackCacheKey(""), ignoreCase = true) -> "qobuz"
-            value.startsWith(tidalFallbackCacheKey(""), ignoreCase = true) -> "tidal"
-            value.startsWith(deezerFallbackCacheKey(""), ignoreCase = true) -> "deezer"
-            value.startsWith(soundCloudFallbackCacheKey(""), ignoreCase = true) -> "soundcloud"
-            value.startsWith(instagramFallbackCacheKey(""), ignoreCase = true) -> "instagram"
-            value.startsWith(directHttpAudioCacheKey(""), ignoreCase = true) -> "direct audio"
-            value.startsWith(youtubeFallbackCacheKey(""), ignoreCase = true) -> "youtube music"
-            else -> null
-        }
     }
 
     private fun currentStreamSelectionKey(): String {
@@ -4978,7 +4125,12 @@ class MusicService :
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val deezerFastMode = dataStore.get(DeezerFastModeKey, false)
-        val deezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val configuredDeezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
+            configuredProxyModeValue = dataStore.get(DeezerProxyModeKey, ""),
+            configuredProxyUrl = configuredDeezerProxyUrl,
+            globalProxyEnabled = dataStore.get(ProxyEnabledKey, false),
+        )
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
         val providerMatchOverrides = dataStore.get(AudioProviderMatchOverridesKey, "")
@@ -5461,7 +4613,12 @@ class MusicService :
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val deezerFastMode = dataStore.get(DeezerFastModeKey, false)
-        val deezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val configuredDeezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
+            configuredProxyModeValue = dataStore.get(DeezerProxyModeKey, ""),
+            configuredProxyUrl = configuredDeezerProxyUrl,
+            globalProxyEnabled = dataStore.get(ProxyEnabledKey, false),
+        )
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
         val providerOverride = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
@@ -6004,17 +5161,14 @@ class MusicService :
 
     private suspend fun updateAppleCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {
         currentEmbeddedCanvasUrl.value = null
-        metadata?.let { appleCanvasLookupFinishedMediaIds.remove(it.id) }
         if (!shouldResolveAppleCanvas()) {
             currentAppleCanvasUrl.value = null
             currentAppleTallCanvasUrl.value = null
-            metadata?.let { finishAppleCanvasLookup(it.id) }
             return
         }
         if (metadata == null || metadata.isEpisode || metadata.isVideoSong) {
             currentAppleCanvasUrl.value = null
             currentAppleTallCanvasUrl.value = null
-            metadata?.let { finishAppleCanvasLookup(it.id) }
             return
         }
 
@@ -6022,7 +5176,6 @@ class MusicService :
             currentAppleCanvasUrl.value = null
             currentAppleTallCanvasUrl.value = null
             loadEmbeddedCanvasInBackground(metadata.id)
-            finishAppleCanvasLookup(metadata.id)
             return
         }
 
@@ -6031,8 +5184,7 @@ class MusicService :
                 ?: run {
                     currentAppleCanvasUrl.value = null
                     currentAppleTallCanvasUrl.value = null
-                    finishAppleCanvasLookup(metadata.id)
-                    return
+                            return
                 }
         val album = metadata.album?.title
         val isrc =
@@ -6064,7 +5216,6 @@ class MusicService :
             currentAppleTallCanvasUrl.value = null
         }
         if (cached != null && cachedTall != null) {
-            finishAppleCanvasLookup(metadata.id)
             return
         }
 
@@ -6109,7 +5260,6 @@ class MusicService :
         if (currentMediaMetadata.value?.id == metadata.id) {
             currentAppleCanvasUrl.value = resolved
             currentAppleTallCanvasUrl.value = resolvedTall ?: resolved
-            finishAppleCanvasLookup(metadata.id)
         }
     }
 
@@ -6164,10 +5314,9 @@ class MusicService :
     }
 
     private fun shouldResolveAppleCanvas(): Boolean =
-        dataStore.get(SpotifyCanvasEnabledKey, false) ||
-            dataStore.get(EmbedAnimatedCanvasKey, false) ||
-            dataStore.get(DiscordAnimatedCanvasKey, false) ||
-            dataStore.get(ExperimentalAppleMusicCoverFadeKey, false)
+        cachedSpotifyCanvasEnabled ||
+            cachedEmbedAnimatedCanvas ||
+            cachedAppleMusicCoverFadeEnabled
 
     private suspend fun updateTidalCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {
         currentTidalCanvasUrl.value = null
@@ -6230,7 +5379,6 @@ class MusicService :
         if (cached.first) {
             if (currentMediaMetadata.value?.id == metadata.id) {
                 currentPreferredArtworkUrl.value = cached.second
-                refreshDiscordRpcForPreferredArtwork(metadata.id)
             }
             return
         }
@@ -6260,21 +5408,7 @@ class MusicService :
         }
         if (currentMediaMetadata.value?.id == metadata.id) {
             currentPreferredArtworkUrl.value = resolved
-            refreshDiscordRpcForPreferredArtwork(metadata.id)
         }
-    }
-
-    private fun refreshDiscordRpcForPreferredArtwork(mediaId: String) {
-        if (currentPreferredArtworkUrl.value.isNullOrBlank()) return
-        if (player.playbackState != Player.STATE_READY || !player.isPlaying) return
-        updateCurrentDiscordRPC(expectedMediaId = mediaId)
-    }
-
-    private fun finishAppleCanvasLookup(mediaId: String) {
-        appleCanvasLookupFinishedMediaIds.add(mediaId)
-        if (!dataStore.get(DiscordAnimatedCanvasKey, false)) return
-        if (player.playbackState != Player.STATE_READY || !player.isPlaying) return
-        updateCurrentDiscordRPC(expectedMediaId = mediaId)
     }
 
     private fun preferredArtworkCacheKey(
@@ -7552,8 +6686,6 @@ class MusicService :
         if (dataStore.get(PersistentQueueKey, true)) {
             saveQueueToDisk()
         }
-        DiscordRpcManager.clear()
-        DiscordRpcManager.destroy()
         connectivityObserver.unregister()
         abandonAudioFocus()
         closeAudioEffectSession()
@@ -7568,7 +6700,6 @@ class MusicService :
         // or we can't easily reference the specific processor created in createExoPlayer here without storing it.
         // But since we are destroying the service, it's fine.
         player.release()
-        discordUpdateJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }
@@ -8296,8 +7427,6 @@ class MusicService :
         _playerFlow.value = player
         updateNotification()
         updateWidgetUI(player.isPlaying)
-        lastPlaybackSpeed = -1.0f
-        discordUpdateJob?.cancel()
         if (player.isPlaying && transitionedMetadata != null) {
             val transitionDuration = currentPlaybackDurationIfReady()
             scrobbleManager?.onSongStop()
@@ -8306,9 +7435,6 @@ class MusicService :
                 metadata = transitionedMetadata,
                 duration = transitionDuration,
             )
-            scope.launch {
-                updateCurrentDiscordRPC(expectedMediaId = transitionedMetadata.id)
-            }
         }
         if (dataStore.get(PersistentQueueKey, true)) {
             saveQueueToDisk()
@@ -8434,19 +7560,8 @@ class MusicService :
         private const val MIN_GAIN_MB = -1500 // Minimum gain in millibels (-15 dB)
 
         private const val TAG = "MusicService"
-        private const val DISCORD_RPC_MIN_REMAINING_DURATION_MS = 1_000L
-        private const val DISCORD_RPC_DURATION_POSITION_MARGIN_MS = 5_000L
-        private const val DISCORD_RPC_MIN_REAL_TRACK_DURATION_MS = 30_000L
-        private const val DISCORD_RPC_DURATION_MISMATCH_TOLERANCE_MS = 15_000L
-        private const val DISCORD_RPC_LARGE_ARTWORK_SIZE = 1024
-        private const val DISCORD_RPC_SMALL_ARTWORK_SIZE = 256
-        private const val DISCORD_RPC_MAX_IMAGE_URL_LENGTH = 300
-        private const val DISCORD_RPC_MAX_IMAGE_BYTES = 10L * 1024L * 1024L
-        private val YOUTUBE_VIDEO_ID_REGEX = Regex("[A-Za-z0-9_-]{11}")
         private const val AUDIO_FORMAT_RETRY_ATTEMPTS = 8
         private const val AUDIO_FORMAT_RETRY_DELAY_MS = 1_000L
-        private const val DISCORD_CANVAS_PREWARM_WINDOW_MS = 30_000L
-        private const val DISCORD_CANVAS_PREWARM_CACHE_LIMIT = 256
         private const val LIVE_PLAYBACK_BITRATE_TICK_MS = 125L
         private const val LIVE_PLAYBACK_BITRATE_MIN_UPDATE_MS = 90L
         private const val LIVE_PLAYBACK_BITRATE_MIN_DELTA_BPS = 250

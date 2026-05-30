@@ -81,7 +81,7 @@ object PlayerColorExtractor {
         val dominantHsv = FloatArray(3)
         android.graphics.Color.colorToHSV(dominantColor, dominantHsv)
 
-        if (dominantHsv[2] < 0.14f && dominantHsv[1] < 0.35f) {
+        if (dominantHsv[2] < 0.18f || (dominantHsv[2] < 0.24f && dominantHsv[1] < 0.35f)) {
             return@withContext listOf(
                 Color.Black,
                 Color(0xFF020202),

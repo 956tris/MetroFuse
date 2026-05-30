@@ -27,6 +27,7 @@ object ProviderHealthChecker {
     private const val TIDAL_PUBLIC_TOKEN = "49YxDN9a2aFV6RTG"
     private const val QOBUZ_HEALTH_QUERY = "yes and ariana grande"
     private const val QOBUZ_HEALTH_TRACK_ID = "256170850"
+    private const val DEEZER_HEALTH_TRACK_ID = "3135556"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val TIDAL_RESOLVERS =
         listOf(
@@ -123,6 +124,15 @@ object ProviderHealthChecker {
                 detail = "Configured Deezer audio resolver",
                 body = """{"formats":["MP3_128"],"ids":[]}""",
             ),
+            postJsonTarget(
+                id = "deezer_render_resolver",
+                group = "Deezer",
+                name = "Render dzmedia resolver",
+                endpoint = DeezerAudioProvider.RENDER_RESOLVER_URL,
+                detail = "Fallback Deezer audio resolver",
+                body = """{"formats":["MP3_128"],"ids":[$DEEZER_HEALTH_TRACK_ID],"fast":true}""",
+            ),
+            deezerRenderProxyTarget(),
             getTarget(
                 id = "tidal_api",
                 group = "TIDAL",
@@ -179,6 +189,17 @@ object ProviderHealthChecker {
             ),
         )
     }
+
+    private fun deezerRenderProxyTarget(): Target =
+        Target(
+            id = "deezer_render_proxy",
+            group = "Deezer",
+            name = "Render Deezer media proxy",
+            endpoint = "${DeezerAudioProvider.RENDER_PROXY_BASE_URL}/deezer-media-proxy",
+            detail = "Ranged Deezer media proxy for restricted networks",
+            requestFactory = { null },
+            customCheck = { target, startedAt -> checkDeezerRenderProxy(target, startedAt) },
+        )
 
     suspend fun checkAll(targets: List<Target>): List<Result> =
         coroutineScope {
@@ -374,6 +395,94 @@ object ProviderHealthChecker {
             request = qobuzGetRequest(downloadUrl.toString(), baseUrl, headers),
             streamName = target.name,
         )
+    }
+
+    private fun checkDeezerRenderProxy(
+        target: Target,
+        startedAt: Long,
+    ): Result {
+        val resolverUrl = DeezerAudioProvider.RENDER_RESOLVER_URL.toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("mode", "fast")
+            ?.build()
+            ?: return Result(target, Status.OFFLINE, null, "Invalid resolver URL")
+        val resolverRequest =
+            Request.Builder()
+                .url(resolverUrl)
+                .post("""{"formats":["MP3_128"],"ids":[$DEEZER_HEALTH_TRACK_ID],"fast":true}""".toRequestBody(JSON_MEDIA_TYPE))
+                .header("Accept", "application/json")
+                .header("User-Agent", USER_AGENT)
+                .build()
+
+        val streamUrl =
+            client.newCall(resolverRequest).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    return Result(
+                        target = target,
+                        status = response.code.toHealthStatus(),
+                        latencyMs = elapsedMs(startedAt),
+                        message = "Resolver HTTP ${response.code}: ${payload.compactHealthBody()}",
+                    )
+                }
+                val root =
+                    runCatching { JSONObject(payload) }
+                        .getOrElse {
+                            return Result(
+                                target = target,
+                                status = Status.REACHABLE,
+                                latencyMs = elapsedMs(startedAt),
+                                message = "Resolver answered without JSON",
+                            )
+                        }
+                root.optJSONArray("data")
+                    ?.optJSONObject(0)
+                    ?.optJSONArray("media")
+                    ?.optJSONObject(0)
+                    ?.optJSONArray("sources")
+                    ?.optJSONObject(0)
+                    ?.stringOrNull("url")
+                    ?: return Result(
+                        target = target,
+                        status = Status.REACHABLE,
+                        latencyMs = elapsedMs(startedAt),
+                        message = "Resolver response missing media URL",
+                    )
+            }
+
+        val proxiedUrl = DeezerAudioProvider.wrapMediaUrlForProxy(
+            mediaUrl = streamUrl,
+            proxyUrl = DeezerAudioProvider.RENDER_PROXY_BASE_URL,
+        )
+        val proxyRequest =
+            proxiedUrl.toHttpUrlOrNull()?.let { url ->
+                Request.Builder()
+                    .url(url)
+                    .get()
+                    .header("Accept", "*/*")
+                    .header("Range", "bytes=0-4095")
+                    .header("User-Agent", USER_AGENT)
+                    .build()
+            } ?: return Result(target, Status.OFFLINE, null, "Invalid proxy URL")
+
+        return client.newCall(proxyRequest).execute().use { response ->
+            val bytes = if (response.isSuccessful) response.body.bytes().size else 0
+            val status = when (response.code) {
+                200, 206 -> Status.ONLINE
+                in 400..499 -> Status.REACHABLE
+                else -> Status.OFFLINE
+            }
+            Result(
+                target = target,
+                status = status,
+                latencyMs = elapsedMs(startedAt),
+                message = if (status == Status.ONLINE) {
+                    "Proxy range OK ($bytes bytes)"
+                } else {
+                    "Proxy HTTP ${response.code}"
+                },
+            )
+        }
     }
 
     private fun checkQobuzDownload(

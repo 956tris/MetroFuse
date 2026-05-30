@@ -12,11 +12,13 @@ import com.metrolist.music.constants.AudioProviderOrderKey
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerFastModeKey
+import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
+import com.metrolist.music.constants.ProxyEnabledKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.isPlaybackProvider
@@ -111,7 +113,12 @@ object ProviderMatchSearch {
                 val quality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
                 val resolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
                 val fastMode = context.dataStore.get(DeezerFastModeKey, false)
-                val proxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+                val configuredProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+                val proxyUrl = DeezerAudioProvider.effectiveProxyUrl(
+                    configuredProxyModeValue = context.dataStore.get(DeezerProxyModeKey, ""),
+                    configuredProxyUrl = configuredProxyUrl,
+                    globalProxyEnabled = context.dataStore.get(ProxyEnabledKey, false),
+                )
                 DeezerAudioProvider.searchCandidates(metadata.toDeezerQuery(resolverUrl, quality, fastMode, proxyUrl, isrcOverride), limit).map { track ->
                     ProviderMatchCandidate(
                         provider = provider,

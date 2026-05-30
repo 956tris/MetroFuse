@@ -126,7 +126,6 @@ import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.request.crossfade
 import coil3.toBitmap
-import com.discord.socialsdk.DiscordSocialSdkInit
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.WatchEndpoint
@@ -406,7 +405,6 @@ class MainActivity : ComponentActivity() {
 
         // Initialize Listen Together manager
         listenTogetherManager.initialize()
-        DiscordSocialSdkInit.setEngineActivity(this)
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val locale =

@@ -79,6 +79,10 @@
     <string name="experimental_apple_music_cover_fade_desc">Uses tall Apple Music motion art as a soft full-player backdrop when available. Experimental and off by default.</string>
     <string name="experimental_smooth_inline_lyrics">Smooth under-album lyric line</string>
     <string name="experimental_smooth_inline_lyrics_desc">Shows only the current under-album lyric, wrapping up to three lines with a timed glow.</string>
+    <string name="experimental_apple_music_lyrics">Apple Music-style main lyrics</string>
+    <string name="experimental_apple_music_lyrics_desc">Uses am-lyrics-inspired line motion, sustained-word grow, glow, and softer inactive lyrics.</string>
+    <string name="experimental_apple_music_lyrics_size">Apple Music lyrics size</string>
+    <string name="experimental_apple_music_lyrics_size_value">%1$d sp</string>
 
     <!-- Menu descriptions -->
     <string name="download_playlist_desc">Download all songs for offline playback</string>
@@ -586,10 +590,17 @@
     <string name="deezer_resolver_url_placeholder">https://yesitworkssomehow-funny-deeza-api-and-yeah.hf.space/get_url</string>
     <string name="deezer_resolver_url_helper">Use a dzmedia-compatible /get_url endpoint. Keep the ARL on the server, never in the app.</string>
     <string name="deezer_proxy_url">Deezer proxy</string>
+    <string name="deezer_proxy_mode">Deezer proxy mode</string>
+    <string name="deezer_proxy_direct">Direct</string>
+    <string name="deezer_proxy_render">Render server</string>
+    <string name="deezer_proxy_custom">Custom URL</string>
+    <string name="deezer_proxy_custom_url">Custom Deezer proxy URL</string>
     <string name="deezer_proxy_url_desc">Current proxy: %1$s</string>
     <string name="deezer_proxy_url_placeholder">proxy.example.com:3128 or https://your-dzmedia.onrender.com</string>
-    <string name="deezer_proxy_url_helper">Use host:port for an HTTP proxy. Use a dzmedia base URL to relay encrypted media through /deezer-media-proxy. Leave empty to connect directly.</string>
+    <string name="deezer_proxy_url_helper">Use this only for a custom host:port HTTP proxy or another dzmedia base URL. Direct and Render server do not need a URL.</string>
     <string name="deezer_proxy_disabled">Direct connection</string>
+    <string name="deezer_proxy_direct_desc">Connect to Deezer media directly.</string>
+    <string name="deezer_proxy_render_desc">Uses %1$s automatically.</string>
     <string name="deezer_clear_proxy">Clear Deezer proxy</string>
     <string name="deezer_audio_quality">Deezer quality</string>
     <string name="deezer_quality_flac">FLAC</string>
@@ -1098,6 +1109,8 @@
     <string name="login_successful">Login successful!</string>
     <string name="discord_logged_in">Logged in</string>
     <string name="discord_information_warning">MetroFuse uses Discord\'s official Social SDK to share what you\'re listening to. Authorization is handled through Discord OAuth, and MetroFuse only stores the Discord session on this device for reconnecting.</string>
+    <string name="discord_rpc_temporarily_removed_warning">Discord RPC is temporarily removed from this hotfix build until the upstream SDK fix is released. Spotify presence and history features are unchanged.</string>
+    <string name="discord_rpc_temporarily_removed_status">Temporarily removed</string>
     <string name="discord_activity_type">Activity type</string>
     <string name="discord_activity_playing">Playing</string>
     <string name="discord_activity_listening">Listening</string>

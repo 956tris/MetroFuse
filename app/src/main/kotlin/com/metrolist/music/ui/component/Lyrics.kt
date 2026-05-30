@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import com.metrolist.music.constants.ExperimentalAppleMusicLyricsKey
 import com.metrolist.music.constants.ExperimentalLyricsKey
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.viewmodels.LyricsViewModel
@@ -21,8 +22,9 @@ fun Lyrics(
     lyricsViewModel: LyricsViewModel = hiltViewModel()
 ) {
     val (experimentalLyrics, _) = rememberPreference(key = ExperimentalLyricsKey, defaultValue = true)
+    val (appleMusicLyrics, _) = rememberPreference(key = ExperimentalAppleMusicLyricsKey, defaultValue = false)
 
-    if (experimentalLyrics) {
+    if (experimentalLyrics || appleMusicLyrics) {
         ExperimentalLyrics(
             sliderPositionProvider = sliderPositionProvider,
             modifier = modifier,

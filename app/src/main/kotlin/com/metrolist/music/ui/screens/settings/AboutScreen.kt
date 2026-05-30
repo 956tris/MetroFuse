@@ -117,8 +117,7 @@ private val metrolistDevelopers = listOf(
 )
 
 private val communityLinks = listOf(
-    CommunityLink(R.string.credits_discord, R.drawable.discord, "https://discord.com/invite/zrdbeRG2Mt"),
-    CommunityLink(R.string.credits_telegram, R.drawable.telegram, "https://t.me/metrolistapp"),
+    CommunityLink(R.string.credits_discord, R.drawable.discord, "https://discord.gg/ddHxkVDgt3"),
     CommunityLink(R.string.credits_view_repo, R.drawable.github, "https://github.com/956tris/MetroFuse"),
     CommunityLink(R.string.credits_license_name, R.drawable.info, "https://github.com/956tris/MetroFuse/blob/main/LICENSE")
 )

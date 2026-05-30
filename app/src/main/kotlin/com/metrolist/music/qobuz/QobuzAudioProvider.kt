@@ -99,6 +99,7 @@ object QobuzAudioProvider {
     private data class StreamAttempt(
         val resolved: Resolved? = null,
         val error: String? = null,
+        val captchaRequired: Boolean = false,
     )
 
     private val client = OkHttpClient.Builder()
@@ -510,7 +511,46 @@ object QobuzAudioProvider {
             ?.build()
             ?: return StreamAttempt(error = "Qobuz request URL could not be built")
 
-        val request = Request.Builder()
+        val initialAttempt = executeSquidStreamRequest(
+            request = buildSquidStreamRequest(
+                url = url,
+                countryCode = countryCode,
+                cookieHeader = SquidAltchaWebViewSolver.cookieHeaderOrNull(),
+            ),
+            track = track,
+            qualityCode = qualityCode,
+            durationMs = durationMs,
+        )
+        if (!initialAttempt.captchaRequired) {
+            return initialAttempt
+        }
+
+        SquidAltchaWebViewSolver.invalidate()
+        val verifiedCookie = SquidAltchaWebViewSolver.solve(SQUID_BASE_URL, BROWSER_USER_AGENT)
+            ?: return StreamAttempt(error = "Qobuz Squid requires ALTCHA verification, but the ALTCHA solver failed")
+
+        val retryAttempt = executeSquidStreamRequest(
+            request = buildSquidStreamRequest(
+                url = url,
+                countryCode = countryCode,
+                cookieHeader = verifiedCookie,
+            ),
+            track = track,
+            qualityCode = qualityCode,
+            durationMs = durationMs,
+        )
+        if (retryAttempt.captchaRequired) {
+            SquidAltchaWebViewSolver.invalidate()
+        }
+        return retryAttempt
+    }
+
+    private fun buildSquidStreamRequest(
+        url: okhttp3.HttpUrl,
+        countryCode: String,
+        cookieHeader: String?,
+    ): Request {
+        val builder = Request.Builder()
             .url(url)
             .get()
             .header("Accept", "application/json")
@@ -519,56 +559,95 @@ object QobuzAudioProvider {
             .header("Origin", SQUID_BASE_URL)
             .header("Referer", "$SQUID_BASE_URL/")
             .header("User-Agent", BROWSER_USER_AGENT)
-            .build()
+        if (!cookieHeader.isNullOrBlank()) {
+            builder.header("Cookie", cookieHeader)
+        }
+        return builder.build()
+    }
 
-        return runCatching {
+    private fun executeSquidStreamRequest(
+        request: Request,
+        track: MatchedTrack,
+        qualityCode: Int,
+        durationMs: Long?,
+    ): StreamAttempt =
+        runCatching {
             client.newCall(request).execute().use { response ->
-                val payload = response.body.string()
-                if (!response.isSuccessful) {
-                    return@use StreamAttempt(error = "Qobuz HTTP ${response.code}: ${payload.take(160)}")
-                }
-                if (payload.isBlank()) {
-                    return@use StreamAttempt(error = "Qobuz returned an empty response")
-                }
-                val root = JSONObject(payload)
-                if (!root.optBoolean("success", false)) {
-                    val apiError = root.stringOrNull("error")
-                    val message = if (apiError.equals("Captcha required.", ignoreCase = true)) {
-                        "Qobuz download API requires a browser captcha right now"
-                    } else {
-                        "Qobuz rejected quality $qualityCode: ${apiError ?: "unknown error"}"
-                    }
-                    return@use StreamAttempt(error = message)
-                }
-
-                val data = root.optJSONObject("data")
-                val streamUrl = data?.stringOrNull("url")
-                    ?: return@use StreamAttempt(error = "Qobuz did not return a stream URL for quality $qualityCode")
-                val bitDepth = data.intOrNull("bit_depth") ?: track.bitDepth
-                val samplingRate = data.doubleOrNull("sampling_rate") ?: track.samplingRateKhz
-                val lossyBitrate = data.intOrNull("bitrate")
-                    ?: data.intOrNull("bit_rate")
-                    ?: root.intOrNull("bitrate")
-                    ?: root.intOrNull("bit_rate")
-                val effectiveDurationMs = durationMs ?: track.durationMs
-                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
-                    ?: normalizeBitrate(
-                        data.intOrNull("average_bitrate")
-                            ?: root.intOrNull("average_bitrate")
-                    ).takeIf { it > 0 }
-                val format = formatFrom(
-                    mimeType = if (qualityCode == 5) "audio/mpeg" else "audio/flac",
-                    bitDepth = bitDepth,
-                    samplingRateKhz = samplingRate,
-                    bitrate = lossyBitrate,
-                    losslessBitrate = losslessBitrate,
-                    hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || qualityCode >= 7,
+                parseSquidStreamResponse(
+                    responseCode = response.code,
+                    successful = response.isSuccessful,
+                    payload = response.body.string(),
+                    track = track,
+                    qualityCode = qualityCode,
+                    durationMs = durationMs,
                 )
-                StreamAttempt(resolved = format.toResolved(streamUrl, track.trackId))
             }
         }.getOrElse { error ->
             StreamAttempt(error = "Qobuz request failed: ${error.message ?: error.javaClass.simpleName}")
         }
+
+    private fun parseSquidStreamResponse(
+        responseCode: Int,
+        successful: Boolean,
+        payload: String,
+        track: MatchedTrack,
+        qualityCode: Int,
+        durationMs: Long?,
+    ): StreamAttempt {
+        if (payload.isBlank()) {
+            return StreamAttempt(error = "Qobuz returned an empty response")
+        }
+        val root = runCatching { JSONObject(payload) }.getOrNull()
+        if (!successful) {
+            val apiError = root?.stringOrNull("error")
+            if (responseCode == 403 && apiError.equals("Captcha required.", ignoreCase = true)) {
+                return StreamAttempt(
+                    error = "Qobuz Squid requires ALTCHA verification",
+                    captchaRequired = true,
+                )
+            }
+            return StreamAttempt(error = "Qobuz HTTP $responseCode: ${payload.take(160)}")
+        }
+        if (root == null) {
+            return StreamAttempt(error = "Qobuz returned invalid JSON")
+        }
+        if (!root.optBoolean("success", false)) {
+            val apiError = root.stringOrNull("error")
+            val message = if (apiError.equals("Captcha required.", ignoreCase = true)) {
+                "Qobuz Squid requires ALTCHA verification"
+            } else {
+                "Qobuz rejected quality $qualityCode: ${apiError ?: "unknown error"}"
+            }
+            return StreamAttempt(
+                error = message,
+                captchaRequired = apiError.equals("Captcha required.", ignoreCase = true),
+            )
+        }
+
+        val data = root.optJSONObject("data")
+        val streamUrl = data?.stringOrNull("url")
+            ?: return StreamAttempt(error = "Qobuz did not return a stream URL for quality $qualityCode")
+        val bitDepth = data.intOrNull("bit_depth") ?: track.bitDepth
+        val samplingRate = data.doubleOrNull("sampling_rate") ?: track.samplingRateKhz
+        val lossyBitrate = data.intOrNull("bitrate")
+            ?: data.intOrNull("bit_rate")
+            ?: root.intOrNull("bitrate")
+            ?: root.intOrNull("bit_rate")
+        val effectiveDurationMs = durationMs ?: track.durationMs
+        val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
+            ?: normalizeBitrate(
+                data.intOrNull("average_bitrate")
+                    ?: root.intOrNull("average_bitrate")
+            ).takeIf { it > 0 }
+        val format = formatFrom(
+            mimeType = if (qualityCode == 5) "audio/mpeg" else "audio/flac",
+            bitDepth = bitDepth,
+            samplingRateKhz = samplingRate,
+            bitrate = lossyBitrate,
+            losslessBitrate = losslessBitrate,
+            hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || qualityCode >= 7,
+        )
+        return StreamAttempt(resolved = format.toResolved(streamUrl, track.trackId))
     }
 
     private fun requestJumoStream(

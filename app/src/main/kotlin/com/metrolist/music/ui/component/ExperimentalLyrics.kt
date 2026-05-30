@@ -92,6 +92,8 @@ import com.metrolist.music.constants.AiProviderKey
 import com.metrolist.music.constants.AiSystemPromptKey
 import com.metrolist.music.constants.DeeplApiKey
 import com.metrolist.music.constants.DeeplFormalityKey
+import com.metrolist.music.constants.ExperimentalAppleMusicLyricsKey
+import com.metrolist.music.constants.ExperimentalAppleMusicLyricsSizeKey
 import com.metrolist.music.constants.LyricsClickKey
 import com.metrolist.music.constants.LyricsRomanizeAsMainKey
 import com.metrolist.music.constants.LyricsRomanizeCyrillicByLineKey
@@ -138,6 +140,9 @@ private val LYRICS_FADE_TOP_DP = 130.dp
 private val LYRICS_FADE_BOTTOM_DP = 160.dp
 private const val LYRICS_STAGGER_DELAY_PER_DISTANCE = 20
 private const val LYRICS_STAGGER_DELAY_MAX_MS = 200
+private const val APPLE_LYRICS_SCROLL_DURATION_MS = 420
+private const val APPLE_LYRICS_STAGGER_DELAY_PER_DISTANCE = 14
+private const val APPLE_LYRICS_STAGGER_DELAY_MAX_MS = 120
 private const val LYRICS_PREVIEW_TIME = 8000L
 
 @OptIn(
@@ -167,6 +172,8 @@ fun ExperimentalLyrics(
     val romanizeCyrillicByLine by rememberPreference(LyricsRomanizeCyrillicByLineKey, false)
     val respectAgentPositioning by rememberPreference(RespectAgentPositioningKey, true)
     val showIntervalIndicator by rememberPreference(ShowIntervalIndicatorKey, true)
+    val appleMusicLyrics by rememberPreference(ExperimentalAppleMusicLyricsKey, false)
+    val appleMusicLyricsSize by rememberPreference(ExperimentalAppleMusicLyricsSizeKey, 46f)
     
     // AI Translation Preferences
     val openRouterApiKey by rememberPreference(OpenRouterApiKey, "")
@@ -297,7 +304,7 @@ fun ExperimentalLyrics(
     }
 
     val expressiveAccent = when (playerBackground) {
-        PlayerBackgroundStyle.DEFAULT -> MaterialTheme.colorScheme.primary
+        PlayerBackgroundStyle.DEFAULT -> if (appleMusicLyrics) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary
         PlayerBackgroundStyle.BLUR,
         PlayerBackgroundStyle.GALAXY_BLUR,
         PlayerBackgroundStyle.GRADIENT -> Color.White
@@ -720,7 +727,10 @@ fun ExperimentalLyrics(
                         targetValue = targetProviderBase,
                         animationSpec = if (isInitialLayout || !isAutoScrollEnabled) snap()
                         else {
-                            tween(750, 0, FastOutSlowInEasing)
+                            tween(
+                                durationMillis = if (appleMusicLyrics) APPLE_LYRICS_SCROLL_DURATION_MS else 750,
+                                easing = FastOutSlowInEasing,
+                            )
                         },
                         label = "lyricsProviderOffset"
                     )
@@ -743,7 +753,16 @@ fun ExperimentalLyrics(
                             targetValue = if (isAutoScrollEnabled) targetOffset else frozenOffset.floatValue,
                             animationSpec = if (isInitialLayout || !isAutoScrollEnabled) snap() 
                                             else {
-                                                tween(750, (distance * LYRICS_STAGGER_DELAY_PER_DISTANCE).coerceAtMost(LYRICS_STAGGER_DELAY_MAX_MS), FastOutSlowInEasing)
+                                                tween(
+                                                    durationMillis = if (appleMusicLyrics) APPLE_LYRICS_SCROLL_DURATION_MS else 750,
+                                                    delayMillis =
+                                                        if (appleMusicLyrics) {
+                                                            (distance * APPLE_LYRICS_STAGGER_DELAY_PER_DISTANCE).coerceAtMost(APPLE_LYRICS_STAGGER_DELAY_MAX_MS)
+                                                        } else {
+                                                            (distance * LYRICS_STAGGER_DELAY_PER_DISTANCE).coerceAtMost(LYRICS_STAGGER_DELAY_MAX_MS)
+                                                        },
+                                                    easing = FastOutSlowInEasing,
+                                                )
                                             },
                             label = "lyricStaggeredOffset_$listIndex"
                         )
@@ -782,11 +801,14 @@ fun ExperimentalLyrics(
                                         bgVisible = bgVisible, isSelected = selectedIndices.contains(index),
                                         isSelectionModeActive = isSelectionModeActive, currentPositionState = currentPositionState,
                                         lyricsOffset = (currentSong?.song?.lyricsOffset ?: 0).toLong(),
-                                        playerConnection = playerConnection, lyricsTextSize = 36f, lyricsLineSpacing = 1.3f,
+                                        playerConnection = playerConnection,
+                                        lyricsTextSize = if (appleMusicLyrics) appleMusicLyricsSize else 36f,
+                                        lyricsLineSpacing = if (appleMusicLyrics) 1.04f else 1.3f,
                                         expressiveAccent = expressiveAccent, lyricsTextPosition = lyricsTextPosition,
                                         respectAgentPositioning = respectAgentPositioning, isAutoScrollEnabled = isAutoScrollEnabled,
                                         displayedCurrentLineIndex = deferredCurrentLineIndex, romanizeAsMain = romanizeAsMain,
                                         enabledLanguages = enabledLanguages, romanizeLyrics = currentSong?.romanizeLyrics == true,
+                                        appleMusicStyle = appleMusicLyrics,
                                         onSizeChanged = { itemHeights[listIndex] = it },
                                         onClick = {
                                             if (isSelectionModeActive) {

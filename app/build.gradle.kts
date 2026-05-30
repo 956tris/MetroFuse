@@ -22,7 +22,6 @@ val baseApplicationId = "com.metrofuse.music"
 val metroFuseVersionCode = 500
 val metroFuseVersionName = "5.0"
 val metroFuseUpdateRepository = "956tris/MetroFuse"
-val discordRpcApplicationId = "1508739806186963045"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
 val appNameOverride = System.getenv("METROLIST_APP_NAME")?.takeIf { it.isNotBlank() }
 val debugKeystorePathOverride = System.getenv("METROLIST_DEBUG_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
@@ -181,8 +180,6 @@ android {
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
         buildConfigField("String", "ARCHITECTURE", "\"universal\"")
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$metroFuseUpdateRepository\"")
-        buildConfigField("long", "DISCORD_RPC_APPLICATION_ID", "${discordRpcApplicationId}L")
-        manifestPlaceholders["discordRpcApplicationId"] = discordRpcApplicationId
     }
 
     splits {
@@ -311,12 +308,6 @@ android {
 
     androidResources {
         generateLocaleConfig = true
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-        }
     }
 
     packaging {
@@ -475,7 +466,6 @@ dependencies {
     implementation(project(":innertube"))
     implementation(project(":kugou"))
     implementation(project(":lrclib"))
-    implementation(files("libs/discord_partner_sdk.aar"))
     implementation(project(":lastfm"))
     implementation(project(":betterlyrics"))
     implementation(project(":shazamkit"))

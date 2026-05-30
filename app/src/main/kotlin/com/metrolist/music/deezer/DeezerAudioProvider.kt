@@ -14,6 +14,7 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
 import com.metrolist.music.constants.DeezerAudioQuality
+import com.metrolist.music.constants.DeezerProxyMode
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -48,6 +49,8 @@ import kotlin.math.roundToInt
 object DeezerAudioProvider {
     const val DEFAULT_RESOLVER_URL = "https://yesitworkssomehow-funny-deeza-api-and-yeah.hf.space/get_url"
     const val DEFAULT_PROXY_URL = ""
+    const val RENDER_RESOLVER_URL = "https://dzmedia-metrofuse.onrender.com/get_url"
+    const val RENDER_PROXY_BASE_URL = "https://dzmedia-metrofuse.onrender.com"
 
     private const val BROWSER_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
@@ -59,11 +62,12 @@ object DeezerAudioProvider {
     private const val NORMAL_SEARCH_LIMIT = 12
     private const val FAST_SEARCH_LIMIT = 4
     private const val RESOLVER_MAX_IN_FLIGHT = 4
-    private const val RESOLVER_PERMIT_TIMEOUT_MS = 8_000L
-    private const val RESOLVER_FAST_MIN_INTERVAL_MS = 80L
-    private const val RESOLVER_NORMAL_MIN_INTERVAL_MS = 140L
+    private const val RESOLVER_PERMIT_TIMEOUT_MS = 4_000L
+    private const val RESOLVER_FAST_MIN_INTERVAL_MS = 40L
+    private const val RESOLVER_NORMAL_MIN_INTERVAL_MS = 70L
     private const val DEFAULT_PROXY_PORT = 3128
     private const val DEFAULT_MEDIA_PROXY_PATH = "/deezer-media-proxy"
+    private const val DEFAULT_API_PROXY_PATH = "/deezer-api-proxy"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val AMAZON_DATE = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US)
 
@@ -311,6 +315,50 @@ object DeezerAudioProvider {
         return config.key
     }
 
+    fun effectiveProxyUrl(
+        configuredProxyModeValue: String?,
+        configuredProxyUrl: String,
+        globalProxyEnabled: Boolean,
+    ): String =
+        effectiveProxyUrl(
+            configuredProxyMode = proxyModeFromPreference(configuredProxyModeValue, configuredProxyUrl),
+            configuredProxyUrl = configuredProxyUrl,
+            globalProxyEnabled = globalProxyEnabled,
+        )
+
+    fun proxyModeFromPreference(
+        configuredProxyModeValue: String?,
+        configuredProxyUrl: String,
+    ): DeezerProxyMode {
+        val normalizedProxyUrl = normalizeProxyUrl(configuredProxyUrl)
+        val inferredMode =
+            when {
+                normalizedProxyUrl.isBlank() -> DeezerProxyMode.DIRECT
+                normalizedProxyUrl == normalizeProxyUrl(RENDER_PROXY_BASE_URL) -> DeezerProxyMode.RENDER
+                else -> DeezerProxyMode.CUSTOM
+            }
+        return runCatching {
+            DeezerProxyMode.valueOf(configuredProxyModeValue.orEmpty())
+        }.getOrDefault(inferredMode)
+    }
+
+    fun effectiveProxyUrl(
+        configuredProxyMode: DeezerProxyMode,
+        configuredProxyUrl: String,
+        globalProxyEnabled: Boolean,
+    ): String {
+        return when (configuredProxyMode) {
+            DeezerProxyMode.DIRECT -> DEFAULT_PROXY_URL
+            DeezerProxyMode.RENDER -> normalizeProxyUrl(RENDER_PROXY_BASE_URL)
+            DeezerProxyMode.CUSTOM -> {
+                val normalized = normalizeProxyUrl(configuredProxyUrl)
+                normalized.ifBlank {
+                    if (globalProxyEnabled) normalizeProxyUrl(RENDER_PROXY_BASE_URL) else DEFAULT_PROXY_URL
+                }
+            }
+        }
+    }
+
     fun isValidProxyUrl(value: String): Boolean =
         value.isBlank() || mediaProxyTemplate(value) != null || proxyConfig(value) != null
 
@@ -325,6 +373,19 @@ object DeezerAudioProvider {
         } else {
             "$template$encodedUrl"
         }
+    }
+
+    private fun wrapApiUrlForProxy(
+        apiUrl: HttpUrl,
+        proxyUrl: String,
+    ): HttpUrl {
+        val template = apiProxyTemplate(proxyUrl) ?: return apiUrl
+        val wrapped = if (template.contains("{url}")) {
+            template.replace("{url}", Uri.encode(apiUrl.toString()))
+        } else {
+            "$template${Uri.encode(apiUrl.toString())}"
+        }
+        return wrapped.toHttpUrlOrNull() ?: apiUrl
     }
 
     fun searchCandidates(
@@ -356,12 +417,6 @@ object DeezerAudioProvider {
             Timber.tag("DeezerAudio").i("Resolved Deezer track ${track.trackId} through ISRC for ${query.title}")
             return track
         }
-        if (!query.fastMode) {
-            resolveSongLinkDeezerTrackId(query)?.let { trackId ->
-                Timber.tag("DeezerAudio").i("Resolved Deezer track $trackId through song.link for ${query.title}")
-                return query.toDirectMatchedTrack(trackId)
-            }
-        }
         for (term in searchTerms(query).let { terms -> if (query.fastMode) terms.take(1) else terms }) {
             val results = searchTracks(
                 term = term,
@@ -370,6 +425,12 @@ object DeezerAudioProvider {
                 proxyUrl = query.proxyUrl,
             ) ?: continue
             selectBestTrack(results, query)?.let { return it }
+        }
+        if (!query.fastMode) {
+            resolveSongLinkDeezerTrackId(query)?.let { trackId ->
+                Timber.tag("DeezerAudio").i("Resolved Deezer track $trackId through song.link for ${query.title}")
+                return query.toDirectMatchedTrack(trackId)
+            }
         }
         return null
     }
@@ -403,7 +464,7 @@ object DeezerAudioProvider {
         val request =
             Request
                 .Builder()
-                .url(url)
+                .url(wrapApiUrlForProxy(url, query.proxyUrl))
                 .get()
                 .header("Accept", "application/json")
                 .header("User-Agent", BROWSER_USER_AGENT)
@@ -444,7 +505,7 @@ object DeezerAudioProvider {
         val request =
             Request
                 .Builder()
-                .url(url)
+                .url(wrapApiUrlForProxy(url, proxyUrl))
                 .get()
                 .header("Accept", "application/json")
                 .header("User-Agent", BROWSER_USER_AGENT)
@@ -470,6 +531,7 @@ object DeezerAudioProvider {
         val wantedIsrc = query.isrc?.trim()?.uppercase(Locale.US).orEmpty()
         val wantedDurationMs = query.durationMs
         val wantedTitleTokens = significantTokens(wantedTitle)
+        val wantedTitleTokenCount = wantedTitleTokens.size
 
         data class Candidate(
             val track: MatchedTrack,
@@ -485,13 +547,14 @@ object DeezerAudioProvider {
             val candidateAlbum = obj.optJSONObject("album")?.stringOrNull("title").normalized()
             val candidateIsrc = obj.stringOrNull("isrc")?.trim()?.uppercase(Locale.US).orEmpty()
             val candidateDurationMs = obj.longOrNull("duration")?.times(1000L)
+            val exactTitleMatch = wantedTitle.isNotBlank() && candidateTitle == wantedTitle
 
             var score = 0
             if (wantedIsrc.isNotBlank() && candidateIsrc == wantedIsrc) {
                 score += 1000
             }
             score += when {
-                candidateTitle == wantedTitle -> 120
+                exactTitleMatch -> 120
                 candidateTitle.contains(wantedTitle) || wantedTitle.contains(candidateTitle) -> 70
                 else -> (tokenOverlap(wantedTitleTokens, significantTokens(candidateTitle)) * 70).roundToInt()
             }
@@ -519,14 +582,28 @@ object DeezerAudioProvider {
                     else -> -90
                 }
             }
-            if (hasVersionMismatch(wantedTitle, candidateTitle)) {
+            val versionMismatch = hasVersionMismatch(wantedTitle, candidateTitle)
+            if (versionMismatch) {
                 score -= 80
             }
             if (candidateTitle.isBlank()) {
                 score = REJECT_SCORE
             }
 
-            if (score >= MIN_MATCH_SCORE || wantedIsrc.isNotBlank() && candidateIsrc == wantedIsrc) {
+            val exactSubtitleMatch =
+                exactTitleMatch &&
+                    wantedTitleTokenCount >= 2 &&
+                    !versionMismatch &&
+                    (wantedDurationMs == null || candidateDurationMs == null || abs(wantedDurationMs - candidateDurationMs) <= 45_000L) &&
+                    (
+                        wantedAlbum.isBlank() ||
+                            candidateAlbum.isBlank() ||
+                            candidateAlbum == wantedAlbum ||
+                            candidateAlbum.contains(wantedAlbum) ||
+                            wantedAlbum.contains(candidateAlbum)
+                    )
+
+            if (score >= MIN_MATCH_SCORE || exactSubtitleMatch || wantedIsrc.isNotBlank() && candidateIsrc == wantedIsrc) {
                 candidates += Candidate(
                     track = MatchedTrack(
                         trackId = trackId,
@@ -579,11 +656,11 @@ object DeezerAudioProvider {
                 .build()
 
         return runCatching {
+            paceResolverRequests(fastMode)
             if (!resolverPermits.tryAcquire(RESOLVER_PERMIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 return StreamAttempt(error = "Deezer resolver is busy")
             }
             try {
-                paceResolverRequests(fastMode)
                 httpClient(fastMode, proxyUrl).newCall(request).execute().use { response ->
                     val payload = response.body.string()
                     if (!response.isSuccessful) {
@@ -735,6 +812,39 @@ object DeezerAudioProvider {
         return if (endpoint.contains("?")) "$endpoint&url=" else "$endpoint?url="
     }
 
+    private fun apiProxyTemplate(value: String): String? {
+        val raw = value.trim()
+        if (raw.isBlank()) return null
+        if (!raw.startsWith("http://", ignoreCase = true) && !raw.startsWith("https://", ignoreCase = true)) {
+            return null
+        }
+
+        val parsed = raw.toHttpUrlOrNull() ?: return null
+        val hasExplicitPort = raw.hasExplicitProxyPort()
+        val path = parsed.encodedPath.trimEnd('/')
+        val isBaseServer = !hasExplicitPort && (path.isBlank() || path == "/")
+        val hasUrlSlot =
+            raw.contains("{url}") ||
+                raw.endsWith("?url=", ignoreCase = true) ||
+                raw.endsWith("&url=", ignoreCase = true)
+        val isApiProxyEndpoint = path.contains("api-proxy", ignoreCase = true) || path.contains("api_proxy", ignoreCase = true)
+        val isMediaProxyEndpoint = path.contains("media-proxy", ignoreCase = true) || path.contains("media_proxy", ignoreCase = true)
+        val isResolverEndpoint =
+            path.equals("/get_url", ignoreCase = true) ||
+                path.equals("/get_url/fast", ignoreCase = true)
+        if (!isBaseServer && !hasUrlSlot && !isApiProxyEndpoint && !isMediaProxyEndpoint && !isResolverEndpoint) return null
+
+        if (hasUrlSlot && isApiProxyEndpoint) return raw
+
+        val endpoint =
+            parsed.newBuilder()
+                .encodedPath(DEFAULT_API_PROXY_PATH)
+                .query(null)
+                .build()
+                .toString()
+        return if (endpoint.contains("?")) "$endpoint&url=" else "$endpoint?url="
+    }
+
     private fun String.hasExplicitProxyPort(): Boolean {
         val authority = substringAfter("://", this)
             .substringBefore('/')
@@ -808,12 +918,16 @@ object DeezerAudioProvider {
 
     private fun searchTerms(query: Query): List<String> =
         buildList {
-            val title = query.title.searchQueryTitle()
+            val titles = query.title.searchQueryTitles()
             val primaryArtist = query.artists.firstOrNull()?.searchQueryArtist().orEmpty()
             val allArtists = query.artists.joinToString(" ") { it.searchQueryArtist() }
-            add(listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" "))
-            add(listOf(title, allArtists).filter { it.isNotBlank() }.joinToString(" "))
-            add(title)
+            val album = query.album?.searchQueryTitle().orEmpty()
+            for (title in titles) {
+                add(listOf(title, primaryArtist).filter { it.isNotBlank() }.joinToString(" "))
+                add(listOf(title, allArtists).filter { it.isNotBlank() }.joinToString(" "))
+                add(listOf(title, primaryArtist, album).filter { it.isNotBlank() }.joinToString(" "))
+                add(title)
+            }
         }.map { it.trim() }
             .filter { it.isNotBlank() }
             .distinct()
@@ -1010,6 +1124,17 @@ object DeezerAudioProvider {
             .replace(Regex("\\s+"), " ")
             .trim()
 
+    private fun String.searchQueryTitles(): List<String> =
+        buildList {
+            val base = searchQueryTitle()
+            add(base)
+            add(base.titleMatchNormalized())
+            add(base.replace(Regex("""[\[(]([^)\]]+)[)\]]"""), " $1 "))
+            add(base.replace(Regex("""[\[(][^)\]]+[)\]]"""), " "))
+        }.map { it.replace(Regex("\\s+"), " ").trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+
     private fun String.searchQueryArtist(): String =
         trim()
             .substringBefore(',')
@@ -1081,7 +1206,7 @@ object DeezerAudioProvider {
         }
 
     private val STOP_WORDS = setOf("the", "a", "an", "and", "or", "of", "to", "in")
-    private val VERSION_TOKENS = setOf("live", "remix", "acoustic", "instrumental", "sped", "slowed")
+    private val VERSION_TOKENS = setOf("live", "remix", "acoustic", "instrumental", "sped", "slowed", "chopped", "choppednotslopped", "slopped")
 }
 
 @UnstableApi

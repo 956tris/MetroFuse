@@ -22,12 +22,14 @@ import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerFastModeKey
+import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.constants.InstagramCookieKey
 import com.metrolist.music.constants.InstagramAppIdKey
 import com.metrolist.music.constants.InstagramUserAgentKey
 import com.metrolist.music.constants.InstagramUuidKey
+import com.metrolist.music.constants.ProxyEnabledKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
@@ -266,7 +268,12 @@ constructor(
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
-        val deezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val configuredDeezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
+            configuredProxyModeValue = context.dataStore.get(DeezerProxyModeKey, ""),
+            configuredProxyUrl = configuredDeezerProxyUrl,
+            globalProxyEnabled = context.dataStore.get(ProxyEnabledKey, false),
+        )
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
@@ -309,7 +316,12 @@ constructor(
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
         val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
-        val deezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val configuredDeezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
+        val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
+            configuredProxyModeValue = context.dataStore.get(DeezerProxyModeKey, ""),
+            configuredProxyUrl = configuredDeezerProxyUrl,
+            globalProxyEnabled = context.dataStore.get(ProxyEnabledKey, false),
+        )
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
         val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)

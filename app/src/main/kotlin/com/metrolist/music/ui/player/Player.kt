@@ -345,6 +345,42 @@ private fun blendColors(
     )
 }
 
+private fun Color.asPlayerControlColor(): Color {
+    val hsv = FloatArray(3)
+    android.graphics.Color.colorToHSV(toArgb(), hsv)
+    hsv[1] = if (hsv[1] < 0.08f) hsv[1] else (hsv[1] * 1.16f).coerceIn(0.18f, 0.9f)
+    hsv[2] = hsv[2].coerceIn(0.34f, 0.78f)
+    return Color(android.graphics.Color.HSVToColor(hsv))
+}
+
+private fun Color.playerControlContentColor(): Color {
+    val luminance = red * 0.299f + green * 0.587f + blue * 0.114f
+    return if (luminance > 0.58f) Color.Black else Color.White
+}
+
+private fun Color.simpleLuminance(): Float =
+    red * 0.299f + green * 0.587f + blue * 0.114f
+
+private fun Color.isNearBlack(): Boolean =
+    red < 0.07f && green < 0.07f && blue < 0.07f
+
+private fun List<Color>.galaxyPlayerControlColor(): Color? {
+    val candidate =
+        getOrNull(2)
+            ?: getOrNull(3)
+            ?: getOrNull(1)
+            ?: firstOrNull()
+
+    if (
+        (size >= 3 && take(3).all { it.isNearBlack() }) ||
+        (size >= 2 && take(2).all { it.isNearBlack() } && (candidate?.simpleLuminance() ?: 1f) < 0.2f)
+    ) {
+        return null
+    }
+
+    return candidate?.asPlayerControlColor()
+}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -994,6 +1030,15 @@ fun BottomSheetPlayer(
         label = "icBackgroundColor",
     )
 
+    val galaxyAlbumControlColor =
+        remember(effectivePlayerBackground, galaxyColors) {
+            if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+                galaxyColors.galaxyPlayerControlColor()
+            } else {
+                null
+            }
+        }
+
     val (textButtonColor, iconButtonColor) =
         when {
             effectivePlayerBackground == PlayerBackgroundStyle.BLUR ||
@@ -1001,7 +1046,11 @@ fun BottomSheetPlayer(
                 effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT -> {
                 when (playerButtonsStyle) {
                     PlayerButtonsStyle.DEFAULT -> {
-                        Pair(Color.White, Color.Black)
+                        if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR && galaxyAlbumControlColor != null) {
+                            Pair(galaxyAlbumControlColor, galaxyAlbumControlColor.playerControlContentColor())
+                        } else {
+                            Pair(Color.White, Color.Black)
+                        }
                     }
 
                     PlayerButtonsStyle.PRIMARY -> {
@@ -1056,7 +1105,11 @@ fun BottomSheetPlayer(
                 when (playerButtonsStyle) {
                     PlayerButtonsStyle.DEFAULT -> {
                         Pair(
-                            Color.White.copy(alpha = 0.2f),
+                            if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR && galaxyAlbumControlColor != null) {
+                                galaxyAlbumControlColor.copy(alpha = 0.42f)
+                            } else {
+                                Color.White.copy(alpha = 0.2f)
+                            },
                             Color.White,
                         )
                     }

@@ -172,6 +172,7 @@ val TidalAnimatedCoversEnabledKey = booleanPreferencesKey("tidalAnimatedCoversEn
 val DeezerResolverUrlKey = stringPreferencesKey("deezerResolverUrl")
 val DeezerAudioQualityKey = stringPreferencesKey("deezerAudioQuality")
 val DeezerFastModeKey = booleanPreferencesKey("deezerFastMode")
+val DeezerProxyModeKey = stringPreferencesKey("deezerProxyMode")
 val DeezerProxyUrlKey = stringPreferencesKey("deezerProxyUrl")
 val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 val QobuzCountryKey = stringPreferencesKey("qobuzCountry")
@@ -193,6 +194,12 @@ enum class DeezerAudioQuality {
     MP3_128,
     MP3_320,
     FLAC,
+}
+
+enum class DeezerProxyMode {
+    DIRECT,
+    RENDER,
+    CUSTOM,
 }
 
 val DeezerAudioQualityOptions =
@@ -316,58 +323,6 @@ val EnableSongCacheKey = booleanPreferencesKey("enableSongCache")
 val PauseListenHistoryKey = booleanPreferencesKey("pauseListenHistory")
 val PauseSearchHistoryKey = booleanPreferencesKey("pauseSearchHistory")
 val DisableScreenshotKey = booleanPreferencesKey("disableScreenshot")
-
-val DiscordAccessTokenKey = stringPreferencesKey("discordAccessToken")
-val DiscordInfoDismissedKey = booleanPreferencesKey("discordInfoDismissed")
-val DiscordUsernameKey = stringPreferencesKey("discordUsername")
-val DiscordNameKey = stringPreferencesKey("discordName")
-val EnableDiscordRPCKey = booleanPreferencesKey("discordRPCEnable")
-val DiscordUseDetailsKey = booleanPreferencesKey("discordUseDetails")
-val DiscordShowProviderKey = booleanPreferencesKey("discordShowProvider")
-val DiscordHideWhenSpotifyHistoryKey = booleanPreferencesKey("discordHideWhenSpotifyHistory")
-val DiscordAvatarKey = stringPreferencesKey("discordAvatar")
-val DiscordStatusKey = stringPreferencesKey("discordStatus")
-val DiscordButton1TextKey = stringPreferencesKey("discordButton1Text")
-val DiscordButton1VisibleKey = booleanPreferencesKey("discordButton1Visible")
-val DiscordButton2TextKey = stringPreferencesKey("discordButton2Text")
-val DiscordButton2VisibleKey = booleanPreferencesKey("discordButton2Visible")
-val DiscordActivityTypeKey = stringPreferencesKey("discordActivityType")
-val DiscordActivityNameKey = stringPreferencesKey("discordActivityName")
-val DiscordAdvancedModeKey = booleanPreferencesKey("discordAdvancedMode")
-val DiscordAnimatedCanvasKey = booleanPreferencesKey("discordAnimatedCanvas")
-val DiscordAnimatedCanvasHighQualityKey = booleanPreferencesKey("discordAnimatedCanvasHighQuality")
-val DiscordAnimatedCanvasQualityKey = stringPreferencesKey("discordAnimatedCanvasQuality")
-
-enum class DiscordAnimatedCanvasQuality(
-    val sizePx: Int,
-    val fps: Int,
-    val seconds: Int,
-) {
-    LOW(
-        sizePx = 448,
-        fps = 15,
-        seconds = 6,
-    ),
-    NORMAL(
-        sizePx = 448,
-        fps = 20,
-        seconds = 10,
-    ),
-    HIGH(
-        sizePx = 512,
-        fps = 25,
-        seconds = 15,
-    ),
-    ;
-
-    val fallback: DiscordAnimatedCanvasQuality?
-        get() =
-            when (this) {
-                HIGH -> NORMAL
-                NORMAL -> LOW
-                LOW -> null
-            }
-}
 
 // Google Cast
 val EnableGoogleCastKey = booleanPreferencesKey("enableGoogleCast")
@@ -671,6 +626,8 @@ val PlayerInlineLyricsKey = booleanPreferencesKey("playerInlineLyrics")
 val PlayerLegacyQualityLabelKey = booleanPreferencesKey("playerLegacyQualityLabel")
 val LivePlaybackBitrateKey = booleanPreferencesKey("livePlaybackBitrate")
 val ExperimentalAppleMusicCoverFadeKey = booleanPreferencesKey("experimentalAppleMusicCoverFade")
+val ExperimentalAppleMusicLyricsKey = booleanPreferencesKey("experimentalAppleMusicLyrics")
+val ExperimentalAppleMusicLyricsSizeKey = floatPreferencesKey("experimentalAppleMusicLyricsSize")
 val ExperimentalSmoothInlineLyricsKey = booleanPreferencesKey("experimentalSmoothInlineLyrics")
 val ShowLyricsKey = booleanPreferencesKey("showLyrics")
 val LyricsTextPositionKey = stringPreferencesKey("lyricsTextPosition")
