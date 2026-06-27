@@ -43,6 +43,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.add
 import kotlinx.serialization.json.longOrNull
 import okhttp3.Cookie
 import okhttp3.FormBody
@@ -765,8 +767,30 @@ object SpotifyCanvasClient {
         liked: Boolean,
     ): Boolean =
         withContext(Dispatchers.IO) {
-            val trackId = trackUriOrId.spotifyTrackId() ?: return@withContext false
+            val trackUri = trackUriOrId.spotifyTrackUri() ?: return@withContext false
             val normalizedCookie = normalizeSpotifyCookieInput(cookie) ?: return@withContext false
+            val operation = if (liked) "addToLibrary" else "removeFromLibrary"
+            val hash = "7c5a69420e2bfae3da5cc4e14cbc8bb3f6090f80afc00ffc179177f19be3f33d"
+            val variables = buildJsonObject {
+                putJsonArray("libraryItemUris") {
+                    add(trackUri)
+                }
+            }
+            val gqlSuccess = runCatching {
+                postGraphQl<JsonObject>(
+                    operation = operation,
+                    variables = variables,
+                    cookie = normalizedCookie,
+                    hashOverride = hash,
+                )
+                true
+            }.onFailure { error ->
+                Timber.w(error, "Spotify GraphQL %s failed for %s", operation, trackUri)
+            }.getOrDefault(false)
+
+            if (gqlSuccess) return@withContext true
+
+            val trackId = trackUriOrId.spotifyTrackId() ?: return@withContext false
             val webToken =
                 runCatching { ensureWebToken(normalizedCookie) }
                     .onFailure { error -> Timber.w(error, "Spotify like token refresh failed") }
