@@ -26,32 +26,22 @@ object QobuzAudioProvider {
     const val BROWSER_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
 
-    private const val SQUID_BASE_URL = "https://qobuz.squid.wtf"
-    private const val JUMO_BASE_URL = "https://jumo-dl.pages.dev"
     private const val KENNY_BASE_URL = "https://qobuz.kennyy.com.br"
-    private const val MONOCHROME_BASE_URL = "https://qdl-api.monochrome.tf"
-    private const val SCAVENGER_BASE_URL = "https://mono.scavengerfurs.net"
-    private const val TRYPT_BASE_URL = "https://trypt-hifi-dl-456461932686.us-west1.run.app"
+    private const val KENNY_MIRROR_BASE_URL = "https://qobuz2.kennyy.com.br"
     private const val STREAM_CACHE_MS = 5 * 60 * 1000L
+    private const val MIN_DURATION_FOR_PREVIEW_REJECTION_MS = 75_000L
+    private const val MAX_PREVIEW_DURATION_MS = 45_000L
+    private const val MIN_FULL_LOSSY_BITRATE_BPS = 96_000
+    private const val MIN_FULL_LOSSLESS_BITRATE_BPS = 400_000
     private const val REJECT_SCORE = -1_000_000
 
-    private val JUMO_SUPPORTED_REGIONS = setOf("JP", "US")
-
     enum class ResolverBackend {
-        JUMO,
         KENNY,
-        SQUID,
-        MONOCHROME,
-        SCAVENGER,
-        TRYPT,
     }
 
     private enum class SearchBackend {
         KENNY,
-        SQUID,
-        MONOCHROME,
-        SCAVENGER,
-        TRYPT,
+        KENNY_MIRROR,
     }
 
     data class Query(
@@ -64,6 +54,7 @@ object QobuzAudioProvider {
         val countryCode: String,
         val backend: ResolverBackend,
         val qualityCode: Int = 27,
+        val customInstances: String? = null,
     )
 
     data class Resolved(
@@ -113,19 +104,26 @@ object QobuzAudioProvider {
     private val trackCache = ConcurrentHashMap<String, MatchedTrack>()
     private val streamCache = ConcurrentHashMap<String, Resolved>()
 
+    fun resolverInstanceBases(customInstances: String? = null): List<String> =
+        customInstances.orEmpty()
+            .split('\n', '\r', ',', ';', '\t', ' ')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .mapNotNull { token ->
+                val candidate = token.removeSuffix("/")
+                    .let { if (it.contains("://")) it else "https://$it" }
+                candidate.toHttpUrlOrNull()?.toString()?.trimEnd('/')
+            }
+            .distinctBy { it.lowercase(Locale.US) }
+            .takeIf { it.isNotEmpty() }
+            ?: listOf(KENNY_BASE_URL, KENNY_MIRROR_BASE_URL)
+
     fun normalizeResolverRegion(
         countryCode: String,
         backend: ResolverBackend,
     ): String {
         val normalized = countryCode.trim().uppercase(Locale.US)
-        return when (backend) {
-            ResolverBackend.JUMO -> normalized.takeIf { it in JUMO_SUPPORTED_REGIONS } ?: "US"
-            ResolverBackend.KENNY -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
-            ResolverBackend.SQUID -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
-            ResolverBackend.MONOCHROME -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
-            ResolverBackend.SCAVENGER -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
-            ResolverBackend.TRYPT -> normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
-        }
+        return normalized.takeIf { it.matches(Regex("[A-Z]{2}")) } ?: "US"
     }
 
     fun resolve(query: Query): Resolved {
@@ -187,28 +185,6 @@ object QobuzAudioProvider {
         return results.values.toList()
     }
 
-    private fun streamBackendOrder(preferred: ResolverBackend): List<ResolverBackend> {
-        return when (preferred) {
-            ResolverBackend.JUMO -> listOf(ResolverBackend.JUMO, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.SQUID)
-            ResolverBackend.KENNY -> listOf(ResolverBackend.KENNY, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.JUMO, ResolverBackend.SQUID)
-            ResolverBackend.SQUID -> listOf(ResolverBackend.SQUID, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO)
-            ResolverBackend.MONOCHROME -> listOf(ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
-            ResolverBackend.SCAVENGER -> listOf(ResolverBackend.SCAVENGER, ResolverBackend.MONOCHROME, ResolverBackend.TRYPT, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
-            ResolverBackend.TRYPT -> listOf(ResolverBackend.TRYPT, ResolverBackend.MONOCHROME, ResolverBackend.SCAVENGER, ResolverBackend.KENNY, ResolverBackend.JUMO, ResolverBackend.SQUID)
-        }
-    }
-
-    private fun searchBackendOrder(preferred: ResolverBackend): List<SearchBackend> {
-        return when (preferred) {
-            ResolverBackend.JUMO -> listOf(SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.SQUID, SearchBackend.KENNY)
-            ResolverBackend.KENNY -> listOf(SearchBackend.KENNY, SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.SQUID)
-            ResolverBackend.SQUID -> listOf(SearchBackend.SQUID, SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.KENNY)
-            ResolverBackend.MONOCHROME -> listOf(SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.TRYPT, SearchBackend.KENNY, SearchBackend.SQUID)
-            ResolverBackend.SCAVENGER -> listOf(SearchBackend.SCAVENGER, SearchBackend.MONOCHROME, SearchBackend.TRYPT, SearchBackend.KENNY, SearchBackend.SQUID)
-            ResolverBackend.TRYPT -> listOf(SearchBackend.TRYPT, SearchBackend.MONOCHROME, SearchBackend.SCAVENGER, SearchBackend.KENNY, SearchBackend.SQUID)
-        }
-    }
-
     private fun findBestTrack(query: Query): MatchedTrack? {
         for (term in searchTerms(query)) {
             raceBestTrack(term, query)?.let { return it }
@@ -221,9 +197,9 @@ object QobuzAudioProvider {
         query: Query,
     ): JSONArray? =
         raceFirstNotNull(
-            searchBackendOrder(query.backend).map { backend ->
+            resolverInstanceBases(query.customInstances).map { baseUrl ->
                 {
-                    searchTracks(term, query.countryCode, backend)
+                    searchTracks(term, query.countryCode, baseUrl)
                         ?.takeIf { it.length() > 0 }
                 }
             },
@@ -234,9 +210,9 @@ object QobuzAudioProvider {
         query: Query,
     ): MatchedTrack? =
         raceFirstNotNull(
-            searchBackendOrder(query.backend).map { backend ->
+            resolverInstanceBases(query.customInstances).map { baseUrl ->
                 {
-                    searchTracks(term, query.countryCode, backend)
+                    searchTracks(term, query.countryCode, baseUrl)
                         ?.let { selectBestTrack(it, query) }
                 }
             },
@@ -249,13 +225,13 @@ object QobuzAudioProvider {
     ): StreamAttempt {
         val errors = Collections.synchronizedList(mutableListOf<String>())
         return raceFirstNotNull(
-            streamBackendOrder(query.backend).map { backend ->
+            resolverInstanceBases(query.customInstances).map { baseUrl ->
                 {
-                    requestStream(
-                        backend = backend,
+                    requestKennyStream(
+                        baseUrl = baseUrl,
                         track = track,
                         qualityCode = qualityCode,
-                        query = query,
+                        durationMs = query.durationMs,
                     ).also { attempt ->
                         if (attempt.resolved == null && !attempt.error.isNullOrBlank()) {
                             errors.add(attempt.error)
@@ -265,45 +241,6 @@ object QobuzAudioProvider {
             },
         ) ?: StreamAttempt(error = errors.lastOrNull())
     }
-
-    private fun requestStream(
-        backend: ResolverBackend,
-        track: MatchedTrack,
-        qualityCode: Int,
-        query: Query,
-    ): StreamAttempt =
-        when (backend) {
-            ResolverBackend.JUMO -> requestJumoStream(
-                track = track,
-                qualityCode = qualityCode,
-                region = normalizeResolverRegion(query.countryCode, ResolverBackend.JUMO),
-                durationMs = query.durationMs,
-            )
-            ResolverBackend.KENNY -> requestKennyStream(track, qualityCode, query.durationMs)
-            ResolverBackend.SQUID -> requestSquidStream(track, query.countryCode, qualityCode, query.durationMs)
-            ResolverBackend.MONOCHROME -> requestQobuzProxyStream(
-                name = "Monochrome",
-                baseUrl = MONOCHROME_BASE_URL,
-                track = track,
-                qualityCode = qualityCode,
-                region = normalizeResolverRegion(query.countryCode, ResolverBackend.MONOCHROME),
-                durationMs = query.durationMs,
-            )
-            ResolverBackend.SCAVENGER -> requestQobuzProxyStream(
-                name = "Scavenger",
-                baseUrl = SCAVENGER_BASE_URL,
-                track = track,
-                qualityCode = qualityCode,
-                region = normalizeResolverRegion(query.countryCode, ResolverBackend.SCAVENGER),
-                durationMs = query.durationMs,
-            )
-            ResolverBackend.TRYPT -> requestTrypTStream(
-                track = track,
-                qualityCode = qualityCode,
-                region = normalizeResolverRegion(query.countryCode, ResolverBackend.TRYPT),
-                durationMs = query.durationMs,
-            )
-        }
 
     private fun <T : Any> raceFirstNotNull(tasks: List<() -> T?>): T? {
         if (tasks.isEmpty()) return null
@@ -338,15 +275,8 @@ object QobuzAudioProvider {
     private fun searchTracks(
         term: String,
         countryCode: String,
-        backend: SearchBackend,
+        baseUrl: String,
     ): JSONArray? {
-        val baseUrl = when (backend) {
-            SearchBackend.KENNY -> KENNY_BASE_URL
-            SearchBackend.SQUID -> SQUID_BASE_URL
-            SearchBackend.MONOCHROME -> MONOCHROME_BASE_URL
-            SearchBackend.SCAVENGER -> SCAVENGER_BASE_URL
-            SearchBackend.TRYPT -> TRYPT_BASE_URL
-        }
         val url = "$baseUrl/api/get-music".toHttpUrlOrNull()
             ?.newBuilder()
             ?.addQueryParameter("q", term)
@@ -354,20 +284,13 @@ object QobuzAudioProvider {
             ?.build()
             ?: return null
 
-        val requestBuilder = Request.Builder()
+        val request = Request.Builder()
             .url(url)
             .get()
             .header("Accept", "application/json")
             .header("Referer", "$baseUrl/")
             .header("User-Agent", "Mozilla/5.0")
-        when (backend) {
-            SearchBackend.SQUID,
-            SearchBackend.MONOCHROME,
-            SearchBackend.SCAVENGER,
-            SearchBackend.TRYPT -> requestBuilder.header("Token-Country", countryCode)
-            SearchBackend.KENNY -> Unit
-        }
-        val request = requestBuilder.build()
+            .build()
 
         return runCatching {
             client.newCall(request).execute().use { response ->
@@ -498,243 +421,13 @@ object QobuzAudioProvider {
         return candidates.maxByOrNull { it.score }?.track
     }
 
-    private fun requestSquidStream(
-        track: MatchedTrack,
-        countryCode: String,
-        qualityCode: Int,
-        durationMs: Long?,
-    ): StreamAttempt {
-        val url = "$SQUID_BASE_URL/api/download-music".toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("track_id", track.trackId)
-            ?.addQueryParameter("quality", qualityCode.toString())
-            ?.build()
-            ?: return StreamAttempt(error = "Qobuz request URL could not be built")
-
-        val initialAttempt = executeSquidStreamRequest(
-            request = buildSquidStreamRequest(
-                url = url,
-                countryCode = countryCode,
-                cookieHeader = SquidAltchaWebViewSolver.cookieHeaderOrNull(),
-            ),
-            track = track,
-            qualityCode = qualityCode,
-            durationMs = durationMs,
-        )
-        if (!initialAttempt.captchaRequired) {
-            return initialAttempt
-        }
-
-        SquidAltchaWebViewSolver.invalidate()
-        val verifiedCookie = SquidAltchaWebViewSolver.solve(SQUID_BASE_URL, BROWSER_USER_AGENT)
-            ?: return StreamAttempt(error = "Qobuz Squid requires ALTCHA verification, but the ALTCHA solver failed")
-
-        val retryAttempt = executeSquidStreamRequest(
-            request = buildSquidStreamRequest(
-                url = url,
-                countryCode = countryCode,
-                cookieHeader = verifiedCookie,
-            ),
-            track = track,
-            qualityCode = qualityCode,
-            durationMs = durationMs,
-        )
-        if (retryAttempt.captchaRequired) {
-            SquidAltchaWebViewSolver.invalidate()
-        }
-        return retryAttempt
-    }
-
-    private fun buildSquidStreamRequest(
-        url: okhttp3.HttpUrl,
-        countryCode: String,
-        cookieHeader: String?,
-    ): Request {
-        val builder = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "application/json")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Token-Country", countryCode)
-            .header("Origin", SQUID_BASE_URL)
-            .header("Referer", "$SQUID_BASE_URL/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-        if (!cookieHeader.isNullOrBlank()) {
-            builder.header("Cookie", cookieHeader)
-        }
-        return builder.build()
-    }
-
-    private fun executeSquidStreamRequest(
-        request: Request,
-        track: MatchedTrack,
-        qualityCode: Int,
-        durationMs: Long?,
-    ): StreamAttempt =
-        runCatching {
-            client.newCall(request).execute().use { response ->
-                parseSquidStreamResponse(
-                    responseCode = response.code,
-                    successful = response.isSuccessful,
-                    payload = response.body.string(),
-                    track = track,
-                    qualityCode = qualityCode,
-                    durationMs = durationMs,
-                )
-            }
-        }.getOrElse { error ->
-            StreamAttempt(error = "Qobuz request failed: ${error.message ?: error.javaClass.simpleName}")
-        }
-
-    private fun parseSquidStreamResponse(
-        responseCode: Int,
-        successful: Boolean,
-        payload: String,
-        track: MatchedTrack,
-        qualityCode: Int,
-        durationMs: Long?,
-    ): StreamAttempt {
-        if (payload.isBlank()) {
-            return StreamAttempt(error = "Qobuz returned an empty response")
-        }
-        val root = runCatching { JSONObject(payload) }.getOrNull()
-        if (!successful) {
-            val apiError = root?.stringOrNull("error")
-            if (responseCode == 403 && apiError.equals("Captcha required.", ignoreCase = true)) {
-                return StreamAttempt(
-                    error = "Qobuz Squid requires ALTCHA verification",
-                    captchaRequired = true,
-                )
-            }
-            return StreamAttempt(error = "Qobuz HTTP $responseCode: ${payload.take(160)}")
-        }
-        if (root == null) {
-            return StreamAttempt(error = "Qobuz returned invalid JSON")
-        }
-        if (!root.optBoolean("success", false)) {
-            val apiError = root.stringOrNull("error")
-            val message = if (apiError.equals("Captcha required.", ignoreCase = true)) {
-                "Qobuz Squid requires ALTCHA verification"
-            } else {
-                "Qobuz rejected quality $qualityCode: ${apiError ?: "unknown error"}"
-            }
-            return StreamAttempt(
-                error = message,
-                captchaRequired = apiError.equals("Captcha required.", ignoreCase = true),
-            )
-        }
-
-        val data = root.optJSONObject("data")
-        val streamUrl = data?.stringOrNull("url")
-            ?: return StreamAttempt(error = "Qobuz did not return a stream URL for quality $qualityCode")
-        val bitDepth = data.intOrNull("bit_depth") ?: track.bitDepth
-        val samplingRate = data.doubleOrNull("sampling_rate") ?: track.samplingRateKhz
-        val lossyBitrate = data.intOrNull("bitrate")
-            ?: data.intOrNull("bit_rate")
-            ?: root.intOrNull("bitrate")
-            ?: root.intOrNull("bit_rate")
-        val effectiveDurationMs = durationMs ?: track.durationMs
-        val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
-            ?: normalizeBitrate(
-                data.intOrNull("average_bitrate")
-                    ?: root.intOrNull("average_bitrate")
-            ).takeIf { it > 0 }
-        val format = formatFrom(
-            mimeType = if (qualityCode == 5) "audio/mpeg" else "audio/flac",
-            bitDepth = bitDepth,
-            samplingRateKhz = samplingRate,
-            bitrate = lossyBitrate,
-            losslessBitrate = losslessBitrate,
-            hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || qualityCode >= 7,
-        )
-        return StreamAttempt(resolved = format.toResolved(streamUrl, track.trackId))
-    }
-
-    private fun requestJumoStream(
-        track: MatchedTrack,
-        qualityCode: Int,
-        region: String,
-        durationMs: Long?,
-    ): StreamAttempt {
-        val url = "$JUMO_BASE_URL/fetch".toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("track_id", track.trackId)
-            ?.addQueryParameter("format_id", qualityCode.toString())
-            ?.addQueryParameter("region", region)
-            ?.build()
-            ?: return StreamAttempt(error = "JUMO request URL could not be built")
-
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "application/json,text/plain,*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Origin", JUMO_BASE_URL)
-            .header("Referer", "$JUMO_BASE_URL/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-            .build()
-
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                val payload = response.body.string()
-                if (!response.isSuccessful) {
-                    return@use StreamAttempt(error = "JUMO HTTP ${response.code}: ${payload.take(160)}")
-                }
-                if (payload.isBlank()) {
-                    return@use StreamAttempt(error = "JUMO returned an empty response")
-                }
-                val root = JSONObject(payload)
-                root.stringOrNull("error")?.takeIf { it.isNotBlank() }?.let { apiError ->
-                    return@use StreamAttempt(error = "JUMO rejected quality $qualityCode: $apiError")
-                }
-                if (root.optBoolean("previewDetected", false)) {
-                    return@use StreamAttempt(error = "JUMO returned a preview instead of a full Qobuz stream")
-                }
-
-                val streamUrl = root.stringOrNull("directUrl")
-                    ?: root.stringOrNull("url")
-                    ?: return@use StreamAttempt(error = "JUMO did not return a stream URL for quality $qualityCode")
-                val actualQualityCode = root.intOrNull("format_id")
-                    ?: streamFormatId(streamUrl)
-                    ?: qualityCode
-                val effectiveDurationMs = root.intOrNull("duration")?.toLong()?.times(1000L)
-                    ?: durationMs
-                    ?: track.durationMs
-                val bitDepth = root.intOrNull("bit_depth") ?: track.bitDepth
-                val samplingRate = root.doubleOrNull("sampling_rate") ?: track.samplingRateKhz
-                val mimeType = root.stringOrNull("mime_type")
-                    ?: if (actualQualityCode == 5) "audio/mpeg" else "audio/flac"
-                val lossyBitrate = root.intOrNull("bitrate")
-                    ?: root.intOrNull("bit_rate")
-                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
-                    ?: normalizeBitrate(root.intOrNull("average_bitrate")).takeIf { it > 0 }
-                val hires = (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || actualQualityCode >= 7
-                val format = formatFrom(
-                    mimeType = mimeType,
-                    bitDepth = bitDepth,
-                    samplingRateKhz = samplingRate,
-                    bitrate = lossyBitrate,
-                    losslessBitrate = losslessBitrate,
-                    hires = hires,
-                )
-                StreamAttempt(
-                    resolved = format.toResolved(
-                        url = streamUrl,
-                        trackId = root.stringOrNull("resolvedTrackId") ?: track.trackId,
-                    )
-                )
-            }
-        }.getOrElse { error ->
-            StreamAttempt(error = "JUMO request failed: ${error.message ?: error.javaClass.simpleName}")
-        }
-    }
-
     private fun requestKennyStream(
+        baseUrl: String,
         track: MatchedTrack,
         qualityCode: Int,
         durationMs: Long?,
     ): StreamAttempt {
-        val url = "$KENNY_BASE_URL/api/download-music".toHttpUrlOrNull()
+        val url = "$baseUrl/api/download-music".toHttpUrlOrNull()
             ?.newBuilder()
             ?.addQueryParameter("track_id", track.trackId)
             ?.addQueryParameter("quality", qualityCode.toString())
@@ -746,8 +439,8 @@ object QobuzAudioProvider {
             .get()
             .header("Accept", "application/json,text/plain,*/*")
             .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Origin", KENNY_BASE_URL)
-            .header("Referer", "$KENNY_BASE_URL/")
+            .header("Origin", baseUrl)
+            .header("Referer", "$baseUrl/")
             .header("User-Agent", BROWSER_USER_AGENT)
             .build()
 
@@ -804,180 +497,6 @@ object QobuzAudioProvider {
             }
         }.getOrElse { error ->
             StreamAttempt(error = "Kenny request failed: ${error.message ?: error.javaClass.simpleName}")
-        }
-    }
-
-    private fun requestQobuzProxyStream(
-        name: String,
-        baseUrl: String,
-        track: MatchedTrack,
-        qualityCode: Int,
-        region: String,
-        durationMs: Long?,
-    ): StreamAttempt {
-        val url = "$baseUrl/api/download-music".toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("track_id", track.trackId)
-            ?.addQueryParameter("quality", qualityCode.toString())
-            ?.build()
-            ?: return StreamAttempt(error = "$name request URL could not be built")
-
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "application/json,text/plain,*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Token-Country", region)
-            .header("Origin", baseUrl)
-            .header("Referer", "$baseUrl/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-            .build()
-
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                val payload = response.body.string()
-                if (!response.isSuccessful) {
-                    return@use StreamAttempt(error = "$name HTTP ${response.code}: ${payload.take(160)}")
-                }
-                if (payload.isBlank()) {
-                    return@use StreamAttempt(error = "$name returned an empty response")
-                }
-                val root = JSONObject(payload)
-                if (!root.optBoolean("success", false)) {
-                    val apiError = root.stringOrNull("error")
-                        ?: root.stringOrNull("message")
-                    return@use StreamAttempt(
-                        error = "$name rejected quality $qualityCode: ${apiError ?: "unknown error"}"
-                    )
-                }
-
-                val data = root.optJSONObject("data")
-                val streamUrl = data?.stringOrNull("url")
-                    ?: root.stringOrNull("url")
-                    ?: return@use StreamAttempt(error = "$name did not return a stream URL for quality $qualityCode")
-                val actualQualityCode = data?.intOrNull("format_id")
-                    ?: root.intOrNull("format_id")
-                    ?: streamFormatId(streamUrl)
-                    ?: qualityCode
-                val bitDepth = data?.intOrNull("bit_depth")
-                    ?: data?.intOrNull("bitDepth")
-                    ?: track.bitDepth
-                val samplingRate = data?.doubleOrNull("sampling_rate")
-                    ?: data?.doubleOrNull("sampleRate")
-                    ?: data?.doubleOrNull("samplingRate")
-                    ?: track.samplingRateKhz
-                val mimeType = data?.stringOrNull("mime_type")
-                    ?: data?.stringOrNull("mimeType")
-                    ?: if (actualQualityCode == 5) "audio/mpeg" else "audio/flac"
-                val lossyBitrate = data?.intOrNull("bitrate")
-                    ?: data?.intOrNull("bit_rate")
-                val effectiveDurationMs = durationMs ?: track.durationMs
-                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
-                    ?: normalizeBitrate(data?.intOrNull("average_bitrate")).takeIf { it > 0 }
-                val hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || actualQualityCode >= 7
-                val format = formatFrom(
-                    mimeType = mimeType,
-                    bitDepth = bitDepth,
-                    samplingRateKhz = samplingRate,
-                    bitrate = lossyBitrate,
-                    losslessBitrate = losslessBitrate,
-                    hires = hires,
-                )
-                StreamAttempt(
-                    resolved = format.toResolved(
-                        url = streamUrl,
-                        trackId = track.trackId,
-                    )
-                )
-            }
-        }.getOrElse { error ->
-            StreamAttempt(error = "$name request failed: ${error.message ?: error.javaClass.simpleName}")
-        }
-    }
-
-    private fun requestTrypTStream(
-        track: MatchedTrack,
-        qualityCode: Int,
-        region: String,
-        durationMs: Long?,
-    ): StreamAttempt {
-        val url = "$TRYPT_BASE_URL/api/download-music".toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("track_id", track.trackId)
-            ?.addQueryParameter("quality", qualityCode.toString())
-            ?.build()
-            ?: return StreamAttempt(error = "TrypT request URL could not be built")
-
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "application/json,text/plain,*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Token-Country", region)
-            .header("Origin", TRYPT_BASE_URL)
-            .header("Referer", "$TRYPT_BASE_URL/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-            .build()
-
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                val payload = response.body.string()
-                if (!response.isSuccessful) {
-                    return@use StreamAttempt(error = "TrypT HTTP ${response.code}: ${payload.take(160)}")
-                }
-                if (payload.isBlank()) {
-                    return@use StreamAttempt(error = "TrypT returned an empty response")
-                }
-                val root = JSONObject(payload)
-                if (!root.optBoolean("success", false)) {
-                    val apiError = root.stringOrNull("error")
-                        ?: root.stringOrNull("message")
-                    return@use StreamAttempt(
-                        error = "TrypT rejected quality $qualityCode: ${apiError ?: "unknown error"}"
-                    )
-                }
-
-                val data = root.optJSONObject("data")
-                val streamUrl = data?.stringOrNull("url")
-                    ?: root.stringOrNull("url")
-                    ?: return@use StreamAttempt(error = "TrypT did not return a stream URL for quality $qualityCode")
-                val actualQualityCode = data?.intOrNull("format_id")
-                    ?: root.intOrNull("format_id")
-                    ?: streamFormatId(streamUrl)
-                    ?: qualityCode
-                val bitDepth = data?.intOrNull("bit_depth")
-                    ?: data?.intOrNull("bitDepth")
-                    ?: track.bitDepth
-                val samplingRate = data?.doubleOrNull("sampling_rate")
-                    ?: data?.doubleOrNull("sampleRate")
-                    ?: data?.doubleOrNull("samplingRate")
-                    ?: track.samplingRateKhz
-                val mimeType = data?.stringOrNull("mime_type")
-                    ?: data?.stringOrNull("mimeType")
-                    ?: if (actualQualityCode == 5) "audio/mpeg" else "audio/flac"
-                val lossyBitrate = data?.intOrNull("bitrate")
-                    ?: data?.intOrNull("bit_rate")
-                val effectiveDurationMs = durationMs ?: track.durationMs
-                val losslessBitrate = estimateStreamBitrateFromContentLength(streamUrl, effectiveDurationMs)
-                    ?: normalizeBitrate(data?.intOrNull("average_bitrate")).takeIf { it > 0 }
-                val hires = track.hires || (bitDepth ?: 0) > 16 || (samplingRate ?: 0.0) > 44.1 || actualQualityCode >= 7
-                val format = formatFrom(
-                    mimeType = mimeType,
-                    bitDepth = bitDepth,
-                    samplingRateKhz = samplingRate,
-                    bitrate = lossyBitrate,
-                    losslessBitrate = losslessBitrate,
-                    hires = hires,
-                )
-                StreamAttempt(
-                    resolved = format.toResolved(
-                        url = streamUrl,
-                        trackId = track.trackId,
-                    )
-                )
-            }
-        }.getOrElse { error ->
-            StreamAttempt(error = "TrypT request failed: ${error.message ?: error.javaClass.simpleName}")
         }
     }
 
@@ -1059,11 +578,51 @@ object QobuzAudioProvider {
     ): Int? {
         val safeDuration = durationMs?.takeIf { it > 0L } ?: return null
         val length = fetchStreamContentLength(url) ?: return null
+        return estimateStreamBitrateFromContentLength(length, safeDuration)
+    }
+
+    private fun estimateStreamBitrateFromContentLength(
+        contentLength: Long?,
+        durationMs: Long?,
+    ): Int? {
+        val safeDuration = durationMs?.takeIf { it > 0L } ?: return null
+        val length = contentLength?.takeIf { it > 0L } ?: return null
         val bitrate = (length * 8L * 1000L) / safeDuration
         return bitrate
             .takeIf { it in 32_000L..20_000_000L }
             ?.coerceAtMost(Int.MAX_VALUE.toLong())
             ?.toInt()
+    }
+
+    private fun previewRejection(
+        providerName: String,
+        contentLength: Long?,
+        expectedDurationMs: Long?,
+        returnedDurationMs: Long?,
+        qualityCode: Int,
+        mimeType: String,
+    ): String? {
+        val expected = expectedDurationMs?.takeIf { it >= MIN_DURATION_FOR_PREVIEW_REJECTION_MS } ?: return null
+        val lowerMime = mimeType.lowercase(Locale.US)
+        val isLossy = qualityCode == 5 ||
+            lowerMime.contains("mpeg") ||
+            lowerMime.contains("mp3") ||
+            lowerMime.contains("aac") ||
+            lowerMime.contains("mp4")
+
+        returnedDurationMs
+            ?.takeIf { it in 1L..MAX_PREVIEW_DURATION_MS && expected - it > 20_000L }
+            ?.let { returned ->
+                return "$providerName returned a ${returned / 1000}s preview instead of the full Qobuz stream"
+            }
+
+        val estimatedBitrate = estimateStreamBitrateFromContentLength(contentLength, expected) ?: return null
+        val minimumBitrate = if (isLossy) MIN_FULL_LOSSY_BITRATE_BPS else MIN_FULL_LOSSLESS_BITRATE_BPS
+        return if (estimatedBitrate < minimumBitrate) {
+            "$providerName returned a likely preview stream (${estimatedBitrate / 1000} kbps over ${expected / 1000}s)"
+        } else {
+            null
+        }
     }
 
     private fun fetchStreamContentLength(url: String): Long? {
