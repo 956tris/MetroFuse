@@ -62,10 +62,6 @@ import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
-import com.metrolist.music.constants.QobuzBackend
-import com.metrolist.music.constants.QobuzBackendOptions
-import com.metrolist.music.constants.QobuzBackendKey
-import com.metrolist.music.constants.QobuzCountryKey
 import com.metrolist.music.constants.RememberShuffleAndRepeatKey
 import com.metrolist.music.constants.ResumeOnBluetoothConnectKey
 import com.metrolist.music.constants.SeekExtraSeconds
@@ -151,14 +147,6 @@ fun PlayerSettings(
     val (audioNormalization, onAudioNormalizationChange) = rememberPreference(
         AudioNormalizationKey,
         defaultValue = true
-    )
-    val (qobuzBackend, onQobuzBackendChange) = rememberEnumPreference(
-        QobuzBackendKey,
-        defaultValue = QobuzBackend.JUMO
-    )
-    val (qobuzCountry, onQobuzCountryChange) = rememberPreference(
-        QobuzCountryKey,
-        defaultValue = "US"
     )
 
     val (loudnessLevel, onLoudnessLevelChange) = rememberEnumPreference(
@@ -250,12 +238,6 @@ fun PlayerSettings(
     var showAudioQualityDialog by remember {
         mutableStateOf(false)
     }
-    var showQobuzBackendDialog by remember {
-        mutableStateOf(false)
-    }
-    var showQobuzCountryDialog by remember {
-        mutableStateOf(false)
-    }
 
     var showLoudnessLevelDialog by remember {
         mutableStateOf(false)
@@ -285,43 +267,6 @@ fun PlayerSettings(
                     AudioQuality.VERY_HIGH -> stringResource(R.string.audio_quality_very_high)
                 }
             }
-        )
-    }
-
-    if (showQobuzBackendDialog) {
-        EnumDialog(
-            onDismiss = { showQobuzBackendDialog = false },
-            onSelect = {
-                onQobuzBackendChange(it)
-                showQobuzBackendDialog = false
-            },
-            title = stringResource(R.string.qobuz_backend),
-            current = qobuzBackend,
-            values = QobuzBackendOptions,
-            valueText = {
-                when (it) {
-                    QobuzBackend.TRYPT -> stringResource(R.string.qobuz_backend_trypt)
-                    QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
-                    QobuzBackend.MONOCHROME -> stringResource(R.string.qobuz_backend_monochrome)
-                    QobuzBackend.SCAVENGER -> stringResource(R.string.qobuz_backend_scavenger)
-                    QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
-                    QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
-                }
-            }
-        )
-    }
-
-    if (showQobuzCountryDialog) {
-        TextFieldDialog(
-            title = { Text(stringResource(R.string.qobuz_country)) },
-            icon = { Icon(painterResource(R.drawable.language), null) },
-            initialTextFieldValue = TextFieldValue(qobuzCountry),
-            isInputValid = { it.trim().matches(Regex("[A-Za-z]{2}")) },
-            onDone = {
-                onQobuzCountryChange(it.trim().uppercase(Locale.US))
-                showQobuzCountryDialog = false
-            },
-            onDismiss = { showQobuzCountryDialog = false },
         )
     }
 
@@ -440,29 +385,6 @@ fun PlayerSettings(
                         )
                     },
                     onClick = { onStopOnProviderErrorChange(!stopOnProviderError) }
-                ))
-                add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.settings),
-                    title = { Text(stringResource(R.string.qobuz_backend)) },
-                    description = {
-                        Text(
-                            when (qobuzBackend) {
-                                QobuzBackend.TRYPT -> stringResource(R.string.qobuz_backend_trypt)
-                                QobuzBackend.JUMO -> stringResource(R.string.qobuz_backend_jumo)
-                                QobuzBackend.MONOCHROME -> stringResource(R.string.qobuz_backend_monochrome)
-                                QobuzBackend.SCAVENGER -> stringResource(R.string.qobuz_backend_scavenger)
-                                QobuzBackend.KENNY -> stringResource(R.string.qobuz_backend_kenny)
-                                QobuzBackend.SQUID -> stringResource(R.string.qobuz_backend_squid)
-                            }
-                        )
-                    },
-                    onClick = { showQobuzBackendDialog = true }
-                ))
-                add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.language),
-                    title = { Text(stringResource(R.string.qobuz_country)) },
-                    description = { Text(stringResource(R.string.qobuz_country_desc, qobuzCountry.uppercase(Locale.US))) },
-                    onClick = { showQobuzCountryDialog = true }
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.shuffle),

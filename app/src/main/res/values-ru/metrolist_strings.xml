@@ -30,7 +30,7 @@
         <item quantity="many">%d секунд</item>
         <item quantity="other">%d секунд</item>
     </plurals>
-    <string name="allows_for_sync_witch_youtube">ПРИМЕЧАНИЕ: Эта опция включает синхронизацию с YouTube Music, и её НЕЛЬЗЯ изменить позже</string>
+    <string name="allows_for_sync_with_youtube">ПРИМЕЧАНИЕ: Эта опция включает синхронизацию с YouTube Music, и её НЕЛЬЗЯ изменить позже</string>
     <string name="player_background_blur">Размытие</string>
     <string name="slim_navbar">Тонкая панель навигации</string>
     <string name="dislikes">Дизлайки</string>

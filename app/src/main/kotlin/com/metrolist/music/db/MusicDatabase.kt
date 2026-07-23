@@ -91,6 +91,18 @@ class MusicDatabase(
         }
 
     fun close() = delegate.close()
+
+    override fun getTransition(outgoingSongId: String, incomingSongId: String) =
+        delegate.dao.getTransition(outgoingSongId, incomingSongId)
+
+    fun upsertTransition(transition: SongTransitionEntity) =
+        delegate.dao.upsert(transition)
+
+    fun deleteTransition(transition: SongTransitionEntity) =
+        delegate.dao.delete(transition)
+
+    override fun deleteTransitionsForSong(songId: String) =
+        delegate.dao.deleteTransitionsForSong(songId)
 }
 
 @Database(
@@ -120,7 +132,7 @@ class MusicDatabase(
         SortedSongAlbumMap::class,
         PlaylistSongMapPreview::class,
     ],
-    version = 40,
+    version = 41,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3),
@@ -160,6 +172,7 @@ class MusicDatabase(
         AutoMigration(from = 36, to = 37),
         AutoMigration(from = 37, to = 38),
         AutoMigration(from = 39, to = 40),
+        AutoMigration(from = 40, to = 41),
     ],
 )
 @TypeConverters(Converters::class)

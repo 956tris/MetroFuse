@@ -14,7 +14,7 @@
     <string name="cached_playlist">Gecached</string>
     <string name="sync_playlist">Playlist synchroniseren</string>
     <string name="sync_disabled">Synchroniseren uitgeschakeld</string>
-    <string name="allows_for_sync_witch_youtube">Opmerking: Dit activeert synchronisatie met YouTube Music. Dit kan later NIET worden gewijzigd.</string>
+    <string name="allows_for_sync_with_youtube">Opmerking: Dit activeert synchronisatie met YouTube Music. Dit kan later NIET worden gewijzigd.</string>
     <string name="generating_image">Afbeelding genereren…</string>
     <string name="please_wait">Een ogenblik geduld alstublieft</string>
     <string name="cancel">Annuleren</string>

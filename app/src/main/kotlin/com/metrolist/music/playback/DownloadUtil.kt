@@ -7,6 +7,7 @@ package com.metrolist.music.playback
 
 import android.content.Context
 import androidx.core.net.toUri
+import androidx.media3.common.MimeTypes
 import androidx.media3.database.DatabaseProvider
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -15,6 +16,9 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadNotificationHelper
+import com.metrolist.music.constants.AmazonAudioQuality
+import com.metrolist.music.constants.AmazonAudioQualityKey
+import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
@@ -33,6 +37,7 @@ import com.metrolist.music.constants.ProxyEnabledKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.constants.QobuzCountryKey
+import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.FormatEntity
@@ -44,10 +49,15 @@ import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.lyrics.LyricsHelper
+import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.instagram.InstagramAudioProvider
+import com.metrolist.music.amazon.AmazonAtmosDecryptor
+import com.metrolist.music.amazon.AmazonFfmpegDecryptor
+import com.metrolist.music.amazon.AmazonAudioProvider
+import com.metrolist.music.amazon.AmazonAudioProvider.toAmazonAsinOrNull
 import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
@@ -68,8 +78,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import timber.log.Timber
+import java.io.File
 import java.time.LocalDateTime
-import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
 import javax.inject.Inject
@@ -86,14 +96,17 @@ constructor(
     @PlayerCache val playerCache: SimpleCache,
     private val lyricsHelper: LyricsHelper,
 ) {
-    private val TAG = "DownloadUtil"
     private val publicExportCleanupIds = ConcurrentHashMap.newKeySet<String>()
+
+    val downloadNotificationHelper = DownloadNotificationHelper(context, ExoDownloadService.CHANNEL_ID)
 
     private data class CachedSongStream(
         val uri: String,
         val expiresAtMs: Long,
         val cacheKey: String,
         val selectionKey: String,
+        val kid: String? = null,
+        val decryptionKey: String? = null,
     )
 
     private data class DownloadStreamResolution(
@@ -101,6 +114,8 @@ constructor(
         val expiresAtMs: Long,
         val cacheKey: String,
         val format: FormatEntity,
+        val kid: String? = null,
+        val decryptionKey: String? = null,
     )
 
     private val songUrlCache = HashMap<String, CachedSongStream>()
@@ -138,74 +153,76 @@ constructor(
     private val dataSourceFactory =
         ResolvingDataSource.Factory(
             DeezerAudioAwareDataSourceFactory(
-                CacheDataSource
-                    .Factory()
-                    .setCache(playerCache)
-                    .setUpstreamDataSourceFactory(
-                        OkHttpDataSource.Factory(
-                            OkHttpClient
-                                .Builder()
-                                .addInterceptor { chain ->
-                                    var request = chain.request()
-                                    if (request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY) != null) {
-                                        val clientName = request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY)
-                                        val cleanUrl =
-                                            request.url
-                                                .newBuilder()
-                                                .removeAllQueryParameters(YouTubeAudioProvider.STREAM_MARKER_QUERY)
-                                                .build()
-                                        request =
-                                            YouTubeAudioProvider.addYouTubePlaybackHeaders(
-                                                request.newBuilder().url(cleanUrl),
-                                                clientName,
-                                                request.header("Range") != null,
-                                            ).build()
-                                    }
-                                    if (request.url.queryParameter(SoundCloudAudioProvider.STREAM_MARKER_QUERY) != null) {
-                                        val isApiStream =
-                                            request.url.queryParameter(SoundCloudAudioProvider.STREAM_SOURCE_QUERY) ==
-                                                SoundCloudAudioProvider.STREAM_SOURCE_API
-                                        val isHlsStream =
-                                            request.url.queryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) == "1"
-                                        val cleanUrl =
-                                            request.url
-                                                .newBuilder()
-                                                .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_MARKER_QUERY)
-                                                .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY)
-                                                .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_SOURCE_QUERY)
-                                                .build()
-                                        request =
-                                            SoundCloudAudioProvider.addPlaybackHeaders(
-                                                request.newBuilder().url(cleanUrl),
-                                                request.header("Range") != null,
-                                                isApiStream,
-                                                isHlsStream,
-                                            ).build()
-                                    }
-                                    if (InstagramAudioProvider.isInstagramPlaybackUrl(request.url)) {
-                                        val instagramClient =
-                                            InstagramAudioProvider.playbackClientProfile(request.url)
-                                        val instagramUserAgent =
-                                            InstagramAudioProvider.playbackUserAgent(request.url)
-                                                ?: cachedInstagramUserAgent
-                                        val cleanUrl = InstagramAudioProvider.cleanPlaybackUrl(request.url)
-                                        request =
-                                            InstagramAudioProvider.addPlaybackHeaders(
-                                                request.newBuilder().url(cleanUrl),
-                                                cachedInstagramCookie,
-                                                request.header("Range") != null,
-                                                instagramClient,
-                                                instagramUserAgent,
-                                            ).build()
-                                    }
+                normalFactory = CacheDataSource
+                        .Factory()
+                        .setCache(playerCache)
+                        .setUpstreamDataSourceFactory(
+                            OkHttpDataSource.Factory(
+                                OkHttpClient
+                                    .Builder()
+                                    .addInterceptor { chain ->
+                                        var request = chain.request()
+                                        if (request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY) != null) {
+                                            val clientName =
+                                                request.url.queryParameter(YouTubeAudioProvider.STREAM_MARKER_QUERY)
+                                            val cleanUrl =
+                                                request.url
+                                                    .newBuilder()
+                                                    .removeAllQueryParameters(YouTubeAudioProvider.STREAM_MARKER_QUERY)
+                                                    .build()
+                                            request =
+                                                YouTubeAudioProvider.addYouTubePlaybackHeaders(
+                                                    request.newBuilder().url(cleanUrl),
+                                                    clientName,
+                                                    request.header("Range") != null,
+                                                ).build()
+                                        }
+                                        if (request.url.queryParameter(SoundCloudAudioProvider.STREAM_MARKER_QUERY) != null) {
+                                            val isApiStream =
+                                                request.url.queryParameter(SoundCloudAudioProvider.STREAM_SOURCE_QUERY) ==
+                                                        SoundCloudAudioProvider.STREAM_SOURCE_API
+                                            val isHlsStream =
+                                                request.url.queryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) == "1"
+                                            val cleanUrl =
+                                                request.url
+                                                    .newBuilder()
+                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_MARKER_QUERY)
+                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY)
+                                                    .removeAllQueryParameters(SoundCloudAudioProvider.STREAM_SOURCE_QUERY)
+                                                    .build()
+                                            request =
+                                                SoundCloudAudioProvider.addPlaybackHeaders(
+                                                    request.newBuilder().url(cleanUrl),
+                                                    request.header("Range") != null,
+                                                    isApiStream,
+                                                    isHlsStream,
+                                                ).build()
+                                        }
+                                        if (InstagramAudioProvider.isInstagramPlaybackUrl(request.url)) {
+                                            val instagramClient =
+                                                InstagramAudioProvider.playbackClientProfile(request.url)
+                                            val instagramUserAgent =
+                                                InstagramAudioProvider.playbackUserAgent(request.url)
+                                                    ?: cachedInstagramUserAgent
+                                            val cleanUrl =
+                                                InstagramAudioProvider.cleanPlaybackUrl(request.url)
+                                            request =
+                                                InstagramAudioProvider.addPlaybackHeaders(
+                                                    request.newBuilder().url(cleanUrl),
+                                                    cachedInstagramCookie,
+                                                    request.header("Range") != null,
+                                                    instagramClient,
+                                                    instagramUserAgent,
+                                                ).build()
+                                        }
                                         chain.proceed(request)
-                                }.build(),
+                                    }.build(),
+                            ),
                         ),
-                    ),
-            ),
+                )
         ) { dataSpec ->
             val mediaId =
-                dataSpec.key?.let(::mediaIdFromDataSpecKey)
+                dataSpec.key?.let { mediaIdFromDataSpecKey(it) }
                     ?: dataSpec.uri
                         .takeIf { it.scheme.isNullOrBlank() }
                         ?.toString()
@@ -220,6 +237,13 @@ constructor(
                     .build()
             }
 
+            if (AmazonAudioProvider.isAmazonCdnUrl(dataSpec.uri.toString())) {
+                return@Factory dataSpec
+                    .buildUpon()
+                    .setKey(amazonFallbackCacheKey(mediaId))
+                    .build()
+            }
+
             val song = database.getSongByIdBlocking(mediaId)
             if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
                 return@Factory dataSpec
@@ -228,15 +252,15 @@ constructor(
             songUrlCache[mediaId]
                 ?.takeIf {
                     it.expiresAtMs > System.currentTimeMillis() &&
-                        it.selectionKey == streamSelectionKey
+                            it.selectionKey == streamSelectionKey
                 }
                 ?.let { cached ->
-                return@Factory dataSpec
-                    .buildUpon()
-                    .setUri(cached.uri.toUri())
-                    .setKey(cached.cacheKey)
-                    .build()
-            } ?: run {
+                    return@Factory dataSpec
+                        .buildUpon()
+                        .setUri(cached.uri.toUri())
+                        .setKey(cached.cacheKey)
+                        .build()
+                } ?: run {
                 songUrlCache.remove(mediaId)
             }
 
@@ -251,11 +275,20 @@ constructor(
                 }
             }
 
+            resolved.decryptionKey?.let { key ->
+                val asin = mediaId.toAmazonAsinOrNull() ?: AmazonAudioProvider.extractAsinFromKey(resolved.cacheKey)
+                if (asin != null) {
+                    AmazonAudioProvider.registerDecryptionKey(asin, key)
+                }
+            }
+
             songUrlCache[mediaId] = CachedSongStream(
                 uri = resolved.uri,
                 expiresAtMs = resolved.expiresAtMs,
                 cacheKey = resolved.cacheKey,
                 selectionKey = streamSelectionKey,
+                kid = resolved.kid,
+                decryptionKey = resolved.decryptionKey,
             )
             dataSpec
                 .buildUpon()
@@ -266,7 +299,7 @@ constructor(
 
     private fun currentStreamSelectionKey(context: Context): String {
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
-        val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
+        val deezerQuality = context.dataStore[DeezerAudioQualityKey].toEnum(DeezerAudioQuality.MP3_128)
         val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val configuredDeezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
         val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
@@ -285,12 +318,6 @@ constructor(
         val instagramUuid = context.dataStore.get(InstagramUuidKey, "")
         val instagramCookieConfigured = instagramCookie.isNotBlank()
         val soundCloudAuthConfigured = context.dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
-        val qobuzBackend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
-        val qobuzCountry = context.dataStore.get(QobuzCountryKey, "US")
-            .trim()
-            .uppercase(Locale.US)
-            .takeIf { it.matches(Regex("[A-Z]{2}")) }
-            ?: "US"
         return listOf(
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
@@ -303,8 +330,6 @@ constructor(
             "instagramAppId=${instagramAppId.hashCode()}",
             "instagramUuid=${instagramUuid.hashCode()}",
             "soundCloudAuth=$soundCloudAuthConfigured",
-            "backend=${qobuzBackend.name}",
-            "country=$qobuzCountry",
         ).joinToString(";")
     }
 
@@ -314,7 +339,7 @@ constructor(
         song: Song?,
     ): DownloadStreamResolution {
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
-        val deezerQuality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
+        val deezerQuality = context.dataStore[DeezerAudioQualityKey].toEnum(DeezerAudioQuality.MP3_128)
         val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val configuredDeezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
         val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
@@ -341,19 +366,10 @@ constructor(
                 false
             } else {
                 when (provider) {
-                    AudioProviderOrderItem.APPLE_MUSIC -> false
                     AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
                     else -> true
                 }
             }
-
-        fun QobuzAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
-            DownloadStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = qobuzFallbackCacheKey(mediaId),
-                format = qobuzFallbackFormat(mediaId, this),
-            )
 
         fun DeezerAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
             DownloadStreamResolution(
@@ -379,16 +395,18 @@ constructor(
                 format = instagramFallbackFormat(mediaId, this),
             )
 
+        var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Qobuz not attempted yet"))
         var soundCloudAttempt: Result<SoundCloudAudioProvider.Resolved> =
             Result.failure(IllegalStateException("SoundCloud not attempted yet"))
         var deezerAttempt: Result<DeezerAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Deezer audio not enabled"))
         var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Instagram audio not enabled"))
+        var amazonAttempt: Result<AmazonAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Amazon Music not enabled"))
         var youtubeAttempt: Result<DownloadStreamResolution> =
             Result.failure(IllegalStateException("YouTube Music not attempted yet"))
-        var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Qobuz not attempted yet"))
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
         val orderedProviders =
             buildList {
@@ -449,6 +467,37 @@ constructor(
                         return resolved.toDownloadResolution()
                     }
                 }
+                AudioProviderOrderItem.AMAZON_MUSIC -> {
+                    attemptedProviders += provider
+                    amazonAttempt = runCatching {
+                        AmazonAudioProvider.resolve(
+                            context,
+                            buildAmazonQuery(mediaId, song),
+                        )
+                    }
+                    amazonAttempt.getOrNull()?.let { resolved ->
+                        Timber.tag(TAG).i("Using Amazon Music stream for download $mediaId: ${resolved.label}")
+                        val isAtmos = resolved.codecs.lowercase().contains("eac3")
+                        val localPath = if (isAtmos) {
+                            AmazonAtmosDecryptor.prepareStream(context, resolved)
+                        } else {
+                            AmazonFfmpegDecryptor.prepareStream(context, resolved)
+                        }
+
+                        val mimeType = if (isAtmos) MimeTypes.AUDIO_MP4 else MimeTypes.AUDIO_FLAC
+                        val itag = if (isAtmos) AMAZON_ATMOS_ITAG else AMAZON_FLAC_ITAG
+
+                        return DownloadStreamResolution(
+                            uri = android.net.Uri.fromFile(File(localPath)).toString(),
+                            expiresAtMs = resolved.expiresAtMs,
+                            cacheKey = amazonFallbackCacheKey(mediaId),
+                            format = amazonFallbackFormat(mediaId, resolved).copy(
+                                itag = itag,
+                                mimeType = mimeType,
+                            ),
+                        )
+                    }
+                }
                 AudioProviderOrderItem.YOUTUBE_MUSIC -> {
                     attemptedProviders += provider
                     youtubeAttempt = runCatching {
@@ -462,14 +511,31 @@ constructor(
                 AudioProviderOrderItem.QOBUZ -> {
                     attemptedProviders += provider
                     qobuzAttempt = runCatching {
-                        QobuzAudioProvider.resolve(buildQobuzQuery(context, mediaId, song))
+                        QobuzAudioProvider.resolve(
+                            QobuzAudioProvider.Query(
+                                mediaId = mediaId,
+                                title = song?.song?.title ?: mediaId,
+                                artists = song?.orderedArtists?.map { it.name }.orEmpty(),
+                                album = song?.song?.albumName ?: song?.album?.title,
+                                isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
+                                durationMs = song?.song?.duration?.toLong()?.times(1000L),
+                                countryCode = context.dataStore.get(QobuzCountryKey, "US"),
+                                backend = when (context.dataStore[QobuzBackendKey].toEnum(QobuzBackend.KENNY)) {
+                                    QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
+                                },
+                                customInstances = context.dataStore.get(QobuzCustomInstancesKey, ""),
+                            ),
+                        )
                     }
                     qobuzAttempt.getOrNull()?.let { resolved ->
-                        return resolved.toDownloadResolution()
+                        Timber.tag(TAG).i("Using Qobuz stream for download $mediaId: ${resolved.label}")
+                        return DownloadStreamResolution(
+                            uri = resolved.mediaUri,
+                            expiresAtMs = resolved.expiresAtMs,
+                            cacheKey = qobuzFallbackCacheKey(mediaId),
+                            format = qobuzFallbackFormat(mediaId, resolved),
+                        )
                     }
-                }
-                AudioProviderOrderItem.APPLE_MUSIC -> {
-                    attemptedProviders += provider
                 }
             }
             return null
@@ -521,56 +587,27 @@ constructor(
         } else {
             ""
         }
+        val amazonDetail = if (attemptedProviders.contains(AudioProviderOrderItem.AMAZON_MUSIC)) {
+            amazonAttempt.exceptionOrNull()?.message
+                ?.let { "Amazon failed: $it; " }
+                .orEmpty()
+        } else {
+            ""
+        }
         val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${instagramDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
-            youtubeError,
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${instagramDetail}${amazonDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            qobuzError,
         )
     }
 
     private suspend fun resolveYouTubeFallback(mediaId: String): DownloadStreamResolution {
         val resolved = YouTubeAudioProvider.resolve(mediaId)
-        Timber.tag(TAG).i(
-            "Using YouTube AAC fallback for download $mediaId: itag=${resolved.itag}, bitrate=${resolved.bitrate}",
-        )
         return DownloadStreamResolution(
             uri = resolved.mediaUri,
             expiresAtMs = resolved.expiresAtMs,
             cacheKey = youtubeFallbackCacheKey(mediaId),
             format = youtubeFallbackFormat(mediaId, resolved),
-        )
-    }
-
-    private fun buildQobuzQuery(
-        context: Context,
-        mediaId: String,
-        song: Song?,
-    ): QobuzAudioProvider.Query {
-        val backend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
-        val country = context.dataStore.get(QobuzCountryKey, "US")
-            .trim()
-            .uppercase(Locale.US)
-            .takeIf { it.matches(Regex("[A-Z]{2}")) }
-            ?: "US"
-        return QobuzAudioProvider.Query(
-            mediaId = mediaId,
-            title = song?.song?.title ?: mediaId,
-            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
-            album = song?.song?.albumName ?: song?.album?.title,
-            isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
-            durationMs = song?.song?.duration
-                ?.takeIf { it > 0 }
-                ?.toLong()
-                ?.times(1000L),
-            countryCode = country,
-            backend = when (backend) {
-                QobuzBackend.TRYPT -> QobuzAudioProvider.ResolverBackend.TRYPT
-                QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
-                QobuzBackend.MONOCHROME -> QobuzAudioProvider.ResolverBackend.MONOCHROME
-                QobuzBackend.SCAVENGER -> QobuzAudioProvider.ResolverBackend.SCAVENGER
-                QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
-                QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
-            },
         )
     }
 
@@ -632,8 +669,26 @@ constructor(
         )
     }
 
-    val downloadNotificationHelper =
-        DownloadNotificationHelper(context, ExoDownloadService.CHANNEL_ID)
+    private fun buildAmazonQuery(
+        mediaId: String,
+        song: Song?,
+    ): AmazonAudioProvider.Query {
+        val country = context.dataStore.get(ContentCountryKey, "US")
+        val quality = context.dataStore[AmazonAudioQualityKey].toEnum(AmazonAudioQuality.HI_RES).name
+
+        return AmazonAudioProvider.Query(
+            mediaId = mediaId,
+            title = song?.song?.title ?: mediaId,
+            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
+            album = song?.song?.albumName ?: song?.album?.title,
+            durationMs = song?.song?.duration
+                ?.takeIf { it > 0 }
+                ?.toLong()
+                ?.times(1000L),
+            country = country,
+            quality = quality,
+        )
+    }
 
     @OptIn(DelicateCoroutinesApi::class)
     val downloadManager: DownloadManager =
@@ -755,18 +810,19 @@ constructor(
     }
 
     private companion object {
-        private const val QOBUZ_FALLBACK_ITAG = 100_027
+        private const val TAG = "DownloadUtil"
         private const val DEEZER_FALLBACK_ITAG = 100_033
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val INSTAGRAM_FALLBACK_ITAG = 100_041
-        private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
-        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
+        private const val AMAZON_FALLBACK_ITAG = 100_045
+        private const val AMAZON_FLAC_ITAG = 100_046
+        private const val AMAZON_ATMOS_ITAG = 100_047
         private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
         private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
+        private const val AMAZON_FALLBACK_CACHE_PREFIX = "amazon-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
-
-        private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
+        private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
 
         private fun deezerFallbackCacheKey(mediaId: String) = "$DEEZER_FALLBACK_CACHE_PREFIX$mediaId"
 
@@ -774,31 +830,20 @@ constructor(
 
         private fun instagramFallbackCacheKey(mediaId: String) = "$INSTAGRAM_FALLBACK_CACHE_PREFIX$mediaId"
 
+        private fun amazonFallbackCacheKey(mediaId: String) = "$AMAZON_FALLBACK_CACHE_PREFIX$mediaId"
+
+        private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
+
         private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun mediaIdFromDataSpecKey(key: String) = key
-            .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
-            .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
+            .removePrefix("qobuz-fallback:")
+            .removePrefix("qobuz-fallback-v2:")
             .removePrefix(DEEZER_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
             .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
+            .removePrefix(AMAZON_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
-
-        private fun qobuzFallbackFormat(
-            mediaId: String,
-            resolved: QobuzAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = QOBUZ_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
 
         private fun deezerFallbackFormat(
             mediaId: String,
@@ -843,6 +888,38 @@ constructor(
             bitrate = resolved.bitrate,
             sampleRate = resolved.sampleRate,
             contentLength = resolved.contentLength ?: 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun amazonFallbackFormat(
+            mediaId: String,
+            resolved: AmazonAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = AMAZON_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun qobuzFallbackFormat(
+            mediaId: String,
+            resolved: QobuzAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = if (resolved.label.contains("Hi-Res")) 100_028 else 100_027,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = 0L,
             loudnessDb = null,
             perceptualLoudnessDb = null,
             playbackUrl = null,

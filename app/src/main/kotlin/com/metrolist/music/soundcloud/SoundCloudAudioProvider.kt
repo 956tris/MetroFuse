@@ -5,15 +5,21 @@
 
 package com.metrolist.music.soundcloud
 
+import com.metrolist.music.constants.SoundCloudAudioQuality
 import com.metrolist.music.utils.soundcloud.normalizeSoundCloudAuthInput
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
-import java.net.URLDecoder
 import java.text.Normalizer
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
@@ -25,21 +31,18 @@ object SoundCloudAudioProvider {
     const val STREAM_HLS_MARKER_QUERY = "_metrofuse_soundcloud_hls"
     const val STREAM_SOURCE_QUERY = "_metrofuse_soundcloud_source"
     const val STREAM_SOURCE_API = "api"
-    const val STREAM_SOURCE_SQUID = "squid"
     const val BROWSER_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
 
     private const val API_BASE_URL = "https://api-v2.soundcloud.com"
-    const val MAID_BASE_URL = "https://sc1.maid.zone"
-    const val SQUID_BASE_URL = "https://sc.squid.wtf"
     private const val STREAM_MARKER_VALUE = "1"
-    private const val CLIENT_ID_CACHE_MS = 60 * 60 * 1000L
     private const val STREAM_CACHE_MS = 5 * 60 * 1000L
     private const val SEARCH_LIMIT = 20
     private const val DEFAULT_BITRATE = 128_000
     private const val DEFAULT_SAMPLE_RATE = 44_100
-    private val assetScriptRegex = Regex("""https://a-v2\.sndcdn\.com/assets/[^"'<>]+\.js""")
-    private val clientIdRegex = Regex("""client_id["']?\s*[:=]\s*["']([A-Za-z0-9]{16,})["']""")
+    private val assetScriptRegex = Regex("""https://[a-z0-9-]+\.sndcdn\.com/[^"'<>!]+\.js""")
+    private val clientIdRegex = Regex("""client_?id["']?\s*[:=]\s*["']([A-Za-z0-9]{20,})["']""", RegexOption.IGNORE_CASE)
+    private val appVersionRegex = Regex("""app_?version["']?\s*[:=]\s*["']([0-9]{8,})["']""", RegexOption.IGNORE_CASE)
 
     data class Query(
         val mediaId: String,
@@ -75,11 +78,6 @@ object SoundCloudAudioProvider {
 
     class SoundCloudResolutionException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
-    private data class ClientId(
-        val value: String,
-        val expiresAtMs: Long,
-    )
-
     private data class MatchedTrack(
         val trackId: String,
         val title: String,
@@ -90,11 +88,6 @@ object SoundCloudAudioProvider {
         val durationMs: Long?,
         val trackAuthorization: String?,
         val transcodings: JSONArray?,
-    )
-
-    private data class StreamMetadata(
-        val mimeType: String,
-        val contentLength: Long?,
     )
 
     private data class StreamCandidate(
@@ -108,55 +101,97 @@ object SoundCloudAudioProvider {
     )
 
     private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
         .build()
 
     private val streamCache = ConcurrentHashMap<String, Resolved>()
+    private val trackCache = ConcurrentHashMap<String, MatchedTrack>()
 
     @Volatile
-    private var clientIdCache: ClientId? = null
+    private var cachedClientId: String? = null
+    @Volatile
+    private var cachedAppVersion: String? = null
+    @Volatile
+    private var metadataExpiresAt: Long = 0
 
-    fun resolve(
+    private val metadataMutex = Mutex()
+
+    suspend fun resolve(
         query: Query,
         authToken: String = "",
-    ): Resolved {
+        quality: SoundCloudAudioQuality = SoundCloudAudioQuality.AAC_160,
+    ): Resolved = withContext(Dispatchers.IO) {
         val normalizedAuthToken = normalizeSoundCloudAuthInput(authToken).orEmpty()
-        val streamCacheKey = query.cacheKey(normalizedAuthToken.isNotBlank())
+        val streamCacheKey = query.cacheKey(normalizedAuthToken.isNotBlank(), quality)
         val now = System.currentTimeMillis()
         streamCache[streamCacheKey]
             ?.takeIf { it.expiresAtMs > now + 20_000L }
-            ?.let { return it }
+            ?.let { return@withContext it }
 
-        val clientId = getClientId()
-        val track = query.mediaId.toSoundCloudUrlOrNull()
-            ?.let { resolveApiV2Track(it, clientId, normalizedAuthToken) ?: resolveSongUrl(it, clientId) }
-            ?: findBestTrack(query, clientId)
-            ?: throw SoundCloudResolutionException("SoundCloud match not found for ${query.title}")
+        var clientId = getClientId()
+        if (clientId.isBlank()) throw SoundCloudResolutionException("Failed to scrape SoundCloud client ID. Cannot resolve audio.")
+
+        val track = trackCache[query.mediaId]
+            ?: run {
+                val resolveTask = async {
+                    query.mediaId.toSoundCloudUrlOrNull()?.let { url ->
+                        resolveApiV2Track(url, clientId)
+                    }
+                }
+                val findTask = async {
+                    if (query.mediaId.toSoundCloudUrlOrNull() == null) {
+                        findBestTrack(query, clientId)
+                    } else null
+                }
+                (resolveTask.await() ?: findTask.await())?.also {
+                    trackCache[query.mediaId] = it
+                }
+            } ?: throw SoundCloudResolutionException("SoundCloud match not found for ${query.title}")
 
         val expectedDurationMs = query.durationMs ?: track.durationMs
-        val apiTrack = resolveApiV2Track(track.permalinkUrl, clientId, normalizedAuthToken) ?: track
-        runCatching {
+
+        val streamResult = runCatching {
             resolveApiV2Stream(
-                track = apiTrack,
+                track = track,
                 clientId = clientId,
-                authToken = normalizedAuthToken,
                 expectedDurationMs = expectedDurationMs,
                 now = now,
+                quality = quality,
             )
-        }.onFailure { error ->
-            Timber.tag("SoundCloudAudio").w(error, "SoundCloud API-v2 stream resolution failed; trying Squid fallback")
-        }.getOrNull()?.also { resolved ->
-            streamCache[streamCacheKey] = resolved
-            return resolved
         }
 
-        return resolveSquidStream(
-            track = track,
-            clientId = clientId,
-            expectedDurationMs = expectedDurationMs,
-            now = now,
-        ).also { streamCache[streamCacheKey] = it }
+        val apiStream = if (streamResult.isFailure && streamResult.exceptionOrNull() is SoundCloudResolutionException) {
+            val error = streamResult.exceptionOrNull() as SoundCloudResolutionException
+            val msg = error.message.orEmpty()
+            when {
+                msg.contains("403") || msg.contains("401") || msg.contains("429") -> {
+                    Timber.tag("SoundCloudAudio").i("SoundCloud client ID revoked or rate limited ($msg); re-scraping and retrying")
+                    clientId = getClientId(forceRefresh = true)
+                    runCatching {
+                        resolveApiV2Stream(
+                            track = track,
+                            clientId = clientId,
+                            expectedDurationMs = expectedDurationMs,
+                            now = now,
+                            quality = quality,
+                        )
+                    }.getOrNull()
+                }
+                else -> null
+            }
+        } else {
+            streamResult.getOrNull()
+        }
+
+        apiStream?.also { resolved ->
+            streamCache[streamCacheKey] = resolved
+            return@withContext resolved
+        }
+
+        throw SoundCloudResolutionException(
+            "SoundCloud stream resolution failed for ${query.title} via official API",
+        )
     }
 
     fun invalidate(mediaId: String) {
@@ -166,78 +201,43 @@ object SoundCloudAudioProvider {
                 streamCache.remove(key)
             }
         }
+        trackCache.remove(mediaId)
+    }
+
+    fun invalidateClientId() {
+        metadataExpiresAt = 0L
     }
 
     fun isSoundCloudUrl(value: String): Boolean =
         value.toSoundCloudUrlOrNull() != null
 
-    fun clientId(): String = getClientId()
+    fun isSoundCloudPlaybackUrl(url: okhttp3.HttpUrl): Boolean {
+        val host = url.host.lowercase(Locale.US)
+        return host == "playback.media-streaming.soundcloud.cloud" ||
+                host.endsWith(".sndcdn.com")
+    }
 
-    fun searchMetadata(
+    suspend fun clientId(): String = getClientId()
+
+    suspend fun searchMetadata(
         term: String,
         limit: Int = SEARCH_LIMIT,
-    ): List<TrackMetadata> {
-        if (term.isBlank()) return emptyList()
-        searchMaidTracks(term, limit).takeIf { it.isNotEmpty() }?.let { return it }
-        val clientId = getClientId()
-        val results = searchTracks(term, clientId, limit) ?: return emptyList()
-        return buildList {
+        clientId: String? = null,
+    ): List<TrackMetadata> = withContext(Dispatchers.IO) {
+        if (term.isBlank()) return@withContext emptyList()
+
+        val effectiveClientId = clientId ?: getClientId()
+        if (effectiveClientId.isBlank()) return@withContext emptyList()
+
+        val results = searchTracks(term, effectiveClientId, limit) ?: return@withContext emptyList()
+        buildList {
             for (index in 0 until results.length()) {
                 val obj = results.optJSONObject(index) ?: continue
                 if (!obj.optString("kind").equals("track", ignoreCase = true)) continue
                 if (!obj.optBoolean("streamable", true)) continue
                 obj.toMatchedTrack()?.toTrackMetadata()?.let(::add)
             }
-        }.distinctBy { it.permalinkUrl }
-    }
-
-    private fun searchMaidTracks(
-        term: String,
-        limit: Int,
-    ): List<TrackMetadata> {
-        val url = "$MAID_BASE_URL/search".toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("q", term)
-            ?.addQueryParameter("type", "tracks")
-            ?.build()
-            ?: return emptyList()
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "text/html")
-            .header("Referer", "$MAID_BASE_URL/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-            .build()
-
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use emptyList()
-                Jsoup.parse(response.body.string(), MAID_BASE_URL)
-                    .select("a.listing[href]")
-                    .mapNotNull { element ->
-                        val href = element.attr("href").trim()
-                        val path = href.takeIf { it.startsWith("/") && !it.startsWith("/_/") }
-                            ?: return@mapNotNull null
-                        val title = element.selectFirst("h3")?.text()?.trim().orEmpty()
-                        if (title.isBlank()) return@mapNotNull null
-                        val artist = element.selectFirst(".meta span")?.text()?.trim()
-                            ?.takeIf { it.isNotBlank() }
-                            ?: "SoundCloud"
-                        TrackMetadata(
-                            trackId = path.trim('/'),
-                            title = title,
-                            artist = artist,
-                            permalinkUrl = "https://soundcloud.com${path.substringBefore('?')}",
-                            artworkUrl = element.selectFirst("img[src]")?.attr("abs:src")?.soundcloakArtworkUrl(),
-                            durationMs = null,
-                        )
-                    }
-                    .distinctBy { it.permalinkUrl }
-                    .take(limit.coerceAtLeast(1))
-            }
-        }.onFailure { error ->
-            Timber.tag("SoundCloudAudio").w(error, "SoundCloud Maid search failed; trying SoundCloud API")
-        }.getOrDefault(emptyList())
+        }
     }
 
     fun addPlaybackHeaders(
@@ -246,193 +246,176 @@ object SoundCloudAudioProvider {
         isApiStream: Boolean = false,
         isHlsStream: Boolean = false,
     ): Request.Builder {
-        return builder
+        builder
             .header("User-Agent", BROWSER_USER_AGENT)
             .header("Accept", "audio/*,*/*;q=0.8")
             .header("Accept-Encoding", "identity")
-            .header("Referer", if (isApiStream) "https://soundcloud.com/" else "$SQUID_BASE_URL/")
-            .apply {
-                if (!isApiStream) {
-                    header("Origin", SQUID_BASE_URL)
-                }
-                if (!hasRangeHeader && !isHlsStream) {
-                    header("Range", "bytes=0-")
-                }
-            }
+            .header("Referer", "https://soundcloud.com/")
+            .header("Origin", "https://soundcloud.com")
+
+        if (isHlsStream) {
+            builder.header("Connection", "keep-alive")
+        }
+
+        if (!hasRangeHeader && !isHlsStream) {
+            builder.header("Range", "bytes=0-")
+        }
+
+        return builder
     }
 
-    private fun getClientId(): String {
+    private suspend fun getClientId(forceRefresh: Boolean = false): String = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        clientIdCache
-            ?.takeIf { it.expiresAtMs > now }
-            ?.let { return it.value }
+        if (!forceRefresh) {
+            cachedClientId?.takeIf { now < metadataExpiresAt }?.let { return@withContext it }
+        }
 
-        val url = "$SQUID_BASE_URL/api/soundcloud/get-client-id".toHttpUrlOrNull()
-            ?: throw SoundCloudResolutionException("SoundCloud client-id URL could not be built")
-        val request = Request.Builder()
-            .url(url)
+        metadataMutex.withLock {
+            val recheck = System.currentTimeMillis()
+            if (!forceRefresh) {
+                cachedClientId?.takeIf { recheck < metadataExpiresAt }?.let { return@withLock it }
+            }
+
+            scrapeMetadata()
+            cachedClientId ?: ""
+        }
+    }
+
+    suspend fun getAppVersion(): String? = withContext(Dispatchers.IO) {
+        val now = System.currentTimeMillis()
+        cachedAppVersion?.takeIf { now < metadataExpiresAt }?.let { return@withContext it }
+
+        metadataMutex.withLock {
+            val recheck = System.currentTimeMillis()
+            cachedAppVersion?.takeIf { recheck < metadataExpiresAt }?.let { return@withLock it }
+
+            scrapeMetadata()
+            cachedAppVersion
+        }
+    }
+
+    private suspend fun scrapeMetadata() = coroutineScope {
+        val homeRequest = Request.Builder()
+            .url("https://soundcloud.com")
             .get()
-            .header("Accept", "application/json")
-            .header("Referer", "$SQUID_BASE_URL/")
             .header("User-Agent", BROWSER_USER_AGENT)
             .build()
 
-        val clientId = runCatching {
-            client.newCall(request).execute().use { response ->
-                val payload = response.body.string()
-                if (!response.isSuccessful) {
-                    throw SoundCloudResolutionException("SoundCloud client-id HTTP ${response.code}: ${payload.take(160)}")
-                }
-                val root = JSONObject(payload)
-                root.stringOrNull("clientId")
-                    ?: throw SoundCloudResolutionException(root.stringOrNull("error") ?: "SoundCloud client-id missing")
-            }
-        }.getOrElse { error ->
-            runCatching { scrapeClientId() }
-                .getOrElse { fallbackError ->
-                    fallbackError.addSuppressed(error)
-                    throw SoundCloudResolutionException("SoundCloud client-id request failed", fallbackError)
-                }
-        }
-
-        clientIdCache = ClientId(clientId, now + CLIENT_ID_CACHE_MS)
-        return clientId
-    }
-
-    private fun scrapeClientId(): String {
-        val homeRequest =
-            Request
-                .Builder()
-                .url("https://soundcloud.com/")
-                .get()
-                .header("Accept", "text/html")
-                .header("User-Agent", BROWSER_USER_AGENT)
-                .build()
-
-        val html =
+        val (html, scriptUrls) = runCatching {
             client.newCall(homeRequest).execute().use { response ->
-                val payload = response.body.string()
-                if (!response.isSuccessful) {
-                    throw SoundCloudResolutionException("SoundCloud web HTTP ${response.code}: ${payload.take(160)}")
-                }
-                payload
+                if (!response.isSuccessful) return@use "" to emptyList<String>()
+                val body = response.body.string()
+                body to assetScriptRegex.findAll(body).map { it.value }.toList().distinct()
             }
+        }.getOrDefault("" to emptyList())
 
-        assetScriptRegex
-            .findAll(html)
-            .map { it.value }
-            .distinct()
-            .forEach { scriptUrl ->
-                val scriptRequest =
-                    Request
-                        .Builder()
-                        .url(scriptUrl)
-                        .get()
-                        .header("Accept", "*/*")
-                        .header("Referer", "https://soundcloud.com/")
-                        .header("User-Agent", BROWSER_USER_AGENT)
-                        .build()
+        var foundClientId = clientIdRegex.find(html)?.groups?.get(1)?.value
+        var foundAppVersion = appVersionRegex.find(html)?.groups?.get(1)?.value
 
-                val script =
+        if (foundClientId == null || foundAppVersion == null) {
+            // Fetch all JS bundles in parallel to drastically reduce load times
+            val jsResponses = scriptUrls.map { scriptUrl ->
+                async(Dispatchers.IO) {
                     runCatching {
-                        client.newCall(scriptRequest).execute().use { response ->
-                            response.body.string().takeIf { response.isSuccessful }.orEmpty()
+                        val scriptRequest = Request.Builder()
+                            .url(scriptUrl)
+                            .get()
+                            .header("User-Agent", BROWSER_USER_AGENT)
+                            .build()
+                        client.newCall(scriptRequest).execute().use { res ->
+                            if (res.isSuccessful) res.body.string() else ""
                         }
                     }.getOrDefault("")
+                }
+            }.awaitAll()
 
-                clientIdRegex.find(script)?.groups?.get(1)?.value?.let { return it }
+            for (js in jsResponses) {
+                if (foundClientId == null) {
+                    foundClientId = clientIdRegex.find(js)?.groups?.get(1)?.value
+                }
+                if (foundAppVersion == null) {
+                    foundAppVersion = appVersionRegex.find(js)?.groups?.get(1)?.value
+                }
+                if (foundClientId != null && foundAppVersion != null) break
             }
+        }
 
-        throw SoundCloudResolutionException("SoundCloud web client-id missing")
+        cachedClientId = foundClientId
+        cachedAppVersion = foundAppVersion
+        metadataExpiresAt = System.currentTimeMillis() + 12 * 60 * 60 * 1000L // 12 hours
+
+        if (foundClientId == null) {
+            Timber.tag("SoundCloudAudio").w("SoundCloud client-id scraping failed; stream resolution will fail")
+        }
     }
 
-    private fun findBestTrack(
+    private suspend fun findBestTrack(
         query: Query,
         clientId: String,
-    ): MatchedTrack? {
-        for (term in searchTerms(query)) {
-            val results = searchTracks(term, clientId) ?: continue
-            selectBestTrack(results, query)?.let { return it }
+    ): MatchedTrack? = coroutineScope {
+        val term = searchTerms(query).firstOrNull() ?: return@coroutineScope null
+
+        val apiTask = async {
+            searchTracks(term, clientId, limit = SEARCH_LIMIT)?.let { results ->
+                buildList {
+                    for (index in 0 until results.length()) {
+                        val obj = results.optJSONObject(index) ?: continue
+                        if (!obj.optString("kind").equals("track", ignoreCase = true)) continue
+                        if (!obj.optBoolean("streamable", true)) continue
+                        obj.toMatchedTrack()?.let(::add)
+                    }
+                }
+            }.orEmpty()
         }
-        return null
+
+        val allTracks = apiTask.await().distinctBy { it.permalinkUrl }
+        selectBestTrack(allTracks, query)
     }
 
-    private fun searchTracks(
+    private suspend fun searchTracks(
         term: String,
         clientId: String,
         limit: Int = SEARCH_LIMIT,
-    ): JSONArray? {
-        val url = "$SQUID_BASE_URL/api/soundcloud/search".toHttpUrlOrNull()
+    ): JSONArray? = withContext(Dispatchers.IO) {
+        val url = "$API_BASE_URL/search/tracks".toHttpUrlOrNull()
             ?.newBuilder()
             ?.addQueryParameter("q", term)
             ?.addQueryParameter("limit", limit.coerceIn(1, 50).toString())
             ?.addQueryParameter("client_id", clientId)
-            ?.build()
-            ?: return null
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "application/json")
-            .header("Referer", "$SQUID_BASE_URL/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-            .build()
+            ?.addQueryParameter("app_locale", "en")
+            ?.build() ?: return@withContext null
 
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
+        runCatching {
+            client.newCall(apiRequest(url.toString()).build()).execute().use { response ->
                 val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
+                if (!response.isSuccessful) {
+                    throw SoundCloudResolutionException("SoundCloud search HTTP ${response.code}: ${payload.take(160)}")
+                }
                 JSONObject(payload).optJSONArray("collection")
             }
         }.getOrNull()
     }
 
-    private fun resolveSongUrl(
+    private suspend fun resolveApiV2Track(
         url: String,
         clientId: String,
-    ): MatchedTrack? {
-        val songUrl = "$SQUID_BASE_URL/api/soundcloud/song".toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("url", url.withClientId(clientId))
-            ?.build()
-            ?: return null
-        val request = Request.Builder()
-            .url(songUrl)
-            .get()
-            .header("Accept", "application/json")
-            .header("Referer", "$SQUID_BASE_URL/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-            .build()
-
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                response.body.string()
-                    .takeIf { it.isNotBlank() }
-                    ?.let(::JSONObject)
-                    ?.toMatchedTrack()
-            }
-        }.getOrNull()
-    }
-
-    private fun resolveApiV2Track(
-        url: String,
-        clientId: String,
-        authToken: String,
-    ): MatchedTrack? {
+    ): MatchedTrack? = withContext(Dispatchers.IO) {
         val resolveUrl = "$API_BASE_URL/resolve".toHttpUrlOrNull()
             ?.newBuilder()
             ?.addQueryParameter("url", url)
             ?.addQueryParameter("client_id", clientId)
             ?.addQueryParameter("app_locale", "en")
             ?.build()
-            ?: return null
-        val request = apiRequest(resolveUrl.toString(), authToken).build()
+            ?: return@withContext null
+        val request = apiRequest(resolveUrl.toString()).build()
 
-        return runCatching {
+        runCatching {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                response.body.string()
-                    .takeIf { it.isNotBlank() }
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    throw SoundCloudResolutionException("SoundCloud resolve HTTP ${response.code}: ${payload.take(160)}")
+                }
+                payload.takeIf { it.isNotBlank() }
                     ?.let(::JSONObject)
                     ?.takeIf { it.optString("kind").equals("track", ignoreCase = true) }
                     ?.toMatchedTrack()
@@ -440,27 +423,25 @@ object SoundCloudAudioProvider {
         }.getOrNull()
     }
 
-    private fun resolveApiV2Stream(
+    private suspend fun resolveApiV2Stream(
         track: MatchedTrack,
         clientId: String,
-        authToken: String,
         expectedDurationMs: Long?,
         now: Long,
-    ): Resolved? {
-        val candidate = selectStreamCandidate(track.transcodings) ?: return null
-        val streamUrl = resolveTranscodingUrl(candidate, track.trackAuthorization, clientId, authToken) ?: return null
-        val streamMetadata =
-            if (candidate.isHls) {
-                StreamMetadata("application/x-mpegURL", null)
-            } else {
-                fetchStreamMetadata(streamUrl, isApiStream = true)
-            }
-        validateStreamIsPlayable(track, streamMetadata, expectedDurationMs)
-        val bitrate = estimateBitrate(streamMetadata.contentLength, expectedDurationMs)
-            ?: candidate.bitrate
-            ?: DEFAULT_BITRATE
+        quality: SoundCloudAudioQuality,
+    ): Resolved? = withContext(Dispatchers.IO) {
+        val effectiveTrack = if (track.transcodings == null) {
+            fetchFullTrack(track.trackId, clientId) ?: track
+        } else {
+            track
+        }
+        val candidate = selectStreamCandidate(effectiveTrack.transcodings, quality) ?: return@withContext null
+        val streamUrl = resolveTranscodingUrl(candidate, effectiveTrack.trackAuthorization, clientId) ?: return@withContext null
 
-        return Resolved(
+        val mimeType = candidate.mimeType
+        val expiresAtMs = now + STREAM_CACHE_MS
+
+        Resolved(
             mediaUri = addStreamMarker(
                 url = streamUrl,
                 isHls = candidate.isHls,
@@ -471,48 +452,44 @@ object SoundCloudAudioProvider {
             title = track.title,
             artist = track.artist,
             artworkUrl = track.artworkUrl,
-            mimeType = streamMetadata.mimeType,
+            mimeType = mimeType,
             codecs = candidate.mimeType.toCodecs(),
-            bitrate = bitrate,
+            bitrate = candidate.bitrate ?: DEFAULT_BITRATE,
             sampleRate = candidate.sampleRate ?: DEFAULT_SAMPLE_RATE,
-            contentLength = streamMetadata.contentLength,
-            expiresAtMs = now + STREAM_CACHE_MS,
+            contentLength = null,
+            expiresAtMs = expiresAtMs,
         )
     }
 
-    private fun resolveSquidStream(
-        track: MatchedTrack,
+    private suspend fun fetchFullTrack(
+        trackId: String,
         clientId: String,
-        expectedDurationMs: Long?,
-        now: Long,
-    ): Resolved {
-        val downloadUrl = buildDownloadUrl(track, clientId)
-        val streamMetadata = fetchStreamMetadata(downloadUrl, isApiStream = false)
-        validateStreamIsPlayable(track, streamMetadata, expectedDurationMs)
-        val bitrate = estimateBitrate(streamMetadata.contentLength, expectedDurationMs)
-            ?: DEFAULT_BITRATE
+    ): MatchedTrack? = withContext(Dispatchers.IO) {
+        val url = "$API_BASE_URL/tracks/$trackId".toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("client_id", clientId)
+            ?.addQueryParameter("app_locale", "en")
+            ?.build() ?: return@withContext null
+        val request = apiRequest(url.toString()).build()
 
-        return Resolved(
-            mediaUri = addStreamMarker(
-                url = downloadUrl,
-                isHls = false,
-                source = STREAM_SOURCE_SQUID,
-            ),
-            trackId = track.trackId,
-            permalinkUrl = track.permalinkUrl,
-            title = track.title,
-            artist = track.artist,
-            artworkUrl = track.artworkUrl,
-            mimeType = streamMetadata.mimeType,
-            codecs = streamMetadata.mimeType.toCodecs(),
-            bitrate = bitrate,
-            sampleRate = DEFAULT_SAMPLE_RATE,
-            contentLength = streamMetadata.contentLength,
-            expiresAtMs = now + STREAM_CACHE_MS,
-        )
+        runCatching {
+            client.newCall(request).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    throw SoundCloudResolutionException("SoundCloud track HTTP ${response.code}: ${payload.take(160)}")
+                }
+                payload.takeIf { it.isNotBlank() }
+                    ?.let(::JSONObject)
+                    ?.takeIf { it.optString("kind").equals("track", ignoreCase = true) }
+                    ?.toMatchedTrack()
+            }
+        }.getOrNull()
     }
 
-    private fun selectStreamCandidate(transcodings: JSONArray?): StreamCandidate? {
+    private fun selectStreamCandidate(
+        transcodings: JSONArray?,
+        quality: SoundCloudAudioQuality = SoundCloudAudioQuality.AAC_160,
+    ): StreamCandidate? {
         if (transcodings == null) return null
         val candidates = buildList {
             for (index in 0 until transcodings.length()) {
@@ -523,9 +500,9 @@ object SoundCloudAudioProvider {
                 if (protocol !in setOf("progressive", "hls")) continue
                 val isSupportedMime =
                     mimeType.contains("mpeg") ||
-                        mimeType.contains("mp3") ||
-                        mimeType.contains("aac") ||
-                        mimeType.contains("mp4")
+                            mimeType.contains("mp3") ||
+                            mimeType.contains("aac") ||
+                            mimeType.contains("mp4")
                 if (!isSupportedMime) continue
                 val streamUrl = transcoding.stringOrNull("url") ?: continue
                 add(
@@ -545,25 +522,44 @@ object SoundCloudAudioProvider {
             }
         }
 
-        return candidates.maxByOrNull { candidate ->
-            var score = 0
-            if (!candidate.isHls) score += 1_000
-            score += when (candidate.mimeType) {
-                "audio/mpeg" -> 120
-                "audio/aac", "audio/mp4" -> 100
-                else -> 0
+        return candidates.maxWithOrNull(
+            compareByDescending<StreamCandidate> {
+                val targetBitrate = when (quality) {
+                    SoundCloudAudioQuality.MP3_128 -> 128_000
+                    SoundCloudAudioQuality.AAC_96 -> 96_000
+                    SoundCloudAudioQuality.AAC_160 -> 160_000
+                }
+                val targetMime = when (quality) {
+                    SoundCloudAudioQuality.MP3_128 -> "audio/mpeg"
+                    SoundCloudAudioQuality.AAC_160 -> "audio/aac"
+                    SoundCloudAudioQuality.AAC_96 -> "audio/aac"
+                    else -> "audio/aac"
+                }
+
+                if (it.bitrate == targetBitrate && it.mimeType.contains(targetMime.substringAfter("/"))) 400
+                else if (it.bitrate == targetBitrate) 300
+                else 0
+            }.thenByDescending {
+                val targetMimePart = when (quality) {
+                    SoundCloudAudioQuality.MP3_128 -> "mpeg"
+                    else -> "aac"
+                }
+                if (it.mimeType.contains(targetMimePart)) 200 else 0
+            }.thenByDescending {
+                if (it.isHls && (quality == SoundCloudAudioQuality.AAC_160 || quality == SoundCloudAudioQuality.AAC_96)) 150 else 0
+            }.thenByDescending {
+                it.bitrate ?: 0
+            }.thenByDescending {
+                if (!it.isHls && quality == SoundCloudAudioQuality.MP3_128) 50 else 0
             }
-            if ("mp3" in candidate.preset.lowercase(Locale.US)) score += 20
-            score
-        }
+        )
     }
 
-    private fun resolveTranscodingUrl(
+    private suspend fun resolveTranscodingUrl(
         candidate: StreamCandidate,
         trackAuthorization: String?,
         clientId: String,
-        authToken: String,
-    ): String? {
+    ): String? = withContext(Dispatchers.IO) {
         val url = candidate.url.toHttpUrlOrNull()
             ?.newBuilder()
             ?.removeAllQueryParameters("client_id")
@@ -575,10 +571,10 @@ object SoundCloudAudioProvider {
                 }
             }
             ?.build()
-            ?: return null
+            ?: return@withContext null
 
-        return runCatching {
-            client.newCall(apiRequest(url.toString(), authToken).build()).execute().use { response ->
+        runCatching {
+            client.newCall(apiRequest(url.toString()).build()).execute().use { response ->
                 val payload = response.body.string()
                 if (!response.isSuccessful) {
                     throw SoundCloudResolutionException("SoundCloud transcoding HTTP ${response.code}: ${payload.take(160)}")
@@ -590,6 +586,22 @@ object SoundCloudAudioProvider {
 
     private fun selectBestTrack(
         results: JSONArray,
+        query: Query,
+    ): MatchedTrack? =
+        selectBestTrack(
+            tracks = buildList {
+                for (index in 0 until results.length()) {
+                    val obj = results.optJSONObject(index) ?: continue
+                    if (!obj.optString("kind").equals("track", ignoreCase = true)) continue
+                    if (!obj.optBoolean("streamable", true)) continue
+                    obj.toMatchedTrack()?.let(::add)
+                }
+            },
+            query = query,
+        )
+
+    private fun selectBestTrack(
+        tracks: List<MatchedTrack>,
         query: Query,
     ): MatchedTrack? {
         val wantedTitle = query.title.normalized()
@@ -605,12 +617,7 @@ object SoundCloudAudioProvider {
         )
 
         val candidates = mutableListOf<Candidate>()
-        for (index in 0 until results.length()) {
-            val obj = results.optJSONObject(index) ?: continue
-            if (!obj.optString("kind").equals("track", ignoreCase = true)) continue
-            if (!obj.optBoolean("streamable", true)) continue
-
-            val track = obj.toMatchedTrack() ?: continue
+        for (track in tracks) {
             val candidateTitle = track.title.normalized()
             val candidateArtists = track.artistNames
                 .ifEmpty { listOf(track.artist) }
@@ -630,14 +637,14 @@ object SoundCloudAudioProvider {
                 }
             val hasTitleMatch =
                 wantedTitle.isBlank() ||
-                    candidateTitle == wantedTitle ||
-                    (wantedTitle.length >= 4 && (candidateTitle.contains(wantedTitle) || wantedTitle.contains(candidateTitle))) ||
-                    titleCoverage >= if (wantedTitleTokens.size <= 2) 1.0 else 0.75
+                        candidateTitle == wantedTitle ||
+                        (wantedTitle.length >= 4 && (candidateTitle.contains(wantedTitle) || wantedTitle.contains(candidateTitle))) ||
+                        titleCoverage >= if (wantedTitleTokens.size <= 2) 1.0 else 0.75
             val hasArtistMatch =
                 wantedArtists.isEmpty() ||
-                    wantedArtists.any { wanted ->
-                        candidateArtists.any { candidate -> artistMatches(wanted, candidate) }
-                    }
+                        wantedArtists.any { wanted ->
+                            candidateArtists.any { candidate -> artistMatches(wanted, candidate) }
+                        }
             val durationDiffSeconds =
                 if (wantedDurationMs != null && track.durationMs != null) {
                     abs(wantedDurationMs - track.durationMs) / 1000L
@@ -693,78 +700,6 @@ object SoundCloudAudioProvider {
         return candidates.maxByOrNull { it.score }?.track
     }
 
-    private fun buildDownloadUrl(
-        track: MatchedTrack,
-        clientId: String,
-    ): String {
-        return "$SQUID_BASE_URL/api/soundcloud/download".toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("url", track.permalinkUrl.withClientId(clientId))
-            ?.addQueryParameter("title", track.title)
-            ?.addQueryParameter("artist", track.artist)
-            ?.addQueryParameter("client_id", clientId)
-            ?.addQueryParameter("preview", "0")
-            ?.build()
-            ?.toString()
-            ?: throw SoundCloudResolutionException("SoundCloud download URL could not be built")
-    }
-
-    private fun fetchStreamMetadata(
-        url: String,
-        isApiStream: Boolean,
-    ): StreamMetadata {
-        val httpUrl = url.toHttpUrlOrNull() ?: return StreamMetadata("audio/mpeg", null)
-        val builder = Request.Builder()
-            .url(httpUrl)
-            .header("Accept", "audio/*,*/*;q=0.8")
-            .header("Accept-Encoding", "identity")
-            .header("Referer", if (isApiStream) "https://soundcloud.com/" else "$SQUID_BASE_URL/")
-            .header("User-Agent", BROWSER_USER_AGENT)
-
-        runCatching {
-            client.newCall(builder.head().build()).execute().use { response ->
-                if (response.code >= 500) {
-                    throw SoundCloudResolutionException("SoundCloud stream HTTP ${response.code}")
-                }
-                if (!response.isSuccessful) return@use null
-                StreamMetadata(
-                    mimeType = response.header("Content-Type")?.substringBefore(';') ?: "audio/mpeg",
-                    contentLength = response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0L },
-                )
-            }
-        }.getOrElse { error ->
-            if (error is SoundCloudResolutionException) throw error
-            null
-        }?.let { return it }
-
-        return runCatching {
-            client.newCall(
-                builder
-                    .get()
-                    .header("Range", "bytes=0-0")
-                    .build(),
-            ).execute().use { response ->
-                if (response.code >= 500) {
-                    throw SoundCloudResolutionException("SoundCloud stream HTTP ${response.code}")
-                }
-                if (!response.isSuccessful) {
-                    throw SoundCloudResolutionException("SoundCloud stream HTTP ${response.code}")
-                }
-                StreamMetadata(
-                    mimeType = response.header("Content-Type")?.substringBefore(';') ?: "audio/mpeg",
-                    contentLength = response.header("Content-Range")
-                        ?.substringAfterLast('/', missingDelimiterValue = "")
-                        ?.toLongOrNull()
-                        ?.takeIf { it > 0L }
-                        ?: response.header("Content-Length")?.toLongOrNull()?.takeIf { it > 0L && response.code == 206 },
-                )
-            }
-        }.getOrElse { error ->
-            if (error is SoundCloudResolutionException) throw error
-            null
-        } ?: StreamMetadata("audio/mpeg", null)
-    }
-
     private fun addStreamMarker(
         url: String,
         isHls: Boolean,
@@ -783,49 +718,39 @@ object SoundCloudAudioProvider {
             ?.toString()
             ?: url
 
-    private fun apiRequest(
+    private suspend fun apiRequest(
         url: String,
-        authToken: String,
-    ): Request.Builder =
+    ): Request.Builder = withContext(Dispatchers.IO) {
+        val appVersion = getAppVersion()
+        val finalUrl = if (appVersion != null && !url.contains("app_version=")) {
+            url.toHttpUrlOrNull()?.newBuilder()?.addQueryParameter("app_version", appVersion)?.build()?.toString() ?: url
+        } else {
+            url
+        }
+
         Request.Builder()
-            .url(url)
+            .url(finalUrl)
             .get()
             .header("Accept", "application/json")
             .header("Referer", "https://soundcloud.com/")
+            .header("Origin", "https://soundcloud.com")
             .header("User-Agent", BROWSER_USER_AGENT)
-            .apply {
-                if (authToken.isNotBlank()) {
-                    header("Authorization", "OAuth $authToken")
-                }
-            }
-
-    private fun estimateBitrate(
-        contentLength: Long?,
-        durationMs: Long?,
-    ): Int? {
-        val length = contentLength?.takeIf { it > 0L } ?: return null
-        val duration = durationMs?.takeIf { it > 0L } ?: return null
-        val bitrate = (length * 8L * 1000L) / duration
-        return bitrate
-            .takeIf { it in 64_000L..512_000L }
-            ?.toInt()
     }
 
     private fun searchTerms(query: Query): List<String> {
         val title = query.title.trim()
-        val artists = query.artists.map { it.trim() }.filter { it.isNotBlank() }
-        val artistPart = artists.take(3).joinToString(" ")
+        val artist = query.artists.firstOrNull().orEmpty().trim()
         val album = query.album.orEmpty().trim()
-        val terms = linkedSetOf(
-            listOf(title, artists.firstOrNull().orEmpty(), album).filter { it.isNotBlank() }.joinToString(" "),
-            listOf(title, artistPart, album).filter { it.isNotBlank() }.joinToString(" "),
-            listOf(title, artists.firstOrNull().orEmpty()).filter { it.isNotBlank() }.joinToString(" "),
-            listOf(title, artistPart).filter { it.isNotBlank() }.joinToString(" "),
-        )
-        if (artists.isEmpty()) {
-            terms += title
+
+        val primaryTerm = if (artist.isNotBlank() && title.isNotBlank()) {
+            "$artist - $title"
+        } else if (title.isNotBlank()) {
+            title
+        } else {
+            ""
         }
-        return terms.filter { it.isNotBlank() }
+
+        return listOf(primaryTerm).filter { it.isNotBlank() }
     }
 
     private fun JSONObject.toMatchedTrack(): MatchedTrack? {
@@ -865,20 +790,18 @@ object SoundCloudAudioProvider {
             durationMs = durationMs,
         )
 
-    private fun validateStreamIsPlayable(
-        track: MatchedTrack,
-        streamMetadata: StreamMetadata,
-        expectedDurationMs: Long?,
-    ) {
-        val duration = expectedDurationMs?.takeIf { it >= 60_000L } ?: return
-        val length = streamMetadata.contentLength?.takeIf { it > 0L } ?: return
-        val minimumBytesForFullTrack = (duration / 1000.0 * 64_000.0 / 8.0 * 0.65).toLong()
-        if (length < minimumBytesForFullTrack) {
-            throw SoundCloudResolutionException(
-                "SoundCloud returned a likely preview for ${track.title}: $length bytes for ${duration / 1000L}s",
-            )
-        }
-    }
+    private fun TrackMetadata.toMatchedTrack(): MatchedTrack =
+        MatchedTrack(
+            trackId = trackId,
+            title = title,
+            artist = artist,
+            artistNames = splitArtistNames(artist),
+            permalinkUrl = permalinkUrl,
+            artworkUrl = artworkUrl,
+            durationMs = durationMs,
+            trackAuthorization = null,
+            transcodings = null,
+        )
 
     private fun String.toSoundCloudUrlOrNull(): String? {
         val url = toHttpUrlOrNull() ?: return null
@@ -890,30 +813,15 @@ object SoundCloudAudioProvider {
         }
     }
 
-    private fun String.withClientId(clientId: String): String {
-        val url = toHttpUrlOrNull() ?: return this
-        return url.newBuilder()
-            .removeAllQueryParameters("client_id")
-            .addQueryParameter("client_id", clientId)
-            .build()
-            .toString()
-    }
-
     private fun String.toCodecs(): String {
         val lower = lowercase(Locale.US)
         return when {
+            lower.contains("aac") || lower.contains("mp4") -> "mp4a.40.2"
             lower.contains("mpegurl") || lower.contains("m3u8") -> "mp3"
             lower.contains("mpeg") || lower.contains("mp3") -> "mp3"
-            lower.contains("aac") || lower.contains("mp4") -> "mp4a.40.2"
             lower.contains("opus") -> "opus"
             else -> ""
         }
-    }
-
-    private fun String.soundcloakArtworkUrl(): String? {
-        val url = toHttpUrlOrNull() ?: return takeIf { it.startsWith("http", ignoreCase = true) }
-        val proxied = url.queryParameter("url") ?: return toString()
-        return runCatching { URLDecoder.decode(proxied, "UTF-8") }.getOrDefault(proxied)
     }
 
     private fun bitrateFromPreset(
@@ -925,7 +833,9 @@ object SoundCloudAudioProvider {
         return when {
             lowerPreset.contains("256") -> 256_000
             lowerPreset.contains("192") -> 192_000
+            lowerPreset.contains("160") && lowerMime.contains("aac") -> 160_000
             lowerPreset.contains("128") -> 128_000
+            lowerPreset.contains("96") && lowerMime.contains("aac") -> 96_000
             lowerPreset.contains("64") -> 64_000
             lowerMime.contains("mpeg") || lowerPreset.contains("mp3") -> DEFAULT_BITRATE
             lowerMime.contains("aac") || lowerMime.contains("mp4") -> DEFAULT_BITRATE
@@ -979,13 +889,17 @@ object SoundCloudAudioProvider {
             .map { it.trim() }
             .filter { it.isNotBlank() }
 
-    private fun Query.cacheKey(hasAuthToken: Boolean): String {
+    private fun Query.cacheKey(
+        hasAuthToken: Boolean,
+        quality: SoundCloudAudioQuality,
+    ): String {
         return listOf(
             mediaId,
             title.normalized(),
             artists.joinToString("|") { it.normalized() },
             album.normalized(),
             durationMs?.toString().orEmpty(),
+            quality.name,
             if (hasAuthToken) "auth" else "anon",
         ).joinToString("::")
     }

@@ -96,7 +96,9 @@ fun GalaxyStarOverlay(
         var lastDrawnFrame = 0L
         while (true) {
             val nextFrame = withFrameMillis { it }
-            if (nextFrame - lastDrawnFrame >= FrameIntervalMs) {
+            // If nextFrame is somehow 0 or less, or if the delta is huge/negative (which can happen on some devices),
+            // just update it without the interval check to avoid potential state issues that could lead to NaN
+            if (nextFrame - lastDrawnFrame >= FrameIntervalMs || nextFrame < lastDrawnFrame) {
                 lastDrawnFrame = nextFrame
                 frameMillis = nextFrame
             }

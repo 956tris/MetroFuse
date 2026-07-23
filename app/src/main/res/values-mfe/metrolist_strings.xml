@@ -19,7 +19,7 @@
     <string name="filter_uploaded">Inn upload</string>
     <string name="sync_playlist">Senkroniz playlist</string>
     <string name="sync_disabled">Senkronizasyon dezaktivé</string>
-    <string name="allows_for_sync_witch_youtube">Note: Sa paramet la permet senkronizasyon ek YouTube Music. Ou PA pu resi resanze li apre.</string>
+    <string name="allows_for_sync_with_youtube">Note: Sa paramet la permet senkronizasyon ek YouTube Music. Ou PA pu resi resanze li apre.</string>
     <string name="generating_image">Generate zimage</string>
     <string name="please_wait">Patienté silvouple</string>
     <string name="cancel">Cancel</string>

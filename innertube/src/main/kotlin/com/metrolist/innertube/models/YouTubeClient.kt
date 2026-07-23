@@ -22,6 +22,7 @@ data class YouTubeClient(
     val useSignatureTimestamp: Boolean = false,
     val isEmbedded: Boolean = false,
     val useWebPoTokens: Boolean = false,
+    val apiFormatVersion: String = "2",
 ) {
     fun toContext(locale: YouTubeLocale, visitorData: String?, dataSyncId: String?) = Context(
         client = Context.Client(
@@ -48,11 +49,17 @@ data class YouTubeClient(
         const val REFERER_YOUTUBE_MUSIC = "$ORIGIN_YOUTUBE_MUSIC/"
         const val API_URL_YOUTUBE_MUSIC = "$ORIGIN_YOUTUBE_MUSIC/youtubei/v1/"
 
+        /**
+         * Device mimicry header value (OnePlus 6T) to reduce server-side throttling.
+         */
+        const val X_YOUTUBE_DEVICE_ONEPLUS_6T = "ONEPLUS_A6013"
+
         val WEB = YouTubeClient(
             clientName = "WEB",
             clientVersion = "2.20260213.00.00",
             clientId = "1",
             userAgent = USER_AGENT_WEB,
+            apiFormatVersion = "1",
         )
 
         val WEB_REMIX = YouTubeClient(
@@ -63,6 +70,7 @@ data class YouTubeClient(
             loginSupported = true,
             useSignatureTimestamp = true,
             useWebPoTokens = true,
+            apiFormatVersion = "1",
         )
 
         val WEB_CREATOR = YouTubeClient(
@@ -103,10 +111,19 @@ data class YouTubeClient(
 
         val IOS = YouTubeClient(
             clientName = "IOS",
-            clientVersion = "21.03.1",
+            clientVersion = "19.45.4",
             clientId = "5",
-            userAgent = "com.google.ios.youtube/21.03.1 (iPhone16,2; U; CPU iOS 18_2 like Mac OS X;)",
-            osVersion = "18.2.22C152",
+            userAgent = "com.google.ios.youtube/19.45.4 (iPhone16,2; U; CPU iOS 18_1 like Mac OS X; en_US)",
+            osVersion = "18.1.1.22B91",
+        )
+
+        val ANDROID_MUSIC = YouTubeClient(
+            clientName = "ANDROID_MUSIC",
+            clientVersion = "7.02.52",
+            clientId = "21",
+            userAgent = "com.google.android.apps.youtube.music/7.02.52 (Linux; U; Android 14) gzip",
+            loginSupported = true,
+            useSignatureTimestamp = true
         )
 
         val MOBILE = YouTubeClient(

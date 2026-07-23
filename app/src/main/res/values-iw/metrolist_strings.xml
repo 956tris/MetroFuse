@@ -18,7 +18,7 @@
     <string name="cached_playlist">הוטמן</string>
     <string name="sync_playlist">סנכרן את רשימת ההשמעה</string>
     <string name="sync_disabled">סינכרון מבוטל</string>
-    <string name="allows_for_sync_witch_youtube">הערה: זה מאפשר סנכרון עם יוטיוב מיוזיק. לא ניתן לשנות זאת מאוחר יותר.</string>
+    <string name="allows_for_sync_with_youtube">הערה: זה מאפשר סנכרון עם יוטיוב מיוזיק. לא ניתן לשנות זאת מאוחר יותר.</string>
     <string name="generating_image">יצירת תמונה…</string>
     <string name="please_wait">אנא המתן</string>
     <string name="cancel">ביטול</string>

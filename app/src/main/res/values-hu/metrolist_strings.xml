@@ -17,7 +17,7 @@
     <string name="cached_playlist">Cache-elt</string>
     <string name="sync_playlist">Lejátszási lista szinkronizálása</string>
     <string name="sync_disabled">Szinkronizálás kikapcsolva</string>
-    <string name="allows_for_sync_witch_youtube">Figyelem: Ez lehetővé teszi a YouTube Music-al való szinkronizálást és NEM változtatható meg később</string>
+    <string name="allows_for_sync_with_youtube">Figyelem: Ez lehetővé teszi a YouTube Music-al való szinkronizálást és NEM változtatható meg később</string>
     <string name="generating_image">Kép generálása…</string>
     <string name="please_wait">Kérem várjon</string>
     <string name="cancel">Mégse</string>

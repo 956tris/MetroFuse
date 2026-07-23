@@ -15,7 +15,7 @@
     <string name="cached_playlist">Nakacache</string>
     <string name="uploaded_playlist">Naka upload</string>
     <string name="filter_uploaded">Naka upload</string>
-    <string name="allows_for_sync_witch_youtube">Tala: Ito ay pumapayag mag sync sa Youtube Music. HINDI PWEDE ibahin to mamaya.</string>
+    <string name="allows_for_sync_with_youtube">Tala: Ito ay pumapayag mag sync sa Youtube Music. HINDI PWEDE ibahin to mamaya.</string>
     <string name="generating_image">Gumagawa ng imahe</string>
     <string name="please_wait">Pakiantay</string>
     <string name="cancel">Kanselahin</string>

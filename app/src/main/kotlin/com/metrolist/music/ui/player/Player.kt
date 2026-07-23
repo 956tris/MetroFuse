@@ -142,6 +142,8 @@ import com.metrolist.music.constants.CanvasArtworkPriorityKey
 import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.DarkModeKey
 import com.metrolist.music.constants.ExperimentalAppleMusicCoverFadeKey
+import com.metrolist.music.constants.ExperimentalGalaxyBlurAdaptiveArtworkKey
+import com.metrolist.music.constants.ExperimentalGalaxyBlurMirroredColorsKey
 import com.metrolist.music.constants.ExperimentalSmoothInlineLyricsKey
 import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.HideStatusBarOnFullscreenKey
@@ -195,6 +197,8 @@ import com.metrolist.music.utils.makeTimeString
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.utils.spotify.SpotifyCanvasMedia
+import com.metrolist.music.utils.spotify.SpotifyCanvasVideoBackground
+import com.metrolist.music.utils.spotify.rememberSpotifyCanvasMedia
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -217,7 +221,10 @@ private const val TIDAL_FALLBACK_ITAG = 100_029
 private const val DEEZER_FALLBACK_ITAG = 100_033
 private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
 private const val INSTAGRAM_FALLBACK_ITAG = 100_041
+private const val AMAZON_FALLBACK_ITAG = 100_045
+private const val AMAZON_FLAC_ITAG = 100_046
 private const val LOCAL_FILE_ITAG = -2000
+private const val DefaultAdaptiveGalaxyArtworkAlpha = 0.58f
 private val AppleMusicCanvasHeaders =
     mapOf(
         "Origin" to "https://music.apple.com",
@@ -237,6 +244,7 @@ private fun FormatEntity.audioSourceLabel(): String? =
         SOUNDCLOUD_FALLBACK_ITAG -> "SoundCloud"
         INSTAGRAM_FALLBACK_ITAG -> "Instagram"
         LOCAL_FILE_ITAG -> "Local"
+        AMAZON_FALLBACK_ITAG, AMAZON_FLAC_ITAG -> "Amazon Music"
         in YouTubeAudioItags -> "YouTube Music"
         else -> playbackUrl?.audioSourceLabelFromUrl()
     }
@@ -247,12 +255,12 @@ private fun String.audioSourceLabelFromUrl(): String? {
         value.contains("googlevideo.com") ||
             value.contains("youtube.com") ||
             value.contains("youtu.be") -> "YouTube Music"
+        value.contains("amazon") && (value.contains(".com") || value.contains(".co")) -> "Amazon Music"
         value.contains("qobuz.com") ||
             value.contains("jumo-dl") ||
             value.contains("kennyy.com.br") ||
             value.contains("squid.wtf") -> "Qobuz"
-        value.contains("tidal.com") ||
-            value.contains("zarz.moe") -> "TIDAL"
+        value.contains("tidal.com") -> "TIDAL"
         value.contains("deezer.com") ||
             value.contains("dzcdn.net") ||
             value.contains("dzmedia") -> "Deezer"
@@ -265,6 +273,7 @@ private fun String.audioSourceLabelFromUrl(): String? {
     }
 }
 
+
 private fun String.audioSourceLabelFromMediaId(): String? {
     val value = lowercase()
     return when {
@@ -275,6 +284,7 @@ private fun String.audioSourceLabelFromMediaId(): String? {
         else -> audioSourceLabelFromUrl()
     }
 }
+
 
 private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
     val hasBitrate = bitrate > 0
@@ -330,6 +340,7 @@ private fun Int.formatSampleRateLabel(): String {
     }
 }
 
+
 private fun blendColors(
     start: Color,
     end: Color,
@@ -361,8 +372,76 @@ private fun Color.playerControlContentColor(): Color {
 private fun Color.simpleLuminance(): Float =
     red * 0.299f + green * 0.587f + blue * 0.114f
 
+private fun Color.simpleSaturation(): Float {
+    val maxChannel = maxOf(red, green, blue)
+    val minChannel = minOf(red, green, blue)
+    return if (maxChannel <= 0f) {
+        0f
+    } else {
+        ((maxChannel - minChannel) / maxChannel).coerceIn(0f, 1f)
+    }
+}
+
+
 private fun Color.isNearBlack(): Boolean =
     red < 0.07f && green < 0.07f && blue < 0.07f
+
+private fun Int.simpleRgbLuminance(): Float =
+    Color(this).simpleLuminance()
+
+private fun Int.simpleRgbSaturation(): Float {
+    val color = Color(this)
+    val maxChannel = maxOf(color.red, color.green, color.blue)
+    val minChannel = minOf(color.red, color.green, color.blue)
+    return if (maxChannel <= 0f) {
+        0f
+    } else {
+        ((maxChannel - minChannel) / maxChannel).coerceIn(0f, 1f)
+    }
+}
+
+
+private fun Palette.adaptiveGalaxyArtworkAlpha(fallbackColor: Int): Float {
+    val swatches =
+        listOfNotNull(
+            dominantSwatch,
+            vibrantSwatch,
+            darkVibrantSwatch,
+            lightVibrantSwatch,
+            mutedSwatch,
+            darkMutedSwatch,
+            lightMutedSwatch,
+        )
+
+    if (swatches.isEmpty()) {
+        return (0.52f + fallbackColor.simpleRgbLuminance() * 0.22f).coerceIn(0.46f, 0.82f)
+    }
+
+    var totalWeight = 0f
+    var weightedLuminance = 0f
+    var weightedSaturation = 0f
+    var darkWeight = 0f
+
+    swatches.forEach { swatch ->
+        val weight = swatch.population.coerceAtLeast(1).toFloat()
+        val luminance = swatch.rgb.simpleRgbLuminance()
+        val saturation = swatch.rgb.simpleRgbSaturation()
+
+        totalWeight += weight
+        weightedLuminance += luminance * weight
+        weightedSaturation += saturation * weight
+        if (luminance < 0.18f) {
+            darkWeight += weight
+        }
+    }
+
+    val luminance = weightedLuminance / totalWeight
+    val saturation = weightedSaturation / totalWeight
+    val darkShare = darkWeight / totalWeight
+
+    return (0.56f + luminance * 0.24f + saturation * 0.08f - darkShare * 0.16f)
+        .coerceIn(0.46f, 0.82f)
+}
 
 private fun List<Color>.galaxyPlayerControlColor(): Color? {
     val candidate =
@@ -379,6 +458,14 @@ private fun List<Color>.galaxyPlayerControlColor(): Color? {
     }
 
     return candidate?.asPlayerControlColor()
+}
+
+private fun List<Color>.galaxyReadabilityScrimAlpha(): Float {
+    if (isEmpty()) return 0.28f
+    val backgroundColors = take(3)
+    val brightest = backgroundColors.maxOf { it.simpleLuminance() }
+    val strongestSaturation = backgroundColors.maxOf { it.simpleSaturation() }
+    return (0.16f + brightest * 0.24f + strongestSaturation * 0.03f).coerceIn(0.12f, 0.38f)
 }
 
 
@@ -431,6 +518,8 @@ fun BottomSheetPlayer(
     val spotifyCanvasEnabled by rememberPreference(SpotifyCanvasEnabledKey, false)
     val spotifyCookie by rememberPreference(SpotifyCookieKey, "")
     val experimentalAppleMusicCoverFade by rememberPreference(ExperimentalAppleMusicCoverFadeKey, false)
+    val experimentalGalaxyBlurAdaptiveArtwork by rememberPreference(ExperimentalGalaxyBlurAdaptiveArtworkKey, false)
+    val experimentalGalaxyBlurMirroredColors by rememberPreference(ExperimentalGalaxyBlurMirroredColorsKey, false)
     val canvasArtworkPriority by rememberEnumPreference(
         CanvasArtworkPriorityKey,
         CanvasArtworkPriority.APPLE_MUSIC,
@@ -448,7 +537,8 @@ fun BottomSheetPlayer(
             when (playerBackground) {
                 PlayerBackgroundStyle.BLUR,
                 PlayerBackgroundStyle.GALAXY_BLUR,
-                PlayerBackgroundStyle.GRADIENT -> true
+                PlayerBackgroundStyle.GRADIENT,
+                PlayerBackgroundStyle.MOVING_BLUR -> true
                 PlayerBackgroundStyle.DEFAULT -> useDarkTheme
             }
         }
@@ -457,7 +547,14 @@ fun BottomSheetPlayer(
     val isKeepScreenOn by rememberPreference(KeepScreenOn, false)
     val keepScreenOn = isPlaying && isKeepScreenOn
 
-    DisposableEffect(playerBackground, state.isExpanded, useDarkTheme, keepScreenOn, isFullScreen, hideStatusBarOnFullscreen) {
+    DisposableEffect(
+        playerBackground,
+        state.isExpanded,
+        useDarkTheme,
+        keepScreenOn,
+        isFullScreen,
+        hideStatusBarOnFullscreen,
+    ) {
         val window = (context as? android.app.Activity)?.window
         if (window != null && state.isExpanded) {
             val insetsController = WindowCompat.getInsetsController(window, window.decorView)
@@ -465,7 +562,8 @@ fun BottomSheetPlayer(
             when (playerBackground) {
                 PlayerBackgroundStyle.BLUR,
                 PlayerBackgroundStyle.GALAXY_BLUR,
-                PlayerBackgroundStyle.GRADIENT -> {
+                PlayerBackgroundStyle.GRADIENT,
+                PlayerBackgroundStyle.MOVING_BLUR -> {
                     insetsController.isAppearanceLightStatusBars = false
                 }
 
@@ -552,8 +650,8 @@ fun BottomSheetPlayer(
             preferredArtworkUrl ?: mediaMetadata?.thumbnailUrl
         }
     val playerColorArtworkUrl =
-        remember(mediaMetadata?.thumbnailUrl, displayArtworkUrl) {
-            mediaMetadata?.thumbnailUrl ?: displayArtworkUrl
+        remember(displayArtworkUrl, mediaMetadata?.thumbnailUrl) {
+            displayArtworkUrl ?: mediaMetadata?.thumbnailUrl
         }
     val playerQualityLabel =
         remember(displayFormat) {
@@ -827,11 +925,15 @@ fun BottomSheetPlayer(
     var galaxyColors by remember {
         mutableStateOf<List<Color>>(emptyList())
     }
+    var galaxyArtworkAlpha by remember {
+        mutableFloatStateOf(DefaultAdaptiveGalaxyArtworkAlpha)
+    }
     var appleFadeColor by remember {
         mutableStateOf<Color?>(null)
     }
     val gradientColorsCache = remember { mutableMapOf<String, List<Color>>() }
     val galaxyColorsCache = remember { mutableMapOf<String, List<Color>>() }
+    val galaxyArtworkAlphaCache = remember { mutableMapOf<String, Float>() }
     val appleFadeColorCache = remember { mutableMapOf<String, Color>() }
 
     if (!canSkipNext && automix.isNotEmpty()) {
@@ -901,16 +1003,20 @@ fun BottomSheetPlayer(
         }
     }
 
-    LaunchedEffect(mediaMetadata?.id, playerColorArtworkUrl, playerBackground) {
+    LaunchedEffect(mediaMetadata?.id, playerColorArtworkUrl, playerBackground, experimentalGalaxyBlurMirroredColors) {
         if (playerBackground != PlayerBackgroundStyle.GRADIENT) gradientColors = emptyList()
-        if (playerBackground != PlayerBackgroundStyle.GALAXY_BLUR) galaxyColors = emptyList()
+        if (playerBackground != PlayerBackgroundStyle.GALAXY_BLUR) {
+            galaxyColors = emptyList()
+            galaxyArtworkAlpha = DefaultAdaptiveGalaxyArtworkAlpha
+        }
         when (playerBackground) {
             PlayerBackgroundStyle.GRADIENT,
             PlayerBackgroundStyle.GALAXY_BLUR -> {
                 val currentMetadata = mediaMetadata
                 val colorArtworkUrl = playerColorArtworkUrl
                 if (currentMetadata != null && colorArtworkUrl != null) {
-                    val artworkColorCacheKey = "${currentMetadata.id}:${colorArtworkUrl.hashCode()}"
+                    val artworkColorCacheKey =
+                        "${currentMetadata.id}:${colorArtworkUrl.hashCode()}:${if (experimentalGalaxyBlurMirroredColors) "mirrored" else "normal"}"
                     val cachedColors =
                         if (playerBackground == PlayerBackgroundStyle.GRADIENT) {
                             gradientColorsCache[artworkColorCacheKey]
@@ -922,6 +1028,8 @@ fun BottomSheetPlayer(
                             gradientColors = cachedColors
                         } else {
                             galaxyColors = cachedColors
+                            galaxyArtworkAlpha =
+                                galaxyArtworkAlphaCache[artworkColorCacheKey] ?: DefaultAdaptiveGalaxyArtworkAlpha
                         }
                         return@LaunchedEffect
                     }
@@ -953,18 +1061,33 @@ fun BottomSheetPlayer(
                                             palette = palette,
                                             fallbackColor = fallbackColor,
                                         )
+                                    } else if (experimentalGalaxyBlurMirroredColors) {
+                                        PlayerColorExtractor.extractMirroredGalaxyColors(
+                                            palette = palette,
+                                            fallbackColor = fallbackColor,
+                                        )
                                     } else {
                                         PlayerColorExtractor.extractGalaxyColors(
                                             palette = palette,
                                             fallbackColor = fallbackColor,
                                         )
                                 }
+                                val extractedArtworkAlpha =
+                                    if (playerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+                                        palette.adaptiveGalaxyArtworkAlpha(fallbackColor)
+                                    } else {
+                                        DefaultAdaptiveGalaxyArtworkAlpha
+                                    }
                                 if (playerBackground == PlayerBackgroundStyle.GRADIENT) {
                                     gradientColorsCache[artworkColorCacheKey] = extractedColors
                                     withContext(Dispatchers.Main) { gradientColors = extractedColors }
                                 } else {
                                     galaxyColorsCache[artworkColorCacheKey] = extractedColors
-                                    withContext(Dispatchers.Main) { galaxyColors = extractedColors }
+                                    galaxyArtworkAlphaCache[artworkColorCacheKey] = extractedArtworkAlpha
+                                    withContext(Dispatchers.Main) {
+                                        galaxyColors = extractedColors
+                                        galaxyArtworkAlpha = extractedArtworkAlpha
+                                    }
                                 }
                             }
                         }
@@ -973,14 +1096,37 @@ fun BottomSheetPlayer(
                     gradientColors = emptyList()
                 } else {
                     galaxyColors = emptyList()
+                    galaxyArtworkAlpha = DefaultAdaptiveGalaxyArtworkAlpha
                 }
             }
             else -> {
                 gradientColors = emptyList()
                 galaxyColors = emptyList()
+                galaxyArtworkAlpha = DefaultAdaptiveGalaxyArtworkAlpha
             }
         }
     }
+
+    val adaptiveGalaxyArtworkAlpha by animateFloatAsState(
+        targetValue =
+            if (experimentalGalaxyBlurAdaptiveArtwork && playerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+                galaxyArtworkAlpha
+            } else {
+                1f
+            },
+        animationSpec = tween(durationMillis = 450),
+        label = "adaptiveGalaxyArtworkAlpha",
+    )
+    val mirroredGalaxyReadabilityScrimAlpha by animateFloatAsState(
+        targetValue =
+            if (experimentalGalaxyBlurMirroredColors && playerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+                galaxyColors.galaxyReadabilityScrimAlpha()
+            } else {
+                0f
+            },
+        animationSpec = tween(durationMillis = 450),
+        label = "mirroredGalaxyReadabilityScrimAlpha",
+    )
 
     val TextBackgroundColor by animateColorAsState(
         targetValue =
@@ -989,6 +1135,7 @@ fun BottomSheetPlayer(
                 PlayerBackgroundStyle.BLUR -> Color.White
                 PlayerBackgroundStyle.GALAXY_BLUR -> Color.White
                 PlayerBackgroundStyle.GRADIENT -> Color.White
+                PlayerBackgroundStyle.MOVING_BLUR -> Color.White
             },
         label = "TextBackgroundColor",
     )
@@ -1003,7 +1150,8 @@ fun BottomSheetPlayer(
 
                 PlayerBackgroundStyle.BLUR,
                 PlayerBackgroundStyle.GRADIENT,
-                PlayerBackgroundStyle.GALAXY_BLUR -> {
+                PlayerBackgroundStyle.GALAXY_BLUR,
+                PlayerBackgroundStyle.MOVING_BLUR -> {
                     val artworkColor = gradientColors.firstOrNull() ?: galaxyColors.firstOrNull() ?: Color.Black
                     artworkColor.copy(alpha = 0.54f)
                 }
@@ -1015,7 +1163,8 @@ fun BottomSheetPlayer(
                 PlayerBackgroundStyle.DEFAULT -> defaultQualityBadgeContentColor.copy(alpha = 0.9f)
                 PlayerBackgroundStyle.BLUR,
                 PlayerBackgroundStyle.GRADIENT,
-                PlayerBackgroundStyle.GALAXY_BLUR -> Color.White.copy(alpha = 0.82f)
+                PlayerBackgroundStyle.GALAXY_BLUR,
+                PlayerBackgroundStyle.MOVING_BLUR -> Color.White.copy(alpha = 0.82f)
             }
         }
 
@@ -1026,6 +1175,7 @@ fun BottomSheetPlayer(
                 PlayerBackgroundStyle.BLUR -> Color.Black
                 PlayerBackgroundStyle.GALAXY_BLUR -> Color.Black
                 PlayerBackgroundStyle.GRADIENT -> Color.Black
+                PlayerBackgroundStyle.MOVING_BLUR -> Color.Black
             },
         label = "icBackgroundColor",
     )
@@ -1043,7 +1193,8 @@ fun BottomSheetPlayer(
         when {
             effectivePlayerBackground == PlayerBackgroundStyle.BLUR ||
                 effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
-                effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT -> {
+                effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT ||
+                effectivePlayerBackground == PlayerBackgroundStyle.MOVING_BLUR -> {
                 when (playerButtonsStyle) {
                     PlayerButtonsStyle.DEFAULT -> {
                         if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR && galaxyAlbumControlColor != null) {
@@ -1367,7 +1518,8 @@ fun BottomSheetPlayer(
         when (effectivePlayerBackground) {
             PlayerBackgroundStyle.BLUR,
             PlayerBackgroundStyle.GALAXY_BLUR,
-            PlayerBackgroundStyle.GRADIENT -> {
+            PlayerBackgroundStyle.GRADIENT,
+            PlayerBackgroundStyle.MOVING_BLUR -> {
                 Color.Black
             }
 
@@ -1436,6 +1588,20 @@ fun BottomSheetPlayer(
                                 intensity = 1f,
                                 skyColors = galaxyColors,
                             )
+                            if (mirroredGalaxyReadabilityScrimAlpha > 0f) {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxSize()
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    0f to Color.Black.copy(alpha = mirroredGalaxyReadabilityScrimAlpha * 0.62f),
+                                                    0.48f to Color.Black.copy(alpha = mirroredGalaxyReadabilityScrimAlpha * 0.85f),
+                                                    1f to Color.Black.copy(alpha = mirroredGalaxyReadabilityScrimAlpha),
+                                                ),
+                                            ),
+                                )
+                            }
                         }
                     }
 
@@ -1450,13 +1616,13 @@ fun BottomSheetPlayer(
                             if (colors.isNotEmpty()) {
                                 val gradientColorStops =
                                     if (colors.size >= 3) {
-                                        arrayOf(
+                                        arrayOf<Pair<Float, Color>>(
                                             0.0f to colors[0],
                                             0.5f to colors[1],
                                             1.0f to colors[2],
                                         )
                                     } else {
-                                        arrayOf(
+                                        arrayOf<Pair<Float, Color>>(
                                             0.0f to colors[0],
                                             0.6f to colors[0].copy(alpha = 0.7f),
                                             1.0f to Color.Black,
@@ -1471,6 +1637,15 @@ fun BottomSheetPlayer(
                                 )
                             }
                         }
+                    }
+
+                    PlayerBackgroundStyle.MOVING_BLUR -> {
+                        MovingBlurBackground(
+                            artworkUrl = displayArtworkUrl,
+                            useDarkTheme = useDarkTheme,
+                            backgroundAlpha = backgroundAlpha,
+                            modifier = Modifier.fillMaxSize(),
+                        )
                     }
 
                     else -> {
@@ -1501,7 +1676,7 @@ fun BottomSheetPlayer(
                         modifier =
                             Modifier
                                 .fillMaxSize()
-                                .alpha(backgroundAlpha),
+                                .alpha(backgroundAlpha * adaptiveGalaxyArtworkAlpha),
                     )
                 }
             }
@@ -2553,11 +2728,11 @@ fun BottomSheetPlayer(
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
                                 Thumbnail(
-                                    sliderPositionProvider = sliderPositionProvider,
                                     modifier = Modifier.animateContentSize(),
                                     isPlayerExpanded = isExpandedProvider,
                                     isLandscape = true,
                                     isListenTogetherGuest = isListenTogetherGuest,
+                                    artworkAlpha = adaptiveGalaxyArtworkAlpha,
                                 )
                             }
                         }
@@ -2620,10 +2795,10 @@ fun BottomSheetPlayer(
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
                                 Thumbnail(
-                                    sliderPositionProvider = sliderPositionProvider,
                                     modifier = Modifier.nestedScroll(state.preUpPostDownNestedScrollConnection),
                                     isPlayerExpanded = isExpandedProvider,
                                     isListenTogetherGuest = isListenTogetherGuest,
+                                    artworkAlpha = adaptiveGalaxyArtworkAlpha,
                                 )
                             }
                         }
@@ -2668,6 +2843,7 @@ fun BottomSheetPlayer(
     }
 }
 
+
 @Composable
 private fun QualityBadge(
     label: String,
@@ -2709,6 +2885,7 @@ private fun QualityBadge(
         )
     }
 }
+
 
 @Composable
 private fun PlayerQualityLabelText(
@@ -2774,6 +2951,7 @@ private fun livePlayerQualityLabel(
         }
     }
 }
+
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -2919,6 +3097,7 @@ fun InlineLyricsView(
     }
 }
 
+
 @Composable
 fun MoreActionsButton(
     mediaMetadata: MediaMetadata,
@@ -2961,6 +3140,7 @@ fun MoreActionsButton(
         )
     }
 }
+
 
 @Composable
 private fun PlayerMoreMenuButton(
@@ -3005,3 +3185,48 @@ private fun PlayerMoreMenuButton(
         )
     }
 }
+
+@Composable
+fun AppleMusicFadedCanvasBackground(
+    media: com.metrolist.music.utils.spotify.SpotifyCanvasMedia,
+    artworkUrl: String?,
+    shouldPlay: Boolean,
+    surfaceColor: Color,
+    fadeColor: Color,
+    preservePlayerBackdrop: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(modifier = modifier) {
+        com.metrolist.music.utils.spotify.SpotifyCanvasVideoBackground(
+            media = media,
+            shouldPlay = shouldPlay,
+            modifier = Modifier.fillMaxSize(),
+            scrimAlpha = 0f
+        )
+
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(artworkUrl)
+                .build(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(40.dp)
+                .alpha(if (preservePlayerBackdrop) 0.5f else 0.8f)
+        )
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.7f to fadeColor.copy(alpha = 0.5f),
+                        1f to surfaceColor
+                    )
+                )
+        )
+    }
+}
+

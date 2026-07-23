@@ -30,6 +30,7 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     private var inputEnded = false
 
     private var filters: List<BiquadFilter> = emptyList()
+    private var metroMixFilters: List<BiquadFilter> = emptyList()
     private var preampGain: Double = 1.0  // Linear preamp gain multiplier
     private var pendingProfile: ParametricEQ? = null
 
@@ -62,6 +63,55 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
 
         Timber.tag(TAG)
             .d("Applied EQ profile with ${filters.size} bands and ${parametricEQ.preamp} dB preamp")
+    }
+
+    /**
+     * Set MetroMix filters for temporary effects during crossfades
+     */
+    @Synchronized
+    fun setMetroMixBands(bands: List<ParametricEQBand>) {
+        if (sampleRate == 0) return
+        metroMixFilters = bands
+            .filter { it.enabled && it.frequency < sampleRate / 2.0 }
+            .map { band ->
+                BiquadFilter(
+                    sampleRate = sampleRate,
+                    frequency = band.frequency,
+                    gain = band.gain,
+                    q = band.q,
+                    filterType = band.filterType
+                )
+            }
+    }
+
+    /**
+     * Update gain of a specific MetroMix band by index
+     */
+    @Synchronized
+    fun updateMetroMixGain(index: Int, gain: Double) {
+        if (index in metroMixFilters.indices) {
+            metroMixFilters[index].updateGain(gain)
+        }
+    }
+
+    /**
+     * Update frequency of a specific MetroMix band by index
+     */
+    @Synchronized
+    fun updateMetroMixFrequency(index: Int, frequency: Double) {
+        if (index in metroMixFilters.indices) {
+            metroMixFilters[index].updateFrequency(frequency)
+        }
+    }
+
+    /**
+     * Update Q of a specific MetroMix band by index
+     */
+    @Synchronized
+    fun updateMetroMixQ(index: Int, q: Double) {
+        if (index in metroMixFilters.indices) {
+            metroMixFilters[index].updateQ(q)
+        }
     }
 
     /**
@@ -144,7 +194,7 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     override fun isActive(): Boolean = isActive
 
     override fun queueInput(inputBuffer: ByteBuffer) {
-        if (!formatSupported || !equalizerEnabled || filters.isEmpty()) {
+        if (!formatSupported || (!equalizerEnabled && metroMixFilters.isEmpty())) {
             // Passthrough mode - directly use input as output
             val remaining = inputBuffer.remaining()
             if (remaining == 0) return
@@ -217,6 +267,11 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
                         processed = filter.processSample(processed)
                     }
 
+                    // Apply MetroMix filters
+                    for (filter in metroMixFilters) {
+                        processed = filter.processSample(processed)
+                    }
+
                     // Apply preamp gain
                     processed *= preampGain
 
@@ -234,6 +289,13 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
 
                     // Apply all filters in series
                     for (filter in filters) {
+                        val (left, right) = filter.processStereo(processedLeft, processedRight)
+                        processedLeft = left
+                        processedRight = right
+                    }
+
+                    // Apply MetroMix filters
+                    for (filter in metroMixFilters) {
                         val (left, right) = filter.processStereo(processedLeft, processedRight)
                         processedLeft = left
                         processedRight = right

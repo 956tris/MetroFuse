@@ -24,7 +24,10 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import java.net.Proxy
 import java.io.IOException
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.select
+import io.ktor.client.statement.HttpResponse
 import java.util.*
 import kotlin.io.encoding.Base64
 import timber.log.Timber
@@ -57,7 +60,7 @@ class InnerTube {
             httpClient.close()
             httpClient = createClient()
         }
-    
+
     var proxyAuth: String? = null
 
     var useLoginForBrowse: Boolean = false
@@ -90,18 +93,18 @@ class InnerTube {
                         java.util.concurrent.TimeUnit.MINUTES
                     )
                 )
-                
+
                 // Timeout configurations
                 connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
                 readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
                 writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                
+
                 // Enable HTTP/2 for better performance
                 protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
-                
+
                 // Retry on connection failure
                 retryOnConnectionFailure(true)
-                
+
                 // Cache configuration for better performance
                 cache(
                     okhttp3.Cache(
@@ -109,12 +112,12 @@ class InnerTube {
                         maxSize = 50L * 1024L * 1024L // 50 MB
                     )
                 )
-                
+
                 // Apply proxy configuration
                 this@InnerTube.proxy?.let { proxyConfig ->
                     proxy(proxyConfig)
                 }
-                
+
                 // Apply proxy authentication
                 this@InnerTube.proxyAuth?.let { auth ->
                     proxyAuthenticator { _, response ->
@@ -145,11 +148,19 @@ class InnerTube {
     private fun HttpRequestBuilder.ytClient(client: YouTubeClient, setLogin: Boolean = false) {
         contentType(ContentType.Application.Json)
         headers {
-            append("X-Goog-Api-Format-Version", "1")
-            append("X-YouTube-Client-Name", client.clientId /* Not a typo. The Client-Name header does contain the client id. */)
+            append("X-Goog-Api-Format-Version", client.apiFormatVersion)
+            append("X-YouTube-Client-Name", client.clientId)
             append("X-YouTube-Client-Version", client.clientVersion)
+            append("X-Goog-Client-Name", client.clientName)
+            append("X-Goog-Client-Version", client.clientVersion)
             append("X-Origin", YouTubeClient.ORIGIN_YOUTUBE_MUSIC)
             append("Referer", YouTubeClient.REFERER_YOUTUBE_MUSIC)
+            append("X-YouTube-Device", YouTubeClient.X_YOUTUBE_DEVICE_ONEPLUS_6T)
+
+            client.osName?.let { append("X-Goog-OS-Name", it) }
+            client.osVersion?.let { append("X-Goog-OS-Version", it) }
+            client.androidSdkVersion?.let { append("X-Android-Sdk-Int", it) }
+
             visitorData?.let { append("X-Goog-Visitor-Id", it) }
             if (setLogin && client.loginSupported) {
                 cookie?.let { cookie ->
@@ -215,40 +226,87 @@ class InnerTube {
     }
 
     suspend fun player(
-        client: YouTubeClient,
         videoId: String,
         playlistId: String?,
         signatureTimestamp: Int?,
         poToken: String? = null,
-    ) = withRetry {
-        httpClient.post("player") {
-            ytClient(client, setLogin = true)
-            setBody(
-                PlayerBody(
-                    context = client.toContext(locale, visitorData, dataSyncId).let {
-                        if (client.isEmbedded) {
-                            it.copy(
-                                thirdParty = Context.ThirdParty(
-                                    embedUrl = "https://www.youtube.com/watch?v=${videoId}"
+        clientOverride: YouTubeClient? = null,
+    ): HttpResponse = coroutineScope {
+        // Speedy and resilient race: VR for speed, Music for metadata, TV for bypass.
+        val clients = clientOverride?.let { listOf(it) } ?: listOf(
+            YouTubeClient.ANDROID_VR_NO_AUTH,
+            YouTubeClient.ANDROID_MUSIC,
+            YouTubeClient.TVHTML5_SIMPLY_EMBEDDED_PLAYER,
+            YouTubeClient.WEB_REMIX
+        )
+
+        // First success wins, loser jobs get cancelled. We only give up once
+        // EVERY client has failed — a single fast failure must not cancel
+        // slower-but-working clients still in flight.
+        val resultChannel = Channel<HttpResponse>(clients.size)
+        val failures = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+        val jobs = clients.map { client ->
+            launch {
+                try {
+                    val response = withRetry(maxAttempts = 1) { // Racing doesn't need many retries
+                        httpClient.post("player") {
+                            ytClient(client, setLogin = client.loginSupported)
+                            setBody(
+                                PlayerBody(
+                                    context = client.toContext(locale, visitorData, dataSyncId).let {
+                                        if (client.isEmbedded) {
+                                            it.copy(
+                                                thirdParty = Context.ThirdParty(
+                                                    embedUrl = "https://www.youtube.com/watch?v=${videoId}"
+                                                )
+                                            )
+                                        } else it
+                                    },
+                                    videoId = videoId,
+                                    playlistId = playlistId,
+                                    playbackContext = if (client.useSignatureTimestamp && signatureTimestamp != null) {
+                                        PlayerBody.PlaybackContext(
+                                            PlayerBody.PlaybackContext.ContentPlaybackContext(
+                                                signatureTimestamp
+                                            )
+                                        )
+                                    } else null,
+                                    serviceIntegrityDimensions = if (client.useWebPoTokens && poToken != null) {
+                                        PlayerBody.ServiceIntegrityDimensions(poToken)
+                                    } else null,
                                 )
                             )
-                        } else it
-                    },
-                    videoId = videoId,
-                    playlistId = playlistId,
-                    playbackContext = if (client.useSignatureTimestamp && signatureTimestamp != null) {
-                        PlayerBody.PlaybackContext(
-                            PlayerBody.PlaybackContext.ContentPlaybackContext(
-                                signatureTimestamp
-                            )
-                        )
-                    } else null,
-                    serviceIntegrityDimensions = if (client.useWebPoTokens && poToken != null) {
-                        PlayerBody.ServiceIntegrityDimensions(poToken)
-                    } else null,
-                )
-            )
+                        }
+                    }
+
+                    // Validate if the response is actually playable
+                    val playerResponse = response.body<com.metrolist.innertube.models.response.PlayerResponse>()
+                    if (playerResponse.playabilityStatus.status == "OK") {
+                        resultChannel.send(response)
+                    } else {
+                        throw IOException("Playability status: ${playerResponse.playabilityStatus.status}")
+                    }
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    failures[client.clientName] = e.message ?: e.javaClass.simpleName
+                    Timber.e(e, "Client ${client.clientName} failed for video $videoId")
+                }
+            }
         }
+
+        launch {
+            jobs.forEach { it.join() }
+            resultChannel.close()
+        }
+
+        val winner = resultChannel.receiveCatching().getOrNull()
+        jobs.forEach { it.cancel() }
+
+        winner ?: throw IOException(
+            "All player clients failed for $videoId: " +
+                    failures.entries.joinToString(", ") { "${it.key}=${it.value}" },
+        )
     }
 
     suspend fun registerPlayback(
@@ -608,7 +666,7 @@ class InnerTube {
             )
         }
     }
-    
+
     suspend fun getUploadCustomThumbnailLink(
         client: YouTubeClient,
         contentLength: Int

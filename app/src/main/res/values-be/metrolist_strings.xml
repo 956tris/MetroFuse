@@ -13,7 +13,7 @@
     <string name="my_top">Мой топ</string>
     <string name="sync_playlist">Сінхранізаваць плей-ліст</string>
     <string name="sync_disabled">Сінхранізацыя адключана</string>
-    <string name="allows_for_sync_witch_youtube">Заўвага: Гэта дазволіць сінхранізацыю з YouTube Music. Гэта НЕЛЬГА змяніць пазней.</string>
+    <string name="allows_for_sync_with_youtube">Заўвага: Гэта дазволіць сінхранізацыю з YouTube Music. Гэта НЕЛЬГА змяніць пазней.</string>
     <string name="generating_image">Генерацыя відарыса</string>
     <string name="please_wait">Пачакайце, калі ласка</string>
     <string name="cancel">Скасаваць</string>

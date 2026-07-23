@@ -19,7 +19,7 @@
     <string name="sync_disabled">ஒத்திசைவு முடக்கப்பட்டுள்ளது</string>
     <string name="uploaded_playlist">பதிவேற்றப்பட்டது</string>
     <string name="filter_uploaded">பதிவேற்றப்பட்டது</string>
-    <string name="allows_for_sync_witch_youtube">குறிப்பு: இது YouTube Music உடன் ஒத்திசைக்க அனுமதிக்கிறது. இதை பின்னர் மாற்ற முடியாது.</string>
+    <string name="allows_for_sync_with_youtube">குறிப்பு: இது YouTube Music உடன் ஒத்திசைக்க அனுமதிக்கிறது. இதை பின்னர் மாற்ற முடியாது.</string>
     <string name="generating_image">படத்தை உருவாக்குகிறது</string>
     <string name="please_wait">தயவுசெய்து காத்திருக்கவும்</string>
     <string name="cancel">ரத்துசெய்</string>

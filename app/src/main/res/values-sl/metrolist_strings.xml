@@ -17,7 +17,7 @@
     <string name="cached_playlist">Predpomnjeno</string>
     <string name="sync_playlist">Sinhronizacija seznama predvajanja</string>
     <string name="sync_disabled">Sinhronizacija onemogočena</string>
-    <string name="allows_for_sync_witch_youtube">Opomba: To omogoča sinhronizacijo z aplikacijo YouTube Music. Tega kasneje NI mogoče spremeniti.</string>
+    <string name="allows_for_sync_with_youtube">Opomba: To omogoča sinhronizacijo z aplikacijo YouTube Music. Tega kasneje NI mogoče spremeniti.</string>
     <string name="generating_image">Generiranje slike</string>
     <string name="please_wait">Prosim, počakajte</string>
     <string name="cancel">Prekliči</string>

@@ -10,7 +10,7 @@
     <string name="offline">已下載</string>
     <string name="my_top">我的Top</string>
     <string name="sync_playlist">同步播放清單</string>
-    <string name="allows_for_sync_witch_youtube">注意：這允許與 Youtube Music 同步，之後無法更改</string>
+    <string name="allows_for_sync_with_youtube">注意：這允許與 Youtube Music 同步，之後無法更改</string>
     <string name="copy_link">複製連結</string>
     <string name="select">全選</string>
     <string name="like_all">全部喜歡</string>

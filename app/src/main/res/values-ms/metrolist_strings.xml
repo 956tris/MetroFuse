@@ -19,7 +19,7 @@
     <string name="filter_uploaded">Dimuat naik</string>
     <string name="sync_playlist">Segerak senarai main</string>
     <string name="sync_disabled">Senarai main ditutup</string>
-    <string name="allows_for_sync_witch_youtube">Nota: Ia membolehkan penyegerakkan dengan YouTube Music. Ia TIDAK boleh ditukar kelak.</string>
+    <string name="allows_for_sync_with_youtube">Nota: Ia membolehkan penyegerakkan dengan YouTube Music. Ia TIDAK boleh ditukar kelak.</string>
     <string name="generating_image">Menjana imej</string>
     <string name="please_wait">Sila tunggu</string>
     <string name="cancel">Batal</string>

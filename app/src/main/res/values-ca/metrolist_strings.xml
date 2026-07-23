@@ -17,7 +17,7 @@
     <string name="cached_playlist">En memòria cau</string>
     <string name="sync_playlist">Sincronitza la llista</string>
     <string name="sync_disabled">Sincronització deshabitada</string>
-    <string name="allows_for_sync_witch_youtube">Nota: Això permet sincronitzar amb Youtube Music. Un cop fet, això NO es podrà canviar.</string>
+    <string name="allows_for_sync_with_youtube">Nota: Això permet sincronitzar amb Youtube Music. Un cop fet, això NO es podrà canviar.</string>
     <string name="generating_image">Generant imatge</string>
     <string name="please_wait">Sisplau espera</string>
     <string name="cancel">Cancel·la</string>

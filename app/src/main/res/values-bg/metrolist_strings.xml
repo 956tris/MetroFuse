@@ -12,7 +12,7 @@
     <string name="offline">Изтеглени</string>
     <string name="cached_playlist">Кеширани</string>
     <string name="sync_playlist">Синхронизирай плейлист</string>
-    <string name="allows_for_sync_witch_youtube">Бележка: Това позволява сихронизирането с YouTube Music. НЕ МОЖЕ да промените това по-късно.</string>
+    <string name="allows_for_sync_with_youtube">Бележка: Това позволява сихронизирането с YouTube Music. НЕ МОЖЕ да промените това по-късно.</string>
     <string name="generating_image">Генериране на изображение</string>
     <string name="please_wait">Моля изчакайте</string>
     <string name="cancel">Отказ</string>

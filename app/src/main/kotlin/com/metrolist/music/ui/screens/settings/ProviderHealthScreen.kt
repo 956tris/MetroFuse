@@ -43,9 +43,9 @@ import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.constants.DeezerResolverUrlKey
-import com.metrolist.music.constants.QobuzBackend
-import com.metrolist.music.constants.QobuzBackendKey
 import com.metrolist.music.deezer.DeezerAudioProvider
+import com.metrolist.music.constants.TidalResolverEndpointsKey
+import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.providers.ProviderHealthChecker
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
@@ -67,9 +67,14 @@ fun ProviderHealthScreen(
         DeezerResolverUrlKey,
         DeezerAudioProvider.DEFAULT_RESOLVER_URL,
     )
-    val qobuzBackend by rememberEnumPreference(QobuzBackendKey, QobuzBackend.JUMO)
-    val targets = remember(deezerResolverUrl) {
-        ProviderHealthChecker.targets(deezerResolverUrl = deezerResolverUrl)
+    val tidalResolverEndpoints by rememberPreference(TidalResolverEndpointsKey, "")
+    val qobuzCustomInstances by rememberPreference(QobuzCustomInstancesKey, "")
+    val targets = remember(deezerResolverUrl, tidalResolverEndpoints, qobuzCustomInstances) {
+        ProviderHealthChecker.targets(
+            deezerResolverUrl = deezerResolverUrl,
+            tidalResolverEndpoints = tidalResolverEndpoints,
+            qobuzCustomInstances = qobuzCustomInstances,
+        )
     }
     var refreshCounter by remember { mutableIntStateOf(0) }
     var results by remember { mutableStateOf<List<ProviderHealthChecker.Result>>(emptyList()) }
@@ -86,7 +91,7 @@ fun ProviderHealthScreen(
     }
 
     val resultMap = results.associateBy { it.target.id }
-    val selectedQobuzTarget = ProviderHealthChecker.qobuzTargetId(qobuzBackend.name)
+    val selectedQobuzTarget = "qobuz_kenny"
 
     Column(
         Modifier

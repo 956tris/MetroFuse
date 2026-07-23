@@ -10,7 +10,7 @@
     <string name="offline">Đã tải xuống</string>
     <string name="my_top">Top nghe nhiều</string>
     <string name="sync_playlist">Đồng bộ danh sách phát</string>
-    <string name="allows_for_sync_witch_youtube">LƯU Ý: Tùy chọn này cho phép đồng bộ hóa với YouTube Music và KHÔNG THỂ thay đổi sau này</string>
+    <string name="allows_for_sync_with_youtube">LƯU Ý: Tùy chọn này cho phép đồng bộ hóa với YouTube Music và KHÔNG THỂ thay đổi sau này</string>
     <string name="select">Chọn tất cả</string>
     <string name="like_all">Thích tất cả</string>
     <string name="dislike_all">Không thích toàn bộ</string>

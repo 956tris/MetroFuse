@@ -24,6 +24,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -40,6 +41,8 @@ import com.metrolist.music.constants.TidalAudioQuality
 import com.metrolist.music.constants.TidalAudioQualityKey
 import com.metrolist.music.constants.TidalAudioQualityOptions
 import com.metrolist.music.constants.TidalCookieKey
+import com.metrolist.music.constants.TidalResolverEndpointsKey
+import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
@@ -64,8 +67,14 @@ fun TidalSettings(
         rememberPreference(TidalAnimatedCoversEnabledKey, false)
     var tidalCookie by rememberPreference(TidalCookieKey, "")
     val cookieConfigured = isTidalCookieConfigured(tidalCookie)
+    var resolverEndpoints by rememberPreference(TidalResolverEndpointsKey, "")
+    val customResolverEndpointCount =
+        remember(resolverEndpoints) {
+            TidalAudioProvider.resolverEndpointBases(resolverEndpoints).size
+        }
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
     var showQualityDialog by rememberSaveable { mutableStateOf(false) }
+    var showResolverEndpointsDialog by rememberSaveable { mutableStateOf(false) }
 
     if (showCookieDialog) {
         TextFieldDialog(
@@ -102,6 +111,27 @@ fun TidalSettings(
         )
     }
 
+    if (showResolverEndpointsDialog) {
+        TextFieldDialog(
+            onDismiss = { showResolverEndpointsDialog = false },
+            icon = { Icon(painterResource(R.drawable.link), contentDescription = null) },
+            title = { Text(stringResource(R.string.tidal_resolver_endpoints)) },
+            initialTextFieldValue = TextFieldValue(resolverEndpoints),
+            placeholder = { Text(stringResource(R.string.tidal_resolver_endpoints_placeholder)) },
+            singleLine = false,
+            isInputValid = { value ->
+                TidalAudioProvider.isResolverEndpointsInputValid(value)
+            },
+            onDone = { value ->
+                resolverEndpoints = TidalAudioProvider.normalizeResolverEndpointsInput(value)
+                showResolverEndpointsDialog = false
+            },
+            extraContent = {
+                InfoLabel(text = stringResource(R.string.tidal_resolver_endpoints_helper))
+            },
+        )
+    }
+
     Column(
         modifier =
             Modifier
@@ -128,6 +158,25 @@ fun TidalSettings(
                         icon = painterResource(R.drawable.equalizer),
                         onClick = {
                             showQualityDialog = true
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.tidal_resolver_endpoints)) },
+                        description = {
+                            Text(
+                                if (customResolverEndpointCount > 0) {
+                                    stringResource(
+                                        R.string.tidal_resolver_endpoints_desc_custom,
+                                        customResolverEndpointCount,
+                                    )
+                                } else {
+                                    stringResource(R.string.tidal_resolver_endpoints_desc_default)
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.link),
+                        onClick = {
+                            showResolverEndpointsDialog = true
                         },
                     ),
                     Material3SettingsItem(

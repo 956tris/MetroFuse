@@ -9,11 +9,10 @@ import androidx.navigation.NavController
 import com.metrolist.music.ui.screens.Screens
 
 fun NavController.backToMain() {
-    val mainRoutes = Screens.MainScreens.map { it.route }
-
-    while (previousBackStackEntry != null &&
-        currentBackStackEntry?.destination?.route !in mainRoutes
-    ) {
-        popBackStack()
+    navigate(Screens.Home.route) {
+        popUpTo(graph.startDestinationId) {
+            inclusive = false
+        }
+        launchSingleTop = true
     }
 }

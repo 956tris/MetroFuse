@@ -69,9 +69,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.lifecycle.Lifecycle
@@ -162,7 +164,7 @@ private fun getMediaItems(
     
     val currentMediaItem = try {
         player.currentMediaItem
-    } catch (e: Exception) { null }
+    } catch (_: Exception) { null }
     
     val previousMediaItem = if (swipeThumbnail && !timeline.isEmpty) {
         val previousIndex = timeline.getPreviousWindowIndex(
@@ -171,7 +173,7 @@ private fun getMediaItems(
             shuffleModeEnabled
         )
         if (previousIndex != C.INDEX_UNSET) {
-            try { player.getMediaItemAt(previousIndex) } catch (e: Exception) { null }
+            try { player.getMediaItemAt(previousIndex) } catch (_: Exception) { null }
         } else null
     } else null
 
@@ -182,7 +184,7 @@ private fun getMediaItems(
             shuffleModeEnabled
         )
         if (nextIndex != C.INDEX_UNSET) {
-            try { player.getMediaItemAt(nextIndex) } catch (e: Exception) { null }
+            try { player.getMediaItemAt(nextIndex) } catch (_: Exception) { null }
         } else null
     } else null
 
@@ -204,20 +206,20 @@ private fun getTextColor(playerBackground: PlayerBackgroundStyle): Color {
         PlayerBackgroundStyle.BLUR -> Color.White
         PlayerBackgroundStyle.GALAXY_BLUR -> Color.White
         PlayerBackgroundStyle.GRADIENT -> Color.White
+        PlayerBackgroundStyle.MOVING_BLUR -> Color.White
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Thumbnail(
-    sliderPositionProvider: () -> Long?,
     modifier: Modifier = Modifier,
-    isPlayerExpanded: () -> Boolean = { true },
     isLandscape: Boolean = false,
     isListenTogetherGuest: Boolean = false,
+    artworkAlpha: Float = 1f,
+    isPlayerExpanded: () -> Boolean = { true },
 ) {
     val playerConnection = LocalPlayerConnection.current ?: return
-    val context = LocalContext.current
     val layoutDirection = LocalLayoutDirection.current
 
     // Collect states
@@ -227,7 +229,20 @@ fun Thumbnail(
     val canSkipPrevious by playerConnection.canSkipPrevious.collectAsStateWithLifecycle()
     val canSkipNext by playerConnection.canSkipNext.collectAsStateWithLifecycle()
     val appleCanvasUrl by playerConnection.service.currentAppleCanvasUrl.collectAsStateWithLifecycle()
+    val appleTallCanvasUrl by playerConnection.service.currentAppleTallCanvasUrl.collectAsStateWithLifecycle()
+    val tidalCanvasUrl by playerConnection.service.currentTidalCanvasUrl.collectAsStateWithLifecycle()
+    val embeddedCanvasUrl by playerConnection.service.currentEmbeddedCanvasUrl.collectAsStateWithLifecycle()
     val preferredArtworkUrl by playerConnection.service.currentPreferredArtworkUrl.collectAsStateWithLifecycle()
+
+    val bestCanvasUrl by remember(appleTallCanvasUrl, appleCanvasUrl, tidalCanvasUrl, embeddedCanvasUrl, isLandscape) {
+        derivedStateOf {
+            if (isLandscape) {
+                appleCanvasUrl ?: tidalCanvasUrl ?: embeddedCanvasUrl
+            } else {
+                appleTallCanvasUrl ?: appleCanvasUrl ?: tidalCanvasUrl ?: embeddedCanvasUrl
+            }
+        }
+    }
 
     // Preferences - computed once
     // Disable swipe for Listen Together guests
@@ -293,7 +308,7 @@ fun Thumbnail(
         if (index >= 0 && index < mediaItems.size) {
             try {
                 thumbnailLazyGridState.animateScrollToItem(index)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 thumbnailLazyGridState.scrollToItem(index)
             }
         }
@@ -414,13 +429,13 @@ fun Thumbnail(
                                 layoutDirection = layoutDirection,
                                 onSeek = onSeekCallback,
                                 playerConnection = playerConnection,
-                                context = context,
                                 isLandscape = isLandscape,
                                 isListenTogetherGuest = isListenTogetherGuest,
                                 currentMediaId = mediaMetadata?.id,
                                 currentMediaThumbnail = mediaMetadata?.thumbnailUrl,
-                                currentAppleCanvasUrl = appleCanvasUrl,
+                                currentCanvasUrl = bestCanvasUrl,
                                 currentPreferredArtworkUrl = preferredArtworkUrl,
+                                artworkAlpha = artworkAlpha,
                             )
                         }
                     }
@@ -452,14 +467,13 @@ fun Thumbnail(
  */
 @Composable
 private fun ThumbnailHeader(
+    modifier: Modifier = Modifier,
     queueTitle: String?,
     albumTitle: String?,
     textColor: Color,
-    modifier: Modifier = Modifier
 ) {
     val listenTogetherManager = LocalListenTogetherManager.current
     val listenTogetherRoleState = listenTogetherManager?.role?.collectAsStateWithLifecycle(initialValue = RoomRole.NONE)
-    val isListenTogetherGuest = listenTogetherRoleState?.value == RoomRole.GUEST
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -505,6 +519,7 @@ private fun ThumbnailHeader(
  */
 @Composable
 private fun ThumbnailItem(
+    modifier: Modifier = Modifier,
     item: MediaItem,
     dimensions: ThumbnailDimensions,
     hidePlayerThumbnail: Boolean,
@@ -513,14 +528,13 @@ private fun ThumbnailItem(
     layoutDirection: LayoutDirection,
     onSeek: (String, Boolean) -> Unit,
     playerConnection: com.metrolist.music.playback.PlayerConnection,
-    context: android.content.Context,
     isLandscape: Boolean = false,
     isListenTogetherGuest: Boolean = false,
     currentMediaId: String? = null,
     currentMediaThumbnail: String? = null,
-    currentAppleCanvasUrl: String? = null,
+    currentCanvasUrl: String? = null,
     currentPreferredArtworkUrl: String? = null,
-    modifier: Modifier = Modifier,
+    artworkAlpha: Float = 1f,
 ) {
     val incrementalSeekSkipEnabled by rememberPreference(SeekExtraSeconds, defaultValue = false)
     var skipMultiplier by remember { mutableIntStateOf(1) }
@@ -565,10 +579,10 @@ private fun ThumbnailItem(
 
                         if (isLeftSide) {
                             playerConnection.player.seekTo((currentPosition - skipAmount).coerceAtLeast(0))
-                            onSeek(context.getString(R.string.seek_backward_dynamic, skipAmount / 1000), true)
+                            onSeek("-${skipAmount / 1000} seconds backward", true)
                         } else {
                             playerConnection.player.seekTo((currentPosition + skipAmount).coerceAtMost(duration))
-                            onSeek(context.getString(R.string.seek_forward_dynamic, skipAmount / 1000), true)
+                            onSeek("+${skipAmount / 1000} seconds forward", true)
                         }
                     }
                 )
@@ -590,15 +604,24 @@ private fun ThumbnailItem(
                         else -> item.mediaMetadata.artworkUri?.toString()
                     }
 
-                if (item.mediaId == currentMediaId && !currentAppleCanvasUrl.isNullOrBlank()) {
-                    AppleMusicCanvasVideo(
-                        canvasUrl = currentAppleCanvasUrl,
-                        modifier = Modifier.fillMaxSize(),
+                if (item.mediaId == currentMediaId && !currentCanvasUrl.isNullOrBlank()) {
+                    CanvasVideo(
+                        canvasUrl = currentCanvasUrl,
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    alpha = artworkAlpha.coerceIn(0f, 1f)
+                                },
                     )
                 } else {
                     ThumbnailImage(
                         artworkUri = artworkUriToUse,
-                        cropArtwork = cropAlbumArt
+                        cropArtwork = cropAlbumArt,
+                        modifier =
+                            Modifier.graphicsLayer {
+                                alpha = artworkAlpha.coerceIn(0f, 1f)
+                            },
                     )
                 }
             }
@@ -670,56 +693,59 @@ private fun ThumbnailImage(
 }
 
 @Composable
-private fun AppleMusicCanvasVideo(
+private fun CanvasVideo(
     canvasUrl: String,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val textureView = remember {
-        TextureView(context).apply {
-            isOpaque = false
-            isClickable = false
-            isFocusable = false
-        }
-    }
+
     val player = remember(canvasUrl) {
         val isRemoteCanvas =
             canvasUrl.startsWith("http://", ignoreCase = true) ||
                 canvasUrl.startsWith("https://", ignoreCase = true)
-        val mediaSourceFactory =
-            if (isRemoteCanvas) {
-                DefaultMediaSourceFactory(
-                    OkHttpDataSource
-                        .Factory(OkHttpClient())
-                        .setDefaultRequestProperties(
-                            mapOf(
-                                "Origin" to "https://music.apple.com",
-                                "Referer" to "https://music.apple.com/",
-                                "User-Agent" to "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/147 Mobile Safari/537.36",
-                            ),
-                        ),
+
+        val dataSourceFactory = if (isRemoteCanvas) {
+            OkHttpDataSource.Factory(OkHttpClient())
+                .setDefaultRequestProperties(
+                    mapOf(
+                        "Origin" to "https://music.apple.com",
+                        "Referer" to "https://music.apple.com/",
+                        "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    )
                 )
-            } else {
-                DefaultMediaSourceFactory(context)
+        } else {
+            DefaultDataSource.Factory(context)
+        }
+
+        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataSourceFactory)
+
+        val mediaItem = MediaItem.Builder()
+            .setUri(canvasUrl)
+            .apply {
+                if (canvasUrl.contains(".m3u8")) {
+                    setMimeType(MimeTypes.APPLICATION_M3U8)
+                }
             }
+            .build()
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .setTrackSelector(createCanvasTrackSelector(context))
             .build()
             .apply {
-            setAudioAttributes(AudioAttributes.DEFAULT, false)
-            repeatMode = Player.REPEAT_MODE_ONE
-            volume = 0f
-            playWhenReady = true
-            setVideoTextureView(textureView)
-            setMediaItem(MediaItem.fromUri(canvasUrl))
-            prepare()
-        }
+                setAudioAttributes(AudioAttributes.DEFAULT, false)
+                videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+                repeatMode = Player.REPEAT_MODE_ONE
+                volume = 0f
+                playWhenReady = true
+                setMediaItem(mediaItem)
+                prepare()
+            }
     }
 
-    DisposableEffect(player, lifecycleOwner, textureView) {
+    DisposableEffect(player, lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_RESUME -> player.play()
@@ -730,13 +756,20 @@ private fun AppleMusicCanvasVideo(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            player.clearVideoTextureView(textureView)
             player.release()
         }
     }
 
     AndroidView(
-        factory = { textureView },
+        factory = { ctx ->
+            TextureView(ctx)
+        },
+        update = { textureView ->
+            player.setVideoTextureView(textureView)
+        },
+        onRelease = {
+            player.clearVideoTextureView(it)
+        },
         modifier = modifier,
     )
 }

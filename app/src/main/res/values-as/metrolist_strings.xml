@@ -19,7 +19,7 @@
     <string name="filter_uploaded">আপলোড কৰা হৈছে</string>
     <string name="sync_playlist">প্লেলিষ্ট ছিঙ্ক কৰক</string>
     <string name="sync_disabled">ছিঙ্ক নিষ্ক্ৰিয় কৰা হৈছে</string>
-    <string name="allows_for_sync_witch_youtube">বি:দ্ৰ: ইয়াৰ দ্বাৰা YouTube Music ৰ সৈতে ছিংকিং কৰিব পৰা যায়। এইটো পিছত সলনি হ\'ব নোৱাৰে।</string>
+    <string name="allows_for_sync_with_youtube">বি:দ্ৰ: ইয়াৰ দ্বাৰা YouTube Music ৰ সৈতে ছিংকিং কৰিব পৰা যায়। এইটো পিছত সলনি হ\'ব নোৱাৰে।</string>
     <string name="generating_image">ছবি সৃষ্টি কৰা</string>
     <string name="please_wait">অনুগ্ৰহ কৰি অপেক্ষা কৰক</string>
     <string name="cancel">বাতিল কৰক</string>
