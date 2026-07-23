@@ -105,7 +105,7 @@ fun CreatePlaylistDialog(
                             style = MaterialTheme.typography.titleLarge,
                         )
                         Text(
-                            text = stringResource(R.string.allows_for_sync_witch_youtube),
+                            text = stringResource(R.string.allows_for_sync_with_youtube),
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.fillMaxWidth(0.7f),
                         )

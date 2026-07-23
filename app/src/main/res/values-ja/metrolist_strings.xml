@@ -72,7 +72,7 @@
     <string name="default_links">対応しているリンクを開く</string>
     <string name="views">視聴回数</string>
     <string name="likes">高評価数</string>
-    <string name="allows_for_sync_witch_youtube">YouTube Musicと同期します。これは後から変更できません</string>
+    <string name="allows_for_sync_with_youtube">YouTube Musicと同期します。これは後から変更できません</string>
     <string name="sort_by_last_updated">更新日</string>
     <plurals name="n_time">
         <item quantity="other">%d回</item>

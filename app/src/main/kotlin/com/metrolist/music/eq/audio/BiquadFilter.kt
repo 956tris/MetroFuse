@@ -2,6 +2,7 @@ package com.metrolist.music.eq.audio
 
 import com.metrolist.music.eq.data.FilterType
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
@@ -14,9 +15,9 @@ import kotlin.math.sqrt
  */
 class BiquadFilter(
     private val sampleRate: Int,
-    private val frequency: Double,
-    private val gain: Double,
-    private val q: Double = 1.41,
+    private var frequency: Double,
+    private var gain: Double,
+    private var q: Double = 1.41,
     private val filterType: FilterType = FilterType.PK
 ) {
     // Filter coefficients
@@ -43,6 +44,38 @@ class BiquadFilter(
     }
 
     /**
+     * Updates the gain and recalculates coefficients
+     */
+    @Synchronized
+    fun updateGain(newGain: Double) {
+        if (abs(gain - newGain) < 0.01) return
+        gain = newGain
+        calculateCoefficients()
+    }
+
+    /**
+     * Updates the frequency and recalculates coefficients
+     */
+    @Synchronized
+    fun updateFrequency(newFrequency: Double) {
+        val clampedFreq = newFrequency.coerceIn(20.0, sampleRate / 2.1)
+        if (abs(frequency - clampedFreq) < 1.0) return
+        frequency = clampedFreq
+        calculateCoefficients()
+    }
+
+    /**
+     * Updates the Q factor and recalculates coefficients
+     */
+    @Synchronized
+    fun updateQ(newQ: Double) {
+        val clampedQ = newQ.coerceIn(0.1, 10.0)
+        if (abs(q - clampedQ) < 0.01) return
+        q = clampedQ
+        calculateCoefficients()
+    }
+
+    /**
      * Calculate biquad filter coefficients based on filter type
      * Based on Robert Bristow-Johnson's Audio EQ Cookbook
      */
@@ -51,10 +84,8 @@ class BiquadFilter(
             FilterType.PK -> calculatePeakingCoefficients()
             FilterType.LSC -> calculateLowShelfCoefficients()
             FilterType.HSC -> calculateHighShelfCoefficients()
-            else -> {
-                // Handle any unexpected filter type
-                calculatePeakingCoefficients()
-            }
+            FilterType.LPQ -> calculateLowPassCoefficients()
+            FilterType.HPQ -> calculateHighPassCoefficients()
         }
     }
 
@@ -146,6 +177,54 @@ class BiquadFilter(
         a2 = aPlusOne - aMinusOne * cosOmega - twoSqrtAAlpha
 
         // Normalize coefficients
+        b0 /= a0
+        b1 /= a0
+        b2 /= a0
+        a1 /= a0
+        a2 /= a0
+        a0 = 1.0
+    }
+
+    /**
+     * Calculate low-pass filter coefficients (LPQ)
+     */
+    private fun calculateLowPassCoefficients() {
+        val omega = 2.0 * PI * frequency / sampleRate
+        val cosOmega = cos(omega)
+        val alpha = sin(omega) / (2.0 * q)
+
+        b0 = (1.0 - cosOmega) / 2.0
+        b1 = 1.0 - cosOmega
+        b2 = (1.0 - cosOmega) / 2.0
+        a0 = 1.0 + alpha
+        a1 = -2.0 * cosOmega
+        a2 = 1.0 - alpha
+
+        // Normalize
+        b0 /= a0
+        b1 /= a0
+        b2 /= a0
+        a1 /= a0
+        a2 /= a0
+        a0 = 1.0
+    }
+
+    /**
+     * Calculate high-pass filter coefficients (HPQ)
+     */
+    private fun calculateHighPassCoefficients() {
+        val omega = 2.0 * PI * frequency / sampleRate
+        val cosOmega = cos(omega)
+        val alpha = sin(omega) / (2.0 * q)
+
+        b0 = (1.0 + cosOmega) / 2.0
+        b1 = -(1.0 + cosOmega)
+        b2 = (1.0 + cosOmega) / 2.0
+        a0 = 1.0 + alpha
+        a1 = -2.0 * cosOmega
+        a2 = 1.0 - alpha
+
+        // Normalize
         b0 /= a0
         b1 /= a0
         b2 /= a0

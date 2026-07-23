@@ -40,6 +40,7 @@ bravepipeExtractor = "v0.26.0-2.3.4"
 extractor = "6305155"
 tinypinyin = "2.0.3"
 protobuf = "4.34.1"
+ffmpegKit = "6.0.6"
 
 [libraries]
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
@@ -128,6 +129,11 @@ tinypinyin = { module = "com.github.promeG:tinypinyin", version.ref = "tinypinyi
 
 protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
 protobuf-kotlin-lite = { module = "com.google.protobuf:protobuf-kotlin-lite", version.ref = "protobuf" }
+
+# Community-maintained republish of the retired arthenica/ffmpeg-kit.
+# -min variant: smallest footprint, sufficient for local-file CENC decryption
+# (-decryption_key lives in libavformat/mov.c which is always compiled in).
+ffmpeg-kit-min = { module = "io.github.maitrungduc1410:ffmpeg-kit-min", version.ref = "ffmpegKit" }
 
 [plugins]
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }

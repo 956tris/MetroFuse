@@ -107,18 +107,109 @@ object PlayerColorExtractor {
         android.graphics.Color.colorToHSV(bestSwatch?.rgb ?: dominantColor, hsv)
         val saturation =
             if (hsv[1] < 0.12f) {
-                hsv[1] * 0.35f
+                hsv[1] * 0.55f
             } else {
-                (hsv[1] * 1.12f).coerceIn(0.18f, 0.82f)
+                (hsv[1] * 1.65f).coerceIn(0.42f, 0.98f)
             }
-        val anchorValue = hsv[2].coerceIn(0.12f, 0.52f)
+        val anchorValue = (hsv[2] * 1.35f).coerceIn(0.28f, 0.88f)
         val hue = hsv[0]
 
         listOf(
-            hsvColor(hue, saturation * 0.70f, anchorValue * 0.16f),
-            hsvColor(hue, saturation * 0.88f, anchorValue * 0.34f),
-            hsvColor(hue, saturation, anchorValue * 0.72f),
-            hsvColor(hue, saturation * 0.42f, (anchorValue * 1.45f).coerceIn(0.45f, 0.78f)),
+            hsvColor(hue, saturation * 0.82f, anchorValue * 0.22f),
+            hsvColor(hue, saturation * 0.95f, anchorValue * 0.42f),
+            hsvColor(hue, saturation * 1.05f, anchorValue * 0.88f),
+            hsvColor(hue, saturation * 0.62f, (anchorValue * 1.55f).coerceIn(0.55f, 0.92f)),
+        )
+    }
+
+    suspend fun extractMirroredGalaxyColors(
+        palette: Palette,
+        fallbackColor: Int,
+    ): List<Color> = withContext(Dispatchers.Default) {
+        val fallback = fallbackColor.toGalaxyCandidate(population = 1)
+        val candidates =
+            listOfNotNull(
+                palette.dominantSwatch,
+                palette.vibrantSwatch,
+                palette.darkVibrantSwatch,
+                palette.lightVibrantSwatch,
+                palette.mutedSwatch,
+                palette.darkMutedSwatch,
+                palette.lightMutedSwatch,
+            ).map { it.toGalaxyCandidate() }
+                .ifEmpty { listOf(fallback) }
+
+        var totalWeight = 0f
+        var weightedSaturation = 0f
+        var weightedValue = 0f
+        var darkWeight = 0f
+        candidates.forEach { candidate ->
+            val weight = candidate.population.coerceAtLeast(1).toFloat()
+            totalWeight += weight
+            weightedSaturation += candidate.saturation * weight
+            weightedValue += candidate.value * weight
+            if (candidate.value < 0.16f) {
+                darkWeight += weight
+            }
+        }
+        val averageSaturation = weightedSaturation / totalWeight.coerceAtLeast(1f)
+        val averageValue = weightedValue / totalWeight.coerceAtLeast(1f)
+        val darkShare = darkWeight / totalWeight.coerceAtLeast(1f)
+
+        if (averageValue < 0.10f || (averageSaturation < 0.08f && averageValue < 0.24f)) {
+            return@withContext listOf(
+                Color.Black,
+                Color(0xFF020202),
+                Color.Black,
+                Color.White,
+            )
+        }
+
+        val primary =
+            candidates.maxByOrNull {
+                val valueScore = (1.1f - abs(it.value - 0.46f)).coerceIn(0.28f, 1f)
+                it.population * (0.42f + it.saturation * 1.25f) * valueScore
+            } ?: fallback
+        val secondary =
+            candidates
+                .filter {
+                    hueDistance(it.hue, primary.hue) > 16f &&
+                        it.saturation > 0.10f &&
+                        it.value > 0.08f
+                }.maxByOrNull {
+                    it.population * (0.30f + it.saturation) * (0.45f + it.value)
+                }
+                ?: primary.shiftHue(if (primary.saturation > 0.18f) 18f else 0f)
+        val accent =
+            candidates.maxByOrNull {
+                it.population * (0.25f + it.saturation * 1.4f) * (0.35f + it.value)
+            } ?: primary
+
+        val darkness = (0.08f + darkShare * 0.06f).coerceIn(0.08f, 0.16f)
+        val topValue = (averageValue * 0.18f + 0.035f - darkness * 0.04f).coerceIn(0.025f, 0.12f)
+        val midValue = (averageValue * 0.32f + 0.055f - darkness * 0.03f).coerceIn(0.06f, 0.22f)
+        val lowValue = (averageValue * 0.48f + 0.075f - darkness * 0.01f).coerceIn(0.10f, 0.32f)
+        val primarySaturation = (primary.saturation * 1.15f + averageSaturation * 0.35f).coerceIn(0.35f, 0.98f)
+        val secondarySaturation = (secondary.saturation * 1.05f + averageSaturation * 0.32f).coerceIn(0.32f, 0.95f)
+        val accentSaturation = (accent.saturation * 1.35f + averageSaturation * 0.25f).coerceIn(0.45f, 1.0f)
+
+        listOf(
+            hsvColor(primary.hue, primarySaturation * 0.70f, topValue * 1.4f),
+            blendColor(
+                hsvColor(primary.hue, primarySaturation, midValue * 1.25f),
+                hsvColor(secondary.hue, secondarySaturation, midValue * 1.35f),
+                0.38f,
+            ),
+            blendColor(
+                hsvColor(secondary.hue, secondarySaturation, lowValue * 1.15f),
+                hsvColor(primary.hue, primarySaturation * 0.75f, lowValue * 1.1f),
+                0.22f,
+            ),
+            hsvColor(
+                accent.hue,
+                accentSaturation,
+                (accent.value * 0.65f + averageValue * 0.30f + 0.45f).coerceIn(0.55f, 0.98f),
+            ),
         )
     }
 
@@ -181,6 +272,58 @@ object PlayerColorExtractor {
         val vibrancyBonus = if (saturation > 0.3f && brightness > 0.3f) 1.5f else 1f
         
         return populationWeight * vibrancyBonus * (saturation + brightness) / 2f
+    }
+
+    private data class GalaxyColorCandidate(
+        val hue: Float,
+        val saturation: Float,
+        val value: Float,
+        val population: Int,
+    )
+
+    private fun Palette.Swatch.toGalaxyCandidate(): GalaxyColorCandidate =
+        rgb.toGalaxyCandidate(population)
+
+    private fun Int.toGalaxyCandidate(population: Int): GalaxyColorCandidate {
+        val hsv = FloatArray(3)
+        android.graphics.Color.colorToHSV(this, hsv)
+        return GalaxyColorCandidate(
+            hue = hsv[0],
+            saturation = hsv[1],
+            value = hsv[2],
+            population = population,
+        )
+    }
+
+    private fun GalaxyColorCandidate.shiftHue(amount: Float): GalaxyColorCandidate =
+        copy(hue = (hue + amount).floorHue())
+
+    private fun Float.floorHue(): Float {
+        val value = this % 360f
+        return if (value < 0f) value + 360f else value
+    }
+
+    private fun hueDistance(
+        first: Float,
+        second: Float,
+    ): Float {
+        val distance = abs(first.floorHue() - second.floorHue())
+        return minOf(distance, 360f - distance)
+    }
+
+    private fun blendColor(
+        start: Color,
+        end: Color,
+        fraction: Float,
+    ): Color {
+        val amount = fraction.coerceIn(0f, 1f)
+        val inverse = 1f - amount
+        return Color(
+            red = start.red * inverse + end.red * amount,
+            green = start.green * inverse + end.green * amount,
+            blue = start.blue * inverse + end.blue * amount,
+            alpha = start.alpha * inverse + end.alpha * amount,
+        )
     }
 
     private fun hsvColor(

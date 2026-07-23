@@ -10,7 +10,7 @@
     <string name="offline">Завантажене</string>
     <string name="my_top">Мій Топ</string>
     <string name="sync_playlist">Синхронізувати список відтворення</string>
-    <string name="allows_for_sync_witch_youtube">Зауважте: Це дозволяє синхронізацію з YouTube Music. Це НЕ можна буде змінити пізніше.</string>
+    <string name="allows_for_sync_with_youtube">Зауважте: Це дозволяє синхронізацію з YouTube Music. Це НЕ можна буде змінити пізніше.</string>
     <string name="select">Обрати все</string>
     <string name="like_all">Вподобати все</string>
     <string name="dislike_all">Позначити все як не вподобане</string>

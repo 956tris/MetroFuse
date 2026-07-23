@@ -19,6 +19,7 @@ import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.SongSortType
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
+import com.metrolist.music.constants.SoundCloudSessionClientIdKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.db.MusicDatabase
@@ -179,8 +180,9 @@ class OnlinePlaylistViewModel @Inject constructor(
 
             "soundcloud" -> {
                 val token = context.dataStore.get(SoundCloudAuthTokenKey, "")
+                val scClientId = context.dataStore.get(SoundCloudSessionClientIdKey, "")
                 SoundCloudHomeFeedProvider
-                    .loadCollection(externalId, type, token)
+                    .loadCollection(externalId, type, token, scClientId)
                     .onSuccess { page -> setExternalPlaylist(page) }
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load SoundCloud $type"

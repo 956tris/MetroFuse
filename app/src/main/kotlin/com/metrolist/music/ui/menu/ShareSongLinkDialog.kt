@@ -119,7 +119,6 @@ private enum class ShareLinkService(
     TIDAL("TIDAL", R.drawable.provider_tidal, AudioProviderOrderItem.TIDAL),
     SOUNDCLOUD("SoundCloud", R.drawable.provider_soundcloud, AudioProviderOrderItem.SOUNDCLOUD),
     DEEZER("Deezer", R.drawable.provider_deezer, AudioProviderOrderItem.DEEZER),
-    APPLE_MUSIC("Apple Music", R.drawable.music_note, AudioProviderOrderItem.APPLE_MUSIC),
     QOBUZ("Qobuz", R.drawable.music_note, AudioProviderOrderItem.QOBUZ),
 }
 
@@ -172,8 +171,6 @@ private fun MediaMetadata.directShareUrl(service: ShareLinkService): String? =
             id.takeIf { it.startsWith("https://soundcloud.com/", ignoreCase = true) }
         ShareLinkService.DEEZER ->
             id.providerNumericId("deezer")?.let { "https://www.deezer.com/track/$it" }
-        ShareLinkService.APPLE_MUSIC ->
-            id.takeIf { it.startsWith("https://music.apple.com/", ignoreCase = true) }
         ShareLinkService.QOBUZ ->
             id.providerNumericId("qobuz")?.let { "https://open.qobuz.com/track/$it" }
     }
@@ -186,7 +183,6 @@ private fun ShareLinkService.searchUrl(metadata: MediaMetadata): String {
         ShareLinkService.TIDAL -> "https://listen.tidal.com/search?q=${query.urlQueryEncoded()}"
         ShareLinkService.SOUNDCLOUD -> "https://soundcloud.com/search/sounds?q=${query.urlQueryEncoded()}"
         ShareLinkService.DEEZER -> "https://www.deezer.com/search/${query.urlPathEncoded()}"
-        ShareLinkService.APPLE_MUSIC -> "https://music.apple.com/search?term=${query.urlQueryEncoded()}"
         ShareLinkService.QOBUZ -> "https://www.qobuz.com/search?q=${query.urlQueryEncoded()}"
     }
 }

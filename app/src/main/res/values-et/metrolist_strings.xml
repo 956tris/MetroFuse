@@ -38,7 +38,7 @@
     <string name="cached_playlist">Puhverdatud</string>
     <string name="sync_playlist">Sünkroniseeri esitusloend</string>
     <string name="sync_disabled">Sünkroniseerimine pole kasutusel</string>
-    <string name="allows_for_sync_witch_youtube">Märkus: see võimaldab sünkroonimist YouTube Musicuga. Sa EI SAA seda seadistust hiljem muuta.</string>
+    <string name="allows_for_sync_with_youtube">Märkus: see võimaldab sünkroonimist YouTube Musicuga. Sa EI SAA seda seadistust hiljem muuta.</string>
     <string name="generating_image">Loon pilti</string>
     <string name="max_selection_limit">Valiku ülempiir</string>
     <string name="share_selected">Jaga valitut</string>

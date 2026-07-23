@@ -44,7 +44,8 @@ object PlayerSliderColors {
             }
             PlayerBackgroundStyle.BLUR,
             PlayerBackgroundStyle.GALAXY_BLUR,
-            PlayerBackgroundStyle.GRADIENT -> {
+            PlayerBackgroundStyle.GRADIENT,
+            PlayerBackgroundStyle.MOVING_BLUR -> {
                 Color.White.copy(alpha = 0.4f)
             }
         }

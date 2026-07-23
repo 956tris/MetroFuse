@@ -16,7 +16,7 @@
     <string name="cached_playlist">În cache</string>
     <string name="sync_playlist">Sincronizează playlistul</string>
     <string name="sync_disabled">Sincronizare dezactivată</string>
-    <string name="allows_for_sync_witch_youtube">Notă: Această setare activează sincronizarea cu YouTube Music și NU poate fi modificată mai târziu</string>
+    <string name="allows_for_sync_with_youtube">Notă: Această setare activează sincronizarea cu YouTube Music și NU poate fi modificată mai târziu</string>
     <string name="generating_image">Se generează imaginea…</string>
     <string name="please_wait">Așteaptă</string>
     <string name="cancel">Anulează</string>

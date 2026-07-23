@@ -22,7 +22,7 @@
     <string name="filter_uploaded">අප්ලෝඩ් කරන ලද</string>
     <string name="sync_playlist">සින්දු ප්ලේ ලිස්ට් එක සමමුහුර්ථ කරන්න</string>
     <string name="sync_disabled">සමමුහුර්ථය වළකන ලදී</string>
-    <string name="allows_for_sync_witch_youtube">මේ මගින් YouTube Music සමග සමමුහුර්ථය සක්‍රීය වන අතර මෙය පසුව වෙනස් කල නොහැකිය</string>
+    <string name="allows_for_sync_with_youtube">මේ මගින් YouTube Music සමග සමමුහුර්ථය සක්‍රීය වන අතර මෙය පසුව වෙනස් කල නොහැකිය</string>
     <string name="generating_image">පින්තූරයක් නිර්මාණය වෙමින් පවතී…</string>
     <string name="please_wait">පොඩ්ඩක් ඉන්න</string>
     <string name="cancel">අවලංගු කරන්න</string>

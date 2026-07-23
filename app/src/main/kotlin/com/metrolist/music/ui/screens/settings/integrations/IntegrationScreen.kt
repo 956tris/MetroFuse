@@ -71,10 +71,24 @@ fun IntegrationScreen(
                 ),
                 IntegrationCardItem(
                     icon = painterResource(R.drawable.music_note),
+                    title = { Text(stringResource(R.string.qobuz_integration)) },
+                    onClick = {
+                        navController.navigate("settings/integrations/qobuz")
+                    }
+                ),
+                IntegrationCardItem(
+                    icon = painterResource(R.drawable.music_note),
                     title = { Text(stringResource(R.string.deezer_integration)) },
                     description = { Text(stringResource(R.string.deezer_integration_desc)) },
                     onClick = {
                         navController.navigate("settings/integrations/deezer")
+                    }
+                ),
+                IntegrationCardItem(
+                    icon = painterResource(R.drawable.music_note),
+                    title = { Text(stringResource(R.string.amazon_music_integration)) },
+                    onClick = {
+                        navController.navigate("settings/integrations/amazon_music")
                     }
                 ),
                 IntegrationCardItem(

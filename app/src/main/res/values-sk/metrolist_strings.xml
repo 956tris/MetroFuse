@@ -17,7 +17,7 @@
     <string name="cached_playlist">Vo vyrovnávacej pamäti</string>
     <string name="sync_playlist">Synchronizácia playlistu</string>
     <string name="sync_disabled">Synchronizácia zakázaná</string>
-    <string name="allows_for_sync_witch_youtube">Poznámka: Toto umožňuje synchronizáciu s YouTube Music. Toto sa neskôr NEDÁ zmeniť.</string>
+    <string name="allows_for_sync_with_youtube">Poznámka: Toto umožňuje synchronizáciu s YouTube Music. Toto sa neskôr NEDÁ zmeniť.</string>
     <string name="generating_image">Generovanie obrázka</string>
     <string name="please_wait">Prosím, počkajte</string>
     <string name="cancel">Zrušiť</string>

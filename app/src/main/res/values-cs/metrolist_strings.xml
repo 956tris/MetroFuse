@@ -69,7 +69,7 @@
     <string name="cached_playlist">V mezipaměti</string>
     <string name="sync_playlist">Synchronizovat playlist</string>
     <string name="sync_disabled">Synchronizace zakázána</string>
-    <string name="allows_for_sync_witch_youtube">UPOZORNĚNÍ: Tato funkce povolí synchronizaci se službou YouTube Music a NELZE ji později změnit</string>
+    <string name="allows_for_sync_with_youtube">UPOZORNĚNÍ: Tato funkce povolí synchronizaci se službou YouTube Music a NELZE ji později změnit</string>
     <string name="remove_from_cache">Odstranit z mezipaměti</string>
     <string name="copy_link">Kopírovat odkaz</string>
     <string name="dislike_all">Nelíbí se u všeho</string>

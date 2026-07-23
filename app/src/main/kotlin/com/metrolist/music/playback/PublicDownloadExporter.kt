@@ -175,6 +175,8 @@ object PublicDownloadExporter {
             listOf(
                 downloadId,
                 "$APPLE_WRAPPER_CACHE_PREFIX$downloadId",
+                "${APPLE_WRAPPER_CACHE_PREFIX}aac:$downloadId",
+                "${APPLE_WRAPPER_CACHE_PREFIX}atmos:$downloadId",
                 "$OLD_APPLE_WRAPPER_CACHE_PREFIX_V2$downloadId",
                 "$OLD_APPLE_WRAPPER_CACHE_PREFIX$downloadId",
                 "$OLD_QOBUZ_FALLBACK_CACHE_PREFIX$downloadId",
@@ -193,6 +195,8 @@ object PublicDownloadExporter {
 
     private fun String.removeKnownCachePrefix(): String =
         removePrefix(APPLE_WRAPPER_CACHE_PREFIX)
+            .removePrefix("aac:")
+            .removePrefix("atmos:")
             .removePrefix(OLD_APPLE_WRAPPER_CACHE_PREFIX_V2)
             .removePrefix(OLD_APPLE_WRAPPER_CACHE_PREFIX)
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
@@ -835,6 +839,8 @@ object PublicDownloadExporter {
                 ?: return null
             val album = source.song.albumName ?: source.album?.title ?: mediaMetadata.album?.title
             val isrc = ProviderIsrc.firstOf(mediaMetadata.id, source.song.id)
+            val durationSeconds = mediaMetadata.duration.takeIf { it > 0 }
+                ?: source.song.duration.takeIf { it > 0 }
             val appleCanvasUrl =
                 AppleMusicCanvasProvider.getCached(
                     song = mediaMetadata.title,
@@ -842,6 +848,7 @@ object PublicDownloadExporter {
                     album = album,
                     explicit = source.song.explicit.takeIf { it },
                     isrc = isrc,
+                    durationSeconds = durationSeconds,
                     preferredAspect = AppleMusicCanvasProvider.CanvasAspectPreference.TALL,
                 )?.animated?.takeIf { it.isNotBlank() }
                     ?: withTimeoutOrNull(6_500L) {
@@ -851,6 +858,7 @@ object PublicDownloadExporter {
                             album = album,
                             explicit = source.song.explicit.takeIf { it },
                             isrc = isrc,
+                            durationSeconds = durationSeconds,
                             preferredAspect = AppleMusicCanvasProvider.CanvasAspectPreference.TALL,
                         )?.animated?.takeIf { it.isNotBlank() }
                     }

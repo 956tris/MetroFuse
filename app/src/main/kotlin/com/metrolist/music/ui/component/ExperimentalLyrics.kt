@@ -82,7 +82,6 @@ import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalListenTogetherManager
@@ -125,7 +124,6 @@ import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.viewmodels.LyricsViewModel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -134,15 +132,19 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val LYRICS_ANCHOR_RATIO = 0.35f
+private const val SPICY_LYRICS_ANCHOR_RATIO = 0.47f
 private val LYRICS_ITEM_FALLBACK_HEIGHT_DP = 68.dp
 private val LYRICS_ITEM_GAP_DP = 16.dp
+private val SPICY_LYRICS_ITEM_GAP_DP = 4.dp
 private val LYRICS_FADE_TOP_DP = 130.dp
 private val LYRICS_FADE_BOTTOM_DP = 160.dp
+private val SPICY_LYRICS_FADE_TOP_DP = 72.dp
+private val SPICY_LYRICS_FADE_BOTTOM_DP = 72.dp
 private const val LYRICS_STAGGER_DELAY_PER_DISTANCE = 20
 private const val LYRICS_STAGGER_DELAY_MAX_MS = 200
-private const val APPLE_LYRICS_SCROLL_DURATION_MS = 420
-private const val APPLE_LYRICS_STAGGER_DELAY_PER_DISTANCE = 14
-private const val APPLE_LYRICS_STAGGER_DELAY_MAX_MS = 120
+private const val APPLE_LYRICS_SCROLL_DURATION_MS = 360
+private const val APPLE_LYRICS_STAGGER_DELAY_PER_DISTANCE = 8
+private const val APPLE_LYRICS_STAGGER_DELAY_MAX_MS = 64
 private const val LYRICS_PREVIEW_TIME = 8000L
 
 @OptIn(
@@ -187,6 +189,12 @@ fun ExperimentalLyrics(
     val aiSystemPrompt by rememberPreference(AiSystemPromptKey, "")
     
     val scope = rememberCoroutineScope()
+
+    val maxSelectionLimit = 5
+    val aiApiKeyRequired = stringResource(R.string.ai_api_key_required)
+    val maxSelectionLimitStr = stringResource(R.string.max_selection_limit, maxSelectionLimit)
+    val shareLyricsStr = stringResource(R.string.share_lyrics)
+    val failedToCreateImageStr = stringResource(R.string.failed_to_create_image, "%s")
 
     val mediaMetadata by playerConnection.mediaMetadata.collectAsStateWithLifecycle()
     val translationStatus by LyricsTranslationHelper.status.collectAsStateWithLifecycle()
@@ -292,7 +300,7 @@ fun ExperimentalLyrics(
                     systemPrompt = aiSystemPrompt,
                 )
             } else if (effectiveApiKey.isBlank()) {
-                Toast.makeText(context, context.getString(R.string.ai_api_key_required), Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, aiApiKeyRequired, Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -307,6 +315,7 @@ fun ExperimentalLyrics(
         PlayerBackgroundStyle.DEFAULT -> if (appleMusicLyrics) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary
         PlayerBackgroundStyle.BLUR,
         PlayerBackgroundStyle.GALAXY_BLUR,
+        PlayerBackgroundStyle.MOVING_BLUR,
         PlayerBackgroundStyle.GRADIENT -> Color.White
     }
 
@@ -333,16 +342,14 @@ fun ExperimentalLyrics(
         selectedIndices.clear()
     }
 
-    val maxSelectionLimit = 5
     LaunchedEffect(showMaxSelectionToast) {
         if (showMaxSelectionToast) {
-            Toast.makeText(context, context.getString(R.string.max_selection_limit, maxSelectionLimit), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, maxSelectionLimitStr, Toast.LENGTH_SHORT).show()
             showMaxSelectionToast = false
         }
     }
 
     var lastMainMaxSeen by remember(lyrics, lines) { mutableIntStateOf(-1) }
-    var smoothPositionForSync by remember { mutableLongStateOf(0L) }
 
     LaunchedEffect(lyrics, lines) {
         if (lyrics.isNullOrEmpty() || lines.isEmpty()) {
@@ -372,7 +379,6 @@ fun ExperimentalLyrics(
             }
             
             currentPositionState = position
-            smoothPositionForSync = position
             
             val lyricsOffset = currentSong?.song?.lyricsOffset ?: 0
             val effectivePosition = position + lyricsOffset
@@ -494,7 +500,6 @@ fun ExperimentalLyrics(
         }
     }
 
-    val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(showLyrics) {
         val activity = context as? Activity
         if (showLyrics) activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -506,14 +511,18 @@ fun ExperimentalLyrics(
         modifier = modifier.fillMaxSize().padding(bottom = 12.dp)
     ) {
         val maxHeightPx = constraints.maxHeight.toFloat()
-        val anchorY = maxHeightPx * LYRICS_ANCHOR_RATIO
+        val anchorRatio = if (appleMusicLyrics) SPICY_LYRICS_ANCHOR_RATIO else LYRICS_ANCHOR_RATIO
+        val anchorY = maxHeightPx * anchorRatio
         val lineHeightPx = with(density) { LYRICS_ITEM_FALLBACK_HEIGHT_DP.toPx() }
+        val itemGapPx = with(density) {
+            (if (appleMusicLyrics) SPICY_LYRICS_ITEM_GAP_DP else LYRICS_ITEM_GAP_DP).toPx()
+        }
         val indicatorHeightPx = with(density) { 72.dp.toPx() }
         
         // Use a more permissive fallback for constraints to prevent "locks" if items are not measured yet
         val constraintLineHeightPx = with(density) { 120.dp.toPx() }
 
-        val positions = remember(itemHeights.toMap(), activeListIndex, mergedLyricsList) {
+        val positions = remember(itemHeights.toMap(), activeListIndex, mergedLyricsList, itemGapPx) {
             val map = mutableMapOf<Int, Float>()
             if (activeListIndex == -1 || mergedLyricsList.isEmpty()) return@remember map
             
@@ -523,7 +532,7 @@ fun ExperimentalLyrics(
                 val item = mergedLyricsList[i]
                 val height = itemHeights[i]?.toFloat() ?: (if (item is LyricsListItem.Indicator) indicatorHeightPx else lineHeightPx)
                 val noGap = (item as? LyricsListItem.Line)?.entry?.isBackground == true || item is LyricsListItem.Indicator
-                currentY -= (height + if (noGap) 0f else with(density) { LYRICS_ITEM_GAP_DP.toPx() })
+                currentY -= (height + if (noGap) 0f else itemGapPx)
                 map[i] = currentY
             }
             currentY = 0f
@@ -532,33 +541,33 @@ fun ExperimentalLyrics(
                 val nextItem = mergedLyricsList[i + 1]
                 val height = itemHeights[i]?.toFloat() ?: (if (currentItem is LyricsListItem.Indicator) indicatorHeightPx else lineHeightPx)
                 val nextNoGap = (nextItem as? LyricsListItem.Line)?.entry?.isBackground == true || nextItem is LyricsListItem.Indicator
-                currentY += (height + if (nextNoGap) 0f else with(density) { LYRICS_ITEM_GAP_DP.toPx() })
+                currentY += (height + if (nextNoGap) 0f else itemGapPx)
                 map[i + 1] = currentY
             }
             map
         }
 
-        val minOffset = remember(itemHeights.toMap(), mergedLyricsList, activeListIndex, anchorY) {
+        val minOffset = remember(itemHeights.toMap(), mergedLyricsList, activeListIndex, anchorY, itemGapPx) {
             if (mergedLyricsList.isEmpty() || activeListIndex == -1) return@remember 0f
             val totalBelow = (activeListIndex until mergedLyricsList.size - 1).sumOf { i ->
                 val currentItem = mergedLyricsList[i]
                 val nextItem = mergedLyricsList[i + 1]
                 val height = itemHeights[i]?.toFloat() ?: (if (currentItem is LyricsListItem.Indicator) indicatorHeightPx else constraintLineHeightPx)
                 val nextNoGap = (nextItem as? LyricsListItem.Line)?.entry?.isBackground == true || nextItem is LyricsListItem.Indicator
-                (height + if (nextNoGap) 0f else with(density) { LYRICS_ITEM_GAP_DP.toPx() }).toDouble()
+                (height + if (nextNoGap) 0f else itemGapPx).toDouble()
             }.toFloat()
             val lastItem = mergedLyricsList.last()
             val lastHeight = itemHeights[mergedLyricsList.size - 1]?.toFloat() ?: (if (lastItem is LyricsListItem.Indicator) indicatorHeightPx else constraintLineHeightPx)
             with(density) { 100.dp.toPx() } - anchorY - totalBelow - lastHeight
         }
 
-        val maxOffset = remember(itemHeights.toMap(), mergedLyricsList, activeListIndex, maxHeightPx, anchorY) {
+        val maxOffset = remember(itemHeights.toMap(), mergedLyricsList, activeListIndex, maxHeightPx, anchorY, itemGapPx) {
             if (mergedLyricsList.isEmpty() || activeListIndex == -1) return@remember 0f
             val totalAbove = (0 until activeListIndex).sumOf { i ->
                 val item = mergedLyricsList[i]
                 val height = itemHeights[i]?.toFloat() ?: (if (item is LyricsListItem.Indicator) indicatorHeightPx else constraintLineHeightPx)
                 val noGap = (item as? LyricsListItem.Line)?.entry?.isBackground == true || item is LyricsListItem.Indicator
-                (height + if (noGap) 0f else with(density) { LYRICS_ITEM_GAP_DP.toPx() }).toDouble()
+                (height + if (noGap) 0f else itemGapPx).toDouble()
             }.toFloat()
             maxHeightPx - with(density) { 150.dp.toPx() } - anchorY + totalAbove
         }
@@ -570,7 +579,7 @@ fun ExperimentalLyrics(
         val scrollClampMax = maxOf(minOffset, maxOffset)
 
         LaunchedEffect(scrollClampMin, scrollClampMax) {
-            if (userManualOffset < scrollClampMin || userManualOffset > scrollClampMax) {
+            if (userManualOffset !in scrollClampMin..scrollClampMax) {
                 userManualOffset = userManualOffset.coerceIn(scrollClampMin, scrollClampMax)
             }
         }
@@ -672,10 +681,12 @@ fun ExperimentalLyrics(
                  }, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 4.dp)) { TextPlaceholder() } } }
              }
         } else {
+            val fadeTop = if (appleMusicLyrics) SPICY_LYRICS_FADE_TOP_DP else LYRICS_FADE_TOP_DP
+            val fadeBottom = if (appleMusicLyrics) SPICY_LYRICS_FADE_BOTTOM_DP else LYRICS_FADE_BOTTOM_DP
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .fadingEdge(top = LYRICS_FADE_TOP_DP, bottom = LYRICS_FADE_BOTTOM_DP)
+                    .fadingEdge(top = fadeTop, bottom = fadeBottom)
                     .clipToBounds()
                     .nestedScroll(remember {
                         object : NestedScrollConnection {
@@ -775,12 +786,35 @@ fun ExperimentalLyrics(
                         ) {
                             when (listItem) {
                                 is LyricsListItem.Indicator -> {
+                                    val indicatorEndOffset = if (appleMusicLyrics) 500L else 650L
                                     val visible =
                                         isAutoScrollEnabled &&
                                             currentPositionState >= listItem.gapStartMs &&
-                                            currentPositionState <= listItem.gapEndMs - 650L
-                                    IntervalIndicator(listItem.gapStartMs, listItem.gapEndMs - 650L, currentPositionState, visible, expressiveAccent, 
-                                        Modifier.fillMaxWidth().onSizeChanged { itemHeights[listIndex] = it.height }.padding(horizontal = 24.dp).wrapContentWidth(Alignment.CenterHorizontally))
+                                            currentPositionState <= listItem.gapEndMs - indicatorEndOffset
+                                    val indicatorModifier = Modifier
+                                        .fillMaxWidth()
+                                        .onSizeChanged { itemHeights[listIndex] = it.height }
+                                        .padding(horizontal = 24.dp)
+                                        .wrapContentWidth(Alignment.CenterHorizontally)
+                                    if (appleMusicLyrics) {
+                                        SpicyIntervalDots(
+                                            listItem.gapStartMs,
+                                            listItem.gapEndMs - 500L,
+                                            currentPositionState,
+                                            visible,
+                                            Color.White,
+                                            indicatorModifier,
+                                        )
+                                    } else {
+                                        IntervalIndicator(
+                                            listItem.gapStartMs,
+                                            listItem.gapEndMs - 650L,
+                                            currentPositionState,
+                                            visible,
+                                            expressiveAccent,
+                                            indicatorModifier,
+                                        )
+                                    }
                                 }
                                 is LyricsListItem.Line -> {
                                     val index = listItem.index
@@ -809,6 +843,7 @@ fun ExperimentalLyrics(
                                         displayedCurrentLineIndex = deferredCurrentLineIndex, romanizeAsMain = romanizeAsMain,
                                         enabledLanguages = enabledLanguages, romanizeLyrics = currentSong?.romanizeLyrics == true,
                                         appleMusicStyle = appleMusicLyrics,
+                                        lineEndTime = lines.getOrNull(index + 1)?.time ?: (item.time + 3200L),
                                         onSizeChanged = { itemHeights[listIndex] = it },
                                         onClick = {
                                             if (isSelectionModeActive) {
@@ -913,9 +948,9 @@ fun ExperimentalLyrics(
                             type = "image/png"
                             putExtra(Intent.EXTRA_STREAM, uri)
                             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }, context.getString(R.string.share_lyrics)))
+                        }, shareLyricsStr))
                     } catch (e: Exception) {
-                        Toast.makeText(context, context.getString(R.string.failed_to_create_image, e.message), Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, failedToCreateImageStr.format(e.message ?: ""), Toast.LENGTH_SHORT).show()
                     } finally {
                         showProgressDialog = false
                     }

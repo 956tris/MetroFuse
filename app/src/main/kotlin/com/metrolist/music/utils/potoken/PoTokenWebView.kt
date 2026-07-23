@@ -111,7 +111,7 @@ class PoTokenWebView private constructor(
                 """try {
                     data = $parsedChallengeData
                     runBotGuard(data).then(function (result) {
-                        this.webPoSignalOutput = result.webPoSignalOutput
+                        window.webPoSignalOutput = result.webPoSignalOutput
                         $JS_INTERFACE.onRunBotguardResult(result.botguardResponse)
                     }, function (error) {
                         $JS_INTERFACE.onJsInitializationError(error + "\n" + error.stack)
@@ -161,9 +161,9 @@ class PoTokenWebView private constructor(
                 webView.evaluateJavascript(
                     """try {
                         console.log('[JS] Setting integrityToken and calling createPoTokenMinter...');
-                        this.integrityToken = $integrityToken
+                        window.integrityToken = $integrityToken
                         console.log('[JS] integrityToken set, now calling createPoTokenMinter...');
-                        createPoTokenMinter(webPoSignalOutput, integrityToken).then(function() {
+                        createPoTokenMinter(window.webPoSignalOutput, window.integrityToken).then(function() {
                             console.log('[JS] createPoTokenMinter .then() resolved!');
                             $JS_INTERFACE.onMinterCreated()
                         }).catch(function(error) {
@@ -325,7 +325,7 @@ class PoTokenWebView private constructor(
         private const val GOOGLE_API_KEY = "AIzaSyDyT5W0Jh49F30Pqqtyfdf7pDLFKLJoAnw"
         private const val REQUEST_KEY = "O43z0dpjhgX20SCx4KAo"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.3"
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.3"
         private const val JS_INTERFACE = "PoTokenWebView"
 
         private val httpClient = OkHttpClient.Builder()

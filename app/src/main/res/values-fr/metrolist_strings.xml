@@ -18,7 +18,7 @@
     <string name="top_length">Longueur de la liste Mon Top</string>
     <string name="remote_history">Dans d\'autres applications</string>
     <string name="top_music_videos">Meilleurs Clips Musicaux</string>
-    <string name="allows_for_sync_witch_youtube">REMARQUE : cette option active la synchronisation avec YouTube Music et NE PEUT PAS être modifiée ultérieurement</string>
+    <string name="allows_for_sync_with_youtube">REMARQUE : cette option active la synchronisation avec YouTube Music et NE PEUT PAS être modifiée ultérieurement</string>
     <string name="copy_link">Copier le lien</string>
     <string name="dislike_all">Ne pas aimer tout</string>
     <string name="remove_from_cache">Retirer du cache</string>

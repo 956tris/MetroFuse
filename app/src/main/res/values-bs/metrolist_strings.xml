@@ -71,7 +71,7 @@
     <string name="my_top">Moj top</string>
     <string name="cached_playlist">Keširano</string>
     <string name="sync_disabled">Sinhronizacoja onemogućena</string>
-    <string name="allows_for_sync_witch_youtube">Napomena: Ovo omogućava sinhronizaciju s YouTube Music. Ovo se NE može kasnije promijeniti.</string>
+    <string name="allows_for_sync_with_youtube">Napomena: Ovo omogućava sinhronizaciju s YouTube Music. Ovo se NE može kasnije promijeniti.</string>
     <string name="generating_image">Generisanje slike</string>
     <string name="cancel">Otkaži</string>
     <string name="share_lyrics">Podjeli stihove</string>

@@ -80,7 +80,7 @@
     <string name="dislike_all">نپسندیدن همه</string>
     <string name="sort_by_last_updated">تاریخ بروزرسانی شد</string>
     <string name="link_copied">پیوند کپی شد</string>
-    <string name="allows_for_sync_witch_youtube">توجه: این مورد اجازه همگام‌سازی با یوتیوب موزیک را فراهم می کند. این مورد بعداً قابل تغییر نیست.</string>
+    <string name="allows_for_sync_with_youtube">توجه: این مورد اجازه همگام‌سازی با یوتیوب موزیک را فراهم می کند. این مورد بعداً قابل تغییر نیست.</string>
     <string name="token_shown">برای رونوشت یا ویرایش دوباره ضربه بزنید</string>
     <string name="general">عمومی</string>
     <string name="proxy">پروکسی</string>

@@ -19,7 +19,7 @@
     <string name="filter_uploaded">อัปโหลดแล้ว</string>
     <string name="sync_playlist">ซิงค์เพลย์ลิสต์</string>
     <string name="sync_disabled">ปิดการซิงค์แล้ว</string>
-    <string name="allows_for_sync_witch_youtube">หมายเหตุ: การเปิดใช้งานนี้จะทำให้สามารถซิงค์กับ YouTube Music ได้ และไม่สามารถเปลี่ยนแปลงภายหลังได้</string>
+    <string name="allows_for_sync_with_youtube">หมายเหตุ: การเปิดใช้งานนี้จะทำให้สามารถซิงค์กับ YouTube Music ได้ และไม่สามารถเปลี่ยนแปลงภายหลังได้</string>
     <string name="generating_image">กำลังสร้างรูปภาพ…</string>
     <string name="please_wait">โปรดรอสักครู่</string>
     <string name="cancel">ยกเลิก</string>

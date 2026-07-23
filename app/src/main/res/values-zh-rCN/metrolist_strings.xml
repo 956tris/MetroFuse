@@ -77,7 +77,7 @@
         <item quantity="other">%d 秒</item>
     </plurals>
     <string name="continuous">连续</string>
-    <string name="allows_for_sync_witch_youtube">注意：此选项会启用与 YouTube Music 的同步功能，且之后无法更改</string>
+    <string name="allows_for_sync_with_youtube">注意：此选项会启用与 YouTube Music 的同步功能，且之后无法更改</string>
     <string name="sync_disabled">同步已禁用</string>
     <string name="share_lyrics">分享歌词</string>
     <string name="views">浏览量</string>

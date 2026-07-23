@@ -427,7 +427,7 @@ fun OriginalLyrics(
             PlayerBackgroundStyle.DEFAULT -> {
                 MaterialTheme.colorScheme.primary
             }
-
+            PlayerBackgroundStyle.MOVING_BLUR,
             PlayerBackgroundStyle.BLUR,
             PlayerBackgroundStyle.GALAXY_BLUR,
             PlayerBackgroundStyle.GRADIENT -> {

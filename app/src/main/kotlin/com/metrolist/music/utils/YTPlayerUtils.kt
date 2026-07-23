@@ -115,21 +115,18 @@ object YTPlayerUtils {
         // Generate PoToken
         var poToken: PoTokenResult? = null
         val sessionId = if (isLoggedIn) YouTube.dataSyncId else YouTube.visitorData
-        if (MAIN_CLIENT.useWebPoTokens && sessionId != null) {
-            Timber.tag(logTag).d("Generating PoToken for WEB_REMIX with sessionId")
+        if (sessionId != null) {
+            Timber.tag(logTag).d("Generating PoToken with sessionId")
             try {
                 poToken = poTokenGenerator.getWebClientPoToken(videoId, sessionId)
-                if (poToken != null) {
-                    Timber.tag(logTag).d("PoToken generated successfully")
-                }
             } catch (e: Exception) {
-                Timber.tag(logTag).e(e, "PoToken generation failed: ${e.message}")
+                Timber.tag(logTag).e(e, "PoToken generation failed")
             }
         }
 
-        // Try WEB_REMIX with signature timestamp and poToken (same as before)
-        Timber.tag(logTag).d("Attempting to get player response using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
-        var mainPlayerResponse = YouTube.player(videoId, playlistId, MAIN_CLIENT, signatureTimestamp.timestamp, poToken?.playerRequestPoToken).getOrThrow()
+        // Try racing player with signature timestamp
+        Timber.tag(logTag).d("Attempting to get player response using racing clients")
+        val mainPlayerResponse = YouTube.player(videoId, playlistId, signatureTimestamp.timestamp, poToken?.playerRequestPoToken).getOrThrow()
 
         // Debug uploaded track response
         if (isUploadedTrack) {
@@ -140,32 +137,15 @@ object YTPlayerUtils {
             Timber.tag(TAG).d("Uploaded track adaptive formats: ${mainPlayerResponse.streamingData?.adaptiveFormats?.size ?: 0}")
         }
 
-        var usedAgeRestrictedClient: YouTubeClient? = null
         val wasOriginallyAgeRestricted: Boolean
 
-        // Check if WEB_REMIX response indicates age-restricted or login-required
+        // Check if response indicates age-restricted or login-required
         val mainStatus = mainPlayerResponse.playabilityStatus.status
         val isAgeRestrictedFromResponse = mainStatus in listOf("AGE_CHECK_REQUIRED", "AGE_VERIFICATION_REQUIRED", "CONTENT_CHECK_REQUIRED")
         val isLoginRequired = mainStatus == "LOGIN_REQUIRED"
 
         // LOGIN_REQUIRED can mean age-restricted (for catalog) or auth needed (for uploaded tracks).
-        // In both cases, WEB_CREATOR (which has loginRequired=true) is the right fallback to try.
         wasOriginallyAgeRestricted = isAgeRestrictedFromResponse || (isLoginRequired && !isUploadedTrack)
-
-        if ((isAgeRestrictedFromResponse || isLoginRequired) && isLoggedIn) {
-            if (isUploadedTrack) {
-                Timber.tag(TAG).d("LOGIN_REQUIRED for uploaded track - trying WEB_CREATOR with full auth")
-            } else {
-                Timber.tag(logTag).d("Age-restricted detected, using WEB_CREATOR")
-            }
-            Timber.tag(TAG).i("Trying WEB_CREATOR for videoId=$videoId (uploaded=$isUploadedTrack)")
-            val creatorResponse = YouTube.player(videoId, playlistId, WEB_CREATOR, null, null).getOrNull()
-            if (creatorResponse?.playabilityStatus?.status == "OK") {
-                Timber.tag(logTag).d("WEB_CREATOR works for content")
-                mainPlayerResponse = creatorResponse
-                usedAgeRestrictedClient = WEB_CREATOR
-            }
-        }
 
         // If we still don't have a valid response, throw
 
@@ -183,7 +163,7 @@ object YTPlayerUtils {
         var privateCandidateExpiry: Int? = null
         var privateCandidateResponse: PlayerResponse? = null
         var inferredAsPrivate = false
-        val retryMainPlayerResponse: PlayerResponse? = if (usedAgeRestrictedClient != null) mainPlayerResponse else null
+        val retryMainPlayerResponse: PlayerResponse? = null
 
         // Check current status
         val currentStatus = mainPlayerResponse.playabilityStatus.status
@@ -206,9 +186,8 @@ object YTPlayerUtils {
         // For age-restricted: skip main client, start with fallbacks
         // For normal content: standard order
         val startIndex = when {
-            isPrivateTrack && usedAgeRestrictedClient != null -> -1  // WEB_CREATOR succeeded, try its streams
-            isPrivateTrack && mainPlayerResponse.playabilityStatus.status == "OK" -> -1  // WEB_REMIX works for this upload
-            isPrivateTrack -> 1  // TVHTML5 (main client could not serve this upload)
+            isPrivateTrack && mainPlayerResponse.playabilityStatus.status == "OK" -> -1  // OK streams found
+            isPrivateTrack -> 1  // TVHTML5 (likely to serve uploads as fallback)
             isAgeRestricted -> 0
             else -> -1
         }
@@ -243,7 +222,7 @@ object YTPlayerUtils {
                 // Skip signature timestamp for age-restricted (faster), use it for normal content
                 val clientSigTimestamp = if (wasOriginallyAgeRestricted) null else signatureTimestamp.timestamp
                 streamPlayerResponse =
-                    YouTube.player(videoId, playlistId, client, clientSigTimestamp, clientPoToken).getOrNull()
+                    YouTube.player(videoId, playlistId, clientSigTimestamp, clientPoToken).getOrNull()
             }
 
             // process current client response
@@ -285,7 +264,7 @@ object YTPlayerUtils {
 
                 // Apply n-transform for throttle parameter handling
                 val currentClient = if (clientIndex == -1) {
-                    usedAgeRestrictedClient ?: MAIN_CLIENT
+                    MAIN_CLIENT
                 } else {
                     STREAM_FALLBACK_CLIENTS[clientIndex]
                 }
@@ -502,8 +481,8 @@ object YTPlayerUtils {
         videoId: String,
         playlistId: String? = null,
     ): Result<PlayerResponse> {
-        Timber.tag(logTag).d("Fetching metadata-only player response for videoId: $videoId using MAIN_CLIENT: ${MAIN_CLIENT.clientName}")
-        return YouTube.player(videoId, playlistId, client = WEB_REMIX) // ANDROID_VR does not work with history
+        Timber.tag(logTag).d("Fetching metadata-only player response for videoId: $videoId using racing clients")
+        return YouTube.player(videoId, playlistId)
             .onSuccess { Timber.tag(logTag).d("Successfully fetched metadata") }
             .onFailure { Timber.tag(logTag).e(it, "Failed to fetch metadata") }
     }

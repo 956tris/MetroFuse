@@ -15,7 +15,7 @@
     <string name="cached_playlist">Predmemorirano</string>
     <string name="sync_playlist">Sinkroniziraj popis za reprodukciju</string>
     <string name="sync_disabled">Sync onemogućen</string>
-    <string name="allows_for_sync_witch_youtube">Napomena: Ovo omogućuje sinkronizaciju s YouTube Music. Ovo NIJE moguće kasnije promijeniti.</string>
+    <string name="allows_for_sync_with_youtube">Napomena: Ovo omogućuje sinkronizaciju s YouTube Music. Ovo NIJE moguće kasnije promijeniti.</string>
     <string name="generating_image">Generiram sliku</string>
     <string name="please_wait">Molim pričekajte</string>
     <string name="cancel">Odustani</string>

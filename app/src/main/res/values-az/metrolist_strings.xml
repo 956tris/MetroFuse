@@ -17,7 +17,7 @@
     <string name="cached_playlist">Keşə yüklənmiş</string>
     <string name="sync_playlist">Pleylisti sinxronizasiya et</string>
     <string name="sync_disabled">Sinxronizasiya qeyri-aktivdir</string>
-    <string name="allows_for_sync_witch_youtube">Qeyd: Bu, YouTube Music ilə sinxronizasiya etməyə imkan verir. Bu sonradan dəyişdirilə bilməz.</string>
+    <string name="allows_for_sync_with_youtube">Qeyd: Bu, YouTube Music ilə sinxronizasiya etməyə imkan verir. Bu sonradan dəyişdirilə bilməz.</string>
     <string name="generating_image">Şəkil yaradılır…</string>
     <string name="please_wait">Zəhmət olmasa gözləyin</string>
     <string name="cancel">Ləğv et</string>
