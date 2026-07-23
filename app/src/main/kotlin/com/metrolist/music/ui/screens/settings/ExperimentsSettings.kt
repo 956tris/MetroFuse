@@ -43,6 +43,9 @@ import com.metrolist.music.R
 import com.metrolist.music.constants.ExperimentalAppleMusicCoverFadeKey
 import com.metrolist.music.constants.ExperimentalAppleMusicLyricsKey
 import com.metrolist.music.constants.ExperimentalAppleMusicLyricsSizeKey
+import com.metrolist.music.constants.ExperimentalLiveWallpaperKey
+import com.metrolist.music.constants.ExperimentalGalaxyBlurAdaptiveArtworkKey
+import com.metrolist.music.constants.ExperimentalGalaxyBlurMirroredColorsKey
 import com.metrolist.music.constants.ExperimentalSmoothInlineLyricsKey
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.IconButton
@@ -61,6 +64,14 @@ fun ExperimentsSettings(
         key = ExperimentalAppleMusicCoverFadeKey,
         defaultValue = false,
     )
+    val (galaxyBlurAdaptiveArtwork, onGalaxyBlurAdaptiveArtworkChange) = rememberPreference(
+        key = ExperimentalGalaxyBlurAdaptiveArtworkKey,
+        defaultValue = false,
+    )
+    val (galaxyBlurMirroredColors, onGalaxyBlurMirroredColorsChange) = rememberPreference(
+        key = ExperimentalGalaxyBlurMirroredColorsKey,
+        defaultValue = false,
+    )
     val (smoothInlineLyrics, onSmoothInlineLyricsChange) = rememberPreference(
         key = ExperimentalSmoothInlineLyricsKey,
         defaultValue = false,
@@ -72,6 +83,10 @@ fun ExperimentsSettings(
     val (appleMusicLyricsSize, onAppleMusicLyricsSizeChange) = rememberPreference(
         key = ExperimentalAppleMusicLyricsSizeKey,
         defaultValue = 46f,
+    )
+    val (liveWallpaper, onLiveWallpaperChange) = rememberPreference(
+        key = ExperimentalLiveWallpaperKey,
+        defaultValue = false,
     )
     var showAppleMusicLyricsSizeDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -116,6 +131,48 @@ fun ExperimentsSettings(
                         )
                     },
                     onClick = { onAppleMusicCoverFadeChange(!appleMusicCoverFade) },
+                ),
+                Material3SettingsItem(
+                    icon = painterResource(R.drawable.gradient),
+                    title = { Text(stringResource(R.string.experimental_galaxy_blur_adaptive_artwork)) },
+                    description = { Text(stringResource(R.string.experimental_galaxy_blur_adaptive_artwork_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = galaxyBlurAdaptiveArtwork,
+                            onCheckedChange = onGalaxyBlurAdaptiveArtworkChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (galaxyBlurAdaptiveArtwork) R.drawable.check else R.drawable.close,
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize),
+                                )
+                            },
+                        )
+                    },
+                    onClick = { onGalaxyBlurAdaptiveArtworkChange(!galaxyBlurAdaptiveArtwork) },
+                ),
+                Material3SettingsItem(
+                    icon = painterResource(R.drawable.gradient),
+                    title = { Text(stringResource(R.string.experimental_galaxy_blur_mirrored_colors)) },
+                    description = { Text(stringResource(R.string.experimental_galaxy_blur_mirrored_colors_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = galaxyBlurMirroredColors,
+                            onCheckedChange = onGalaxyBlurMirroredColorsChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (galaxyBlurMirroredColors) R.drawable.check else R.drawable.close,
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize),
+                                )
+                            },
+                        )
+                    },
+                    onClick = { onGalaxyBlurMirroredColorsChange(!galaxyBlurMirroredColors) },
                 ),
                 Material3SettingsItem(
                     icon = painterResource(R.drawable.lyrics),
@@ -172,6 +229,27 @@ fun ExperimentsSettings(
                     },
                     enabled = appleMusicLyrics,
                     onClick = { showAppleMusicLyricsSizeDialog = true },
+                ),
+                Material3SettingsItem(
+                    icon = painterResource(R.drawable.slow_motion_video),
+                    title = { Text(stringResource(R.string.live_wallpaper)) },
+                    description = { Text(stringResource(R.string.live_wallpaper_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = liveWallpaper,
+                            onCheckedChange = onLiveWallpaperChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (liveWallpaper) R.drawable.check else R.drawable.close,
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize),
+                                )
+                            },
+                        )
+                    },
+                    onClick = { onLiveWallpaperChange(!liveWallpaper) },
                 ),
             ),
         )

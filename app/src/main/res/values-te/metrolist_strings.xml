@@ -17,7 +17,7 @@
     <string name="cached_playlist">తాత్కాలిక నిల్వ</string>
     <string name="sync_playlist">జాబితాను సమకాలీకరించు</string>
     <string name="sync_disabled">సమకాలీకరణ నిలిపివేయబడింది</string>
-    <string name="allows_for_sync_witch_youtube">గమనిక: ఈ ఎంపిక యూట్యూబ్ మ్యూజిక్‌తో సమకాలీకరించడానికి అనుమతిస్తుంది. దీనిని తర్వాత మార్చడం సాధ్యం కాదు</string>
+    <string name="allows_for_sync_with_youtube">గమనిక: ఈ ఎంపిక యూట్యూబ్ మ్యూజిక్‌తో సమకాలీకరించడానికి అనుమతిస్తుంది. దీనిని తర్వాత మార్చడం సాధ్యం కాదు</string>
     <string name="generating_image">చిత్రాన్ని సృష్టిస్తోంది…</string>
     <string name="please_wait">దయచేసి వేచి ఉండండి</string>
     <string name="cancel">రద్దు చేయి</string>

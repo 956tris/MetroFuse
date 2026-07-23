@@ -17,28 +17,53 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
 import com.metrolist.music.extensions.toEnum
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.properties.ReadOnlyProperty
 
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
-operator fun <T> DataStore<Preferences>.get(key: Preferences.Key<T>): T? =
-    runBlocking(Dispatchers.IO) {
-        data.first()[key]
+/**
+ * Global preference cache to avoid blocking disk reads (runBlocking) on every access.
+ */
+object PreferenceCache {
+    private var _state: StateFlow<Preferences>? = null
+    
+    fun initialize(context: Context, scope: CoroutineScope) {
+        if (_state == null) {
+            _state = context.dataStore.data.stateIn(
+                scope = scope,
+                started = SharingStarted.Eagerly,
+                initialValue = runBlocking { context.dataStore.data.first() }
+            )
+        }
     }
+
+    val state: Preferences
+        get() = _state?.value ?: runBlocking { throw IllegalStateException("PreferenceCache not initialized") }
+}
+
+operator fun <T> DataStore<Preferences>.get(key: Preferences.Key<T>): T? {
+    return try {
+        PreferenceCache.state[key]
+    } catch (e: Exception) {
+        runBlocking(Dispatchers.IO) { data.first()[key] }
+    }
+}
 
 fun <T> DataStore<Preferences>.get(
     key: Preferences.Key<T>,
     defaultValue: T,
-): T =
-    runBlocking(Dispatchers.IO) {
-        data.first()[key] ?: defaultValue
-    }
+): T = get(key) ?: defaultValue
 
 fun <T> preference(
     context: Context,

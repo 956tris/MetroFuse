@@ -79,6 +79,10 @@ import com.metrolist.music.utils.mix.MixMetadata
 import com.metrolist.music.utils.mix.MixMetadataResolver
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import com.metrolist.music.db.entities.SongTransitionEntity
+import com.metrolist.music.playback.MusicService
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -137,6 +141,8 @@ fun MetroMixStudioDialog(
     val outgoing = current.withExternalMix(fetchedCurrent).toMixTrackInfo()
     val incoming = next.withExternalMix(fetchedNext).toMixTrackInfo()
 
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -161,6 +167,25 @@ fun MetroMixStudioDialog(
                 StudioHeader(
                     onCancel = onDismiss,
                     onSave = {
+                        if (current != null && next != null) {
+                            scope.launch(Dispatchers.IO) {
+                                database.query {
+                                    upsert(
+                                        SongTransitionEntity(
+                                            outgoingSongId = current.id,
+                                            incomingSongId = next.id,
+                                            overlapBars = bars,
+                                            mixTransitionStyleOverride = preset.name,
+                                            volumeCurve = volumeCurve.name,
+                                            eqTemplate = eqCurve.name,
+                                            effectType = effectCurve.name,
+                                            bpmA = current.bpm ?: fetchedCurrent?.bpm,
+                                            bpmB = next.bpm ?: fetchedNext?.bpm,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
                         enabled = true
                         onDismiss()
                     },

@@ -53,7 +53,7 @@ class PlayerConnection(
     context: Context,
     binder: MusicBinder,
     val database: MusicDatabase,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
 ) : Player.Listener {
     private companion object {
         private const val TAG = "PlayerConnection"
@@ -159,6 +159,8 @@ class PlayerConnection(
         mediaMetadata.flatMapLatest { mediaMetadata ->
             database.format(mediaMetadata?.id)
         }
+    val currentPlaybackFormat = service.currentPlaybackFormat
+    val currentLivePlaybackBitrate = service.currentLivePlaybackBitrate
 
     val queueTitle = MutableStateFlow<String?>(null)
     val queueWindows = MutableStateFlow<List<Timeline.Window>>(emptyList())
@@ -211,6 +213,7 @@ class PlayerConnection(
         }
     }
 
+
     private fun updateAttachedPlayer(newPlayer: Player) {
         attachedPlayer?.removeListener(this)
         attachedPlayer = newPlayer
@@ -225,6 +228,15 @@ class PlayerConnection(
         currentMediaItemIndex.value = newPlayer.currentMediaItemIndex
         shuffleModeEnabled.value = newPlayer.shuffleModeEnabled
         repeatMode.value = newPlayer.repeatMode
+
+        scope.launch {
+            service.currentPlaybackFormat.collect {
+                // currentPlaybackFormat is now directly from service, so this isn't strictly needed
+                // but we keep the flow logic consistent
+            }
+        }
+
+        updateCanSkipPreviousAndNext()
         Timber.tag(TAG).d("Attached to new player instance: $newPlayer")
     }
 

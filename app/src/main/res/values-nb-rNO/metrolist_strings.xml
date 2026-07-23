@@ -8,7 +8,7 @@
     <string name="enable_swipe_thumbnail">Sveip for å bytte sanger</string>
     <string name="token_adv_login_description">Dette er en AVANSERT innloggingsmetode. Som alternativ til nettportalen, kan du direkte legge inn eller oppdatere innloggingstokenen din her. Dette kan f.eks. gjøre innlogging på flere enheter raskere. NB: Ugyldige tokenformater som appen ikke lykkes til i å tolke, vil ikke godtas</string>
     <string name="lyrics">Sangtekster</string>
-    <string name="allows_for_sync_witch_youtube">NB: Dette tillater synkronisering med YouTube Music. Dette kan ikke endres senere.</string>
+    <string name="allows_for_sync_with_youtube">NB: Dette tillater synkronisering med YouTube Music. Dette kan ikke endres senere.</string>
     <string name="share_lyrics">Del sangtekster</string>
     <string name="similar_content">Lignende innhold</string>
     <string name="local_history">Lokal</string>

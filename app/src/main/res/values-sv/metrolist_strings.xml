@@ -56,7 +56,7 @@
     <string name="cached_playlist">Cachade</string>
     <string name="sync_playlist">Synka spellista</string>
     <string name="sync_disabled">Synkning inaktiverad</string>
-    <string name="allows_for_sync_witch_youtube">Obs! Det här möjliggör synkronisering med YouTube Music. Det går INTE att ångra i efterhand.</string>
+    <string name="allows_for_sync_with_youtube">Obs! Det här möjliggör synkronisering med YouTube Music. Det går INTE att ångra i efterhand.</string>
     <string name="generating_image">Skapar bild</string>
     <string name="please_wait">Vänligen vänta</string>
     <string name="cancel">Avbryt</string>

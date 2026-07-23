@@ -50,6 +50,7 @@ import com.metrolist.music.extensions.filterYoutubeShorts
 import com.metrolist.music.extensions.matchesNormalizedQuery
 import com.metrolist.music.extensions.normalizeForSearch
 import com.metrolist.music.extensions.toEnum
+import com.metrolist.music.extensions.toMediaItem
 import com.metrolist.music.playback.DownloadUtil
 import com.metrolist.music.utils.PodcastRefreshTrigger
 import com.metrolist.music.utils.SyncUtils
@@ -67,9 +68,12 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import androidx.media3.common.MediaItem
+import com.metrolist.music.db.entities.Song
 import java.time.Duration
 import java.time.LocalDateTime
 import javax.inject.Inject
@@ -115,6 +119,22 @@ constructor(
                     SongFilter.UPLOADED -> database.uploadedSongs(sortType, descending).map { it.filterExplicit(hideExplicit).filterVideoSongs(hideVideoSongs) }
                 }
             }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    val filteredSongs =
+        combine(allSongs, debouncedSearchQuery) { songs, query ->
+            val normalizedQuery = query.normalizeForSearch()
+            songs.filter { song ->
+                val artistNames = song.artists.map { it.name }.toTypedArray()
+                matchesNormalizedQuery(normalizedQuery, song.song.title, song.album?.title, *artistNames)
+            }
+        }.flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<Song>())
+
+    val filteredMediaItems =
+        filteredSongs
+            .map { songs -> songs.map { it.toMediaItem() } }
+            .flowOn(Dispatchers.Default)
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList<MediaItem>())
 
     fun syncLikedSongs() {
         viewModelScope.launch(Dispatchers.IO) { syncUtils.syncLikedSongs() }

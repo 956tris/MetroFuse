@@ -49,6 +49,7 @@ import com.metrolist.music.db.entities.SetVideoIdEntity
 import com.metrolist.music.db.entities.Song
 import com.metrolist.music.db.entities.SongAlbumMap
 import com.metrolist.music.db.entities.SongArtistMap
+import com.metrolist.music.db.entities.SongTransitionEntity
 import com.metrolist.music.db.entities.SongEntity
 import com.metrolist.music.db.entities.SongWithStats
 import com.metrolist.music.extensions.reversed
@@ -1982,4 +1983,18 @@ interface DatabaseDao {
 
     @Delete
     fun delete(podcast: PodcastEntity)
+
+    // Song Transition methods
+
+    @Query("SELECT * FROM song_transition WHERE outgoingSongId = :outgoingSongId AND incomingSongId = :incomingSongId")
+    fun getTransition(outgoingSongId: String, incomingSongId: String): SongTransitionEntity?
+
+    @Upsert
+    fun upsert(transition: SongTransitionEntity)
+
+    @Delete
+    fun delete(transition: SongTransitionEntity)
+
+    @Query("DELETE FROM song_transition WHERE outgoingSongId = :songId OR incomingSongId = :songId")
+    fun deleteTransitionsForSong(songId: String)
 }

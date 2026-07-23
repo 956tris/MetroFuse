@@ -56,16 +56,9 @@ object TidalAudioProvider {
     private const val MIN_MATCH_SCORE = 90
     private const val STRONG_MATCH_SCORE = 150
     private const val REJECT_SCORE = -1_000_000
+    const val DEFAULT_RESOLVER_BASE_URL = "https://hifi.binimum.org"
+    private const val DEFAULT_RESOLVER_NAME = "Bini hifi-api"
     private val AMAZON_DATE = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US)
-    private val DOWNLOAD_API_ENDPOINTS =
-        listOf(
-            TidalDownloadEndpoint("HiFi is Back v2.7", "https://hifi-isback.peridotclient.com"),
-            TidalDownloadEndpoint("Maus QQDL v2.6", "https://maus.qqdl.site"),
-            TidalDownloadEndpoint("Vogel QQDL v2.6", "https://vogel.qqdl.site"),
-            TidalDownloadEndpoint("Katze QQDL v2.6", "https://katze.qqdl.site"),
-            TidalDownloadEndpoint("Hund QQDL v2.6", "https://hund.qqdl.site"),
-            TidalDownloadEndpoint("Wolf QQDL v2.6", "https://wolf.qqdl.site"),
-        )
 
     data class Query(
         val mediaId: String,
@@ -208,6 +201,60 @@ object TidalAudioProvider {
         val baseUrl: String = baseUrl.trimEnd('/')
     }
 
+    fun resolverEndpointBases(customResolverEndpoints: String? = null): List<String> =
+        customResolverEndpoints.normalizedResolverEndpoints()
+            .distinctBy { it.lowercase(Locale.US) }
+
+    fun resolverEndpointDisplayName(
+        baseUrl: String,
+        customIndex: Int,
+    ): String = "Custom TIDAL #$customIndex"
+
+    fun normalizeResolverEndpointsInput(value: String): String =
+        value
+            .normalizedResolverEndpoints()
+            .joinToString("\n")
+
+    fun isResolverEndpointsInputValid(value: String): Boolean {
+        val entries = value.resolverEndpointTokens()
+        return entries.all { token -> token.normalizedResolverEndpointOrNull() != null }
+    }
+
+    private fun downloadApiEndpoints(customResolverEndpoints: String?): List<TidalDownloadEndpoint> {
+        var customIndex = 0
+        return resolverEndpointBases(customResolverEndpoints)
+            .map { baseUrl ->
+                customIndex += 1
+                TidalDownloadEndpoint(
+                    name = resolverEndpointDisplayName(baseUrl, customIndex),
+                    baseUrl = baseUrl,
+                )
+            }
+    }
+
+    private fun String?.normalizedResolverEndpoints(): List<String> =
+        orEmpty()
+            .resolverEndpointTokens()
+            .mapNotNull { token -> token.normalizedResolverEndpointOrNull() }
+            .distinctBy { it.lowercase(Locale.US) }
+
+    private fun String.resolverEndpointTokens(): List<String> =
+        split('\n', '\r', ',', ';', '\t', ' ')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+    private fun String.normalizedResolverEndpointOrNull(): String? {
+        val candidate = trim()
+            .removeSuffix("/")
+            .let { value ->
+                if (value.contains("://")) value else "https://$value"
+            }
+        return candidate
+            .toHttpUrlOrNull()
+            ?.toString()
+            ?.trimEnd('/')
+    }
+
     private data class ScoredTrack(
         val track: MatchedTrack,
         val score: Int,
@@ -235,6 +282,7 @@ object TidalAudioProvider {
         preferAtmos: Boolean = false,
         preferLiveDash: Boolean = true,
         audioQuality: TidalAudioQuality = TidalAudioQuality.AAC_320,
+        resolverEndpoints: String? = null,
     ): Resolved {
         val now = System.currentTimeMillis()
         val cooldownRemainingMs = resolverRateLimitedUntilMs - now
@@ -242,13 +290,15 @@ object TidalAudioProvider {
             throw TidalRateLimitedException(cooldownRemainingMs)
         }
         cacheDir?.let(::cleanupTempFiles)
+        val downloadEndpoints = downloadApiEndpoints(resolverEndpoints)
+        val endpointCacheKey = downloadEndpoints.joinToString(",") { it.baseUrl }.hashCode()
         val directTrackId = query.mediaId.toTidalTrackIdOrNull()
-        val trackCacheKey = query.trackCacheKey()
+        val trackCacheKey = "${query.trackCacheKey()}::$endpointCacheKey"
         val tracks = if (directTrackId != null) {
             val directTrack = resolveTrackById(directTrackId) ?: query.toDirectMatchedTrack(directTrackId)
             buildList {
                 add(directTrack)
-                findCandidateTracks(query)
+                findCandidateTracks(query, downloadEndpoints, endpointCacheKey)
                     .asSequence()
                     .filterNot { it.trackId == directTrack.trackId }
                     .take(MAX_DIRECT_STREAM_CANDIDATES - 1)
@@ -259,7 +309,7 @@ object TidalAudioProvider {
                 trackCache[trackCacheKey]
                 ?.takeIf { it.expiresAtMs > now }
                 ?.track
-            val candidates = findCandidateTracks(query)
+            val candidates = findCandidateTracks(query, downloadEndpoints, endpointCacheKey)
             buildList {
                 addAll(candidates)
                 cached?.let(::add)
@@ -297,6 +347,7 @@ object TidalAudioProvider {
 
                 val streamAttempt = runCatching {
                     requestDirectFlac(
+                        endpoints = downloadEndpoints,
                         track = track,
                         quality = quality,
                         durationMs = query.durationMs ?: track.durationMs,
@@ -397,8 +448,16 @@ object TidalAudioProvider {
     fun searchCandidates(
         query: Query,
         limit: Int = 8,
+        resolverEndpoints: String? = null,
     ): List<CandidateMetadata> =
-        findCandidateTracks(query)
+        downloadApiEndpoints(resolverEndpoints)
+            .let { endpoints ->
+                findCandidateTracks(
+                    query = query,
+                    downloadEndpoints = endpoints,
+                    endpointCacheKey = endpoints.joinToString(",") { endpoint -> endpoint.baseUrl }.hashCode(),
+                )
+            }
             .take(limit.coerceAtLeast(1))
             .map { track ->
                 CandidateMetadata(
@@ -410,6 +469,39 @@ object TidalAudioProvider {
                     durationMs = track.durationMs,
                 )
             }
+
+    fun searchCandidatesByIsrc(
+        isrc: String,
+        limit: Int = 4,
+        resolverEndpoints: String? = null,
+    ): List<CandidateMetadata> {
+        val normalized = normalizeIsrc(isrc) ?: return emptyList()
+        val endpoints = downloadApiEndpoints(resolverEndpoints)
+        val endpointCacheKey = endpoints.joinToString(",") { it.baseUrl }.hashCode()
+        val results = searchTracks(
+            term = normalized,
+            exactIsrc = true,
+            downloadEndpoints = endpoints,
+            endpointCacheKey = endpointCacheKey,
+        ) ?: return emptyList()
+
+        val candidates = mutableListOf<CandidateMetadata>()
+        for (i in 0 until results.length()) {
+            val obj = results.optJSONObject(i) ?: continue
+            val track = obj.toMatchedTrack() ?: continue
+            if (normalizeIsrc(track.isrc) != normalized) continue
+            candidates += CandidateMetadata(
+                trackId = track.trackId,
+                title = track.title,
+                artist = track.artistNames.joinToString(", "),
+                album = track.album,
+                isrc = track.isrc,
+                durationMs = track.durationMs,
+            )
+            if (candidates.size >= limit) break
+        }
+        return candidates
+    }
 
     fun isLiveManifestUri(value: String?): Boolean =
         value
@@ -430,7 +522,11 @@ object TidalAudioProvider {
             ?.value
     }
 
-    private fun findCandidateTracks(query: Query): List<MatchedTrack> {
+    private fun findCandidateTracks(
+        query: Query,
+        downloadEndpoints: List<TidalDownloadEndpoint>,
+        endpointCacheKey: Int,
+    ): List<MatchedTrack> {
         val candidates = mutableListOf<ScoredTrack>()
         val wantedTitle = query.title.titleMatchNormalized()
         val wantedArtists = query.artists.map { it.normalized() }.filter { it.isNotBlank() }
@@ -438,7 +534,12 @@ object TidalAudioProvider {
         val wantedIsrc = normalizeIsrc(query.isrc)
         val wantedDurationMs = query.durationMs?.takeIf { it > 0L }
         normalizeIsrc(query.isrc)?.let { isrc ->
-            searchTracks(isrc, exactIsrc = true)
+            searchTracks(
+                term = isrc,
+                exactIsrc = true,
+                downloadEndpoints = downloadEndpoints,
+                endpointCacheKey = endpointCacheKey,
+            )
                 ?.let { selectCandidateTracks(it, query, exactIsrcOnly = true) }
                 ?.losslessFirst()
                 ?.firstOrNull()
@@ -448,7 +549,12 @@ object TidalAudioProvider {
 
         val terms = searchTerms(query)
         for (term in terms) {
-            val results = searchTracks(term) ?: continue
+            val results =
+                searchTracks(
+                    term = term,
+                    downloadEndpoints = downloadEndpoints,
+                    endpointCacheKey = endpointCacheKey,
+                ) ?: continue
             candidates += selectCandidateTracks(results, query)
             candidates.losslessFirst()
                 .firstOrNull()
@@ -478,21 +584,25 @@ object TidalAudioProvider {
     private fun searchTracks(
         term: String,
         exactIsrc: Boolean = false,
+        downloadEndpoints: List<TidalDownloadEndpoint>,
+        endpointCacheKey: Int,
     ): JSONArray? {
         if (term.isBlank()) return null
-        searchTracksFromDirectApi(term, exactIsrc)?.takeIf { it.length() > 0 }?.let { return it }
+        searchTracksFromDirectApi(term, exactIsrc, downloadEndpoints, endpointCacheKey)?.takeIf { it.length() > 0 }?.let { return it }
         return searchTracksFromTidalApi(term)
     }
 
     private fun searchTracksFromDirectApi(
         term: String,
         exactIsrc: Boolean,
+        downloadEndpoints: List<TidalDownloadEndpoint>,
+        endpointCacheKey: Int,
     ): JSONArray? {
-        val cacheKey = "direct:${if (exactIsrc) "isrc" else "query"}:${term.lowercase(Locale.US)}"
+        val cacheKey = "direct:$endpointCacheKey:${if (exactIsrc) "isrc" else "query"}:${term.lowercase(Locale.US)}"
         val now = System.currentTimeMillis()
         searchCache[cacheKey]?.takeIf { it.expiresAtMs > now }?.let { return it.results }
         val parameter = if (exactIsrc) "i" else "s"
-        for (endpoint in DOWNLOAD_API_ENDPOINTS) {
+        for (endpoint in downloadEndpoints) {
             val url =
                 endpoint.baseUrl
                     .toHttpUrl()
@@ -700,6 +810,7 @@ object TidalAudioProvider {
     }
 
     private fun requestDirectFlac(
+        endpoints: List<TidalDownloadEndpoint>,
         track: MatchedTrack,
         quality: String,
         durationMs: Long?,
@@ -713,7 +824,7 @@ object TidalAudioProvider {
         val errors = mutableListOf<String>()
         var rateLimitCount = 0
         var longestRetryAfterMs = 0L
-        for (endpoint in DOWNLOAD_API_ENDPOINTS) {
+        for (endpoint in endpoints) {
             val result =
                 runCatching {
                     requestDirectFlacFromEndpoint(
@@ -738,7 +849,7 @@ object TidalAudioProvider {
             errors += "${endpoint.name}: ${error.message ?: error.javaClass.simpleName}"
             Timber.tag("TidalAudio").w(error, "TIDAL resolver ${endpoint.name} failed for ${track.trackId}")
         }
-        if (rateLimitCount == DOWNLOAD_API_ENDPOINTS.size && longestRetryAfterMs > 0L) {
+        if (rateLimitCount == endpoints.size && longestRetryAfterMs > 0L) {
             resolverRateLimitedUntilMs = System.currentTimeMillis() + longestRetryAfterMs
             throw TidalRateLimitedException(longestRetryAfterMs)
         }

@@ -56,10 +56,10 @@ object DeezerHomeFeedProvider {
                     runCatching { loadPersonalizedHome(normalizedCookie) }
                         .getOrElse { throwable ->
                             Timber.tag("DeezerHome").w(throwable, "Deezer logged-in home failed; using public home")
-                            loadPublicHome(normalizedCookie)
+                            loadPublicHome()
                         }
                 } else {
-                    loadPublicHome(normalizedCookie)
+                    loadPublicHome()
                 }
             }
         }
@@ -70,14 +70,15 @@ object DeezerHomeFeedProvider {
     ): Result<SearchSummaryPage> =
         runCatching {
             withContext(Dispatchers.IO) {
-                val normalizedCookie = normalizeDeezerCookieInput(cookie).orEmpty()
                 SearchSummaryPage(
                     summaries =
                         buildList {
-                            addSummary("Songs", apiData("search/track", normalizedCookie, mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicSongItem() })
-                            addSummary("Albums", apiData("search/album", normalizedCookie, mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicAlbumItem() })
-                            addSummary("Artists", apiData("search/artist", normalizedCookie, mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicArtistItem() })
-                            addSummary("Playlists", apiData("search/playlist", normalizedCookie, mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicPlaylistItem() })
+                            // Search suggestions stay on Deezer's public APIs so the session cookie
+                            // is only used for personal home/collection actions.
+                            addSummary("Songs", apiData("search/track", "", mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicSongItem() })
+                            addSummary("Albums", apiData("search/album", "", mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicAlbumItem() })
+                            addSummary("Artists", apiData("search/artist", "", mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicArtistItem() })
+                            addSummary("Playlists", apiData("search/playlist", "", mapOf("q" to query, "limit" to SEARCH_SECTION_LIMIT.toString())).mapNotNull { it.toPublicPlaylistItem() })
                         },
                 )
             }
@@ -94,7 +95,6 @@ object DeezerHomeFeedProvider {
                 val normalizedTitle = title.normalizedArtworkMatch()
                 if (normalizedTitle.isBlank()) return@withContext null
 
-                val normalizedCookie = normalizeDeezerCookieInput(cookie).orEmpty()
                 val query =
                     listOfNotNull(
                         title.takeIf { it.isNotBlank() },
@@ -105,7 +105,7 @@ object DeezerHomeFeedProvider {
                 val trackCandidates =
                     apiData(
                         "search/track",
-                        normalizedCookie,
+                        "",
                         mapOf("q" to query, "limit" to "10"),
                     ).mapNotNull { track ->
                         val trackAlbum = track.optJSONObject("album")
@@ -130,7 +130,7 @@ object DeezerHomeFeedProvider {
                         ?.let { albumQuery ->
                             apiData(
                                 "search/album",
-                                normalizedCookie,
+                                "",
                                 mapOf("q" to listOfNotNull(albumQuery, artist).joinToString(" "), "limit" to "10"),
                             ).mapNotNull { albumJson ->
                                 val artwork = albumJson.deezerCoverUrl() ?: return@mapNotNull null
@@ -230,39 +230,39 @@ object DeezerHomeFeedProvider {
             throw IllegalStateException("Deezer home returned no sections")
         }
 
-        val publicSections = loadPublicHome(session.cookie).sections
+        val publicSections = loadPublicHome().sections
         return HomePage(
             chips = null,
             sections = (sections + publicSections.take(2)).distinctBy { it.title },
         )
     }
 
-    private fun loadPublicHome(cookie: String): HomePage {
+    private fun loadPublicHome(): HomePage {
         val sections =
             buildList {
                 addHomeSection(
                     "Deezer charts",
-                    apiData("chart/0/tracks", cookie, mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicSongItem() },
+                    apiData("chart/0/tracks", "", mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicSongItem() },
                 )
                 addHomeSection(
                     "Top albums",
-                    apiData("chart/0/albums", cookie, mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicAlbumItem() },
+                    apiData("chart/0/albums", "", mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicAlbumItem() },
                 )
                 addHomeSection(
                     "Editorial playlists",
-                    apiData("chart/0/playlists", cookie, mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicPlaylistItem() },
+                    apiData("chart/0/playlists", "", mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicPlaylistItem() },
                 )
                 addHomeSection(
                     "Top artists",
-                    apiData("chart/0/artists", cookie, mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicArtistItem() },
+                    apiData("chart/0/artists", "", mapOf("limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicArtistItem() },
                 )
                 addHomeSection(
                     "New on Deezer",
-                    apiData("search/album", cookie, mapOf("q" to "new music", "limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicAlbumItem() },
+                    apiData("search/album", "", mapOf("q" to "new music", "limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicAlbumItem() },
                 )
                 addHomeSection(
                     "Fresh tracks",
-                    apiData("search/track", cookie, mapOf("q" to "new music", "limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicSongItem() },
+                    apiData("search/track", "", mapOf("q" to "new music", "limit" to HOME_SECTION_LIMIT.toString())).mapNotNull { it.toPublicSongItem() },
                 )
             }
         return HomePage(chips = null, sections = sections)

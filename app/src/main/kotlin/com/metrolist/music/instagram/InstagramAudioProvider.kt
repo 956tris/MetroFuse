@@ -322,8 +322,12 @@ object InstagramAudioProvider {
         return builder
             .header("User-Agent", playbackUserAgent)
             .header("Accept", "audio/*,*/*")
+            .header("Accept-Encoding", "identity")
             .header("Referer", "https://www.instagram.com/")
             .apply {
+                if (!hasRangeHeader) {
+                    header("Range", "bytes=0-")
+                }
                 if (cookie.isNotBlank()) {
                     header("Cookie", cookie)
                 }
@@ -362,7 +366,11 @@ object InstagramAudioProvider {
     }
 
     private fun Credentials.clientAttempts(): List<Credentials> =
-        listOf(copy(userAgent = userAgent.ifBlank { DEFAULT_USER_AGENT }, appId = appId.ifBlank { DEFAULT_APP_ID }))
+        listOf(
+            copy(userAgent = userAgent.ifBlank { DEFAULT_USER_AGENT }, appId = appId.ifBlank { DEFAULT_APP_ID }),
+            copy(userAgent = DEFAULT_USER_AGENT, appId = DEFAULT_APP_ID),
+            copy(userAgent = IOS_USER_AGENT, appId = IOS_APP_ID),
+        ).distinctBy { "${it.streamClient}|${it.userAgent}|${it.appId}" }
 
     private fun Credentials.isIosClient(): Boolean =
         userAgent.contains("iPhone", ignoreCase = true) ||
@@ -1124,7 +1132,6 @@ object InstagramAudioProvider {
             credentials.streamClient,
             credentials.userAgent,
             credentials.appId,
-            credentials.uuid,
         ).joinToString("|")
 
     private fun getCachedStream(key: String): Resolved? {

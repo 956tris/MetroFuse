@@ -31,13 +31,18 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
+import com.metrolist.music.constants.SoundCloudAudioQuality
+import com.metrolist.music.constants.SoundCloudAudioQualityKey
+import com.metrolist.music.constants.SoundCloudAudioQualityOptions
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
+import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
+import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.utils.soundcloud.isSoundCloudAuthConfigured
 import com.metrolist.music.utils.soundcloud.normalizeSoundCloudAuthInput
@@ -49,15 +54,17 @@ fun SoundCloudSettings(
 ) {
     var soundCloudAuthToken by rememberPreference(SoundCloudAuthTokenKey, "")
     val authConfigured = isSoundCloudAuthConfigured(soundCloudAuthToken)
+    var soundCloudAudioQuality by rememberEnumPreference(SoundCloudAudioQualityKey, SoundCloudAudioQuality.AAC_160)
     var showAuthDialog by rememberSaveable { mutableStateOf(false) }
+    var showQualityDialog by rememberSaveable { mutableStateOf(false) }
 
     if (showAuthDialog) {
         TextFieldDialog(
             onDismiss = { showAuthDialog = false },
-            icon = { Icon(painterResource(R.drawable.token), contentDescription = null) },
-            title = { Text(stringResource(R.string.soundcloud_auth_token_title)) },
+            icon = { Icon(painterResource(com.metrolist.music.R.drawable.token), contentDescription = null) },
+            title = { Text(stringResource(com.metrolist.music.R.string.soundcloud_auth_token_title)) },
             initialTextFieldValue = TextFieldValue(soundCloudAuthToken),
-            placeholder = { Text(stringResource(R.string.soundcloud_auth_token_placeholder)) },
+            placeholder = { Text(stringResource(com.metrolist.music.R.string.soundcloud_auth_token_placeholder)) },
             singleLine = false,
             isInputValid = { value ->
                 value.isBlank() || normalizeSoundCloudAuthInput(value) != null
@@ -67,7 +74,27 @@ fun SoundCloudSettings(
                 showAuthDialog = false
             },
             extraContent = {
-                InfoLabel(text = stringResource(R.string.soundcloud_auth_token_helper))
+                InfoLabel(text = stringResource(com.metrolist.music.R.string.soundcloud_auth_token_helper))
+            },
+        )
+    }
+
+    if (showQualityDialog) {
+        EnumDialog(
+            onDismiss = { showQualityDialog = false },
+            title = stringResource(com.metrolist.music.R.string.soundcloud_audio_quality),
+            values = SoundCloudAudioQualityOptions,
+            current = soundCloudAudioQuality,
+            onSelect = {
+                soundCloudAudioQuality = it
+                showQualityDialog = false
+            },
+            valueText = { quality ->
+                when (quality) {
+                    SoundCloudAudioQuality.MP3_128 -> stringResource(com.metrolist.music.R.string.soundcloud_quality_mp3_128)
+                    SoundCloudAudioQuality.AAC_96 -> stringResource(com.metrolist.music.R.string.soundcloud_quality_aac_96)
+                    SoundCloudAudioQuality.AAC_160 -> stringResource(com.metrolist.music.R.string.soundcloud_quality_aac_160)
+                }
             },
         )
     }
@@ -89,43 +116,57 @@ fun SoundCloudSettings(
         )
 
         Material3SettingsGroup(
-            title = stringResource(R.string.general),
+            title = stringResource(com.metrolist.music.R.string.general),
             items =
                 listOf(
                     Material3SettingsItem(
-                        title = { Text(stringResource(R.string.soundcloud_web_login)) },
+                        title = { Text(stringResource(com.metrolist.music.R.string.soundcloud_web_login)) },
                         description = {
                             Text(
                                 if (authConfigured) {
-                                    stringResource(R.string.soundcloud_auth_configured)
+                                    stringResource(com.metrolist.music.R.string.soundcloud_auth_configured)
                                 } else {
-                                    stringResource(R.string.soundcloud_auth_not_configured)
+                                    stringResource(com.metrolist.music.R.string.soundcloud_auth_not_configured)
                                 },
                             )
                         },
-                        icon = painterResource(R.drawable.login),
+                        icon = painterResource(com.metrolist.music.R.drawable.login),
                         onClick = {
                             navController.navigate("settings/integrations/soundcloud/login")
                         },
                     ),
                     Material3SettingsItem(
-                        title = { Text(stringResource(R.string.soundcloud_auth_token_title)) },
-                        description = { Text(stringResource(R.string.soundcloud_auth_token_helper)) },
-                        icon = painterResource(R.drawable.token),
+                        title = { Text(stringResource(com.metrolist.music.R.string.soundcloud_auth_token_title)) },
+                        description = { Text(stringResource(com.metrolist.music.R.string.soundcloud_auth_token_helper)) },
+                        icon = painterResource(com.metrolist.music.R.drawable.token),
                         onClick = { showAuthDialog = true },
                     ),
                     Material3SettingsItem(
-                        title = { Text(stringResource(R.string.soundcloud_clear_auth)) },
+                        title = { Text(stringResource(com.metrolist.music.R.string.soundcloud_audio_quality)) },
                         description = {
                             Text(
-                                if (authConfigured) {
-                                    stringResource(R.string.soundcloud_auth_configured)
-                                } else {
-                                    stringResource(R.string.soundcloud_auth_not_configured)
+                                when (soundCloudAudioQuality) {
+                                    SoundCloudAudioQuality.MP3_128 -> stringResource(com.metrolist.music.R.string.soundcloud_quality_mp3_128)
+                                    SoundCloudAudioQuality.AAC_96 -> stringResource(com.metrolist.music.R.string.soundcloud_quality_aac_96)
+                                    SoundCloudAudioQuality.AAC_160 -> stringResource(com.metrolist.music.R.string.soundcloud_quality_aac_160)
                                 },
                             )
                         },
-                        icon = painterResource(R.drawable.delete),
+                        icon = painterResource(com.metrolist.music.R.drawable.tune),
+                        onClick = { showQualityDialog = true },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(com.metrolist.music.R.string.soundcloud_clear_auth)) },
+                        description = {
+                            Text(
+                                if (authConfigured) {
+                                    stringResource(com.metrolist.music.R.string.soundcloud_auth_configured)
+                                } else {
+                                    stringResource(com.metrolist.music.R.string.soundcloud_auth_not_configured)
+                                },
+                            )
+                        },
+                        icon = painterResource(com.metrolist.music.R.drawable.delete),
                         enabled = authConfigured,
                         onClick = {
                             soundCloudAuthToken = ""
@@ -135,18 +176,18 @@ fun SoundCloudSettings(
         )
 
         Spacer(Modifier.height(8.dp))
-        InfoLabel(text = stringResource(R.string.soundcloud_web_login_desc))
+        InfoLabel(text = stringResource(com.metrolist.music.R.string.soundcloud_web_login_desc))
     }
 
     TopAppBar(
-        title = { Text(stringResource(R.string.soundcloud_integration)) },
+        title = { Text(stringResource(com.metrolist.music.R.string.soundcloud_integration)) },
         navigationIcon = {
             IconButton(
                 onClick = navController::navigateUp,
                 onLongClick = navController::backToMain,
             ) {
                 Icon(
-                    painterResource(R.drawable.arrow_back),
+                    painterResource(com.metrolist.music.R.drawable.arrow_back),
                     contentDescription = null,
                 )
             }

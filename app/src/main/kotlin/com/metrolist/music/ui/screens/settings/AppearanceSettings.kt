@@ -377,7 +377,8 @@ fun AppearanceSettings(
 
     val availableBackgroundStyles =
         PlayerBackgroundStyle.entries.filter {
-            it != PlayerBackgroundStyle.BLUR || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            (it != PlayerBackgroundStyle.BLUR && it != PlayerBackgroundStyle.MOVING_BLUR) ||
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         }
 
     val (defaultChip, onDefaultChipChange) =
@@ -630,6 +631,7 @@ fun AppearanceSettings(
                     PlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                     PlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
                     PlayerBackgroundStyle.GALAXY_BLUR -> stringResource(R.string.player_background_galaxy_blur)
+                    PlayerBackgroundStyle.MOVING_BLUR -> stringResource(R.string.player_background_moving_blur)
                 }
             },
         )
@@ -1286,6 +1288,7 @@ fun AppearanceSettings(
                                     PlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                                     PlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
                                     PlayerBackgroundStyle.GALAXY_BLUR -> stringResource(R.string.player_background_galaxy_blur)
+                                    PlayerBackgroundStyle.MOVING_BLUR -> stringResource(R.string.player_background_moving_blur)
                                 },
                             )
                         },

@@ -15,6 +15,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -102,6 +103,8 @@ import com.metrolist.music.LocalDownloadUtil
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
+import com.metrolist.music.constants.CONTENT_TYPE_HEADER
+import com.metrolist.music.constants.CONTENT_TYPE_SONG
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.SongSortDescendingKey
 import com.metrolist.music.constants.SongSortType
@@ -163,6 +166,7 @@ fun AutoPlaylistScreen(
         }
 
     val songs by viewModel.likedSongs.collectAsStateWithLifecycle(null)
+    val recommendedSongs by viewModel.recommendedSongs.collectAsStateWithLifecycle()
     val mutableSongs =
         remember {
             mutableStateListOf<Song>()
@@ -600,7 +604,10 @@ fun AutoPlaylistScreen(
         ) {
             if (songs != null) {
                 if (songs!!.isEmpty()) {
-                    item(key = "empty_placeholder") {
+                    item(
+                        key = "empty_placeholder",
+                        contentType = CONTENT_TYPE_HEADER,
+                    ) {
                         EmptyPlaceholder(
                             icon = R.drawable.music_note,
                             text = stringResource(R.string.playlist_is_empty),
@@ -608,7 +615,10 @@ fun AutoPlaylistScreen(
                     }
                 } else {
                     if (!isSearching) {
-                        item(key = "playlist_header") {
+                        item(
+                            key = "playlist_header",
+                            contentType = CONTENT_TYPE_HEADER,
+                        ) {
                             AutoPlaylistHeader(
                                 name = playlist,
                                 songs = songs!!,
@@ -620,12 +630,88 @@ fun AutoPlaylistScreen(
                                 modifier = Modifier.animateItem(),
                             )
                         }
+
+                        if (playlistType == PlaylistType.LOCAL && recommendedSongs.isNotEmpty() && query.text.isEmpty()) {
+                            item(
+                                key = "recommended_header",
+                                contentType = CONTENT_TYPE_HEADER,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.recommended_for_you),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).animateItem(),
+                                )
+                            }
+
+                            itemsIndexed(
+                                items = recommendedSongs.take(5),
+                                key = { _, song -> "rec_${song.id}" },
+                                contentType = { _, _ -> CONTENT_TYPE_SONG },
+                            ) { _, song ->
+                                SongListItem(
+                                    song = song,
+                                    isActive = song.song.id == mediaMetadata?.id,
+                                    isPlaying = isPlaying,
+                                    showInLibraryIcon = true,
+                                    trailingContent = {
+                                        IconButton(
+                                            onClick = {
+                                                menuState.show {
+                                                    SongMenu(
+                                                        originalSong = song,
+                                                        navController = navController,
+                                                        onDismiss = menuState::dismiss,
+                                                    )
+                                                }
+                                            },
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(R.drawable.more_vert),
+                                                contentDescription = null,
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (song.song.id == mediaMetadata?.id) {
+                                                playerConnection.togglePlayPause()
+                                            } else {
+                                                playerConnection.playQueue(
+                                                    ListQueue(
+                                                        title = context.getString(R.string.recommended_for_you),
+                                                        items = recommendedSongs.map { it.toMediaItem() },
+                                                        startIndex = recommendedSongs.indexOfFirst { it.id == song.id },
+                                                    ),
+                                                )
+                                            }
+                                        }
+                                        .animateItem(),
+                                )
+                            }
+
+                            item(
+                                key = "all_files_header",
+                                contentType = CONTENT_TYPE_HEADER,
+                            ) {
+                                Text(
+                                    text = stringResource(R.string.all_files),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).animateItem(),
+                                )
+                            }
+                        }
                     }
 
-                    item(key = "songs_header") {
+                    item(
+                        key = "songs_header",
+                        contentType = CONTENT_TYPE_HEADER,
+                    ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(start = 16.dp),
+                            modifier = Modifier.padding(start = 16.dp).animateItem(),
                         ) {
                             SortHeader(
                                 sortType = sortType,
@@ -650,6 +736,7 @@ fun AutoPlaylistScreen(
                     itemsIndexed(
                         items = filteredSongs,
                         key = { _, song -> song.id },
+                        contentType = { _, _ -> CONTENT_TYPE_SONG },
                     ) { index, song ->
                         val onCheckedChange: (Boolean) -> Unit = {
                             if (it) {

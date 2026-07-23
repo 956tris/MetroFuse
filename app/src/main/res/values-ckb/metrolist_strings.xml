@@ -18,7 +18,7 @@
     <string name="cached_playlist">کاشکراو</string>
     <string name="sync_playlist">هاوکاتکردنی لیستی لێدان</string>
     <string name="sync_disabled">هاوکاتکردن ناچالاک کراوە</string>
-    <string name="allows_for_sync_witch_youtube">تێبینی: ئەمە ڕێگە بە هاوکاتکردن لەگەڵ یوتیوب میوزیک دەدات. ئەم بژاردەیە دواتر ناگۆڕدرێت.</string>
+    <string name="allows_for_sync_with_youtube">تێبینی: ئەمە ڕێگە بە هاوکاتکردن لەگەڵ یوتیوب میوزیک دەدات. ئەم بژاردەیە دواتر ناگۆڕدرێت.</string>
     <string name="generating_image">دروستکردنی وێنە</string>
     <string name="please_wait">تکایە چاوەڕێ بکە</string>
     <string name="cancel">هەڵوەشاندنەوە</string>

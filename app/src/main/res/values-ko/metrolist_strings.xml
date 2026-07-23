@@ -63,7 +63,7 @@
     <string name="swipe_song_to_add">왼쪽으로 스와이프해 재생목록에 추가, 혹은 오른쪽으로 스와이프해 다음에 재생</string>
     <string name="density_restart_message">앱을 재시작해야 변경 사항이 적용됩니다. 지금 재시작하시겠습니까?</string>
     <string name="playlist_add_local_to_synced_note">참고: 동기화 / 원격 재생목록에 로컬 곡 추가는 지원되지 않습니다. 그 외 조합은 모두 가능합니다</string>
-    <string name="allows_for_sync_witch_youtube">참고: 이 옵션은 YouTube Music과의 동기화를 활성화하며 나중에 변경할 수 없습니다</string>
+    <string name="allows_for_sync_with_youtube">참고: 이 옵션은 YouTube Music과의 동기화를 활성화하며 나중에 변경할 수 없습니다</string>
     <string name="seek_seconds_addup_description">탐색 시마다 탐색 시간이 5초씩 누적됩니다</string>
     <string name="sleep_timer_stop_after_current_song_description">현재 재생 중인 곡이 끝나면 재생을 중단합니다</string>
     <string name="crop_album_art_desc">비디오 썸네일을 크롭하여 정사각형 화면비 강제 적용</string>

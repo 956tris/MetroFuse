@@ -93,8 +93,6 @@ import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
-import com.metrolist.music.apple.AppleMusicCanvasProvider
-import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
 import com.metrolist.music.constants.AppBarHeight
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.ShowArtistDescriptionKey
@@ -124,7 +122,6 @@ import com.metrolist.music.ui.menu.YouTubeAlbumMenu
 import com.metrolist.music.ui.menu.YouTubeArtistMenu
 import com.metrolist.music.ui.menu.YouTubePlaylistMenu
 import com.metrolist.music.ui.menu.YouTubeSongMenu
-import com.metrolist.music.ui.player.SpotifyCanvasVideoBackground
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.ui.utils.fadingEdge
 import com.metrolist.music.ui.utils.isScrollingUp
@@ -168,7 +165,6 @@ fun ArtistScreen(
     val showArtistDescription by rememberPreference(key = ShowArtistDescriptionKey, defaultValue = true)
     val showArtistSubscriberCount by rememberPreference(key = ShowArtistSubscriberCountKey, defaultValue = true)
     val showMonthlyListeners by rememberPreference(key = ShowMonthlyListenersKey, defaultValue = true)
-    val appleMusicArtistMotionBackground by rememberPreference(key = AppleMusicArtistMotionBackgroundKey, defaultValue = true)
 
     val lazyListState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -296,26 +292,7 @@ fun ArtistScreen(
                 item(key = "header") {
                     val thumbnail = artistPage?.artist?.thumbnail ?: libraryArtist?.artist?.thumbnailUrl
                     val artistName = artistPage?.artist?.title ?: libraryArtist?.artist?.name
-                    val artistMotionUrl by produceState<String?>(
-                        initialValue =
-                            if (appleMusicArtistMotionBackground && !showLocal && !artistName.isNullOrBlank()) {
-                                AppleMusicCanvasProvider.getCachedArtistMotion(artistName)?.animated
-                            } else {
-                                null
-                            },
-                        appleMusicArtistMotionBackground,
-                        showLocal,
-                        artistName,
-                    ) {
-                        value = null
-                        if (!appleMusicArtistMotionBackground || showLocal || artistName.isNullOrBlank()) {
-                            return@produceState
-                        }
-                        value = AppleMusicCanvasProvider
-                            .getArtistMotionByName(artistName)
-                            ?.animated
-                    }
-                    val hasHeroArtwork = thumbnail != null || artistMotionUrl != null
+                    val hasHeroArtwork = thumbnail != null
 
                     Box {
                         // Artist Image with offset
@@ -341,19 +318,6 @@ fun ArtistScreen(
                                             Modifier
                                                 .fillMaxSize()
                                                 .align(Alignment.TopCenter),
-                                    )
-                                }
-
-                                artistMotionUrl?.let { motionUrl ->
-                                    SpotifyCanvasVideoBackground(
-                                        media =
-                                            SpotifyCanvasMedia(
-                                                url = motionUrl,
-                                                headers = AppleMusicArtistMotionHeaders,
-                                            ),
-                                        shouldPlay = true,
-                                        modifier = Modifier.fillMaxSize(),
-                                        scrimAlpha = 0.08f,
                                     )
                                 }
                             }

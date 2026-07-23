@@ -59,6 +59,7 @@ import com.metrolist.music.ui.screens.settings.SettingsScreen
 import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
+import com.metrolist.music.ui.screens.settings.integrations.AmazonMusicSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
@@ -67,6 +68,7 @@ import com.metrolist.music.ui.screens.settings.integrations.InstagramSettings
 import com.metrolist.music.ui.screens.settings.integrations.IntegrationScreen
 import com.metrolist.music.ui.screens.settings.integrations.LastFMSettings
 import com.metrolist.music.ui.screens.settings.integrations.ListenTogetherSettings
+import com.metrolist.music.ui.screens.settings.integrations.QobuzSettings
 import com.metrolist.music.ui.screens.settings.integrations.SoundCloudLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.SoundCloudSettings
 import com.metrolist.music.ui.screens.settings.integrations.SpotifyCanvasLoginScreen
@@ -443,12 +445,20 @@ fun NavGraphBuilder.navigationBuilder(
         TidalLoginScreen(navController)
     }
 
+    composable("settings/integrations/qobuz") {
+        QobuzSettings(navController)
+    }
+
     composable("settings/integrations/deezer") {
         DeezerSettings(navController)
     }
 
     composable("settings/integrations/deezer/login") {
         DeezerLoginScreen(navController)
+    }
+
+    composable("settings/integrations/amazon_music") {
+        AmazonMusicSettings(navController)
     }
 
     composable("settings/integrations/soundcloud") {

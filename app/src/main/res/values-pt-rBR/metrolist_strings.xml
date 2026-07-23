@@ -53,7 +53,7 @@
     <string name="cached_playlist">Em cache</string>
     <string name="token_adv_login_description">Este é um método AVANÇADO de login. Em vez de usar o portal web, você pode entrarou atualizar o seu token de login diretamente. Isto pode ser útil para conectar-se através de múltiplos dispositivos rapidamente. Tokens em um formato não reconheço serão rejeitados</string>
     <string name="information">Informações</string>
-    <string name="allows_for_sync_witch_youtube">OBSERVAÇÃO: Está opção ativa a sincronização com o YouTube Music e NÃO pode ser alterado depois</string>
+    <string name="allows_for_sync_with_youtube">OBSERVAÇÃO: Está opção ativa a sincronização com o YouTube Music e NÃO pode ser alterado depois</string>
     <string name="swipe_song_to_add">Deslizar na música para a esquerda para adicionar a fila ou para a direita para tocá-la em seguida</string>
     <string name="show_top_playlist">Mostrar playlist do Top</string>
     <string name="show_cached_playlist">Mostrar playlist das Em cache</string>

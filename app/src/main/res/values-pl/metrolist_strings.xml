@@ -52,7 +52,7 @@
     <string name="clear_downloads_dialog">Czy na pewno chcesz wyczyścić wszystkie pobrane pliki?</string>
     <string name="top_music_videos">Najlepsze teledyski</string>
     <string name="sync_disabled">Synchronizacja wyłączona</string>
-    <string name="allows_for_sync_witch_youtube">UWAGA: Włącza to synchronizację z YouTube Music i NIE można tego zmienić później.</string>
+    <string name="allows_for_sync_with_youtube">UWAGA: Włącza to synchronizację z YouTube Music i NIE można tego zmienić później.</string>
     <string name="generating_image">Generowanie obrazu…</string>
     <string name="please_wait">Proszę czekać</string>
     <string name="share_lyrics">Udostępnij tekst</string>

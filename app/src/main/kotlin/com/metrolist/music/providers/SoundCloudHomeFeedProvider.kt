@@ -15,16 +15,17 @@ import com.metrolist.innertube.pages.SearchSummaryPage
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.utils.soundcloud.normalizeSoundCloudAuthInput
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
 import timber.log.Timber
-import java.net.URLDecoder
+import java.util.Collections
 import java.util.concurrent.TimeUnit
 import com.metrolist.innertube.models.Artist as TubeArtist
 
@@ -37,21 +38,75 @@ object SoundCloudHomeFeedProvider {
     private const val PLAYLIST_LIMIT = 100
     private const val PLAYLIST_SAFETY_LIMIT = 10_000
 
+    @Volatile
+    var activeSessionClientId: String = ""
+        private set
+
+    @Volatile
+    private var cachedAuthToken: String = ""
+
+    // SoundCloud's "front page" recommendation blocks (mixed-selections, system-playlists,
+    // personalized-mixes) are NOT independently re-fetchable resources for a lot of entries -
+    // there is no stable "give me this exact recommended mix by id" endpoint. Real unofficial
+    // SoundCloud API clients never try to re-resolve these; they consume the big listing
+    // response once and keep what they got. We do the same: remember the raw JSON object each
+    // PlaylistItem was parsed from, keyed by the id we handed out for it, so tapping into it
+    // later can use what we already fetched instead of firing a doomed network request.
+    private val collectionCache: MutableMap<String, JSONObject> =
+        Collections.synchronizedMap(
+            object : LinkedHashMap<String, JSONObject>(64, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, JSONObject>?): Boolean =
+                    size > 300
+            },
+        )
+
+    suspend fun fetchRecommendations(authToken: String): List<SongItem> = withContext(Dispatchers.IO) {
+        val token = normalizeSoundCloudAuthInput(authToken).orEmpty().ifBlank { cachedAuthToken }
+        if (token.isNotBlank()) cachedAuthToken = token
+        if (token.isBlank()) return@withContext emptyList()
+
+        runCatching {
+            val primary = safeCollectionItems("me/track-recommendations", token, 40).trackItems()
+            if (primary.isEmpty()) {
+                val suggested = safeCollectionItems("me/suggestions/tracks", token, 40).trackItems()
+                if (suggested.isEmpty()) {
+                    safeCollectionItems("me/mixed-selections/recommends", token, 40).trackItems()
+                } else suggested
+            } else primary
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun fetchRelatedTracks(trackId: String, authToken: String = ""): List<SongItem> = withContext(Dispatchers.IO) {
+        val token = normalizeSoundCloudAuthInput(authToken).orEmpty().ifBlank { cachedAuthToken }
+        val numericId = if (trackId.startsWith("http")) {
+            runCatching {
+                apiObject("resolve", token, mapOf("url" to trackId)).stringOrNull("id")
+            }.getOrNull()
+        } else {
+            trackId.substringAfterLast(":").takeIf { it.all(Char::isDigit) }
+        } ?: return@withContext emptyList()
+
+        runCatching {
+            safeCollectionItems("tracks/$numericId/related", token, 30).trackItems()
+        }.getOrDefault(emptyList())
+    }
+
+    private suspend fun effectiveClientId(): String {
+        val session = activeSessionClientId
+        if (session.isNotBlank()) return session
+        return try {
+            SoundCloudAudioProvider.clientId()
+        } catch (e: Exception) {
+            ""
+        }
+    }
+
     private val client =
         OkHttpClient
             .Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
             .build()
-
-    private val feedQueries =
-        listOf(
-            "Fresh SoundCloud" to "new music",
-            "SoundCloud rap" to "soundcloud rap",
-            "Trending by genre" to "trending",
-            "Electronic" to "electronic",
-            "Remixes" to "remix",
-        )
 
     private val publicPlaylistQueries =
         listOf(
@@ -66,10 +121,12 @@ object SoundCloudHomeFeedProvider {
         val nextHref: String?,
     )
 
-    suspend fun load(authToken: String = ""): Result<HomePage> =
+    suspend fun load(authToken: String = "", sessionClientId: String = ""): Result<HomePage> =
         runCatching {
             withContext(Dispatchers.IO) {
-                val token = normalizeSoundCloudAuthInput(authToken).orEmpty()
+                val token = normalizeSoundCloudAuthInput(authToken).orEmpty().ifBlank { cachedAuthToken }
+                if (token.isNotBlank()) cachedAuthToken = token
+                activeSessionClientId = sessionClientId
                 if (token.isNotBlank()) {
                     runCatching { loadPersonalizedHome(token) }
                         .getOrElse { throwable ->
@@ -85,8 +142,16 @@ object SoundCloudHomeFeedProvider {
     suspend fun loadPlaylist(
         playlistId: String,
         authToken: String = "",
-    ): Result<ExternalPlaylistPage> =
-        loadCollection(playlistId, "playlist", authToken)
+        sessionClientId: String = "",
+    ): Result<ExternalPlaylistPage> {
+        val collectionType = when {
+            playlistId.contains(":album:") -> "album"
+            playlistId.contains(":mix:") -> "mix"
+            playlistId.contains(":playlist:") -> "playlist"
+            else -> "playlist"
+        }
+        return loadCollection(playlistId, collectionType, authToken, sessionClientId)
+    }
 
     suspend fun search(
         query: String,
@@ -94,7 +159,7 @@ object SoundCloudHomeFeedProvider {
     ): Result<SearchSummaryPage> =
         runCatching {
             withContext(Dispatchers.IO) {
-                val token = normalizeSoundCloudAuthInput(authToken).orEmpty()
+                val token = normalizeSoundCloudAuthInput(authToken).orEmpty().ifBlank { cachedAuthToken }
                 val tracks = searchTracks(query, token, SEARCH_SECTION_LIMIT)
                 val playlists = searchPlaylists(query, token, SEARCH_SECTION_LIMIT)
                 val albums = playlists.filter { it.id.contains(":album:") }
@@ -120,28 +185,94 @@ object SoundCloudHomeFeedProvider {
         collectionId: String,
         type: String,
         authToken: String = "",
+        sessionClientId: String = "",
     ): Result<ExternalPlaylistPage> =
         runCatching {
             withContext(Dispatchers.IO) {
-                val token = normalizeSoundCloudAuthInput(authToken).orEmpty()
+                val token = normalizeSoundCloudAuthInput(authToken).orEmpty().ifBlank { cachedAuthToken }
+                if (sessionClientId.isNotBlank()) activeSessionClientId = sessionClientId
                 val collectionType = type.lowercase().takeIf { it in setOf("playlist", "album", "mix") } ?: "playlist"
-                val collection =
-                    runCatching {
-                        apiObject(
-                            path = "playlists/$collectionId",
-                            authToken = token,
-                        )
-                    }.getOrElse { directError ->
-                        resolveCollectionObject(
-                            collectionId = collectionId,
-                            authToken = token,
-                        ) ?: throw directError
+
+                val cleanId = collectionId.removeMetroPrefix()
+
+                // 0. If we already parsed this exact item off a listing (home feed, search,
+                // mixed-selections, etc.), use that JSON directly. Many of these "recommended"
+                // objects (mixes, made-for-you, personalized system-playlists) have no reliable
+                // standalone re-fetch endpoint, so re-resolving over the network is what was
+                // failing here - the data we already have is the only copy that's guaranteed to work.
+                var collection: JSONObject? = collectionCache[collectionId] ?: collectionCache[cleanId]
+
+                // 1. Strictly handle selections and discover/sets (which 404 on /resolve)
+                val selectionUrn = when {
+                    cleanId.startsWith("soundcloud:selections:") -> cleanId
+                    cleanId.startsWith("selections:") -> "soundcloud:$cleanId"
+                    cleanId.startsWith("discover:sets:") -> "soundcloud:selections:${cleanId.removePrefix("discover:sets:")}"
+                    cleanId.startsWith("discover/sets/") -> "soundcloud:selections:${cleanId.removePrefix("discover/sets/")}"
+                    cleanId.startsWith("http") && cleanId.contains("discover/sets/") -> {
+                        val path = cleanId.toHttpUrlOrNull()?.encodedPath.orEmpty()
+                        if (path.startsWith("/discover/sets/")) {
+                            "soundcloud:selections:${path.removePrefix("/discover/sets/").trimEnd('/')}"
+                        } else null
                     }
+                    else -> null
+                }
+
+                if (collection == null && selectionUrn != null) {
+                    val selectionObj = runCatching { apiObject(path = "mixed-selections/$selectionUrn", authToken = token) }.getOrNull()
+                    if (selectionObj != null) {
+                        // Unwrap system_playlist from inside the selection
+                        val itemsCollection = selectionObj.optJSONObject("items")?.optJSONArray("collection")
+                        val systemPlaylist = itemsCollection?.optJSONObject(0)?.optJSONObject("system_playlist")
+                        if (systemPlaylist != null) {
+                            // The system_playlist returned here often omits the tracks array entirely.
+                            // We must fetch it by its URN to get the actual tracks.
+                            val systemUrn = systemPlaylist.optString("urn")
+                            if (systemUrn.isNotBlank()) {
+                                collection = runCatching { apiObject(path = "system-playlists/$systemUrn", authToken = token) }.getOrNull()
+                            } else {
+                                collection = systemPlaylist
+                            }
+                        } else {
+                            // Fallback to the selection itself if no system_playlist found
+                            collection = selectionObj
+                        }
+                    }
+                }
+
+                // 2. Handle direct system-playlists
+                if (collection == null && (cleanId.startsWith("system-playlists:") || cleanId.startsWith("soundcloud:system-playlists:"))) {
+                    val urn = if (cleanId.startsWith("soundcloud:")) cleanId else "soundcloud:$cleanId"
+                    collection = runCatching { apiObject(path = "system-playlists/$urn", authToken = token) }.getOrNull()
+                }
+
+                // 3. Handle track-stations
+                if (collection == null && (cleanId.startsWith("track-stations:") || cleanId.startsWith("soundcloud:track-stations:"))) {
+                    val urn = if (cleanId.startsWith("soundcloud:")) cleanId else "soundcloud:$cleanId"
+                    collection = runCatching { apiObject(path = "track-stations/$urn", authToken = token) }.getOrNull()
+                }
+
+                // 4. Handle plain numeric playlist/album IDs directly via the API.
+                // This is the common case: search results and most "recommended" sections
+                // (Curated by SoundCloud, Made for you via search, Albums for you, etc.) produce
+                // PlaylistItem ids that are just the raw numeric SoundCloud id (e.g. "soundcloud:playlist:58273916"),
+                // not a URL and not one of the special urn-based collections handled above.
+                if (collection == null && cleanId.isNotBlank() && cleanId.all(Char::isDigit)) {
+                    collection = runCatching { apiObject(path = "playlists/$cleanId", authToken = token) }.getOrNull()
+                }
+
+                // 5. Fallback to standard /resolve for URLs (permalinks like soundcloud.com/user/sets/name)
+                if (collection == null) {
+                    val urlToResolve = if (cleanId.startsWith("http")) cleanId else "https://soundcloud.com/$cleanId"
+                    collection = resolveCollectionObject(urlToResolve, token)
+                }
+
+                collection ?: throw IllegalStateException("Could not resolve SoundCloud collection: $cleanId")
+
                 val songs = collection.loadCollectionSongs(token)
                 val playlistItem =
                     collection.toPlaylistItem(preferredType = collectionType)
                         ?: PlaylistItem(
-                            id = "soundcloud:$collectionType:$collectionId",
+                            id = "soundcloud:$collectionType:$cleanId",
                             title = collection.stringOrNull("title") ?: "SoundCloud ${collectionType.displayName()}",
                             author = collection.optJSONObject("user")?.stringOrNull("username")?.let { TubeArtist(name = it, id = null) },
                             songCountText = songs.size.takeIf { it > 0 }?.let { "$it tracks" },
@@ -158,98 +289,208 @@ object SoundCloudHomeFeedProvider {
             }
         }
 
-    private fun loadPersonalizedHome(authToken: String): HomePage {
-        val me = apiObject("me", authToken)
-        val userId = me.longOrNull("id")?.toString()
-            ?: throw IllegalStateException("SoundCloud account id missing")
-        val username = me.stringOrNull("username") ?: "you"
+    private suspend fun loadPersonalizedHome(authToken: String): HomePage = coroutineScope {
+        val sections = mutableListOf<HomePage.Section>()
 
-        val likes = safeCollectionItems("users/$userId/track_likes", authToken, PERSONAL_SECTION_LIMIT)
-            .trackItems()
-        val library = safeCollectionItems("me/library/all", authToken, PERSONAL_SECTION_LIMIT)
-        val libraryTracks = library.trackItems()
-        val recentlyPlayed = safeCollectionItems("me/play-history/tracks", authToken, PERSONAL_SECTION_LIMIT)
-            .trackItems()
-        val history = safeCollectionItems("me/play-history/tracks", authToken, PERSONAL_SECTION_LIMIT)
-            .trackItems()
-        val playlists = safeCollectionItems("users/$userId/playlists/liked_and_owned", authToken, PERSONAL_SECTION_LIMIT)
-            .playlistItems()
-        val libraryCollections = library.playlistItems()
-        val mixes =
-            (playlists + libraryCollections + searchPlaylists("Daily Drops Weekly Wave mix", authToken, PERSONAL_SECTION_LIMIT))
-                .filter { it.id.contains(":mix:") || it.title.contains("mix", ignoreCase = true) }
-                .distinctBy { it.id }
-        val albums =
-            (safeCollectionItems("users/$userId/albums", authToken, PERSONAL_SECTION_LIMIT).playlistItems() +
-                libraryCollections.filter { it.id.contains(":album:") } +
-                searchPlaylists("album", authToken, PUBLIC_SECTION_LIMIT).filter { it.id.contains(":album:") })
-                .distinctBy { it.id }
-        val curated = searchPlaylists("SoundCloud", authToken, PUBLIC_SECTION_LIMIT)
-        val stations = searchPlaylists("artist station", authToken, PUBLIC_SECTION_LIMIT)
-
-        val shortcutItems =
-            buildList<YTItem> {
-                addAll(mixes.take(2))
-                addAll(playlists.take(2))
-                addAll(likes.take(4))
-                addAll(libraryTracks.take(4))
-            }.distinctExternalItems().take(8)
-
-        val sections =
-            buildList {
-                addSection(
-                    title = "Your likes",
-                    items = shortcutItems.ifEmpty { likes.take(8) },
-                )
-                addSection(
-                    title = "More of what you like",
-                    items = (libraryTracks + likes).distinctExternalItems().take(PERSONAL_SECTION_LIMIT),
-                )
-                addSection(
-                    title = "Recently played",
-                    items = recentlyPlayed.distinctExternalItems().take(PERSONAL_SECTION_LIMIT),
-                )
-                addSection(
-                    title = "Mixed for $username",
-                    items = mixes.distinctExternalItems().take(PERSONAL_SECTION_LIMIT),
-                )
-                addSection(
-                    title = "Listening history",
-                    items = history.distinctExternalItems().take(PERSONAL_SECTION_LIMIT),
-                )
-                addSection(
-                    title = "Curated by SoundCloud",
-                    items = curated.distinctExternalItems().take(PUBLIC_SECTION_LIMIT),
-                )
-                addSection(
-                    title = "Discover with Stations",
-                    items = stations.distinctExternalItems().take(PUBLIC_SECTION_LIMIT),
-                )
-                addSection(
-                    title = "Albums for you",
-                    items = albums.distinctExternalItems().take(PERSONAL_SECTION_LIMIT),
-                )
-            }
-
-        return if (sections.isEmpty()) {
-            loadPublicHome()
-        } else {
-            HomePage(chips = null, sections = sections)
+        val streamJob = async {
+            runCatching { safeCollectionItems("me/stream", authToken, 60).trackItems() }.getOrDefault(emptyList())
         }
+
+        val systemMixesJob = async {
+            runCatching {
+                val obj = apiObject("system-playlists", authToken, mapOf("limit" to "40"))
+                val collection = obj.optJSONArray("collection") ?: JSONArray()
+                collection.playlistItems()
+            }.getOrDefault(emptyList())
+        }
+
+        val legacyMixesJob = async {
+            runCatching { safeCollectionItems("me/personalized-mixes", authToken, 32).playlistItems() }.getOrDefault(emptyList())
+        }
+
+        val mixedJob = async { fetchAllMixedSelections(authToken) }
+
+        val meJob = async {
+            runCatching {
+                val me = apiObject("me", authToken)
+                val userId = me.longOrNull("id")?.toString() ?: return@runCatching null
+                val likes = safeCollectionItems("users/$userId/track_likes", authToken, 32).trackItems()
+                val history = safeCollectionItems("me/play-history/tracks", authToken, 32).trackItems()
+                likes to history
+            }.getOrNull()
+        }
+
+        val recsJob = async {
+            fetchRecommendations(authToken)
+        }
+
+        val discoveryJob = async {
+            runCatching { apiObject("discovery", authToken) }.getOrNull()
+        }
+
+        val madeForYouItems = (systemMixesJob.await() + legacyMixesJob.await())
+            .distinctExternalItems()
+        if (madeForYouItems.isNotEmpty()) {
+            sections.addSection("Made for you", madeForYouItems)
+        }
+
+        val recItems = recsJob.await()
+        if (recItems.isNotEmpty()) {
+            sections.addSection("SoundCloud Recommends", recItems)
+        }
+
+        val streamItems = streamJob.await()
+        if (streamItems.isNotEmpty()) {
+            sections.addSection("Stream", streamItems)
+        }
+
+        mixedJob.await().forEach { selection ->
+            parseDiscoverySelection(selection)?.let { (title, items) ->
+                if (items.isNotEmpty() && sections.none { it.title.equals(title, ignoreCase = true) }) {
+                    sections.addSection(title, items)
+                }
+            }
+        }
+
+        discoveryJob.await()?.let { discovery ->
+            discovery.optJSONArray("collection")?.let { collection ->
+                for (i in 0 until collection.length()) {
+                    val selection = collection.optJSONObject(i) ?: continue
+                    parseDiscoverySelection(selection)?.let { (title, items) ->
+                        if (items.isNotEmpty() && sections.none { it.title.equals(title, ignoreCase = true) }) {
+                            sections.addSection(title, items)
+                        }
+                    }
+                }
+            }
+            parseDiscoverySelection(discovery)?.let { (title, items) ->
+                if (items.isNotEmpty() && sections.none { it.title.equals(title, ignoreCase = true) }) {
+                    sections.addSection(title, items)
+                }
+            }
+        }
+
+        meJob.await()?.let { (likes, history) ->
+            if (likes.isNotEmpty() && sections.none { it.title.contains("like", ignoreCase = true) }) {
+                sections.addSection("Your likes", likes)
+            }
+            if (history.isNotEmpty() && sections.none { it.title.contains("Recent", ignoreCase = true) }) {
+                sections.addSection("Recently played", history)
+            }
+        }
+
+        if (sections.isEmpty()) loadPublicHome()
+        else HomePage(chips = null, sections = sections)
     }
 
-    private fun loadPublicHome(): HomePage {
-        val sections =
-            buildList {
-                publicPlaylistQueries.forEach { (title, query) ->
-                    addSection(title, searchPlaylists(query, "", PUBLIC_SECTION_LIMIT))
-                }
-                feedQueries.forEach { (title, query) ->
-                    addSection(title, searchTracks(query, "", PUBLIC_SECTION_LIMIT))
+    private fun parseDiscoverySelection(selection: JSONObject): Pair<String, List<YTItem>>? {
+        val title = selection.stringOrNull("title") ?: selection.stringOrNull("description") ?: return null
+        val itemsObj = selection.optJSONObject("items")
+        val itemsCollection = if (itemsObj != null) {
+            itemsObj.optJSONArray("collection") ?: itemsObj.optJSONArray("items") ?: JSONArray()
+        } else {
+            selection.optJSONArray("items") ?: JSONArray()
+        }
+        val items = (itemsCollection.trackItems() + itemsCollection.playlistItems()).distinctExternalItems()
+        if (items.isEmpty()) return null
+        return title to items
+    }
+
+    private suspend fun loadPublicHome(): HomePage = coroutineScope {
+        val sections = mutableListOf<HomePage.Section>()
+
+        val mixedJob = async { fetchAllMixedSelections("") }
+        val chartsJob = async {
+            runCatching {
+                safeCollectionItems(
+                    path = "charts",
+                    authToken = "",
+                    limit = 50,
+                    extraParams = mapOf(
+                        "kind" to "top",
+                        "genre" to "soundcloud:genres:all-music",
+                        "region" to "soundcloud:regions:all-countries"
+                    )
+                ).trackItems()
+            }.getOrDefault(emptyList())
+        }
+        val trendingJob = async {
+            runCatching {
+                safeCollectionItems(
+                    path = "charts",
+                    authToken = "",
+                    limit = 50,
+                    extraParams = mapOf(
+                        "kind" to "trending",
+                        "genre" to "soundcloud:genres:all-music",
+                        "region" to "soundcloud:regions:all-countries"
+                    )
+                ).trackItems()
+            }.getOrDefault(emptyList())
+        }
+
+        val chartItems = chartsJob.await()
+        if (chartItems.isNotEmpty()) {
+            sections.addSection("Top 50: All Music", chartItems)
+        }
+
+        val trendingItems = trendingJob.await()
+        if (trendingItems.isNotEmpty()) {
+            sections.addSection("Trending: All Music", trendingItems)
+        }
+
+        mixedJob.await().forEach { selection ->
+            parseDiscoverySelection(selection)?.let { (title, items) ->
+                if (items.isNotEmpty() && sections.none { it.title.equals(title, ignoreCase = true) }) {
+                    sections.addSection(title, items)
                 }
             }
+        }
 
-        return HomePage(chips = null, sections = sections)
+        if (sections.size < 5) {
+            publicPlaylistQueries.map { (title, query) ->
+                async {
+                    val items = searchPlaylists(query, "", PUBLIC_SECTION_LIMIT)
+                    title to items
+                }
+            }.forEach { job ->
+                val (title, items) = job.await()
+                if (items.isNotEmpty() && sections.none { it.title.equals(title, ignoreCase = true) }) {
+                    sections.addSection(title, items)
+                }
+            }
+        }
+
+        HomePage(chips = null, sections = sections)
+    }
+
+    private suspend fun fetchAllMixedSelections(authToken: String): List<JSONObject> = withContext(Dispatchers.IO) {
+        val results = mutableListOf<JSONObject>()
+        var nextHref: String? = null
+
+        repeat(3) {
+            runCatching {
+                if (nextHref == null) {
+                    apiObject("mixed-selections", authToken, mapOf("limit" to "40", "linked_partitioning" to "1"))
+                } else {
+                    val page = apiCollectionPageFromUrl(nextHref!!, authToken)
+                    JSONObject().apply {
+                        put("collection", page.collection)
+                        put("next_href", page.nextHref)
+                    }
+                }
+            }.getOrNull()?.let { response ->
+                response.optJSONArray("collection")?.let { collection ->
+                    for (i in 0 until collection.length()) {
+                        collection.optJSONObject(i)?.let { results.add(it) }
+                    }
+                }
+                nextHref = response.stringOrNull("next_href")
+            } ?: return@withContext results
+
+            if (nextHref == null) return@withContext results
+        }
+        results
     }
 
     private fun MutableList<HomePage.Section>.addSection(
@@ -276,22 +517,24 @@ object SoundCloudHomeFeedProvider {
         add(SearchSummary(title = title, items = items))
     }
 
-    private fun searchTracks(
+    private suspend fun searchTracks(
         query: String,
         authToken: String,
         limit: Int,
     ): List<SongItem> {
         if (query.isBlank()) return emptyList()
-        runCatching {
+        val effectiveId = effectiveClientId()
+        val metadataItems = try {
             SoundCloudAudioProvider
-                .searchMetadata(query, limit = limit)
+                .searchMetadata(query, limit = limit, clientId = effectiveId)
                 .mapNotNull { it.toSongItem() }
                 .distinctBy { it.id }
-        }.onSuccess { items ->
-            items.takeIf { it.isNotEmpty() }?.let { return it }
-        }.onFailure { throwable ->
+        } catch (throwable: Throwable) {
             Timber.tag("SoundCloudHome").w(throwable, "SoundCloud metadata search failed; using API search")
+            null
         }
+
+        if (!metadataItems.isNullOrEmpty()) return metadataItems
 
         return safeCollectionItems(
             path = "search/tracks",
@@ -301,76 +544,21 @@ object SoundCloudHomeFeedProvider {
         ).trackItems()
     }
 
-    private fun searchPlaylists(
+    private suspend fun searchPlaylists(
         query: String,
         authToken: String,
         limit: Int,
     ): List<PlaylistItem> {
         if (query.isBlank()) return emptyList()
-        searchMaidPlaylists(query, limit).takeIf { it.isNotEmpty() }?.let { return it }
-        val apiItems = safeCollectionItems(
+        return safeCollectionItems(
             path = "search/playlists",
             authToken = authToken,
             limit = limit,
             extraParams = mapOf("q" to query),
         ).playlistItems()
-        return apiItems
     }
 
-    private fun searchMaidPlaylists(
-        query: String,
-        limit: Int,
-    ): List<PlaylistItem> {
-        val url = SoundCloudAudioProvider.MAID_BASE_URL.toHttpUrl()
-            .newBuilder()
-            .addPathSegment("search")
-            .addQueryParameter("q", query)
-            .addQueryParameter("type", "playlists")
-            .build()
-        val request = Request.Builder()
-            .url(url)
-            .get()
-            .header("Accept", "text/html")
-            .header("Referer", "${SoundCloudAudioProvider.MAID_BASE_URL}/")
-            .header("User-Agent", SoundCloudAudioProvider.BROWSER_USER_AGENT)
-            .build()
-
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use emptyList()
-                Jsoup.parse(response.body.string(), SoundCloudAudioProvider.MAID_BASE_URL)
-                    .select("a.listing[href]")
-                    .mapNotNull { element ->
-                        val href = element.attr("href").trim()
-                        if (!href.startsWith("/") || href.startsWith("/_/")) return@mapNotNull null
-                        val title = element.selectFirst("h3")?.text()?.trim().orEmpty()
-                        if (title.isBlank()) return@mapNotNull null
-                        val author = element.selectFirst(".meta span")?.text()?.trim()?.takeIf { it.isNotBlank() }
-                        val path = href.substringBefore('?')
-                        val soundCloudUrl = "https://soundcloud.com$path"
-                        val playlistId = path.substringAfter("/sets/", missingDelimiterValue = "")
-                            .trim('/')
-                            .takeIf { it.isNotBlank() }
-                        PlaylistItem(
-                            id = playlistId?.let { "soundcloud:playlist:$it" } ?: soundCloudUrl,
-                            title = title,
-                            author = author?.let { TubeArtist(name = it, id = null) },
-                            songCountText = null,
-                            thumbnail = element.selectFirst("img[src]")?.attr("abs:src")?.soundcloakArtworkUrl(),
-                            playEndpoint = null,
-                            shuffleEndpoint = null,
-                            radioEndpoint = null,
-                        )
-                    }
-                    .distinctBy { it.id }
-                    .take(limit.coerceAtLeast(1))
-            }
-        }.onFailure { throwable ->
-            Timber.tag("SoundCloudHome").w(throwable, "SoundCloud Maid playlist search failed")
-        }.getOrDefault(emptyList())
-    }
-
-    private fun safeCollectionItems(
+    private suspend fun safeCollectionItems(
         path: String,
         authToken: String,
         limit: Int,
@@ -386,11 +574,13 @@ object SoundCloudHomeFeedProvider {
                 maxItems = maxItems,
             )
         }.getOrElse { throwable ->
-            Timber.tag("SoundCloudHome").w(throwable, "SoundCloud collection failed: $path")
+            if (throwable !is IllegalStateException || !throwable.message.orEmpty().contains("404")) {
+                Timber.tag("SoundCloudHome").w(throwable, "SoundCloud collection failed: $path")
+            }
             JSONArray()
         }
 
-    private fun apiCollectionItems(
+    private suspend fun apiCollectionItems(
         path: String,
         authToken: String,
         limit: Int,
@@ -429,7 +619,7 @@ object SoundCloudHomeFeedProvider {
         return merged
     }
 
-    private fun apiCollectionPage(
+    private suspend fun apiCollectionPage(
         path: String,
         authToken: String,
         limit: Int,
@@ -445,22 +635,27 @@ object SoundCloudHomeFeedProvider {
                 ) + extraParams,
         ).toPagedCollection()
 
-    private fun apiCollectionPageFromUrl(
+    private suspend fun apiCollectionPageFromUrl(
         url: String,
         authToken: String,
-    ): PagedCollection {
+    ): PagedCollection = withContext(Dispatchers.IO) {
+        val clientId = activeSessionClientId.ifBlank { effectiveClientId() }
+        val appVersion = SoundCloudAudioProvider.getAppVersion()
         val httpUrl = url.toHttpUrlOrNull()
             ?.newBuilder()
             ?.apply {
                 if (build().queryParameter("client_id").isNullOrBlank()) {
-                    addQueryParameter("client_id", SoundCloudAudioProvider.clientId())
+                    addQueryParameter("client_id", clientId)
                 }
                 if (build().queryParameter("app_locale").isNullOrBlank()) {
                     addQueryParameter("app_locale", APP_LOCALE)
                 }
+                if (appVersion != null && build().queryParameter("app_version").isNullOrBlank()) {
+                    addQueryParameter("app_version", appVersion)
+                }
             }
             ?.build()
-            ?: return PagedCollection(JSONArray(), null)
+            ?: return@withContext PagedCollection(JSONArray(), null)
 
         val requestBuilder =
             Request
@@ -475,7 +670,7 @@ object SoundCloudHomeFeedProvider {
             requestBuilder.header("Authorization", "OAuth $authToken")
         }
 
-        return client.newCall(requestBuilder.build()).execute().use { response ->
+        client.newCall(requestBuilder.build()).execute().use { response ->
             val payload = response.body.string()
             if (!response.isSuccessful) {
                 throw IllegalStateException("SoundCloud ${response.code}: ${payload.take(180)}")
@@ -484,16 +679,23 @@ object SoundCloudHomeFeedProvider {
         }
     }
 
-    private fun apiObject(
+    private suspend fun apiObject(
         path: String,
         authToken: String,
         params: Map<String, String> = emptyMap(),
-    ): JSONObject {
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val clientId = activeSessionClientId.ifBlank { effectiveClientId() }
+        val appVersion = SoundCloudAudioProvider.getAppVersion()
         val urlBuilder = API_BASE.toHttpUrl()
             .newBuilder()
             .addPathSegments(path.trim('/'))
-            .addQueryParameter("client_id", SoundCloudAudioProvider.clientId())
+            .addQueryParameter("client_id", clientId)
             .addQueryParameter("app_locale", APP_LOCALE)
+            .apply {
+                if (appVersion != null) {
+                    addQueryParameter("app_version", appVersion)
+                }
+            }
 
         params.forEach { (key, value) ->
             urlBuilder.addQueryParameter(key, value)
@@ -512,7 +714,7 @@ object SoundCloudHomeFeedProvider {
             requestBuilder.header("Authorization", "OAuth $authToken")
         }
 
-        return client.newCall(requestBuilder.build()).execute().use { response ->
+        client.newCall(requestBuilder.build()).execute().use { response ->
             val payload = response.body.string()
             if (!response.isSuccessful) {
                 throw IllegalStateException("SoundCloud ${response.code}: ${payload.take(180)}")
@@ -521,15 +723,22 @@ object SoundCloudHomeFeedProvider {
         }
     }
 
-    private fun apiTrackArray(
+    private suspend fun apiTrackArray(
         ids: List<String>,
         authToken: String,
-    ): JSONArray {
+    ): JSONArray = withContext(Dispatchers.IO) {
+        val clientId = activeSessionClientId.ifBlank { effectiveClientId() }
+        val appVersion = SoundCloudAudioProvider.getAppVersion()
         val urlBuilder = API_BASE.toHttpUrl()
             .newBuilder()
             .addPathSegments("tracks")
-            .addQueryParameter("client_id", SoundCloudAudioProvider.clientId())
+            .addQueryParameter("client_id", clientId)
             .addQueryParameter("app_locale", APP_LOCALE)
+            .apply {
+                if (appVersion != null) {
+                    addQueryParameter("app_version", appVersion)
+                }
+            }
             .addQueryParameter("ids", ids.joinToString(","))
 
         val requestBuilder =
@@ -545,7 +754,7 @@ object SoundCloudHomeFeedProvider {
             requestBuilder.header("Authorization", "OAuth $authToken")
         }
 
-        return client.newCall(requestBuilder.build()).execute().use { response ->
+        client.newCall(requestBuilder.build()).execute().use { response ->
             val payload = response.body.string()
             if (!response.isSuccessful) {
                 throw IllegalStateException("SoundCloud tracks ${response.code}: ${payload.take(180)}")
@@ -554,17 +763,37 @@ object SoundCloudHomeFeedProvider {
         }
     }
 
-    private fun JSONObject.loadCollectionSongs(authToken: String): List<SongItem> {
+    private suspend fun JSONObject.loadCollectionSongs(authToken: String): List<SongItem> {
         val rawInitialTracks = optJSONArray("tracks")
         val initial =
             (
-                rawInitialTracks.trackItems() +
-                    rawInitialTracks.hydratedTrackItems(authToken)
-            ).distinctBy { it.id }
+                    rawInitialTracks.trackItems() +
+                            rawInitialTracks.hydratedTrackItems(authToken)
+                    ).distinctBy { it.id }
         val trackCount = longOrNull("track_count")?.toInt() ?: initial.size
         if (initial.size >= trackCount || trackCount <= initial.size) return initial
 
         val playlistId = stringOrNull("id") ?: return initial
+        val urn = stringOrNull("urn")
+        val isSystem = optString("kind").equals("system-playlist", ignoreCase = true) ||
+                urn?.contains("system-playlists") == true
+        val isStation = urn?.contains("track-stations") == true
+        val isSelection = urn?.contains("selections") == true
+
+        if (isSelection) return initial
+
+        val basePath = when {
+            isStation -> "track-stations"
+            isSystem -> "system-playlists"
+            else -> "playlists"
+        }
+
+        val cleanId = if (isSystem || isStation) {
+            urn ?: "soundcloud:$basePath:$playlistId"
+        } else {
+            if (playlistId.startsWith("soundcloud:")) playlistId.substringAfterLast(":") else playlistId
+        }
+
         val songs = initial.toMutableList()
         var nextHref: String? = null
         var offset = rawInitialTracks?.length() ?: initial.size
@@ -575,7 +804,7 @@ object SoundCloudHomeFeedProvider {
                     val page =
                         if (nextHref == null) {
                             apiCollectionPage(
-                                path = "playlists/$playlistId/tracks",
+                                path = "$basePath/$cleanId/tracks",
                                 authToken = authToken,
                                 limit = PLAYLIST_LIMIT,
                                 extraParams = mapOf("offset" to offset.toString()),
@@ -599,51 +828,39 @@ object SoundCloudHomeFeedProvider {
         return songs.distinctBy { it.id }
     }
 
-    private fun resolveCollectionObject(
+    private suspend fun resolveCollectionObject(
         collectionId: String,
         authToken: String,
     ): JSONObject? {
-        val resolvedFromUrl =
-            collectionId
-                .takeIf { it.startsWith("http", ignoreCase = true) }
-                ?.let { url ->
-                    runCatching {
-                        apiObject(
-                            path = "resolve",
-                            authToken = authToken,
-                            params = mapOf("url" to url),
-                        )
-                    }.getOrNull()
-                }
-        if (resolvedFromUrl?.isPlaylistObject() == true) return resolvedFromUrl
+        if (!collectionId.startsWith("http", ignoreCase = true)) return null
 
-        val searchQuery =
-            collectionId
-                .replace('/', ' ')
-                .replace('-', ' ')
-                .replace('_', ' ')
-                .trim()
-                .takeIf { it.isNotBlank() && it.any(Char::isLetter) }
-                ?: return null
+        val resolved = runCatching {
+            apiObject(
+                path = "resolve",
+                authToken = authToken,
+                params = mapOf("url" to collectionId),
+            )
+        }.getOrNull() ?: return null
 
-        return safeCollectionItems(
-            path = "search/playlists",
-            authToken = authToken,
-            limit = 10,
-            extraParams = mapOf("q" to searchQuery),
-        ).firstPlaylistObject()
+        if (resolved.isPlaylistObject()) return resolved
+
+        if (resolved.optString("kind").equals("selection", ignoreCase = true)) {
+            return resolved
+        }
+
+        return null
     }
 
     private fun JSONArray?.trackItems(): List<SongItem> {
         if (this == null) return emptyList()
-        val tracks = mutableListOf<JSONObject>()
-        collectTracks(this, tracks)
-        return tracks
-            .mapNotNull { it.toSongItem() }
-            .distinctBy { it.id }
+        val items = mutableListOf<JSONObject>()
+        collectTracks(this, items)
+        return items.mapNotNull { obj ->
+            obj.toSongItem() ?: obj.optJSONObject("track")?.toSongItem()
+        }.distinctBy { it.id }
     }
 
-    private fun JSONArray?.hydratedTrackItems(authToken: String): List<SongItem> {
+    private suspend fun JSONArray?.hydratedTrackItems(authToken: String): List<SongItem> {
         if (this == null) return emptyList()
         val trackIds = mutableListOf<String>()
         collectTrackIds(this, trackIds)
@@ -664,11 +881,14 @@ object SoundCloudHomeFeedProvider {
 
     private fun JSONArray?.playlistItems(): List<PlaylistItem> {
         if (this == null) return emptyList()
-        val playlists = mutableListOf<JSONObject>()
-        collectPlaylists(this, playlists)
-        return playlists
-            .mapNotNull { it.toPlaylistItem() }
-            .distinctBy { it.id }
+        val items = mutableListOf<JSONObject>()
+        collectPlaylists(this, items)
+        return items.mapNotNull { obj ->
+            val source = if (obj.isPlaylistObject()) obj else obj.optJSONObject("playlist")
+            val item = source?.toPlaylistItem()
+            if (item != null && source != null) collectionCache[item.id] = source
+            item
+        }.distinctBy { it.id }
     }
 
     private fun collectTracks(
@@ -704,7 +924,7 @@ object SoundCloudHomeFeedProvider {
             is JSONObject -> {
                 val looksLikeTrack =
                     value.optString("kind").equals("track", ignoreCase = true) ||
-                        value.stringOrNull("permalink_url") != null
+                            value.stringOrNull("permalink_url") != null
                 if (looksLikeTrack) {
                     value.longOrNull("id")?.toString()?.let(output::add)
                     return
@@ -759,8 +979,8 @@ object SoundCloudHomeFeedProvider {
     private fun JSONObject.isPlaylistObject(): Boolean {
         val kind = stringOrNull("kind").orEmpty()
         return kind.equals("playlist", ignoreCase = true) ||
-            kind.equals("system-playlist", ignoreCase = true) ||
-            (optJSONArray("tracks") != null && stringOrNull("title") != null && stringOrNull("id") != null)
+                kind.equals("system-playlist", ignoreCase = true) ||
+                (optJSONArray("tracks") != null && stringOrNull("title") != null && stringOrNull("id") != null)
     }
 
     private fun JSONObject.toSongItem(): SongItem? {
@@ -784,9 +1004,24 @@ object SoundCloudHomeFeedProvider {
 
     private fun JSONObject.toPlaylistItem(preferredType: String? = null): PlaylistItem? {
         if (!isPlaylistObject()) return null
-        val id = stringOrNull("id") ?: return null
         val title = stringOrNull("title") ?: return null
         val type = preferredType?.takeIf { it in setOf("playlist", "album", "mix") } ?: soundCloudCollectionType()
+        // IMPORTANT: base this only on the real "kind" field from SoundCloud, never on the derived
+        // display `type`. Regular curated/editorial playlists are tagged set_type == "mix" (which
+        // makes soundCloudCollectionType() return "mix"), but they are still ordinary kind: "playlist"
+        // objects fetchable via /playlists/{id}. Treating type == "mix" as isSystem fabricates a
+        // non-existent "soundcloud:system-playlists:<numericId>" urn for them, which 404s on resolve.
+        val isSystem = optString("kind").equals("system-playlist", ignoreCase = true)
+
+        val urn = stringOrNull("urn")
+        val numericId = stringOrNull("id")
+        val id = when {
+            isSystem && urn != null -> urn.removePrefix("soundcloud:")
+            isSystem && numericId != null -> "system-playlists:$numericId"
+            urn?.contains("selection") == true -> urn.removePrefix("soundcloud:")
+            else -> numericId ?: return null
+        }
+
         val userName = optJSONObject("user")?.stringOrNull("username")
         val trackCount = longOrNull("track_count")
             ?: optJSONArray("tracks")?.length()?.toLong()
@@ -806,10 +1041,9 @@ object SoundCloudHomeFeedProvider {
     private fun JSONObject.soundCloudCollectionType(): String {
         val setType = stringOrNull("set_type")?.lowercase()
         val kind = stringOrNull("kind")?.lowercase()
-        val title = stringOrNull("title").orEmpty()
         return when {
             setType == "album" || kind == "album" -> "album"
-            setType == "mix" || kind == "system-playlist" || title.contains("mix", ignoreCase = true) -> "mix"
+            kind == "system-playlist" || setType == "mix" -> "mix"
             else -> "playlist"
         }
     }
@@ -842,9 +1076,42 @@ object SoundCloudHomeFeedProvider {
             }
         }
 
-    private fun JSONObject.soundCloudArtworkUrl(): String? =
-        stringOrNull("artwork_url")?.toLargeArtworkUrl()
-            ?: optJSONObject("user")?.stringOrNull("avatar_url")?.toLargeArtworkUrl()
+    private fun JSONObject.soundCloudArtworkUrl(): String? {
+        val direct = (stringOrNull("artwork_url") ?: stringOrNull("calculated_artwork_url"))?.toLargeArtworkUrl()
+        if (direct != null) return direct
+
+        val visualsObj = optJSONObject("visuals")
+        visualsObj?.stringOrNull("visual_url")?.let { return it.toLargeArtworkUrl() }
+        val visualsArray = visualsObj?.optJSONArray("visuals")
+        if (visualsArray != null && visualsArray.length() > 0) {
+            visualsArray.optJSONObject(0)?.stringOrNull("visual_url")?.let { return it.toLargeArtworkUrl() }
+        }
+
+        optJSONObject("playlist")?.soundCloudArtworkUrl()?.let { return it }
+        optJSONObject("track")?.soundCloudArtworkUrl()?.let { return it }
+
+        val user = optJSONObject("user")
+        val avatar = user?.stringOrNull("avatar_url")
+        if (avatar != null && !avatar.contains("default_avatar")) {
+            return avatar.toLargeArtworkUrl()
+        }
+
+        val userVisuals = user?.optJSONObject("visuals")?.optJSONArray("visuals")
+        if (userVisuals != null && userVisuals.length() > 0) {
+            userVisuals.optJSONObject(0)?.stringOrNull("visual_url")?.let { return it.toLargeArtworkUrl() }
+        }
+
+        optJSONArray("tracks")?.let { tracks ->
+            for (i in 0 until tracks.length()) {
+                val trackArt = tracks.optJSONObject(i)?.soundCloudArtworkUrl()
+                if (trackArt != null) return trackArt
+            }
+        }
+
+        optJSONObject("publisher_metadata")?.stringOrNull("artwork_url")?.let { return it.toLargeArtworkUrl() }
+
+        return null
+    }
 
     private fun JSONArray.firstTrackArtworkUrl(): String? {
         for (index in 0 until length()) {
@@ -878,15 +1145,36 @@ object SoundCloudHomeFeedProvider {
             else -> null
         }
 
-    private fun String.toLargeArtworkUrl(): String =
-        replace("-large.", "-t500x500.")
-            .replace("-t120x120.", "-t500x500.")
+    private fun String.toLargeArtworkUrl(): String {
+        if (isEmpty() || contains("default_avatar")) return this
+        if (contains("-t500x500.")) return this
 
-    private fun String.soundcloakArtworkUrl(): String? {
-        val url = toHttpUrlOrNull() ?: return takeIf { it.startsWith("http", ignoreCase = true) }
-        val proxied = url.queryParameter("url") ?: return this
-        return runCatching { URLDecoder.decode(proxied, "UTF-8") }.getOrDefault(proxied)
-            .toLargeArtworkUrl()
+        val urlWithoutQuery = substringBefore('?')
+        val query = if (contains('?')) "?" + substringAfter('?') else ""
+
+        val replaced = urlWithoutQuery.replace(Regex("-(large|t120x120|t67x67|t300x300|t240x240|t1024x1024|badge|tiny|small|t200x200|t50x50|t60x60|original|crop)\\."), "-t500x500.")
+        if (replaced != urlWithoutQuery) return replaced + query
+
+        if (urlWithoutQuery.contains("sndcdn.com") && !urlWithoutQuery.contains("-t")) {
+            val dotIndex = urlWithoutQuery.lastIndexOf('.')
+            if (dotIndex > urlWithoutQuery.lastIndexOf('/')) {
+                return urlWithoutQuery.substring(0, dotIndex) + "-t500x500" + urlWithoutQuery.substring(dotIndex) + query
+            }
+        }
+        return this
+    }
+
+    private fun String.removeMetroPrefix(): String {
+        var current = this
+        var previous: String
+        do {
+            previous = current
+            current = current.removePrefix("soundcloud:playlist:")
+                .removePrefix("soundcloud:album:")
+                .removePrefix("soundcloud:mix:")
+                .removePrefix("soundcloud:")
+        } while (current != previous)
+        return current
     }
 
     private fun String.displayName(): String =

@@ -19,6 +19,33 @@ import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.providers.ExternalPlaylistPage
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.providers.SpotifyHomeFeedParser
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
+import android.view.TextureView
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -78,6 +105,99 @@ data class SpotifyCanvasMedia(
     val url: String,
     val headers: Map<String, String>,
 )
+
+@Composable
+fun rememberSpotifyCanvasMedia(
+    mediaMetadata: MediaMetadata?,
+    enabled: Boolean,
+    cookie: String,
+    shouldLoad: Boolean,
+): SpotifyCanvasMedia? {
+    if (mediaMetadata == null || !enabled || !shouldLoad || cookie.isBlank()) return null
+    var media by remember(mediaMetadata.id, cookie) { mutableStateOf<SpotifyCanvasMedia?>(null) }
+    LaunchedEffect(mediaMetadata.id, cookie) {
+        media = SpotifyCanvasClient.resolveBackground(mediaMetadata, cookie)
+    }
+    return media
+}
+
+@Composable
+fun SpotifyCanvasVideoBackground(
+    media: SpotifyCanvasMedia,
+    shouldPlay: Boolean,
+    modifier: Modifier = Modifier,
+    scrimAlpha: Float = 0.16f,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val textureView = remember {
+        TextureView(context).apply {
+            isOpaque = false
+            isClickable = false
+            isFocusable = false
+        }
+    }
+
+    val player = remember(media.url) {
+        val mediaSourceFactory = DefaultMediaSourceFactory(
+            OkHttpDataSource.Factory(OkHttpClient())
+                .setDefaultRequestProperties(media.headers)
+        )
+
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .setTrackSelector(
+                DefaultTrackSelector(context).apply {
+                    parameters = buildUponParameters()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true)
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                        .build()
+                }
+            )
+            .build()
+            .apply {
+                setAudioAttributes(AudioAttributes.DEFAULT, false)
+                repeatMode = Player.REPEAT_MODE_ONE
+                volume = 0f
+                setVideoTextureView(textureView)
+                setMediaItem(MediaItem.fromUri(media.url))
+                prepare()
+            }
+    }
+
+    LaunchedEffect(shouldPlay) {
+        if (shouldPlay) player.play() else player.pause()
+    }
+
+    DisposableEffect(player, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> if (shouldPlay) player.play()
+                Lifecycle.Event.ON_PAUSE -> player.pause()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            player.release()
+        }
+    }
+
+    Box(modifier = modifier.fillMaxSize()) {
+        AndroidView(
+            factory = { textureView },
+            modifier = Modifier.fillMaxSize()
+        )
+        if (scrimAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = scrimAlpha))
+            )
+        }
+    }
+}
 
 data class SpotifyMixMetadata(
     val bpm: Float? = null,
@@ -617,16 +737,25 @@ object SpotifyCanvasClient {
     )
 
     private class SpotifyDealerCommandQueue {
-        @Volatile
+        private val pendingCommands = ArrayDeque<JsonObject>()
         private var waitingForCommand: CompletableDeferred<JsonObject>? = null
 
-        fun nextCommand(): CompletableDeferred<JsonObject> =
-            CompletableDeferred<JsonObject>().also { waitingForCommand = it }
+        @Synchronized
+        fun nextCommand(): CompletableDeferred<JsonObject> {
+            if (pendingCommands.isNotEmpty()) {
+                return CompletableDeferred(pendingCommands.removeFirst())
+            }
+            return CompletableDeferred<JsonObject>().also { waitingForCommand = it }
+        }
 
+        @Synchronized
         fun offer(command: JsonObject) {
-            waitingForCommand
-                ?.takeIf { it.complete(command) }
-                ?.let { waitingForCommand = null }
+            val waiter = waitingForCommand
+            if (waiter != null) {
+                waitingForCommand = null
+                if (waiter.complete(command)) return
+            }
+            pendingCommands.addLast(command)
         }
     }
 
@@ -636,6 +765,12 @@ object SpotifyCanvasClient {
         val paused: Boolean,
         val durationMs: Long?,
         val playbackId: String?,
+    )
+
+    private data class SpotifyPlaybackStateParseResult(
+        val playbackState: SpotifyListeningHistoryPlaybackState? = null,
+        val ignoredReason: String? = null,
+        val ignoredAd: Boolean = false,
     )
 
     private class SpotifyListeningHistoryDevice(
@@ -1646,17 +1781,64 @@ object SpotifyCanvasClient {
             }.getOrDefault(false)
         if (!commandSent) return null
 
-        return withTimeoutOrNull(SPOTIFY_HISTORY_DEALER_TIMEOUT_MS) {
-            commandWait.await()
-        }?.let(::spotifyPlaybackStateFromDealerCommand)
-            ?: run {
-                if (notifyFailures) {
-                    notifyListeningHistoryFailure("command timed out")
-                } else {
-                    Timber.w("Spotify listening history command timed out for %s context", contextUri)
+        return awaitSpotifyPlaybackStateFromDealer(
+            device = device,
+            firstCommandWait = commandWait,
+            expectedTrackId = trackUri.spotifyTrackId(),
+            contextUri = contextUri,
+            notifyFailures = notifyFailures,
+        )
+    }
+
+    private suspend fun awaitSpotifyPlaybackStateFromDealer(
+        device: SpotifyListeningHistoryDevice,
+        firstCommandWait: CompletableDeferred<JsonObject>,
+        expectedTrackId: String?,
+        contextUri: String,
+        notifyFailures: Boolean,
+    ): SpotifyListeningHistoryPlaybackState? {
+        var nextCommandWait = firstCommandWait
+        var ignoredReason: String? = null
+        var ignoredAd = false
+        val playbackState =
+            withTimeoutOrNull(SPOTIFY_HISTORY_DEALER_TIMEOUT_MS) {
+                while (true) {
+                    val parsed =
+                        spotifyPlaybackStateFromDealerCommand(
+                            command = nextCommandWait.await(),
+                            expectedTrackId = expectedTrackId,
+                        )
+                    parsed.playbackState?.let { return@withTimeoutOrNull it }
+                    parsed.ignoredReason?.let { reason ->
+                        ignoredReason = reason
+                        ignoredAd = ignoredAd || parsed.ignoredAd
+                        Timber.i("Ignoring Spotify listening history state for %s: %s", contextUri, reason)
+                    }
+                    nextCommandWait = device.commandQueue.nextCommand()
                 }
                 null
             }
+        if (playbackState != null) return playbackState
+
+        if (ignoredAd) {
+            clearListeningHistoryDevice(device)
+            deferListeningHistoryRequests(
+                reason = "Spotify served an ad instead of the requested track; skipping history sync briefly",
+                retryAfterMs = 90_000L,
+            )
+            return null
+        }
+
+        if (notifyFailures) {
+            notifyListeningHistoryFailure(ignoredReason ?: "command timed out")
+        } else {
+            Timber.w(
+                "Spotify listening history command timed out for %s context%s",
+                contextUri,
+                ignoredReason?.let { ": last ignored state was $it" }.orEmpty(),
+            )
+        }
+        return null
     }
 
     private fun fetchListeningHistoryEndpoints(): SpotifyListeningHistoryEndpoints {
@@ -1931,7 +2113,6 @@ object SpotifyCanvasClient {
                         listOf(
                             JsonPrimitive("file_ids_mp3"),
                             JsonPrimitive("file_urls_mp3"),
-                            JsonPrimitive("manifest_urls_audio_ad"),
                             JsonPrimitive("file_ids_mp4"),
                             JsonPrimitive("file_ids_mp4_dual"),
                         ),
@@ -1953,10 +2134,21 @@ object SpotifyCanvasClient {
             put("client_version", SPOTIFY_HISTORY_FINAL_SDK_ID)
         }
 
-    private fun spotifyPlaybackStateFromDealerCommand(command: JsonObject): SpotifyListeningHistoryPlaybackState? {
-        val stateMachine = command.obj("state_machine") ?: return null
-        val internalStateRef = command.obj("state_ref") ?: return null
-        return spotifyPlaybackStateFromInternalRef(stateMachine, internalStateRef)
+    private fun spotifyPlaybackStateFromDealerCommand(
+        command: JsonObject,
+        expectedTrackId: String?,
+    ): SpotifyPlaybackStateParseResult {
+        val stateMachine =
+            command.obj("state_machine")
+                ?: return SpotifyPlaybackStateParseResult(ignoredReason = "missing state machine")
+        val internalStateRef =
+            command.obj("state_ref")
+                ?: return SpotifyPlaybackStateParseResult(ignoredReason = "missing state ref")
+        return spotifyPlaybackStateFromInternalRef(
+            stateMachine = stateMachine,
+            internalStateRef = internalStateRef,
+            expectedTrackId = expectedTrackId,
+        )
     }
 
     private fun updateListeningHistorySessionState(
@@ -1967,7 +2159,12 @@ object SpotifyCanvasClient {
             val root = json.parseToJsonElement(body).jsonObject
             val stateMachine = root.obj("state_machine") ?: return
             val internalStateRef = root.obj("updated_state_ref") ?: return
-            val playbackState = spotifyPlaybackStateFromInternalRef(stateMachine, internalStateRef) ?: return
+            val playbackState =
+                spotifyPlaybackStateFromInternalRef(
+                    stateMachine = stateMachine,
+                    internalStateRef = internalStateRef,
+                    expectedTrackId = session.trackUri.spotifyTrackId(),
+                ).playbackState ?: return
             session.applyListeningHistoryPlaybackState(playbackState)
         }.onFailure { error ->
             Timber.d(error, "Spotify listening history state response parse skipped")
@@ -1977,14 +2174,19 @@ object SpotifyCanvasClient {
     private fun spotifyPlaybackStateFromInternalRef(
         stateMachine: JsonObject,
         internalStateRef: JsonObject,
-    ): SpotifyListeningHistoryPlaybackState? {
-        val stateIndex = internalStateRef.int("state_index") ?: return null
+        expectedTrackId: String? = null,
+    ): SpotifyPlaybackStateParseResult {
+        val stateIndex = internalStateRef.int("state_index")
+            ?: return SpotifyPlaybackStateParseResult(ignoredReason = "missing state index")
         val state =
             stateMachine.array("states")
                 ?.getOrNull(stateIndex)
-                ?.obj ?: return null
-        val stateMachineId = stateMachine.string("state_machine_id") ?: return null
-        val stateId = state.string("state_id") ?: return null
+                ?.obj
+                ?: return SpotifyPlaybackStateParseResult(ignoredReason = "missing state")
+        val stateMachineId = stateMachine.string("state_machine_id")
+            ?: return SpotifyPlaybackStateParseResult(ignoredReason = "missing state machine id")
+        val stateId = state.string("state_id")
+            ?: return SpotifyPlaybackStateParseResult(ignoredReason = "missing state id")
         val track =
             state.int("track")
                 ?.let { trackIndex ->
@@ -1992,6 +2194,20 @@ object SpotifyCanvasClient {
                         ?.getOrNull(trackIndex)
                         ?.obj
                 }
+        val currentTrackId = track?.spotifyStateMachineTrackId()
+        if (expectedTrackId != null && currentTrackId != expectedTrackId) {
+            val ignoredAd = track?.isSpotifyAdLike() == true
+            val reason =
+                when {
+                    ignoredAd -> "Spotify ad playback state"
+                    currentTrackId == null -> "non-track playback state"
+                    else -> "different track playback state ($currentTrackId)"
+                }
+            return SpotifyPlaybackStateParseResult(
+                ignoredReason = reason,
+                ignoredAd = ignoredAd,
+            )
+        }
         cacheWebPlayerAutoplayQueue(stateMachine, stateIndex)
         val durationMs =
             state.long("duration_override")
@@ -2006,12 +2222,15 @@ object SpotifyCanvasClient {
                     ?.obj("log_data")
                     ?.string("playback_id")
 
-        return SpotifyListeningHistoryPlaybackState(
-            stateMachineId = stateMachineId,
-            stateId = stateId,
-            paused = internalStateRef.boolean("paused"),
-            durationMs = durationMs,
-            playbackId = playbackId,
+        return SpotifyPlaybackStateParseResult(
+            playbackState =
+                SpotifyListeningHistoryPlaybackState(
+                    stateMachineId = stateMachineId,
+                    stateId = stateId,
+                    paused = internalStateRef.boolean("paused"),
+                    durationMs = durationMs,
+                    playbackId = playbackId,
+                ),
         )
     }
 
@@ -2310,6 +2529,53 @@ object SpotifyCanvasClient {
             obj("metadata")?.string("entityUri")?.spotifyTrackId(),
         ).firstOrNull()
             ?: collectSpotifyTrackIds(1).firstOrNull()
+
+    private fun JsonObject.isSpotifyAdLike(): Boolean {
+        val metadata = obj("metadata")
+        val uriValues =
+            listOfNotNull(
+                string("uri"),
+                string("track_uri"),
+                string("trackUri"),
+                string("id"),
+                metadata?.string("uri"),
+                metadata?.string("track_uri"),
+                metadata?.string("trackUri"),
+                metadata?.string("entity_uri"),
+                metadata?.string("entityUri"),
+            )
+        if (uriValues.any { it.startsWith("spotify:ad:", ignoreCase = true) }) return true
+
+        val typeValues =
+            listOfNotNull(
+                string("type"),
+                string("media_type"),
+                string("mediaType"),
+                string("entity_type"),
+                string("entityType"),
+                metadata?.string("type"),
+                metadata?.string("media_type"),
+                metadata?.string("mediaType"),
+                metadata?.string("entity_type"),
+                metadata?.string("entityType"),
+            )
+        if (
+            typeValues.any {
+                it.equals("ad", ignoreCase = true) ||
+                    it.equals("audio_ad", ignoreCase = true) ||
+                    it.contains("advert", ignoreCase = true)
+            }
+        ) {
+            return true
+        }
+
+        return boolean("is_ad") ||
+            boolean("isAd") ||
+            boolean("is_advertisement") ||
+            metadata?.boolean("is_ad") == true ||
+            metadata?.boolean("isAd") == true ||
+            metadata?.boolean("is_advertisement") == true
+    }
 
     private fun SpotifyListeningHistorySession.applyListeningHistoryPlaybackState(
         playbackState: SpotifyListeningHistoryPlaybackState,

@@ -27,7 +27,7 @@
     <string name="filter_uploaded">Įkėlimai</string>
     <string name="sync_playlist">Sinchronizuoti grojaraštį</string>
     <string name="sync_disabled">Sinchronizavimas išjungtas</string>
-    <string name="allows_for_sync_witch_youtube">Pastaba: Tai leidžia sinchronizuoti su YouTube Muzika. To NEGALIMA pakeisti vėliau.</string>
+    <string name="allows_for_sync_with_youtube">Pastaba: Tai leidžia sinchronizuoti su YouTube Muzika. To NEGALIMA pakeisti vėliau.</string>
     <string name="generating_image">Generuojamas paveikslėlis</string>
     <string name="please_wait">Prašome palaukti</string>
     <string name="share_lyrics">Dalintis dainos žodžiais</string>

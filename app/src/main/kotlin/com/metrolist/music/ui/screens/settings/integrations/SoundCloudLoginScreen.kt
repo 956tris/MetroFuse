@@ -40,6 +40,7 @@ import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
+import com.metrolist.music.constants.SoundCloudSessionClientIdKey
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.utils.backToMain
@@ -58,8 +59,60 @@ private val SoundCloudCookieUrls =
         "https://api-v2.soundcloud.com",
     )
 
-private val SoundCloudAuthCaptureDelaysMs = listOf(0L, 250L, 750L, 1_500L, 3_000L, 5_000L)
+private val SoundCloudAuthCaptureDelaysMs = listOf(0L, 300L, 800L, 1_600L, 3_000L, 5_000L)
 
+/**
+ * Extracts the client_id that the SoundCloud web app loaded into its own JS
+ * runtime. This is the user's session-bound client_id, which has permission to
+ * access personalized endpoints (system-playlists, mixes, etc.) that a
+ * scraped/proxy client_id does not.
+ */
+private const val SOUNDCLOUD_CLIENT_ID_READ_SCRIPT =
+    """
+    (function() {
+        try {
+            var cfg = window.__sc_hydration;
+            if (cfg) {
+                var s = JSON.stringify(cfg);
+                var m = s.match(/client_?[Ii]d['":\s]+['"]([A-Za-z0-9]{16,})['"]/);
+                if (m) return m[1];
+            }
+        } catch (e) {}
+        try {
+            if (window.SC && window.SC.__serverProperties) {
+                var sp = window.SC.__serverProperties;
+                if (sp.client_id) return sp.client_id;
+            }
+        } catch (e) {}
+        try {
+            if (window.SC && window.SC._config && window.SC._config.client_id) {
+                return window.SC._config.client_id;
+            }
+        } catch (e) {}
+        try {
+            if (window.scHydrationPackages) {
+                var s = JSON.stringify(window.scHydrationPackages);
+                var m = s.match(/client_?[Ii]d['":\s]+['"]([A-Za-z0-9]{16,})['"]/);
+                if (m) return m[1];
+            }
+        } catch (e) {}
+        try {
+            var scripts = document.getElementsByTagName('script');
+            for (var i = scripts.length - 1; i >= 0; i--) {
+                var t = scripts[i].textContent || '';
+                var m = t.match(/client_?[Ii]d["']?\s*[:=]\s*["']([A-Za-z0-9]{16,})["']/i);
+                if (m) return m[1];
+            }
+        } catch (e) {}
+        return '';
+    })()
+    """
+
+/**
+ * Reads every localStorage + sessionStorage key plus any OAuth-shaped value we
+ * can pull out of the runtime. SoundCloud's web app stashes the access token
+ * under several possible keys (V1 and V2 SDK variants), so we sweep them all.
+ */
 private const val SOUNDCLOUD_STORAGE_READ_SCRIPT =
     """
     (function() {
@@ -77,6 +130,16 @@ private const val SOUNDCLOUD_STORAGE_READ_SCRIPT =
         }
         dumpStorage('localStorage', window.localStorage);
         dumpStorage('sessionStorage', window.sessionStorage);
+        try {
+            var sc = window.SC;
+            if (sc && sc.connector && typeof sc.connector.oauth_token === 'string') {
+                rows.push('runtime:oauth_token=' + sc.connector.oauth_token);
+            }
+        } catch (error) {}
+        try {
+            var accessToken = window.__sc_token;
+            if (typeof accessToken === 'string') rows.push('runtime:access_token=' + accessToken);
+        } catch (error) {}
         return rows.join('\n');
     })()
     """
@@ -88,12 +151,16 @@ fun SoundCloudLoginScreen(
     navController: NavController,
 ) {
     var soundCloudAuthToken by rememberPreference(SoundCloudAuthTokenKey, "")
+    var sessionClientId by rememberPreference(SoundCloudSessionClientIdKey, "")
     var webView by remember { mutableStateOf<WebView?>(null) }
     var savedVisible by remember { mutableStateOf(false) }
     val handler = remember { Handler(Looper.getMainLooper()) }
 
     fun saveToken(token: String) {
         soundCloudAuthToken = token
+        // A new auth token means personalized endpoints open up; drop any cached
+        // client id so the first authenticated call resolves cleanly.
+        SoundCloudAudioProvider.invalidateClientId()
         savedVisible = true
     }
 
@@ -101,6 +168,12 @@ fun SoundCloudLoginScreen(
         webView?.captureSoundCloudAuth(
             onToken = ::saveToken,
         )
+        webView?.captureSessionClientId { id ->
+            if (id.isNotBlank()) {
+                sessionClientId = id
+                Timber.tag("SoundCloudLogin").d("Captured session client_id: $id")
+            }
+        }
     }
 
     fun finish() {
@@ -138,9 +211,21 @@ fun SoundCloudLoginScreen(
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webViewClient =
                         object : WebViewClient() {
+                            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                                super.onPageStarted(view, url, favicon)
+                                url?.let { extractTokenFromUrl(it) }?.let(::saveToken)
+                                handler.postDelayed({ view.captureSoundCloudAuth(onToken = ::saveToken) }, 150L)
+                                handler.postDelayed({
+                                    view.captureSessionClientId { id ->
+                                        if (id.isNotBlank()) sessionClientId = id
+                                    }
+                                }, 200L)
+                            }
+
                             override fun onPageFinished(view: WebView, url: String?) {
                                 super.onPageFinished(view, url)
                                 CookieManager.getInstance().flush()
+                                url?.let { extractTokenFromUrl(it) }?.let(::saveToken)
                                 SoundCloudAuthCaptureDelaysMs.forEach { delay ->
                                     handler.postDelayed(
                                         {
@@ -150,6 +235,10 @@ fun SoundCloudLoginScreen(
                                         },
                                         delay,
                                     )
+                                }
+                                // Capture session client_id on each page finish too
+                                view.captureSessionClientId { id ->
+                                    if (id.isNotBlank()) sessionClientId = id
                                 }
                             }
                         }
@@ -208,6 +297,24 @@ private fun WebView.captureSoundCloudAuth(onToken: (String) -> Unit) {
     }
 }
 
+/**
+ * Pulls an OAuth token straight out of a redirect URL's fragment or query —
+ * SoundCloud's OAuth2 flow can return `access_token=...` directly in the URL
+ * on some login paths. Faster than waiting for cookies/storage to populate.
+ */
+private fun extractTokenFromUrl(url: String): String? {
+    if (url.isBlank()) return null
+    val fragment = url.substringAfter('#', missingDelimiterValue = "")
+    val candidates = buildList {
+        add(url)
+        if (fragment.isNotBlank()) {
+            add("oauth_token=$fragment")
+            add("access_token=$fragment")
+        }
+    }
+    return mergeSoundCloudAuthInputs(candidates)
+}
+
 private fun decodeJavascriptString(result: String?): String? =
     result
         ?.trim()
@@ -223,3 +330,11 @@ private fun decodeJavascriptString(result: String?): String? =
         ?.replace("\\u003B", ";")
         ?.takeIf { it.isNotBlank() }
         ?.also { Timber.tag("SoundCloudLogin").d("Captured SoundCloud storage payload") }
+
+/** Runs the client_id extraction JS and calls back with any 16+ char result. */
+private fun WebView.captureSessionClientId(onClientId: (String) -> Unit) {
+    evaluateJavascript(SOUNDCLOUD_CLIENT_ID_READ_SCRIPT) { result ->
+        val id = result?.trim()?.trim('"')?.takeIf { it.length >= 16 && it != "null" }
+        if (!id.isNullOrBlank()) onClientId(id)
+    }
+}

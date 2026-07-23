@@ -19,7 +19,7 @@
     <string name="filter_uploaded">আপলোডেড</string>
     <string name="sync_playlist">প্লেলিস্ট সমন্বয়</string>
     <string name="sync_disabled">সমন্বয় বন্ধ</string>
-    <string name="allows_for_sync_witch_youtube">নোট: এই বিকল্পটি ইউটিউব মিউজিকের সাথে সমন্বয় চালু করে এবং এটি পরবর্তীতে পরিবর্তন করা সম্ভব নয়</string>
+    <string name="allows_for_sync_with_youtube">নোট: এই বিকল্পটি ইউটিউব মিউজিকের সাথে সমন্বয় চালু করে এবং এটি পরবর্তীতে পরিবর্তন করা সম্ভব নয়</string>
     <string name="generating_image">ছবি তৈরি হচ্ছে…</string>
     <string name="please_wait">অপেক্ষা করুন</string>
     <string name="cancel">বাতিল</string>

@@ -14,7 +14,7 @@
     <string name="cached_playlist">الأغاني المخزنة مؤقتًا</string>
     <string name="sync_playlist">مزامنة قائمة التشغيل</string>
     <string name="sync_disabled">المزامنة غير مفعلة</string>
-    <string name="allows_for_sync_witch_youtube">ملاحظة: يتيح هذا الخيار المزامنة مع YouTube Music ولا يمكن تغييره لاحقًا.</string>
+    <string name="allows_for_sync_with_youtube">ملاحظة: يتيح هذا الخيار المزامنة مع YouTube Music ولا يمكن تغييره لاحقًا.</string>
     <string name="remove_from_cache">إزالة من التخزين المؤقت</string>
     <string name="copy_link">نسخ الرابط</string>
     <string name="select">تحديد الكل</string>

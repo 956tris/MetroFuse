@@ -22,6 +22,7 @@ val baseApplicationId = "com.metrofuse.music"
 val metroFuseVersionCode = 510
 val metroFuseVersionName = "5.1"
 val metroFuseUpdateRepository = "956tris/MetroFuse"
+val discordRpcApplicationId = "1508739806186963045"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
 val appNameOverride = System.getenv("METROLIST_APP_NAME")?.takeIf { it.isNotBlank() }
 val debugKeystorePathOverride = System.getenv("METROLIST_DEBUG_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
@@ -180,6 +181,20 @@ android {
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
         buildConfigField("String", "ARCHITECTURE", "\"universal\"")
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$metroFuseUpdateRepository\"")
+        buildConfigField("long", "DISCORD_RPC_APPLICATION_ID", "${discordRpcApplicationId}L")
+        manifestPlaceholders["discordRpcApplicationId"] = discordRpcApplicationId
+
+        if (!releaseBuildRequested) {
+            ndk {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
+        }
+
+        externalNativeBuild {
+            cmake {
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            }
+        }
     }
 
     splits {
@@ -308,6 +323,12 @@ android {
 
     androidResources {
         generateLocaleConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+        }
     }
 
     packaging {
@@ -447,6 +468,11 @@ dependencies {
     implementation(libs.media3.dash)
     implementation(libs.media3.ffmpeg.decoder)
 
+    // FFmpegKit - used by Amazon Music provider to decrypt CMAF/MP4 streams via
+    // `ffmpeg -decryption_key <hex> -i <enc> -c copy <out.flac>`. The -min variant
+    // is the smallest footprint build that still includes the mov demuxer.
+    implementation(libs.ffmpeg.kit.min)
+
     // Google Cast - only included in GMS flavor (not available in F-Droid/FOSS builds)
     "gmsImplementation"(libs.media3.cast)
     "gmsImplementation"(libs.mediarouter)
@@ -466,6 +492,7 @@ dependencies {
     implementation(project(":innertube"))
     implementation(project(":kugou"))
     implementation(project(":lrclib"))
+    implementation(files("libs/discord_partner_sdk.aar"))
     implementation(project(":lastfm"))
     implementation(project(":betterlyrics"))
     implementation(project(":shazamkit"))

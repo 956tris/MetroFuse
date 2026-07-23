@@ -17,7 +17,7 @@
     <string name="cached_playlist">Αποθηκευμένα στην προσωρινή μνήμη</string>
     <string name="sync_playlist">Συγχρονισμός λίστας αναπαραγωγής</string>
     <string name="sync_disabled">Συγχρονισμός ανενεργός</string>
-    <string name="allows_for_sync_witch_youtube">ΣΗΜΕΙΩΣΗ: Αυτή η επιλογή επιτρέπει τον συγχρονισμό με το YouTube Music και ΔΕΝ μπορεί να αλλάξει αργότερα</string>
+    <string name="allows_for_sync_with_youtube">ΣΗΜΕΙΩΣΗ: Αυτή η επιλογή επιτρέπει τον συγχρονισμό με το YouTube Music και ΔΕΝ μπορεί να αλλάξει αργότερα</string>
     <string name="remove_from_cache">Αφαίρεση από την προσωρινή μνήμη</string>
     <string name="copy_link">Αντιγραφή συνδέσμου</string>
     <string name="select">Επιλογή όλων</string>
