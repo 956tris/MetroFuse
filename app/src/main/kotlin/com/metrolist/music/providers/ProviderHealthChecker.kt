@@ -7,6 +7,8 @@ package com.metrolist.music.providers
 
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
+import com.metrolist.music.tidal.TidalAudioProvider
+import com.metrolist.music.qobuz.QobuzAudioProvider
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -24,20 +26,11 @@ import kotlinx.coroutines.withContext
 object ProviderHealthChecker {
     private const val USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
-    private const val TIDAL_PUBLIC_TOKEN = "49YxDN9a2aFV6RTG"
+    private const val TIDAL_HEALTH_TRACK_ID = "4875683"
     private const val QOBUZ_HEALTH_QUERY = "yes and ariana grande"
     private const val QOBUZ_HEALTH_TRACK_ID = "256170850"
     private const val DEEZER_HEALTH_TRACK_ID = "3135556"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
-    private val TIDAL_RESOLVERS =
-        listOf(
-            TidalResolver("tidal_resolver_hifi_isback", "HiFi is Back v2.7", "https://hifi-isback.peridotclient.com"),
-            TidalResolver("tidal_resolver_maus", "Maus QQDL v2.6", "https://maus.qqdl.site"),
-            TidalResolver("tidal_resolver_vogel", "Vogel QQDL v2.6", "https://vogel.qqdl.site"),
-            TidalResolver("tidal_resolver_katze", "Katze QQDL v2.6", "https://katze.qqdl.site"),
-            TidalResolver("tidal_resolver_hund", "Hund QQDL v2.6", "https://hund.qqdl.site"),
-            TidalResolver("tidal_resolver_wolf", "Wolf QQDL v2.6", "https://wolf.qqdl.site"),
-        )
 
     private val client =
         OkHttpClient
@@ -70,16 +63,50 @@ object ProviderHealthChecker {
         val message: String,
     )
 
-    private data class TidalResolver(
-        val id: String,
-        val name: String,
-        val baseUrl: String,
-    ) {
-        val endpoint: String = baseUrl.trimEnd('/') + "/"
-    }
-
-    fun targets(deezerResolverUrl: String): List<Target> {
+    fun targets(
+        deezerResolverUrl: String,
+        tidalResolverEndpoints: String = "",
+        qobuzCustomInstances: String = "",
+    ): List<Target> {
         val deezerResolver = normalizeDeezerResolverUrl(deezerResolverUrl)
+        var customTidalIndex = 0
+        val tidalResolverTargets =
+            TidalAudioProvider.resolverEndpointBases(tidalResolverEndpoints)
+                .map { baseUrl ->
+                    val isDefault = baseUrl.equals(TidalAudioProvider.DEFAULT_RESOLVER_BASE_URL, ignoreCase = true)
+                    if (!isDefault) customTidalIndex += 1
+                    val name = TidalAudioProvider.resolverEndpointDisplayName(baseUrl, customTidalIndex)
+                    getTarget(
+                        id = if (isDefault) "tidal_resolver_bini" else "tidal_resolver_custom_$customTidalIndex",
+                        group = "TIDAL",
+                        name = name,
+                        endpoint = "$baseUrl/track/?id=$TIDAL_HEALTH_TRACK_ID&quality=LOSSLESS",
+                        detail = "Lossless stream resolver",
+                    )
+                }
+
+        val qobuzTargets = QobuzAudioProvider.resolverInstanceBases(qobuzCustomInstances)
+            .mapIndexed { index, baseUrl ->
+                val isKenny = baseUrl.contains("kennyy.com.br")
+                val isKennyMirror = baseUrl.contains("qobuz2")
+                val name = if (isKenny) {
+                    if (isKennyMirror) "Kenny Mirror" else "Kenny"
+                } else {
+                    "Custom Qobuz ${index + 1}"
+                }
+                val id = if (isKenny) {
+                    if (isKennyMirror) "qobuz_kenny_mirror" else "qobuz_kenny"
+                } else {
+                    "qobuz_custom_$index"
+                }
+                qobuzSearchAndStreamTarget(
+                    id = id,
+                    name = name,
+                    baseUrl = baseUrl,
+                    requiresCountry = false,
+                )
+            }
+
         return listOf(
             getTarget(
                 id = "youtube_music",
@@ -96,18 +123,18 @@ object ProviderHealthChecker {
                 detail = "Public SoundCloud frontend",
             ),
             getTarget(
-                id = "soundcloud_maid",
+                id = "soundcloud_api",
                 group = "SoundCloud",
-                name = "SoundCloud Maid",
-                endpoint = "${SoundCloudAudioProvider.MAID_BASE_URL}/search?q=test&type=tracks",
-                detail = "Primary SoundCloud frontend metadata backend",
+                name = "SoundCloud API",
+                endpoint = "https://api-v2.soundcloud.com/",
+                detail = "Official SoundCloud API used for homepage and client ID",
             ),
             getTarget(
-                id = "soundcloud_squid",
+                id = "soundcloud_api",
                 group = "SoundCloud",
-                name = "SoundCloud Squid",
-                endpoint = "${SoundCloudAudioProvider.SQUID_BASE_URL}/api/soundcloud/get-client-id",
-                detail = "Secondary SoundCloud client ID and stream helper",
+                name = "SoundCloud API",
+                endpoint = "https://api-v2.soundcloud.com/search/tracks?q=test&limit=1",
+                detail = "Official SoundCloud track search and stream resolution",
             ),
             getTarget(
                 id = "deezer_api",
@@ -132,61 +159,8 @@ object ProviderHealthChecker {
                 detail = "Fallback Deezer audio resolver",
                 body = """{"formats":["MP3_128"],"ids":[$DEEZER_HEALTH_TRACK_ID],"fast":true}""",
             ),
-            deezerRenderProxyTarget(),
-            getTarget(
-                id = "tidal_api",
-                group = "TIDAL",
-                name = "TIDAL API",
-                endpoint = "https://tidal.com/v1/search/tracks?query=test&countryCode=US&limit=1",
-                detail = "Search and catalog metadata",
-                headers = mapOf("x-tidal-token" to TIDAL_PUBLIC_TOKEN),
-            ),
-            *TIDAL_RESOLVERS
-                .map { resolver ->
-                    getTarget(
-                        id = resolver.id,
-                        group = "TIDAL",
-                        name = resolver.name,
-                        endpoint = resolver.endpoint,
-                        detail = "Lossless stream resolver reachability",
-                    )
-                }
-                .toTypedArray(),
-            qobuzSearchAndStreamTarget(
-                id = "qobuz_trypt",
-                name = "TrypT",
-                baseUrl = "https://trypt-hifi-dl-456461932686.us-west1.run.app",
-                requiresCountry = true,
-            ),
-            qobuzJumoTarget(
-                id = "qobuz_jumo",
-                name = "JUMO",
-                baseUrl = "https://jumo-dl.pages.dev",
-            ),
-            qobuzSearchAndStreamTarget(
-                id = "qobuz_monochrome",
-                name = "Monochrome v1.0",
-                baseUrl = "https://qdl-api.monochrome.tf",
-                requiresCountry = true,
-            ),
-            qobuzSearchAndStreamTarget(
-                id = "qobuz_scavenger",
-                name = "Scavenger v1.0",
-                baseUrl = "https://mono.scavengerfurs.net",
-                requiresCountry = true,
-            ),
-            qobuzSearchAndStreamTarget(
-                id = "qobuz_kenny",
-                name = "Kenny",
-                baseUrl = "https://qobuz.kennyy.com.br",
-                requiresCountry = false,
-            ),
-            qobuzSearchAndStreamTarget(
-                id = "qobuz_squid",
-                name = "Squid",
-                baseUrl = "https://qobuz.squid.wtf",
-                requiresCountry = true,
-            ),
+            *tidalResolverTargets.toTypedArray(),
+            *qobuzTargets.toTypedArray(),
         )
     }
 

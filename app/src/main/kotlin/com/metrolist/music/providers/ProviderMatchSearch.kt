@@ -6,6 +6,8 @@
 package com.metrolist.music.providers
 
 import android.content.Context
+import com.metrolist.music.constants.AmazonAudioQualityKey
+import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
@@ -21,11 +23,14 @@ import com.metrolist.music.constants.QobuzCountryKey
 import com.metrolist.music.constants.ProxyEnabledKey
 import com.metrolist.music.constants.SoundCloudAuthTokenKey
 import com.metrolist.music.constants.SpotifyCookieKey
+import com.metrolist.music.constants.TidalResolverEndpointsKey
+import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.qobuz.QobuzAudioProvider
+import com.metrolist.music.amazon.AmazonAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.utils.dataStore
@@ -33,6 +38,7 @@ import com.metrolist.music.utils.get
 import com.metrolist.music.utils.spotify.SpotifyCanvasClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.util.Locale
 
 object ProviderMatchSearch {
@@ -72,7 +78,7 @@ object ProviderMatchSearch {
             )
         }
 
-    private fun searchProviderInternal(
+    private suspend fun searchProviderInternal(
         context: Context,
         metadata: MediaMetadata,
         provider: AudioProviderOrderItem,
@@ -97,8 +103,13 @@ object ProviderMatchSearch {
                     )
                 }
             }
-            AudioProviderOrderItem.TIDAL ->
-                TidalAudioProvider.searchCandidates(metadata.toTidalQuery(isrcOverride), limit).map { track ->
+            AudioProviderOrderItem.TIDAL -> {
+                val resolverEndpoints = context.dataStore.get(TidalResolverEndpointsKey, "")
+                TidalAudioProvider.searchCandidates(
+                    query = metadata.toTidalQuery(isrcOverride),
+                    limit = limit,
+                    resolverEndpoints = resolverEndpoints,
+                ).map { track ->
                     ProviderMatchCandidate(
                         provider = provider,
                         providerTrackId = track.trackId,
@@ -109,6 +120,7 @@ object ProviderMatchSearch {
                         shareUrl = "https://listen.tidal.com/track/${track.trackId}",
                     )
                 }
+            }
             AudioProviderOrderItem.DEEZER -> {
                 val quality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
                 val resolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
@@ -144,10 +156,11 @@ object ProviderMatchSearch {
                     ),
                 )
             AudioProviderOrderItem.QOBUZ -> {
-                val backend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.JUMO)
+                val backend = context.dataStore.get(QobuzBackendKey).toEnum(QobuzBackend.KENNY)
                 val country = context.dataStore.get(QobuzCountryKey, "US")
+                val customInstances = context.dataStore.get(QobuzCustomInstancesKey, "")
                 QobuzAudioProvider.searchCandidates(
-                    query = metadata.toQobuzQuery(country, backend.toProviderBackend(), isrcOverride),
+                    query = metadata.toQobuzQuery(country, backend.toProviderBackend(), isrcOverride, customInstances),
                     limit = limit,
                 ).map { track ->
                     ProviderMatchCandidate(
@@ -161,8 +174,24 @@ object ProviderMatchSearch {
                     )
                 }
             }
-            AudioProviderOrderItem.APPLE_MUSIC -> emptyList()
+
             AudioProviderOrderItem.INSTAGRAM -> emptyList()
+
+            AudioProviderOrderItem.AMAZON_MUSIC -> {
+                val country = context.dataStore.get(ContentCountryKey, "US")
+                val searchTerm = metadata.searchTerm()
+                AmazonAudioProvider.searchCandidates(context, searchTerm, country, limit).map { track ->
+                    ProviderMatchCandidate(
+                        provider = provider,
+                        providerTrackId = track.trackId,
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album,
+                        durationMs = track.durationMs,
+                        shareUrl = "https://music.amazon.com/tracks/${track.trackId}",
+                    )
+                }
+            }
         }
 
     private suspend fun resolveSpotifyIsrc(
@@ -212,6 +241,7 @@ object ProviderMatchSearch {
         countryCode: String,
         backend: QobuzAudioProvider.ResolverBackend,
         isrcOverride: String? = null,
+        customInstances: String? = null,
     ): QobuzAudioProvider.Query =
         QobuzAudioProvider.Query(
             mediaId = id,
@@ -226,6 +256,7 @@ object ProviderMatchSearch {
                 .takeIf { it.matches(Regex("[A-Z]{2}")) }
                 ?: "US",
             backend = backend,
+            customInstances = customInstances,
         )
 
     private fun MediaMetadata.searchTerm(): String =
@@ -235,11 +266,6 @@ object ProviderMatchSearch {
 
     private fun QobuzBackend.toProviderBackend(): QobuzAudioProvider.ResolverBackend =
         when (this) {
-            QobuzBackend.TRYPT -> QobuzAudioProvider.ResolverBackend.TRYPT
-            QobuzBackend.JUMO -> QobuzAudioProvider.ResolverBackend.JUMO
-            QobuzBackend.MONOCHROME -> QobuzAudioProvider.ResolverBackend.MONOCHROME
-            QobuzBackend.SCAVENGER -> QobuzAudioProvider.ResolverBackend.SCAVENGER
             QobuzBackend.KENNY -> QobuzAudioProvider.ResolverBackend.KENNY
-            QobuzBackend.SQUID -> QobuzAudioProvider.ResolverBackend.SQUID
         }
 }

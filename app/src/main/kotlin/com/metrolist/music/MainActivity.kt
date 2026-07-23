@@ -8,8 +8,11 @@ package com.metrolist.music
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.PendingIntent
+import android.content.BroadcastReceiver
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Build
@@ -126,6 +129,7 @@ import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.request.crossfade
 import coil3.toBitmap
+import com.discord.socialsdk.DiscordSocialSdkInit
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
 import com.metrolist.innertube.models.WatchEndpoint
@@ -142,6 +146,8 @@ import com.metrolist.music.constants.EnableHighRefreshRateKey
 import com.metrolist.music.constants.ExperimentalLyricsKey
 import com.metrolist.music.constants.HomeFeedSource
 import com.metrolist.music.constants.HomeFeedSourceKey
+import com.metrolist.music.constants.SoundCloudAuthTokenKey
+import com.metrolist.music.constants.SoundCloudSessionClientIdKey
 import com.metrolist.music.constants.LastSeenVersionKey
 import com.metrolist.music.constants.ListenTogetherInTopBarKey
 import com.metrolist.music.constants.ListenTogetherUsernameKey
@@ -172,6 +178,7 @@ import com.metrolist.music.playback.DownloadUtil
 import com.metrolist.music.playback.MusicService
 import com.metrolist.music.playback.MusicService.MusicBinder
 import com.metrolist.music.playback.PlayerConnection
+import com.metrolist.music.playback.queues.SoundCloudQueue
 import com.metrolist.music.playback.queues.YouTubeQueue
 import com.metrolist.music.ui.component.AccountSettingsDialog
 import com.metrolist.music.ui.component.AppNavigationBar
@@ -310,8 +317,8 @@ class MainActivity : ComponentActivity() {
         if (!isServiceBound) return
         try {
             unbindService(serviceConnection)
-        } catch (e: IllegalArgumentException) {
-            Timber.tag("MainActivity").w(e, "Service was not bound when attempting to unbind in $source")
+        } catch (e: Exception) {
+            Timber.tag("MainActivity").w(e, "Error unbinding service or receiver in $source")
         } finally {
             isServiceBound = false
             listenTogetherManager.setPlayerConnection(null)
@@ -405,6 +412,7 @@ class MainActivity : ComponentActivity() {
 
         // Initialize Listen Together manager
         listenTogetherManager.initialize()
+        DiscordSocialSdkInit.setEngineActivity(this)
 
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             val locale =
@@ -549,7 +557,7 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(enableHighRefreshRate) {
             val window = this@MainActivity.window
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val layoutParams = window.attributes
+                val layoutParams = WindowManager.LayoutParams().apply { copyFrom(window.attributes) }
                 if (enableHighRefreshRate) {
                     layoutParams.preferredDisplayModeId = 0
                 } else {
@@ -695,10 +703,8 @@ class MainActivity : ComponentActivity() {
                 val (listenTogetherInTopBar) = rememberPreference(ListenTogetherInTopBarKey, defaultValue = true)
                 val navigationItems =
                     remember(listenTogetherInTopBar) {
-                        if (listenTogetherInTopBar) {
-                            Screens.MainScreens.filter { it != Screens.ListenTogether }
-                        } else {
-                            Screens.MainScreens
+                        Screens.MainScreens.filter { screen ->
+                            screen != Screens.ListenTogether || !listenTogetherInTopBar
                         }
                     }
                 val routeIndexMap = remember(navigationItems) {
@@ -1603,6 +1609,20 @@ class MainActivity : ComponentActivity() {
 
                 if (videoId != null) {
                     coroutineScope.launch(Dispatchers.IO) {
+                        if (videoId.startsWith("https://soundcloud.com/")) {
+                            val token = dataStore.get(SoundCloudAuthTokenKey, "")
+                            val scClientId = dataStore.get(SoundCloudSessionClientIdKey, "")
+                            withContext(Dispatchers.Main) {
+                                playerConnection?.playQueue(
+                                    SoundCloudQueue(
+                                        playlistId = videoId,
+                                        authToken = token,
+                                        sessionClientId = scClientId
+                                    )
+                                )
+                            }
+                            return@launch
+                        }
                         YouTube
                             .queue(listOf(videoId), playlistId)
                             .onSuccess { queue ->
