@@ -589,17 +589,28 @@ class MusicService :
                 currentAppleTallCanvasUrl,
                 currentAppleCanvasUrl,
                 currentTidalCanvasUrl,
-                currentEmbeddedCanvasUrl
-            ) { appleTall, appleSquare, tidal, embedded ->
-                appleTall ?: appleSquare ?: tidal ?: embedded
-            }.onEach { url ->
-                if (dataStore.get(ExperimentalLiveWallpaperKey, false)) {
-                    sendBroadcast(Intent(CanvasWallpaperService.ACTION_UPDATE_WALLPAPER).apply {
-                        setPackage(packageName)
-                        putExtra(CanvasWallpaperService.EXTRA_CANVAS_URL, url)
-                    })
-                }
-            }.collect()
+                currentEmbeddedCanvasUrl,
+                currentPreferredArtworkUrl,
+            ) { appleTall, appleSquare, tidal, embedded, artwork ->
+                (appleTall ?: appleSquare ?: tidal ?: embedded) to artwork
+            }.collect { (url, artwork) ->
+                broadcastWallpaperUpdate(url, artwork)
+            }
+        }
+    }
+
+    private fun broadcastWallpaperUpdate(
+        url: String?,
+        artwork: String?,
+    ) {
+        if (dataStore.get(ExperimentalLiveWallpaperKey, false)) {
+            sendBroadcast(
+                Intent(CanvasWallpaperService.ACTION_UPDATE_WALLPAPER).apply {
+                    setPackage(packageName)
+                    putExtra(CanvasWallpaperService.EXTRA_CANVAS_URL, url)
+                    putExtra(CanvasWallpaperService.EXTRA_CANVAS_ARTWORK_URL, artwork)
+                },
+            )
         }
     }
 
@@ -760,6 +771,24 @@ class MusicService :
                             startLivePlaybackBitrateTicker()
                         }
                     }
+                }
+            }
+        }
+
+    private val wallpaperRequestReceiver =
+        object : BroadcastReceiver() {
+            override fun onReceive(
+                context: Context,
+                intent: Intent,
+            ) {
+                if (intent.action == CanvasWallpaperService.ACTION_REQUEST_UPDATE) {
+                    val url =
+                        currentAppleTallCanvasUrl.value
+                            ?: currentAppleCanvasUrl.value
+                            ?: currentTidalCanvasUrl.value
+                            ?: currentEmbeddedCanvasUrl.value
+                    val artwork = currentPreferredArtworkUrl.value
+                    broadcastWallpaperUpdate(url, artwork)
                 }
             }
         }
@@ -932,6 +961,11 @@ class MusicService :
                 addAction(Intent.ACTION_SCREEN_OFF)
             }
         registerReceiver(screenStateReceiver, screenStateFilter)
+        registerReceiver(
+            wallpaperRequestReceiver,
+            IntentFilter(CanvasWallpaperService.ACTION_REQUEST_UPDATE),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) Context.RECEIVER_NOT_EXPORTED else 0
+        )
 
         audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
 
@@ -7309,6 +7343,11 @@ class MusicService :
 
         try {
             unregisterReceiver(screenStateReceiver)
+        } catch (e: Exception) {
+            // Ignore
+        }
+        try {
+            unregisterReceiver(wallpaperRequestReceiver)
         } catch (e: Exception) {
             // Ignore
         }

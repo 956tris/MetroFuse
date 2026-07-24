@@ -158,6 +158,14 @@ abstract class GenerateProtoTask : DefaultTask() {
     }
 }
 
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        freeCompilerArgs.add("-Xannotation-default-target=param-property")
+        jvmTarget.set(JvmTarget.JVM_21)
+    }
+}
+
 android {
     namespace = "com.metrolist.music"
     compileSdk = 36
@@ -283,9 +291,9 @@ android {
                 resValue("string", "app_name", "MetroFuse")
             }
             signingConfig =
-                if (workflowDebugKeystoreFile != null) {
+                if (workflowDebugKeystoreFile?.exists() == true && workflowDebugKeystoreFile.length() > 1024) {
                     signingConfigs.getByName("workflowDebug")
-                } else if (persistentDebugKeystoreFile.exists()) {
+                } else if (persistentDebugKeystoreFile.exists() && persistentDebugKeystoreFile.length() > 1024) {
                     signingConfigs.getByName("persistentDebug")
                 } else {
                     signingConfigs.getByName("debug")
@@ -297,14 +305,6 @@ android {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
-    }
-
-    kotlin {
-        jvmToolchain(21)
-        compilerOptions {
-            freeCompilerArgs.add("-Xannotation-default-target=param-property")
-            jvmTarget.set(JvmTarget.JVM_21)
-        }
     }
 
     buildFeatures {

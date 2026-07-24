@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.add
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -88,6 +89,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -253,22 +257,22 @@ private fun String.audioSourceLabelFromUrl(): String? {
     val value = lowercase()
     return when {
         value.contains("googlevideo.com") ||
-            value.contains("youtube.com") ||
-            value.contains("youtu.be") -> "YouTube Music"
+                value.contains("youtube.com") ||
+                value.contains("youtu.be") -> "YouTube Music"
         value.contains("amazon") && (value.contains(".com") || value.contains(".co")) -> "Amazon Music"
         value.contains("qobuz.com") ||
-            value.contains("jumo-dl") ||
-            value.contains("kennyy.com.br") ||
-            value.contains("squid.wtf") -> "Qobuz"
+                value.contains("jumo-dl") ||
+                value.contains("kennyy.com.br") ||
+                value.contains("squid.wtf") -> "Qobuz"
         value.contains("tidal.com") -> "TIDAL"
         value.contains("deezer.com") ||
-            value.contains("dzcdn.net") ||
-            value.contains("dzmedia") -> "Deezer"
+                value.contains("dzcdn.net") ||
+                value.contains("dzmedia") -> "Deezer"
         value.contains("soundcloud.com") ||
-            value.contains("sndcdn.com") -> "SoundCloud"
+                value.contains("sndcdn.com") -> "SoundCloud"
         value.contains("instagram.com") ||
-            value.contains("cdninstagram.com") ||
-            value.contains("fbcdn.net") -> "Instagram"
+                value.contains("cdninstagram.com") ||
+                value.contains("fbcdn.net") -> "Instagram"
         else -> null
     }
 }
@@ -295,13 +299,13 @@ private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
 private fun FormatEntity.playerQualityLabel(liveBitrate: Int? = null): String? {
     val codec = when {
         mimeType.contains("flac", ignoreCase = true) ||
-            codecs.contains("flac", ignoreCase = true) -> "FLAC"
+                codecs.contains("flac", ignoreCase = true) -> "FLAC"
         codecs.contains("alac", ignoreCase = true) -> "ALAC"
         codecs.contains("ec-3", ignoreCase = true) ||
-            codecs.contains("eac3", ignoreCase = true) ||
-            codecs.contains("atmos", ignoreCase = true) -> "Dolby Atmos"
+                codecs.contains("eac3", ignoreCase = true) ||
+                codecs.contains("atmos", ignoreCase = true) -> "Dolby Atmos"
         codecs.contains("mp3", ignoreCase = true) ||
-            mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
+                mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
         codecs.contains("mp4a", ignoreCase = true) -> "AAC"
         else -> null
     }
@@ -678,11 +682,11 @@ fun BottomSheetPlayer(
     ) {
         val needsPlaybackDetails =
             mediaMetadata != null &&
-                (
-                    displayFormat == null ||
-                        !hasPlayerQualityDetails ||
-                        playerQualityLabel == null
-                )
+                    (
+                            displayFormat == null ||
+                                    !hasPlayerQualityDetails ||
+                                    playerQualityLabel == null
+                            )
         if (!needsPlaybackDetails) {
             playerQualityLoadingGraceActive = false
             return@LaunchedEffect
@@ -694,12 +698,12 @@ fun BottomSheetPlayer(
     }
     val isAwaitingPlayerQuality =
         displayFormat == null ||
-            !hasPlayerQualityDetails ||
-            playerQualityLabel == null
+                !hasPlayerQualityDetails ||
+                playerQualityLabel == null
     val isPlayerQualityLoading =
         mediaMetadata != null &&
-            playerQualityLoadingGraceActive &&
-            isAwaitingPlayerQuality
+                playerQualityLoadingGraceActive &&
+                isAwaitingPlayerQuality
     val displayedPlayerQualityLabel =
         if (isPlayerQualityLoading) "Loading" else playerQualityLabel
     val displayedPlayerSourceLabel =
@@ -745,8 +749,8 @@ fun BottomSheetPlayer(
 
     val isLocalMedia =
         currentSong?.song?.isLocal == true ||
-            mediaMetadata?.id?.startsWith("content://", ignoreCase = true) == true ||
-            mediaMetadata?.id?.startsWith("file://", ignoreCase = true) == true
+                mediaMetadata?.id?.startsWith("content://", ignoreCase = true) == true ||
+                mediaMetadata?.id?.startsWith("file://", ignoreCase = true) == true
     val embeddedCanvasBackground =
         remember(embeddedCanvasUrl) {
             embeddedCanvasUrl?.takeIf { it.isNotBlank() }?.let { url ->
@@ -767,13 +771,13 @@ fun BottomSheetPlayer(
         }
     val shouldResolveSpotifyCanvasBackground =
         spotifyCanvasEnabled &&
-            state.progress > 0.1f &&
-            !isLocalMedia &&
-            embeddedCanvasBackground == null &&
-            (
-                canvasArtworkPriority == CanvasArtworkPriority.SPOTIFY ||
-                    (appleCanvasBackground == null && tidalCanvasBackground == null)
-            )
+                state.progress > 0.1f &&
+                !isLocalMedia &&
+                embeddedCanvasBackground == null &&
+                (
+                        canvasArtworkPriority == CanvasArtworkPriority.SPOTIFY ||
+                                (appleCanvasBackground == null && tidalCanvasBackground == null)
+                        )
     val spotifyCanvasBackground =
         rememberSpotifyCanvasMedia(
             mediaMetadata = mediaMetadata,
@@ -790,12 +794,12 @@ fun BottomSheetPlayer(
         }
     val isAppleCanvasBackground =
         canvasBackground != null &&
-            appleCanvasBackground != null &&
-            canvasBackground.url == appleCanvasBackground.url
+                appleCanvasBackground != null &&
+                canvasBackground.url == appleCanvasBackground.url
     val isTidalCanvasBackground =
         canvasBackground != null &&
-            tidalCanvasBackground != null &&
-            canvasBackground.url == tidalCanvasBackground.url
+                tidalCanvasBackground != null &&
+                canvasBackground.url == tidalCanvasBackground.url
     val appleLikeCanvasBackground =
         when {
             isAppleCanvasBackground -> appleCanvasBackground
@@ -806,8 +810,8 @@ fun BottomSheetPlayer(
     val shouldShowCanvasBackground = playerCanvasBackground != null && state.progress > 0.1f
     val shouldShowAppleMusicFadeBackground =
         experimentalAppleMusicCoverFade &&
-            appleLikeCanvasBackground != null &&
-            state.progress > 0.1f
+                appleLikeCanvasBackground != null &&
+                state.progress > 0.1f
     val shouldReplaceLargeArtworkWithCanvas =
         shouldShowCanvasBackground || shouldShowAppleMusicFadeBackground
     val effectivePlayerBackground =
@@ -931,10 +935,14 @@ fun BottomSheetPlayer(
     var appleFadeColor by remember {
         mutableStateOf<Color?>(null)
     }
+    var appleFadeSplitRatio by remember {
+        mutableFloatStateOf(0.7f)
+    }
     val gradientColorsCache = remember { mutableMapOf<String, List<Color>>() }
     val galaxyColorsCache = remember { mutableMapOf<String, List<Color>>() }
     val galaxyArtworkAlphaCache = remember { mutableMapOf<String, Float>() }
     val appleFadeColorCache = remember { mutableMapOf<String, Color>() }
+    val appleFadeSplitRatioCache = remember { mutableMapOf<String, Float>() }
 
     if (!canSkipNext && automix.isNotEmpty()) {
         playerConnection.service.addToQueueAutomix(automix[0], 0)
@@ -946,13 +954,15 @@ fun BottomSheetPlayer(
     LaunchedEffect(mediaMetadata?.id, displayArtworkUrl, shouldShowAppleMusicFadeBackground, useDarkTheme) {
         if (!shouldShowAppleMusicFadeBackground || displayArtworkUrl.isNullOrBlank()) {
             appleFadeColor = null
+            appleFadeSplitRatio = 0.7f
             return@LaunchedEffect
         }
 
         val currentMetadata = mediaMetadata ?: return@LaunchedEffect
         val artworkColorCacheKey = "${currentMetadata.id}:${displayArtworkUrl.hashCode()}:$useDarkTheme"
-        appleFadeColorCache[artworkColorCacheKey]?.let { cached ->
-            appleFadeColor = cached
+        if (appleFadeColorCache.containsKey(artworkColorCacheKey)) {
+            appleFadeColor = appleFadeColorCache[artworkColorCacheKey]
+            appleFadeSplitRatio = appleFadeSplitRatioCache[artworkColorCacheKey] ?: 0.7f
             return@LaunchedEffect
         }
 
@@ -968,37 +978,79 @@ fun BottomSheetPlayer(
 
             val result = runCatching { context.imageLoader.execute(request) }.getOrNull()
             val bitmap = result?.image?.toBitmap()
-            val fadeColor =
-                if (bitmap != null) {
-                    val palette =
-                        withContext(Dispatchers.Default) {
-                            Palette
-                                .from(bitmap)
-                                .maximumColorCount(12)
-                                .resizeBitmapArea(96 * 128)
-                                .generate()
-                        }
-                    val swatchColor =
-                        listOfNotNull(
-                            palette.lightMutedSwatch,
-                            palette.mutedSwatch,
-                            palette.dominantSwatch,
-                            palette.vibrantSwatch,
-                        ).maxByOrNull { it.population }?.rgb
-                            ?: palette.getDominantColor(appleFadeFallbackColor.toArgb())
-                    val base = Color(swatchColor)
-                    blendColors(
-                        start = base,
-                        end = if (useDarkTheme) Color(0xFF2A272C) else Color.White,
-                        fraction = if (useDarkTheme) 0.34f else 0.22f,
-                    )
+            if (bitmap != null) {
+                // Smart Split Logic: Calculate luminance of the bottom 40% of the image
+                val width = bitmap.width
+                val height = bitmap.height
+                val startY = (height * 0.6).toInt()
+                val pixels = IntArray(width * (height - startY))
+                bitmap.getPixels(pixels, 0, width, 0, startY, width, height - startY)
+
+                var totalLuminance = 0f
+                for (pixel in pixels) {
+                    val r = (pixel shr 16) and 0xff
+                    val g = (pixel shr 8) and 0xff
+                    val b = pixel and 0xff
+                    totalLuminance += (0.299f * r + 0.587f * g + 0.114f * b) / 255f
+                }
+                val avgLuminance = if (pixels.isNotEmpty()) totalLuminance / pixels.size else 0.5f
+
+                // True edge color: average just the last ~12% of rows (the actual pixels the
+                // fade needs to match), instead of a Palette vibrant/dominant swatch which picks
+                // whatever is most saturated ANYWHERE in the artwork (e.g. picking blue from a
+                // sword when the artwork's bottom edge is actually solid red).
+                val edgeStartY = (height * 0.88).toInt()
+                val edgeRowCount = (height - edgeStartY).coerceAtLeast(1)
+                val edgePixels = IntArray(width * edgeRowCount)
+                bitmap.getPixels(edgePixels, 0, width, 0, edgeStartY, width, edgeRowCount)
+                var sumR = 0L
+                var sumG = 0L
+                var sumB = 0L
+                for (pixel in edgePixels) {
+                    sumR += (pixel shr 16) and 0xff
+                    sumG += (pixel shr 8) and 0xff
+                    sumB += pixel and 0xff
+                }
+                val edgeCount = edgePixels.size.coerceAtLeast(1)
+                val base = Color(
+                    red = (sumR.toFloat() / edgeCount) / 255f,
+                    green = (sumG.toFloat() / edgeCount) / 255f,
+                    blue = (sumB.toFloat() / edgeCount) / 255f,
+                )
+
+                // Determine the ideal target color for the fade based on dark theme and base color
+                val targetFadeColor = if (useDarkTheme) {
+                    // If the base color is already very dark, use pure black for the fade
+                    if (base.simpleLuminance() < 0.1f) Color.Black else Color(0xFF121212)
                 } else {
-                    appleFadeFallbackColor
+                    Color.White
                 }
 
-            appleFadeColorCache[artworkColorCacheKey] = fadeColor
-            withContext(Dispatchers.Main) {
-                appleFadeColor = fadeColor
+                // Blend the base (true edge) color with the targetFadeColor
+                val fadeColor = blendColors(
+                    start = base,
+                    end = targetFadeColor,
+                    fraction = if (useDarkTheme) 0.4f else 0.25f,
+                )
+
+                // Adjust calculatedSplit more aggressively for dark content to ensure a higher canvas visibility
+                val calculatedSplit = if (useDarkTheme) {
+                    (0.6f - (avgLuminance * 0.25f)).coerceIn(0.5f, 0.65f) // Adjust range and influence
+                } else {
+                    (0.5f + (avgLuminance * 0.2f)).coerceIn(0.45f, 0.7f)
+                }
+
+                appleFadeColorCache[artworkColorCacheKey] = fadeColor
+                appleFadeSplitRatioCache[artworkColorCacheKey] = calculatedSplit
+                withContext(Dispatchers.Main) {
+                    appleFadeColor = fadeColor
+                    appleFadeSplitRatio = calculatedSplit
+                }
+            } else {
+                withContext(Dispatchers.Main) {
+                    appleFadeColor = appleFadeFallbackColor
+                    appleFadeSplitRatio = 0.7f
+                }
             }
         }
     }
@@ -1071,7 +1123,7 @@ fun BottomSheetPlayer(
                                             palette = palette,
                                             fallbackColor = fallbackColor,
                                         )
-                                }
+                                    }
                                 val extractedArtworkAlpha =
                                     if (playerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
                                         palette.adaptiveGalaxyArtworkAlpha(fallbackColor)
@@ -1192,9 +1244,9 @@ fun BottomSheetPlayer(
     val (textButtonColor, iconButtonColor) =
         when {
             effectivePlayerBackground == PlayerBackgroundStyle.BLUR ||
-                effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
-                effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT ||
-                effectivePlayerBackground == PlayerBackgroundStyle.MOVING_BLUR -> {
+                    effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
+                    effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT ||
+                    effectivePlayerBackground == PlayerBackgroundStyle.MOVING_BLUR -> {
                 when (playerButtonsStyle) {
                     PlayerButtonsStyle.DEFAULT -> {
                         if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR && galaxyAlbumControlColor != null) {
@@ -1251,8 +1303,8 @@ fun BottomSheetPlayer(
     val (sideButtonContainerColor, sideButtonContentColor) =
         when {
             effectivePlayerBackground == PlayerBackgroundStyle.BLUR ||
-                effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
-                effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT -> {
+                    effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
+                    effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT -> {
                 when (playerButtonsStyle) {
                     PlayerButtonsStyle.DEFAULT -> {
                         Pair(
@@ -1672,6 +1724,7 @@ fun BottomSheetPlayer(
                         shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
                         surfaceColor = appleFadeColor ?: appleFadeFallbackColor,
                         fadeColor = appleFadeColor ?: appleFadeFallbackColor,
+                        splitRatio = appleFadeSplitRatio,
                         preservePlayerBackdrop = playerBackground != PlayerBackgroundStyle.DEFAULT,
                         modifier =
                             Modifier
@@ -2449,8 +2502,8 @@ fun BottomSheetPlayer(
                                             if (isListenTogetherGuest) {
                                                 if (isMuted) stringResource(R.string.unmute) else stringResource(R.string.mute)
                                             } else {
-                                                    if (effectiveIsPlaying) stringResource(R.string.pause) else stringResource(R.string.play)
-                                                },
+                                                if (effectiveIsPlaying) stringResource(R.string.pause) else stringResource(R.string.play)
+                                            },
                                         style = MaterialTheme.typography.labelLarge,
                                     )
                                 }
@@ -2717,13 +2770,13 @@ fun BottomSheetPlayer(
                             transitionSpec = { fadeIn() togetherWith fadeOut() },
                         ) { showLyrics ->
                             if (showLyrics) {
-                            InlineLyricsView(
-                                mediaMetadata = mediaMetadata,
-                                showLyrics = showLyrics,
-                                positionProvider = {
-                                    sliderPosition ?: if (isCasting) effectivePosition else null
-                                },
-                            )
+                                InlineLyricsView(
+                                    mediaMetadata = mediaMetadata,
+                                    showLyrics = showLyrics,
+                                    positionProvider = {
+                                        sliderPosition ?: if (isCasting) effectivePosition else null
+                                    },
+                                )
                             } else if (shouldReplaceLargeArtworkWithCanvas) {
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
@@ -2784,13 +2837,13 @@ fun BottomSheetPlayer(
                             transitionSpec = { fadeIn() togetherWith fadeOut() },
                         ) { showLyrics ->
                             if (showLyrics) {
-                            InlineLyricsView(
-                                mediaMetadata = mediaMetadata,
-                                showLyrics = showLyrics,
-                                positionProvider = {
-                                    sliderPosition ?: if (isCasting) effectivePosition else null
-                                },
-                            )
+                                InlineLyricsView(
+                                    mediaMetadata = mediaMetadata,
+                                    showLyrics = showLyrics,
+                                    positionProvider = {
+                                        sliderPosition ?: if (isCasting) effectivePosition else null
+                                    },
+                                )
                             } else if (shouldReplaceLargeArtworkWithCanvas) {
                                 Spacer(modifier = Modifier.fillMaxSize())
                             } else {
@@ -3193,17 +3246,17 @@ fun AppleMusicFadedCanvasBackground(
     shouldPlay: Boolean,
     surfaceColor: Color,
     fadeColor: Color,
+    splitRatio: Float,
     preservePlayerBackdrop: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Box(modifier = modifier) {
-        com.metrolist.music.utils.spotify.SpotifyCanvasVideoBackground(
-            media = media,
-            shouldPlay = shouldPlay,
-            modifier = Modifier.fillMaxSize(),
-            scrimAlpha = 0f
-        )
+    // Where the video's own content starts fading out. Feathering begins a bit before the
+    // 60% crop line so the video never just "stops" at a hard edge.
+    val videoHeightFraction = 0.60f
+    val videoFadeStartFraction = (videoHeightFraction - 0.18f).coerceAtLeast(0f)
 
+    Box(modifier = modifier.background(surfaceColor)) {
+        // 1. Blurred artwork underneath for a rich, vibrant base glow
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
                 .data(artworkUrl)
@@ -3212,21 +3265,54 @@ fun AppleMusicFadedCanvasBackground(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(40.dp)
-                .alpha(if (preservePlayerBackdrop) 0.5f else 0.8f)
+                .blur(150.dp) // Maintain a strong blur for the background
+                .alpha(if (preservePlayerBackdrop) 0.6f else 0.9f) // Increase alpha to make blur more prominent
         )
 
+        // 2. Canvas video constrained to a 60% height cap, with its OWN bottom edge feathered
+        // out via an alpha mask. Without this the video simply stops at a hard rectangle edge
+        // and no gradient drawn on top of it can fully hide that line.
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(videoHeightFraction)
+                .graphicsLayer { alpha = 0.99f } // forces an offscreen compositing layer so DstIn masking works
+                .drawWithContent {
+                    drawContent()
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            0.0f to Color.Black,
+                            videoFadeStartFraction to Color.Black,
+                            1.0f to Color.Transparent,
+                        ),
+                        blendMode = BlendMode.DstIn,
+                    )
+                }
+        ) {
+            com.metrolist.music.utils.spotify.SpotifyCanvasVideoBackground(
+                media = media,
+                shouldPlay = shouldPlay,
+                modifier = Modifier.fillMaxSize(),
+                scrimAlpha = 0.4f
+            )
+        }
+
+        // 3. Continuous gradient overlay that picks up exactly where the video's own feather
+        // begins, so the two fades read as one uninterrupted transition into surfaceColor/fadeColor
+        // rather than a visible seam followed by a separate banded gradient.
+        val gradientStart = videoFadeStartFraction.coerceAtMost(splitRatio)
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.7f to fadeColor.copy(alpha = 0.5f),
-                        1f to surfaceColor
+                        0.0f to Color.Transparent,
+                        gradientStart to Color.Transparent,
+                        splitRatio to surfaceColor.copy(alpha = 0.35f),
+                        ((splitRatio + 1.0f) / 2f) to surfaceColor.copy(alpha = 0.85f),
+                        1.0f to fadeColor,
                     )
                 )
         )
     }
 }
-

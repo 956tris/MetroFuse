@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <wallpaper xmlns:android="http://schemas.android.com/apk/res/android"
-    android:thumbnail="@drawable/small_icon"
-    android:description="@string/wallpaper_description" />
+    android:thumbnail="@mipmap/ic_launcher"
+    android:description="@string/wallpaper_description"
+    android:settingsActivity="com.metrolist.music.MainActivity" />

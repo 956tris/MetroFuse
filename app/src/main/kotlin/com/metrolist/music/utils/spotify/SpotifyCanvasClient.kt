@@ -6362,6 +6362,10 @@ object SpotifyCanvasClient {
         trackUri: String,
         cookie: String,
     ): String? {
+        if (trackUri.isBlank()) {
+            Timber.w("resolveCanvas called with blank trackUri, returning null")
+            return null
+        }
         val now = System.currentTimeMillis()
         canvasUrlCache[trackUri]
             ?.takeIf { cached ->

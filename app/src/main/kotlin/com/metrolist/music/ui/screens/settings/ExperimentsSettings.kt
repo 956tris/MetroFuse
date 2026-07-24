@@ -237,7 +237,12 @@ fun ExperimentsSettings(
                     trailingContent = {
                         Switch(
                             checked = liveWallpaper,
-                            onCheckedChange = onLiveWallpaperChange,
+                            onCheckedChange = { checked ->
+                                onLiveWallpaperChange(checked)
+                                if (checked) {
+                                    com.metrolist.music.playback.CanvasWallpaperService.setLiveWallpaper(navController.context)
+                                }
+                            },
                             thumbContent = {
                                 Icon(
                                     painter = painterResource(
@@ -249,7 +254,13 @@ fun ExperimentsSettings(
                             },
                         )
                     },
-                    onClick = { onLiveWallpaperChange(!liveWallpaper) },
+                    onClick = {
+                        val newValue = !liveWallpaper
+                        onLiveWallpaperChange(newValue)
+                        if (newValue) {
+                            com.metrolist.music.playback.CanvasWallpaperService.setLiveWallpaper(navController.context)
+                        }
+                    },
                 ),
             ),
         )
