@@ -23,6 +23,7 @@ import com.metrolist.music.constants.LastFMUseSendLikes
 import com.metrolist.music.constants.LastFullSyncKey
 import com.metrolist.music.constants.SYNC_COOLDOWN
 import com.metrolist.music.constants.SpotifyCookieKey
+import com.metrolist.music.constants.SpotifySyncLikesKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.ArtistEntity
@@ -128,6 +129,7 @@ class SyncUtils @Inject constructor(
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
     private var lastfmSendLikes = false
+    private var spotifySyncLikes = false
     private val playlistsBeingModified = ConcurrentHashMap<String, AtomicInteger>()
     // Tracks songs currently being added to YouTube — browseId → set of songIds
     private val pendingYouTubeAdds = ConcurrentHashMap<String, MutableSet<String>>()
@@ -157,6 +159,13 @@ class SyncUtils @Inject constructor(
             .distinctUntilChanged()
             .collectLatest(syncScope) {
                 lastfmSendLikes = it
+            }
+
+        context.dataStore.data
+            .map { it[SpotifySyncLikesKey] ?: false }
+            .distinctUntilChanged()
+            .collectLatest(syncScope) {
+                spotifySyncLikes = it
             }
 
         startProcessingQueue()
@@ -600,6 +609,31 @@ class SyncUtils @Inject constructor(
                 )
             } catch (e: Exception) {
                 Timber.e(e, "Failed to update LastFM love status")
+            }
+        }
+
+        if (spotifySyncLikes && externalProvider != "spotify") {
+            try {
+                val dbSong = database.song(s.id).firstOrNull()
+                val mediaMetadata = dbSong?.toMediaMetadata()
+                if (mediaMetadata != null) {
+                    val spotifyCookie = context.dataStore.get(SpotifyCookieKey, "")
+                    if (spotifyCookie.isNotBlank()) {
+                        val spotifyUri = SpotifyCanvasClient.resolveTrackUriForMix(mediaMetadata, spotifyCookie)
+                        if (spotifyUri != null) {
+                            SpotifyCanvasClient.setTrackLiked(
+                                trackUriOrId = spotifyUri,
+                                cookie = spotifyCookie,
+                                liked = s.liked,
+                            )
+                            Timber.d("Synced like to Spotify: %s liked=%s", spotifyUri, s.liked)
+                        } else {
+                            Timber.w("Spotify like sync: no Spotify match found for %s", s.id)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to sync like to Spotify for %s", s.id)
             }
         }
     }

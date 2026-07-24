@@ -42,6 +42,7 @@ import com.metrolist.music.constants.SpotifyCanvasEnabledKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.SpotifyListeningHistoryEnabledKey
 import com.metrolist.music.constants.SpotifyListeningHistoryGlobalKey
+import com.metrolist.music.constants.SpotifySyncLikesKey
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
@@ -65,6 +66,8 @@ fun SpotifyCanvasSettings(
         rememberPreference(SpotifyListeningHistoryEnabledKey, false)
     val (spotifyListeningHistoryGlobal, onSpotifyListeningHistoryGlobalChange) =
         rememberPreference(SpotifyListeningHistoryGlobalKey, false)
+    val (spotifySyncLikes, onSpotifySyncLikesChange) =
+        rememberPreference(SpotifySyncLikesKey, false)
     var canvasArtworkPriority by rememberEnumPreference(CanvasArtworkPriorityKey, CanvasArtworkPriority.APPLE_MUSIC)
     var downloadCanvasMode by rememberEnumPreference(DownloadCanvasModeKey, DownloadCanvasMode.OFF)
     var spotifyCookie by rememberPreference(SpotifyCookieKey, "")
@@ -101,6 +104,14 @@ fun SpotifyCanvasSettings(
             onSpotifyListeningHistoryGlobalChange(true)
         } else {
             onSpotifyListeningHistoryGlobalChange(enabled)
+        }
+    }
+
+    fun updateSyncLikes(enabled: Boolean) {
+        if (enabled && !cookieConfigured) {
+            navController.navigate("settings/integrations/spotify_canvas/login")
+        } else {
+            onSpotifySyncLikesChange(enabled)
         }
     }
 
@@ -299,6 +310,38 @@ fun SpotifyCanvasSettings(
                         enabled = spotifyListeningHistoryEnabled && cookieConfigured,
                         onClick = {
                             updateListeningHistoryGlobal(!spotifyListeningHistoryGlobal)
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.spotify_sync_likes)) },
+                        description = {
+                            Text(
+                                if (cookieConfigured) {
+                                    stringResource(R.string.spotify_sync_likes_description)
+                                } else {
+                                    stringResource(R.string.spotify_canvas_requires_cookie)
+                                },
+                            )
+                        },
+                        trailingContent = {
+                            Switch(
+                                checked = spotifySyncLikes,
+                                onCheckedChange = ::updateSyncLikes,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (spotifySyncLikes) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.favorite),
+                        onClick = {
+                            updateSyncLikes(!spotifySyncLikes)
                         },
                     ),
                     Material3SettingsItem(

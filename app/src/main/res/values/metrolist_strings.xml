@@ -710,6 +710,8 @@
     <string name="spotify_listening_history_desc">Experimental. Matches MetroFuse plays to Spotify tracks and reports them only when Spotify accepts the history write path.</string>
     <string name="spotify_listening_history_global">Use Spotify history globally</string>
     <string name="spotify_listening_history_global_desc">Also match non-Spotify playback across MetroFuse, which can show the Spotify Connect device and Spotify Discord status.</string>
+    <string name="spotify_sync_likes">Sync likes with Spotify</string>
+    <string name="spotify_sync_likes_description">Automatically add or remove songs you like in MetroFuse to your Spotify Liked Songs.</string>
     <string name="spotify_listening_history_device_name">stupid ass client</string>
     <string name="spotify_listening_history_title">Spotify listening history</string>
     <string name="spotify_listening_history_login_required">Log in with Spotify to show your listening history</string>
