@@ -17,6 +17,8 @@ import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
 import com.metrolist.music.extensions.filterExplicit
 import com.metrolist.music.extensions.filterVideoSongs
+import com.metrolist.music.playback.PlaybackCacheIndex
+import com.metrolist.music.playback.isFullyCached
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -55,7 +57,7 @@ class CachePlaylistViewModel
                             .mapTo(mutableSetOf()) { it.id }
                     val cacheKeysBySongId =
                         (playerCacheKeys + downloadCacheKeys)
-                            .mapNotNull { key -> key.cacheMediaIdOrNull()?.let { mediaId -> mediaId to key } }
+                            .mapNotNull { key -> PlaybackCacheIndex.mediaIdForKey(key)?.let { mediaId -> mediaId to key } }
                             .filterNot { (mediaId, _) -> mediaId in downloadedIds }
                             .groupBy(
                                 keySelector = { it.first },
@@ -73,8 +75,8 @@ class CachePlaylistViewModel
                         songs.filter { song ->
                             val candidateKeys = cacheKeysBySongId[song.id].orEmpty() + song.id
                             candidateKeys.any { key ->
-                                playerCache.hasUsableCacheFor(key, song.format?.contentLength) ||
-                                    downloadCache.hasUsableCacheFor(key, song.format?.contentLength)
+                                playerCache.isFullyCached(key, song.format?.contentLength) ||
+                                    downloadCache.isFullyCached(key, song.format?.contentLength)
                             }
                         }
 
@@ -108,7 +110,7 @@ class CachePlaylistViewModel
         fun removeSongFromCache(songId: String) {
             val keys =
                 (playerCache.keys + downloadCache.keys)
-                    .filter { it.cacheMediaIdOrNull() == songId }
+                    .filter { PlaybackCacheIndex.mediaIdForKey(it) == songId }
                     .toSet() + songId
             keys.forEach { key ->
                 playerCache.removeResource(key)
@@ -121,50 +123,5 @@ class CachePlaylistViewModel
                     }
                 }
             }
-        }
-
-        private fun SimpleCache.hasUsableCacheFor(
-            key: String,
-            contentLength: Long?,
-        ): Boolean {
-            val length = contentLength?.takeIf { it > 0L }
-            if (length != null && runCatching { isCached(key, 0L, length) }.getOrDefault(false)) {
-                return true
-            }
-            return runCatching {
-                getCachedSpans(key).any { span ->
-                    span.isCached && span.length > 0L && span.file?.exists() == true
-                }
-            }.getOrDefault(false)
-        }
-
-        private fun String.cacheMediaIdOrNull(): String? {
-            val stripped =
-                CACHE_KEY_PREFIXES.fold(trim()) { value, prefix ->
-                    value.removePrefix(prefix)
-                }
-            return stripped
-                .takeIf { it.isNotBlank() }
-                ?.takeUnless { it.startsWith("http://", ignoreCase = true) }
-                ?.takeUnless { it.startsWith("https://", ignoreCase = true) }
-                ?.takeUnless { it.startsWith("file:", ignoreCase = true) }
-        }
-
-        private companion object {
-            private val CACHE_KEY_PREFIXES =
-                listOf(
-                    "apple-wrapper-alac-v3:",
-                    "apple-wrapper-alac-v2:",
-                    "apple-wrapper-alac:",
-                    "qobuz-fallback-v2:",
-                    "qobuz-fallback:",
-                    "tidal-flac-fallback-temp-v1:",
-                    "tidal-flac-fallback:",
-                    "deezer-fallback-audio:",
-                    "soundcloud-fallback-mp3:",
-                    "instagram-fallback-audio:",
-                    "direct-http-audio:",
-                    "youtube-fallback-aac:",
-                )
         }
     }

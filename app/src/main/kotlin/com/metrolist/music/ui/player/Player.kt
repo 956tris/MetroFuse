@@ -280,7 +280,6 @@ private fun String.audioSourceLabelFromUrl(): String? {
     }
 }
 
-
 private fun String.audioSourceLabelFromMediaId(): String? {
     val value = lowercase()
     return when {
@@ -297,6 +296,29 @@ private fun FormatEntity.hasUsefulPlaybackDetails(): Boolean {
     val hasBitrate = bitrate > 0
     val hasSampleRate = sampleRate?.let { it > 0 } == true
     return hasBitrate || hasSampleRate
+}
+
+private fun FormatEntity.technicalQualityLabel(liveBitrate: Int? = null): String? {
+    val codec =
+        when {
+            isAtmosQuality() -> "Dolby Atmos"
+            codecs.contains("alac", ignoreCase = true) -> "ALAC"
+            mimeType.contains("flac", ignoreCase = true) ||
+                codecs.contains("flac", ignoreCase = true) -> "FLAC"
+            codecs.contains("mp3", ignoreCase = true) ||
+                mimeType.contains("mpeg", ignoreCase = true) -> "MP3"
+            codecs.contains("opus", ignoreCase = true) -> "Opus"
+            codecs.contains("vorbis", ignoreCase = true) -> "Vorbis"
+            codecs.contains("mp4a", ignoreCase = true) ||
+                mimeType.contains("mp4", ignoreCase = true) -> "AAC"
+            else -> null
+        }
+    val displayedBitrate = liveBitrate?.takeIf { it > 0 } ?: bitrate.takeIf { it > 0 }
+    val bitrateLabel = displayedBitrate?.let { "${(it / 1000).coerceAtLeast(1)} kbps" }
+    val sampleRateLabel = sampleRate?.takeIf { it > 0 }?.formatSampleRateLabel()
+    return listOfNotNull(codec, bitrateLabel, sampleRateLabel)
+        .joinToString(" • ")
+        .takeIf { it.isNotBlank() }
 }
 
 private enum class PlayerQualityLabel {
@@ -658,9 +680,44 @@ fun BottomSheetPlayer(
             mediaMetadata?.id?.audioSourceLabelFromMediaId()
                 ?: displayFormat?.audioSourceLabel()
         }
+    var playerQualityLoadingGraceActive by remember { mutableStateOf(false) }
+    val hasPlayerQualityDetails =
+        displayFormat?.hasUsefulPlaybackDetails() == true
+    LaunchedEffect(
+        mediaMetadata?.id,
+        displayFormat?.id,
+        displayFormat?.bitrate,
+        displayFormat?.sampleRate,
+        playerQualityLabel,
+    ) {
+        val needsPlaybackDetails =
+            mediaMetadata != null &&
+                    (
+                            displayFormat == null ||
+                                    !hasPlayerQualityDetails
+                            )
+        if (!needsPlaybackDetails) {
+            playerQualityLoadingGraceActive = false
+            return@LaunchedEffect
+        }
+
+        playerQualityLoadingGraceActive = true
+        delay(2_500)
+        playerQualityLoadingGraceActive = false
+    }
+    val isAwaitingPlayerQuality =
+        displayFormat == null ||
+                !hasPlayerQualityDetails
+    val isPlayerQualityLoading =
+        mediaMetadata != null &&
+                playerQualityLoadingGraceActive &&
+                isAwaitingPlayerQuality
     val displayedPlayerQualityLabel = playerQualityLabel
-    val displayedPlayerSourceLabel =
-        playerSourceLabel ?: fallbackPlayerSourceLabel
+    val displayedTechnicalQualityLabel =
+        displayFormat?.technicalQualityLabel(
+            liveBitrate = if (livePlaybackBitrateEnabled) currentLivePlaybackBitrate else null,
+        )
+    val displayedPlayerSourceLabel = playerSourceLabel ?: fallbackPlayerSourceLabel
 
     val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
     val squigglySlider by rememberPreference(SquigglySliderKey, defaultValue = false)
@@ -1816,12 +1873,38 @@ fun BottomSheetPlayer(
                 Column(
                     modifier = Modifier.weight(1f),
                 ) {
-                    if (!useLegacyQualityLabel) displayedPlayerQualityLabel?.let { label ->
-                        QualityBadge(
-                            label = label,
-                            containerColor = qualityBadgeContainerColor,
-                            contentColor = qualityBadgeContentColor,
-                        )
+                    if (!useLegacyQualityLabel && (isPlayerQualityLoading || displayedPlayerQualityLabel != null || displayedTechnicalQualityLabel != null)) {
+                        if (isPlayerQualityLoading) {
+                            Text(
+                                text = "Loading",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = qualityBadgeContentColor,
+                                modifier =
+                                    Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(qualityBadgeContainerColor)
+                                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
+                        } else {
+                            displayedPlayerQualityLabel?.let { label ->
+                                QualityBadge(
+                                    label = label,
+                                    containerColor = qualityBadgeContainerColor,
+                                    contentColor = qualityBadgeContentColor,
+                                )
+                            }
+                            displayedTechnicalQualityLabel?.let { details ->
+                                Text(
+                                    text = details,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextBackgroundColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.basicMarquee(iterations = 1, initialDelayMillis = 1800, velocity = 18.dp),
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                     }
 
@@ -2704,7 +2787,7 @@ fun BottomSheetPlayer(
                         }
                     }
 
-                    if ((useLegacyQualityLabel && (displayedPlayerQualityLabel != null || (livePlaybackBitrateEnabled && currentLivePlaybackBitrate != null))) || displayedPlayerSourceLabel != null) {
+                    if ((useLegacyQualityLabel && (isPlayerQualityLoading || displayedTechnicalQualityLabel != null)) || displayedPlayerSourceLabel != null) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
@@ -2715,36 +2798,28 @@ fun BottomSheetPlayer(
                                     .padding(horizontal = PlayerHorizontalPadding),
                         ) {
                             if (useLegacyQualityLabel) {
-                                if (displayedPlayerQualityLabel != null) {
-                                    PlayerQualityLabelText(
-                                        label = displayedPlayerQualityLabel,
-                                        format = displayFormat,
-                                        liveBitrate = if (livePlaybackBitrateEnabled) currentLivePlaybackBitrate else null,
+                                if (isPlayerQualityLoading) {
+                                    Text(
+                                        text = "Loading",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = TextBackgroundColor,
+                                        textAlign = TextAlign.Center,
                                     )
-                                } else if (livePlaybackBitrateEnabled) {
-                                    currentLivePlaybackBitrate?.let { bitrate ->
-                                        val bitrateText = buildAnnotatedString {
-                                            append("${bitrate / 1000} kbps")
-                                            displayFormat?.sampleRate?.let { sampleRate ->
-                                                append(" • ")
-                                                append(sampleRate.formatSampleRateLabel())
-                                            }
-                                        }
-                                        Text(
-                                            text = bitrateText,
-                                            style = MaterialTheme.typography.labelLarge,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = TextBackgroundColor,
-                                            textAlign = TextAlign.Center,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier =
-                                                Modifier
-                                                    .fillMaxWidth()
-                                                    .basicMarquee(iterations = 1, initialDelayMillis = 2200, velocity = 18.dp),
-                                        )
-                                    }
+                                } else if (displayedTechnicalQualityLabel != null) {
+                                    Text(
+                                        text = displayedTechnicalQualityLabel,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = TextBackgroundColor,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier =
+                                            Modifier
+                                                .fillMaxWidth()
+                                                .basicMarquee(iterations = 1, initialDelayMillis = 2200, velocity = 18.dp),
+                                    )
                                 }
                             }
                             displayedPlayerSourceLabel?.let { source ->

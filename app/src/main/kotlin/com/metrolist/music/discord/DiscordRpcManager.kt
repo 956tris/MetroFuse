@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
-import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -26,11 +25,18 @@ data class DiscordUser(
     val avatar: String?,
 )
 
+data class DiscordCredentials(
+    val accessToken: String,
+    val refreshToken: String,
+    val expiresAtMillis: Long,
+)
+
 object DiscordRpcManager {
     private val APP_ID = BuildConfig.DISCORD_RPC_APPLICATION_ID
     private const val AUTH_URL = "https://discord.com/oauth2/authorize"
-    private const val TOKEN_URL = "https://discord.com/api/v10/oauth2/token"
     private const val SCOPES = "openid sdk.social_layer_presence"
+    private const val TOKEN_REFRESH_SKEW_MS = 60_000L
+    private const val CONNECTION_READY_TIMEOUT_MS = 30_000L
     private val REDIRECT_URI = "discord-$APP_ID:///authorize/callback"
 
     @Volatile private var initialized = false
@@ -49,6 +55,8 @@ object DiscordRpcManager {
     val currentUser: StateFlow<DiscordUser?> = _currentUser
     private val _errors = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val errors: SharedFlow<String> = _errors
+    private val _credentials = MutableSharedFlow<DiscordCredentials>(replay = 1, extraBufferCapacity = 1)
+    val credentials: SharedFlow<DiscordCredentials> = _credentials
     private val mainHandler = Handler(Looper.getMainLooper())
 
     enum class Status { Disconnected, Authorizing, Connected }
@@ -77,14 +85,21 @@ object DiscordRpcManager {
     }
 
     @JvmStatic
-    fun onNativeAuthorized(token: String) {
+    fun onNativeAuthorized(token: String, refreshToken: String, expiresInSeconds: Long) {
         mainHandler.post {
             accessToken = token
             _authorized = true
             _ready = false
             _connectionStatus.value = Status.Authorizing
             val generation = ++connectGeneration
-            scheduleConnectRetry(token, generation, attempt = 0)
+            _credentials.tryEmit(
+                DiscordCredentials(
+                    accessToken = token,
+                    refreshToken = refreshToken,
+                    expiresAtMillis = System.currentTimeMillis() + (expiresInSeconds * 1_000L),
+                ),
+            )
+            scheduleConnectionWatchdog(token, generation)
             completeAuthorization(true)
         }
     }
@@ -92,7 +107,8 @@ object DiscordRpcManager {
     private external fun nativeInit(appId: Long): Boolean
     private external fun nativeAuthorize()
     private external fun nativeSetTokenAndConnect(token: String)
-    private external fun nativeConnect()
+    private external fun nativeExchangeAuthorizationCode(code: String, redirectUri: String, codeVerifier: String)
+    private external fun nativeRefreshToken(refreshToken: String)
     private external fun nativeIsReady(): Boolean
     private external fun nativeIsAuthorized(): Boolean
     private external fun nativeSetListening(
@@ -257,74 +273,14 @@ object DiscordRpcManager {
         codeVerifier: String,
         generation: Int,
     ) {
-        Thread {
-            try {
-                val body =
-                    "client_id=$APP_ID" +
-                        "&grant_type=authorization_code" +
-                        "&code=${URLEncoder.encode(authCode, "UTF-8")}" +
-                        "&redirect_uri=${URLEncoder.encode(REDIRECT_URI, "UTF-8")}" +
-                        "&code_verifier=$codeVerifier"
-                val conn = URL(TOKEN_URL).openConnection() as HttpURLConnection
-                conn.connectTimeout = 10_000
-                conn.readTimeout = 10_000
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                conn.setRequestProperty("Accept", "application/json")
-                OutputStreamWriter(conn.outputStream).use { it.write(body) }
-
-                val responseCode = conn.responseCode
-                val responseBody =
-                    if (responseCode in 200..299) {
-                        conn.inputStream.bufferedReader().readText()
-                    } else {
-                        conn.errorStream?.bufferedReader()?.readText().orEmpty()
-                    }
-                conn.disconnect()
-
-                if (responseCode !in 200..299) {
-                    mainHandler.post {
-                        if (generation != authorizeGeneration || authorizeCallback == null) return@post
-                        reportError("Discord RPC token exchange failed: HTTP $responseCode")
-                        _connectionStatus.value = Status.Disconnected
-                        completeAuthorization(false)
-                    }
-                    return@Thread
-                }
-
-                val token = JSONObject(responseBody).optString("access_token").takeIf { it.isNotBlank() }
-                if (token == null) {
-                    mainHandler.post {
-                        if (generation != authorizeGeneration || authorizeCallback == null) return@post
-                        reportError("Discord RPC token exchange returned no access token")
-                        _connectionStatus.value = Status.Disconnected
-                        completeAuthorization(false)
-                    }
-                    return@Thread
-                }
-
-                mainHandler.post {
-                    if (generation != authorizeGeneration || authorizeCallback == null) return@post
-                    accessToken = token
-                    _authorized = true
-                    _ready = false
-                    _connectionStatus.value = Status.Authorizing
-                    val connectAttemptGeneration = ++connectGeneration
-                    nativeSetTokenAndConnect(token)
-                    nativeConnect()
-                    scheduleConnectRetry(token, connectAttemptGeneration, attempt = 0)
-                    completeAuthorization(true)
-                }
-            } catch (e: Exception) {
-                mainHandler.post {
-                    if (generation != authorizeGeneration || authorizeCallback == null) return@post
-                    reportError("Discord RPC token exchange failed", e)
-                    _connectionStatus.value = Status.Disconnected
-                    completeAuthorization(false)
-                }
-            }
-        }.apply { name = "DiscordTokenExchange" }.start()
+        if (generation != authorizeGeneration || authorizeCallback == null) return
+        try {
+            nativeExchangeAuthorizationCode(authCode, REDIRECT_URI, codeVerifier)
+        } catch (e: Exception) {
+            reportError("Discord RPC token exchange failed", e)
+            _connectionStatus.value = Status.Disconnected
+            completeAuthorization(false)
+        }
     }
 
     private fun scheduleAuthorizationTimeout(generation: Int) {
@@ -434,14 +390,22 @@ object DiscordRpcManager {
         nativeClear()
     }
 
-    fun reconnectWithToken(token: String) {
+    fun reconnectWithToken(
+        token: String,
+        refreshToken: String = "",
+        expiresAtMillis: Long = 0L,
+    ) {
         if (!initialized) {
             reportError("Discord RPC reconnect failed because the SDK is not initialized")
             return
         }
         _authorized = true
         _connectionStatus.value = Status.Authorizing
-        connectWithToken(token)
+        if (refreshToken.isNotBlank() && expiresAtMillis <= System.currentTimeMillis() + TOKEN_REFRESH_SKEW_MS) {
+            nativeRefreshToken(refreshToken)
+        } else {
+            connectWithToken(token)
+        }
     }
 
     private fun connectWithToken(token: String) {
@@ -449,25 +413,19 @@ object DiscordRpcManager {
         _ready = false
         nativeSetTokenAndConnect(token)
         val generation = ++connectGeneration
-        scheduleConnectRetry(token, generation, attempt = 0)
+        scheduleConnectionWatchdog(token, generation)
     }
 
-    private fun scheduleConnectRetry(token: String, generation: Int, attempt: Int) {
+    private fun scheduleConnectionWatchdog(token: String, generation: Int) {
         mainHandler.postDelayed(
             {
                 if (!initialized || _ready || accessToken != token || generation != connectGeneration) {
                     return@postDelayed
                 }
-                nativeConnect()
-                if (attempt < 4) {
-                    scheduleConnectRetry(token, generation, attempt + 1)
-                } else if (!_ready) {
-                    _authorized = false
-                    reportError("Discord RPC connection timed out after token exchange")
-                    _connectionStatus.value = Status.Disconnected
-                }
+                reportError("Discord RPC did not reach Ready; check the native error detail")
+                _connectionStatus.value = Status.Disconnected
             },
-            if (attempt == 0) 500L else 2_000L,
+            CONNECTION_READY_TIMEOUT_MS,
         )
     }
 

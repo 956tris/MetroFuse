@@ -12,6 +12,8 @@ public:
 
     bool Init(int64_t appId);
     void Authorize();
+    void ExchangeAuthorizationCode(const char* code, const char* redirectUri, const char* codeVerifier);
+    void RefreshToken(const char* refreshToken);
     void Shutdown();
     void SetTokenAndConnect(const char* token);
     void Connect();

@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.media3.common.PlaybackException
 import com.metrolist.music.R
+import com.metrolist.music.constants.ExperimentalConfirmBeforeSkipKey
+import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.utils.PastefoxLogUploader
 import kotlinx.coroutines.launch
 
@@ -50,11 +52,16 @@ import kotlinx.coroutines.launch
 fun PlaybackError(
     error: PlaybackException,
     retry: () -> Unit,
+    skipNext: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val diagnosticText = remember(error) { buildPlaybackDiagnostic(error) }
     var isCreatingPaste by remember(error) { mutableStateOf(false) }
+    val (confirmBeforeSkip) = rememberPreference(
+        ExperimentalConfirmBeforeSkipKey,
+        defaultValue = true,
+    )
 
     // Build detailed error info for debugging
     val unknownError = stringResource(R.string.error_unknown)
@@ -206,6 +213,15 @@ fun PlaybackError(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(text = stringResource(R.string.retry))
+            }
+
+            if (confirmBeforeSkip && skipNext != null) {
+                OutlinedButton(
+                    onClick = skipNext,
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text(text = stringResource(R.string.skip_next))
+                }
             }
         }
     }

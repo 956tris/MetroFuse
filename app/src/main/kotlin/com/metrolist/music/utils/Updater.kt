@@ -19,6 +19,7 @@ import java.util.Locale
 data class ReleaseInfo(
     val tagName: String,
     val versionName: String,
+    val releaseUrl: String,
     val description: String,
     val releaseDate: String,
     val assets: List<ReleaseAsset>
@@ -124,7 +125,7 @@ object Updater {
         return assets
     }
 
-    private fun inferAssetTarget(name: String): Pair<String, String>? {
+    internal fun inferAssetTarget(name: String): Pair<String, String>? {
         val lowerName = name.lowercase()
         if (!lowerName.endsWith(".apk")) return null
         if (lowerName.contains("debug")) return null
@@ -156,13 +157,10 @@ object Updater {
 
     private fun parseReleaseInfo(json: JSONObject): ReleaseInfo {
         val tagName = json.getString("tag_name")
-        val displayName = json.optString("name")
-            .trim()
-            .ifBlank { tagName }
-
         return ReleaseInfo(
             tagName = tagName,
-            versionName = displayName,
+            versionName = tagName.removePrefix("v"),
+            releaseUrl = json.getString("html_url"),
             description = json.optString("body"),
             releaseDate = json.getString("published_at"),
             assets = parseAssets(json.getJSONArray("assets"))
@@ -232,18 +230,21 @@ object Updater {
     /**
      * Get the download URL for the correct app variant
      */
-    fun getDownloadUrlForCurrentVariant(releaseInfo: ReleaseInfo): String? {
+    fun getAssetForCurrentVariant(releaseInfo: ReleaseInfo): ReleaseAsset? {
         val (currentArch, currentVariant) = getCurrentAppVariant()
-        
-        val matchingAsset = releaseInfo.assets
-            .find { it.architecture == currentArch && it.variant == currentVariant }
-            ?: releaseInfo.assets.find { it.architecture == "universal" && it.variant == currentVariant }
-            ?: releaseInfo.assets.find { it.variant == currentVariant }
-            ?: releaseInfo.assets.find { it.architecture == "universal" }
-            ?: releaseInfo.assets.firstOrNull()
-
-        return matchingAsset?.downloadUrl
+        return selectCompatibleAsset(releaseInfo.assets, currentArch, currentVariant)
     }
+
+    internal fun selectCompatibleAsset(
+        assets: List<ReleaseAsset>,
+        architecture: String,
+        variant: String,
+    ): ReleaseAsset? =
+        assets.find { it.architecture == architecture && it.variant == variant }
+            ?: assets.find { it.architecture == "universal" && it.variant == variant }
+
+    fun getDownloadUrlForCurrentVariant(releaseInfo: ReleaseInfo): String? =
+        getAssetForCurrentVariant(releaseInfo)?.downloadUrl
 
     /**
      * Get all available download URLs for a release

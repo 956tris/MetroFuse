@@ -5,6 +5,7 @@
 
 package com.metrolist.music.youtube
 
+import android.net.Uri
 import com.metrolist.innertube.NewPipeExtractor
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.NewPipeUtils
@@ -40,8 +41,6 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
-import android.net.Uri
-import com.chaquo.python.Python
 
 object YouTubeAudioProvider {
     const val STREAM_MARKER_QUERY = "_metrolist_youtube"
@@ -90,6 +89,7 @@ object YouTubeAudioProvider {
     private val extractorDownloader = BravePipeExtractorDownloader(httpClient)
     private val poTokenGenerator = PoTokenGenerator()
     private val innertubePlaybackClients = listOf(
+        PlaybackClientCandidate("visionos", YouTubeClient.VISIONOS),
         PlaybackClientCandidate("android_vr_no_auth", YouTubeClient.ANDROID_VR_NO_AUTH),
         PlaybackClientCandidate("android_vr_143", YouTubeClient.ANDROID_VR_1_43_32),
         PlaybackClientCandidate("tv_embedded", YouTubeClient.TVHTML5_SIMPLY_EMBEDDED_PLAYER),
@@ -137,7 +137,7 @@ object YouTubeAudioProvider {
 
     private fun isValidYouTubeVideoId(id: String): Boolean = YOUTUBE_VIDEO_ID_REGEX.matches(id)
 
-    suspend fun resolve(mediaId: String, context: android.content.Context, fallbackQuery: TrackQuery? = null): Resolved {
+    suspend fun resolve(mediaId: String, fallbackQuery: TrackQuery? = null): Resolved {
         val now = System.currentTimeMillis()
         // Cache is keyed by the ORIGINAL id (e.g. the Spotify URI), not the
         // resolved YouTube id, so repeat playback of the same non-YouTube
@@ -156,7 +156,7 @@ object YouTubeAudioProvider {
             resolveViaSearch(query)
         }
 
-        return resolveVideoId(videoId, now, cacheKey = mediaId, context = context)
+        return resolveVideoId(videoId, now, cacheKey = mediaId)
     }
 
     /**
@@ -186,186 +186,49 @@ object YouTubeAudioProvider {
         return topSong.id
     }
 
-    private suspend fun resolveVideoId(videoId: String, now: Long, cacheKey: String, context: android.content.Context): Resolved {
+    private suspend fun resolveVideoId(videoId: String, now: Long, cacheKey: String): Resolved {
+        var extractorFailure: Throwable? = null
+        var innertubeFailure: Throwable? = null
 
-        // yt-dlp (on-device via Chaquopy) is now the sole primary path. It
-        // uses the device's own IP, handles SABR internally, and its
-        // extractor is kept current independent of app releases via
-        // YtDlpUpdater. The innertube-client race and BravePipe/NewPipe
-        // extractor that used to live here have been fully retired — that
-        // was the whole point of this refactor: one resolution path instead
-        // of three that all needed independent maintenance against YouTube's
-        // churn.
-        var ytDlpFailure: Throwable? = null
-        runCatching { resolveWithYtDlpOnDevice(videoId, now) }
-            .onSuccess { return cache(cacheKey, it) }
-            .onFailure {
-                ytDlpFailure = it
-                Timber.tag(TAG).w(it, "yt-dlp resolution failed for $videoId, forcing an update and retrying once")
+        val result = coroutineScope {
+            val channel = Channel<Resolved>(2)
+            val extractorJob = launch {
+                try {
+                    channel.send(resolveWithExtractor(videoId, now))
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    extractorFailure = error
+                    Timber.tag(TAG).w(error, "Extractor fallback failed for $videoId")
+                }
+            }
+            val innertubeJob = launch {
+                try {
+                    channel.send(resolveWithInnertubeFallback(videoId, now))
+                } catch (error: Exception) {
+                    if (error is CancellationException) throw error
+                    innertubeFailure = error
+                    Timber.tag(TAG).w(error, "Innertube fallback failed for $videoId")
+                }
+            }
+            launch {
+                extractorJob.join()
+                innertubeJob.join()
+                channel.close()
             }
 
-        // First failure this session: force a yt-dlp version check/upgrade
-        // (normally rate-limited to once per process) and retry immediately.
-        // Most yt-dlp failures on a given device are "YouTube shipped a
-        // breaking change and our bundled build-time version doesn't know
-        // about it yet" — this is the self-healing path for that.
-        runCatching {
-            YtDlpUpdater.updateIfNeeded(context, force = true)
-            resolveWithYtDlpOnDevice(videoId, now)
-        }.onSuccess { return cache(cacheKey, it) }
-            .onFailure { ytDlpFailure = it }
+            val first = channel.receiveCatching().getOrNull()
+            extractorJob.cancel()
+            innertubeJob.cancel()
+            first
+        }
 
-        // Last resort: some responses (SABR-only, no direct progressive/
-        // adaptive URL at all) can't be handled by URL-extraction no matter
-        // how many clients we try — yt-dlp's SABR handling only exists in
-        // its actual download path, not extract_info(download=False). Have
-        // yt-dlp fully download the audio (SABR handled transparently on
-        // its end) to a local cache file and hand ExoPlayer that instead of
-        // a remote URL. Slower and uses local storage, so this only runs
-        // once URL-based resolution has already failed twice above.
-        runCatching { resolveWithYtDlpDownload(videoId, now, context) }
-            .onSuccess { return cache(cacheKey, it) }
-            .onFailure {
-                ytDlpFailure = it
-                Timber.tag(TAG).w(it, "yt-dlp download fallback also failed for $videoId")
-            }
+        result?.let { return cache(cacheKey, it) }
 
         throw YouTubeAudioResolutionException(
             "YouTube Music playback failed for $videoId: " +
-                    "yt-dlp=${ytDlpFailure?.readableMessage() ?: "no candidate produced a stream"}",
+                "extractor=${extractorFailure?.readableMessage() ?: "no stream"}; " +
+                "innertube=${innertubeFailure?.readableMessage() ?: "no stream"}",
         )
-    }
-
-    /**
-     * Resolves a stream using yt-dlp running on-device via Chaquopy.
-     */
-    private suspend fun resolveWithYtDlpOnDevice(
-        videoId: String,
-        now: Long,
-    ): Resolved = withContext(Dispatchers.IO) {
-        val py = Python.getInstance()
-        val ytmResolver = py.getModule("ytm_resolver")
-        val resultJsonString = ytmResolver.callAttr("resolve", videoId).toString()
-
-        val json = org.json.JSONObject(resultJsonString)
-        if (json.has("error")) {
-            throw YouTubeAudioResolutionException("yt-dlp failed: ${json.getString("error")}")
-        }
-
-        val streamUrl = json.getString("url")
-        val workingClient = json.optString("working_client", "unknown")
-
-        Resolved(
-            mediaUri = addStreamMarker(streamUrl, "ytdlp"),
-            videoId = videoId,
-            clientKey = "ytdlp:$workingClient",
-            itag = json.optInt("itag", 251),
-            mimeType = json.optString("mime", "audio/webm"),
-            codecs = json.optString("acodec", "opus"),
-            bitrate = (json.optDouble("bitrate", 0.0) * 1000).toInt(),
-            sampleRate = null,
-            contentLength = null,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            // yt-dlp URLs usually last a while
-            expiresAtMs = now + 60 * 60 * 1000L,
-        )
-    }
-
-    /**
-     * One-in-flight-at-a-time download cache dir. Only ever expect one
-     * download-fallback file to matter at a time in practice (this is a
-     * last-resort path, not the common case), so cleanup is opportunistic:
-     * deleting the previous file whenever a new one lands covers normal
-     * skip/next-track flow, and sweeping the whole subdirectory on each
-     * call catches anything orphaned by a crash or force-stop.
-     */
-    private const val YTDLP_DOWNLOAD_SUBDIR = "ytdlp_downloads"
-
-    @Volatile
-    private var lastDownloadedFile: java.io.File? = null
-
-    /**
-     * Resolves a stream by having yt-dlp fully download the audio to a
-     * local cache file, rather than extracting a direct URL. This is the
-     * only way to get SABR-only responses playable at all without
-     * reimplementing YouTube's SABR wire protocol in Kotlin/ExoPlayer:
-     * yt-dlp's SABR handling lives entirely inside its download path
-     * (download=True), not its URL-extraction path (download=False) — a
-     * SABR-only client simply has no plain URL to hand back from the
-     * latter.
-     */
-    private suspend fun resolveWithYtDlpDownload(
-        videoId: String,
-        now: Long,
-        context: android.content.Context,
-    ): Resolved = withContext(Dispatchers.IO) {
-        val downloadDir = java.io.File(context.cacheDir, YTDLP_DOWNLOAD_SUBDIR).apply { mkdirs() }
-
-        // Sweep stray files before starting a new download — catches
-        // anything left behind by a crash, force-stop, or a previous
-        // failed attempt, not just the last successful one.
-        downloadDir.listFiles()?.forEach { it.delete() }
-
-        val py = Python.getInstance()
-        val ytmResolver = py.getModule("ytm_resolver")
-        val resultJsonString = ytmResolver.callAttr("download", videoId, downloadDir.absolutePath).toString()
-
-        val json = org.json.JSONObject(resultJsonString)
-        if (json.has("error")) {
-            throw YouTubeAudioResolutionException("yt-dlp download failed: ${json.getString("error")}")
-        }
-
-        val filePath = json.getString("filepath")
-        val file = java.io.File(filePath)
-        if (!file.isFile) {
-            throw YouTubeAudioResolutionException("yt-dlp reported a downloaded file that doesn't exist: $filePath")
-        }
-
-        lastDownloadedFile = file
-        val workingClient = json.optString("working_client", "unknown")
-
-        Resolved(
-            mediaUri = Uri.fromFile(file).toString(),
-            videoId = videoId,
-            clientKey = "ytdlp-download:$workingClient",
-            itag = json.optInt("itag", -1),
-            mimeType = when (json.optString("mime", "")) {
-                "webm" -> "audio/webm"
-                "m4a" -> "audio/mp4"
-                else -> "audio/mp4"
-            },
-            codecs = json.optString("acodec", "opus"),
-            bitrate = (json.optDouble("bitrate", 0.0) * 1000).toInt(),
-            sampleRate = null,
-            contentLength = json.optLong("filesize", -1L).takeIf { it > 0 },
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            // The file is already fully downloaded and local — there's
-            // nothing to re-fetch or expire the way a remote URL would.
-            // Give it a long window; it gets cleaned up on the NEXT
-            // download call (or via releaseDownloadedFile) regardless.
-            expiresAtMs = now + 24 * 60 * 60 * 1000L,
-        )
-    }
-
-    /**
-     * Deletes a downloaded fallback file after playback is done with it.
-     * Call this from wherever playback lifecycle is tracked (track
-     * finished, skipped, or player released) once that hook is wired up.
-     * Safe to call even if [mediaUri] wasn't a download-fallback file (or
-     * the file's already gone) — this is best-effort cleanup, not a
-     * correctness requirement, since the NEXT download call also sweeps
-     * the whole subdirectory regardless.
-     */
-    fun releaseDownloadedFile(mediaUri: String) {
-        val uri = runCatching { Uri.parse(mediaUri) }.getOrNull() ?: return
-        if (uri.scheme != "file") return
-        val path = uri.path ?: return
-        runCatching { java.io.File(path).delete() }
-        if (lastDownloadedFile?.absolutePath == path) {
-            lastDownloadedFile = null
-        }
     }
 
     private suspend fun resolveWithExtractor(
@@ -429,7 +292,7 @@ object YouTubeAudioProvider {
             }
         }
 
-        // Race all 3 clients in parallel — no sequential fallback needed.
+        // Race all configured clients in parallel — no sequential fallback needed.
         val channel = Channel<Resolved>(innertubePlaybackClients.size)
         val candidateFailures = ConcurrentHashMap<String, String>()
 
@@ -494,18 +357,19 @@ object YouTubeAudioProvider {
             return null
         }
 
-        val playerResponse = withContext(Dispatchers.IO) {
+        val playerResult = withContext(Dispatchers.IO) {
             val signatureTimestamp = if (client.useSignatureTimestamp) signatureTimestampDeferred.await() else null
             YouTube.player(
                 videoId = videoId,
                 signatureTimestamp = signatureTimestamp,
                 client = client,
                 poToken = poTokenResult?.playerRequestPoToken
-            ).getOrNull()
+            )
         }
 
+        val playerResponse = playerResult.getOrNull()
         if (playerResponse == null) {
-            failures[candidate.key] = "player response null"
+            failures[candidate.key] = playerResult.exceptionOrNull()?.readableMessage() ?: "player response null"
             return null
         }
         if (playerResponse.playabilityStatus.status != "OK") {
@@ -513,49 +377,33 @@ object YouTubeAudioProvider {
             return null
         }
 
-        // Cache the successful player response, tagged with its client key,
-        // so a later cache hit rebuilds headers for the right client.
-        playerResponseCache[videoId] = CachedPlayerResponse(playerResponse, candidate.key, System.currentTimeMillis())
-
         var resolved = buildResolvedFromPlayerResponse(playerResponse, videoId, now, candidate.key)
         if (resolved == null) {
             failures[candidate.key] = "no usable audio format in player response"
             return null
         }
 
-        // Apply n-parameter transformation and PoToken to the stream URL if required.
-        if (client.useWebPoTokens) {
-            try {
-                var streamUrl = resolved.mediaUri
-                // Prioritize NewPipe throttling deobfuscation
-                val newPipeUrl = NewPipeExtractor.getThrottlingDeobfuscatedUrl(videoId, streamUrl)
-                if (newPipeUrl != null && newPipeUrl != streamUrl) {
-                    streamUrl = newPipeUrl
-                } else {
-                    // Fallback to CipherDeobfuscator
-                    val transformedUrl = CipherDeobfuscator.transformNParamInUrl(streamUrl)
-                    if (transformedUrl != streamUrl) {
-                        streamUrl = transformedUrl
-                    }
-                }
+        // A playable status can still contain only SABR metadata and no direct stream URL.
+        // Cache the response only after it has produced a stream supported by this resolver.
+        playerResponseCache[videoId] = CachedPlayerResponse(playerResponse, candidate.key, System.currentTimeMillis())
 
-                // Append pot= parameter if streaming poToken is available
-                poTokenResult?.streamingDataPoToken?.let { streamingPoToken ->
-                    val uri = Uri.parse(streamUrl)
-                    if (uri.getQueryParameter("pot") == null) {
-                        val separator = if (streamUrl.contains("?")) "&" else "?"
-                        streamUrl = "${streamUrl}${separator}pot=${Uri.encode(streamingPoToken)}"
-                    }
+        try {
+            var streamUrl = resolved.mediaUri
+            poTokenResult?.streamingDataPoToken?.let { streamingPoToken ->
+                val uri = Uri.parse(streamUrl)
+                if (uri.getQueryParameter("pot") == null) {
+                    val separator = if (streamUrl.contains("?")) "&" else "?"
+                    streamUrl = "${streamUrl}${separator}pot=${Uri.encode(streamingPoToken)}"
                 }
-
-                if (streamUrl != resolved.mediaUri) {
-                    resolved = resolved.copy(mediaUri = streamUrl)
-                }
-            } catch (e: Exception) {
-                failures[candidate.key] = "n-transform/poToken failed: ${e.readableMessage()}"
-                Timber.tag(TAG).e(e, "Failed to apply n-transform or PoToken to stream URL")
-                return null // Return null if transformation/PoToken fails
             }
+
+            if (streamUrl != resolved.mediaUri) {
+                resolved = resolved.copy(mediaUri = streamUrl)
+            }
+        } catch (e: Exception) {
+            failures[candidate.key] = "poToken append failed: ${e.readableMessage()}"
+            Timber.tag(TAG).e(e, "Failed to append YouTube streaming PoToken")
+            return null
         }
 
         return resolved
@@ -568,7 +416,7 @@ object YouTubeAudioProvider {
      * [Resolved] without any network validation. Shared by the client race
      * and the playerResponseCache hit path.
      */
-    private fun buildResolvedFromPlayerResponse(
+    private suspend fun buildResolvedFromPlayerResponse(
         playerResponse: PlayerResponse,
         videoId: String,
         now: Long,
@@ -582,8 +430,7 @@ object YouTubeAudioProvider {
         val format = selectInnertubeAudioFormats(playerResponse, expectedDurationMs).firstOrNull()
             ?: return null
 
-        val streamUrl = NewPipeUtils.getStreamUrl(format, videoId).getOrNull()
-            ?: format.url
+        val streamUrl = resolveFormatUrl(format, videoId)
             ?: return null
 
         val expiresAtMs = resolveExpiryMs(
@@ -609,6 +456,31 @@ object YouTubeAudioProvider {
             perceptualLoudnessDb = playerResponse.playerConfig?.audioConfig?.perceptualLoudnessDb,
             expiresAtMs = expiresAtMs,
         )
+    }
+
+    private suspend fun resolveFormatUrl(
+        format: PlayerResponse.StreamingData.Format,
+        videoId: String,
+    ): String? {
+        val rawUrl = format.url?.takeIf { it.isNotBlank() } ?: run {
+            val signatureCipher = format.signatureCipher ?: format.cipher
+            val customUrl = signatureCipher
+                ?.takeIf { it.isNotBlank() }
+                ?.let { CipherDeobfuscator.deobfuscateStreamUrl(it, videoId) }
+            customUrl ?: NewPipeUtils.getStreamUrl(format, videoId).getOrNull()
+        } ?: return null
+
+        return try {
+            val newPipeUrl = NewPipeExtractor.getThrottlingDeobfuscatedUrl(videoId, rawUrl)
+            if (newPipeUrl != null && newPipeUrl != rawUrl) {
+                newPipeUrl
+            } else {
+                CipherDeobfuscator.transformNParamInUrl(rawUrl)
+            }
+        } catch (error: Exception) {
+            Timber.tag(TAG).w(error, "YouTube n-parameter transform failed for $videoId")
+            rawUrl
+        }
     }
 
     fun invalidate(videoId: String) {

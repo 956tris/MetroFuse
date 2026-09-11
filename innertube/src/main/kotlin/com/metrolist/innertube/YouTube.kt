@@ -69,6 +69,7 @@ import com.metrolist.innertube.pages.SearchSuggestionPage
 import com.metrolist.innertube.pages.SearchSummary
 import com.metrolist.innertube.pages.SearchSummaryPage
 import io.ktor.client.call.body
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
@@ -109,6 +110,8 @@ object YouTube {
         set(value) {
             innerTube.cookie = value
         }
+    val hasBrowserAuthentication: Boolean
+        get() = innerTube.hasBrowserAuthentication
     var proxy: Proxy?
         get() = innerTube.proxy
         set(value) {
@@ -2698,17 +2701,150 @@ object YouTube {
                     ]
                 }.joinToString("")
 
-        val playbackUrl =
-            playbackTracking.replace(
-                "https://s.youtube.com",
-                "https://music.youtube.com",
-            )
-
         innerTube.registerPlayback(
-            url = playbackUrl,
+            url = playbackTracking,
             playlistId = playlistId,
             cpn = cpn,
         )
+    }
+
+    data class PlaybackTrackingRegistration(
+        val playbackStatus: Int,
+        val watchtimeStatus: Int,
+    )
+
+    data class ProgressivePlaybackTrackingSession(
+        val playbackTracking: PlayerResponse.PlaybackTracking,
+        val playlistId: String?,
+        val client: YouTubeClient,
+        val cpn: String,
+        val startedAtMs: Long,
+    )
+
+    suspend fun startProgressivePlaybackTracking(
+        playbackTracking: PlayerResponse.PlaybackTracking,
+        playlistId: String? = null,
+        client: YouTubeClient = WEB_REMIX,
+    ): Result<ProgressivePlaybackTrackingSession> =
+        runCatching {
+            check(hasBrowserAuthentication) { "YouTube Music browser authentication is unavailable" }
+            val playbackUrl =
+                requireNotNull(playbackTracking.videostatsPlaybackUrl?.baseUrl) {
+                    "Authenticated ${client.clientName} player response has no playback tracking URL"
+                }
+            requireNotNull(playbackTracking.videostatsWatchtimeUrl?.baseUrl) {
+                "Authenticated ${client.clientName} player response has no watchtime tracking URL"
+            }
+            val cpn = randomPlaybackNonce()
+            innerTube
+                .registerPlayback(
+                    url = playbackUrl,
+                    playlistId = playlistId,
+                    cpn = cpn,
+                    client = client,
+                    customParameters = YouTubeProgressivePlaybackTrackingPolicy.playbackParameters(),
+                ).also(::requireTrackingSuccess)
+
+            ProgressivePlaybackTrackingSession(
+                playbackTracking = playbackTracking,
+                playlistId = playlistId,
+                client = client,
+                cpn = cpn,
+                startedAtMs = System.currentTimeMillis(),
+            )
+        }
+
+    suspend fun reportProgressivePlaybackTracking(
+        session: ProgressivePlaybackTrackingSession,
+        fromSeconds: Double,
+        toSeconds: Double,
+        state: String,
+    ): Result<Int> =
+        runCatching {
+            val watchtimeUrl =
+                requireNotNull(session.playbackTracking.videostatsWatchtimeUrl?.baseUrl) {
+                    "Progressive YouTube Music session has no watchtime tracking URL"
+                }
+            val elapsedSeconds =
+                (System.currentTimeMillis() - session.startedAtMs)
+                    .coerceAtLeast(0L) / 1_000.0
+            innerTube
+                .registerPlayback(
+                    url = watchtimeUrl,
+                    playlistId = session.playlistId,
+                    cpn = session.cpn,
+                    client = session.client,
+                    customParameters =
+                        YouTubeProgressivePlaybackTrackingPolicy.watchtimeParameters(
+                            fromSeconds = fromSeconds,
+                            toSeconds = toSeconds,
+                            elapsedSeconds = elapsedSeconds,
+                            state = state,
+                        ),
+                ).also(::requireTrackingSuccess)
+                .status.value
+        }
+
+    suspend fun registerPlaybackTracking(
+        playbackTracking: PlayerResponse.PlaybackTracking,
+        playedSeconds: Double,
+        playlistId: String? = null,
+        client: YouTubeClient = WEB_REMIX,
+    ): Result<PlaybackTrackingRegistration> =
+        runCatching {
+            check(hasBrowserAuthentication) { "YouTube Music browser authentication is unavailable" }
+
+            val playbackUrl =
+                requireNotNull(playbackTracking.videostatsPlaybackUrl?.baseUrl) {
+                    "Authenticated ${client.clientName} player response has no playback tracking URL"
+                }
+            val watchtimeUrl =
+                playbackTracking.videostatsWatchtimeUrl?.baseUrl
+                    ?: error("Authenticated ${client.clientName} player response has no watchtime tracking URL")
+            val cpn = randomPlaybackNonce()
+            val parameters =
+                YouTubePlaybackTrackingPolicy.markWatchedParameters(
+                    playbackUrl = playbackUrl,
+                    playedSeconds = playedSeconds,
+                )
+
+            val playbackResponse =
+                innerTube.registerPlayback(
+                    url = playbackUrl,
+                    playlistId = playlistId,
+                    cpn = cpn,
+                    client = client,
+                    customParameters = parameters.playback,
+                ).also(::requireTrackingSuccess)
+
+            val watchtimeResponse =
+                innerTube
+                    .registerPlayback(
+                        url = watchtimeUrl,
+                        playlistId = playlistId,
+                        cpn = cpn,
+                        client = client,
+                        customParameters = parameters.watchtime,
+                    ).also(::requireTrackingSuccess)
+
+            PlaybackTrackingRegistration(
+                playbackStatus = playbackResponse.status.value,
+                watchtimeStatus = watchtimeResponse.status.value,
+            )
+        }
+
+    private fun randomPlaybackNonce(): String =
+        (1..16)
+            .map {
+                "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"[
+                    Random.Default.nextInt(0, 64),
+                ]
+            }.joinToString("")
+
+    private fun requireTrackingSuccess(response: HttpResponse) {
+        check(response.status.value in 200..299) {
+            "YouTube Music tracking request failed with HTTP ${response.status.value}"
+        }
     }
 
     suspend fun next(

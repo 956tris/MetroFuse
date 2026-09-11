@@ -62,7 +62,11 @@ static void NotifyJavaError(const std::string& message) {
     if (shouldDetach) g_javaVm->DetachCurrentThread();
 }
 
-static void NotifyJavaAuthorized(const std::string& accessToken) {
+static void NotifyJavaAuthorized(
+    const std::string& accessToken,
+    const std::string& refreshToken,
+    int32_t expiresIn
+) {
     if (!g_javaVm || !g_managerClass) {
         LOGW("NotifyJavaAuthorized: Java callback not ready");
         return;
@@ -85,7 +89,7 @@ static void NotifyJavaAuthorized(const std::string& accessToken) {
     const jmethodID method = env->GetStaticMethodID(
         g_managerClass,
         "onNativeAuthorized",
-        "(Ljava/lang/String;)V"
+        "(Ljava/lang/String;Ljava/lang/String;J)V"
     );
     if (!method) {
         LOGE("NotifyJavaAuthorized: callback method not found");
@@ -97,9 +101,17 @@ static void NotifyJavaAuthorized(const std::string& accessToken) {
         return;
     }
 
-    jstring javaToken = env->NewStringUTF(accessToken.c_str());
-    env->CallStaticVoidMethod(g_managerClass, method, javaToken);
-    env->DeleteLocalRef(javaToken);
+    jstring javaAccessToken = env->NewStringUTF(accessToken.c_str());
+    jstring javaRefreshToken = env->NewStringUTF(refreshToken.c_str());
+    env->CallStaticVoidMethod(
+        g_managerClass,
+        method,
+        javaAccessToken,
+        javaRefreshToken,
+        static_cast<jlong>(expiresIn)
+    );
+    env->DeleteLocalRef(javaAccessToken);
+    env->DeleteLocalRef(javaRefreshToken);
     if (env->ExceptionCheck()) {
         env->ExceptionDescribe();
         env->ExceptionClear();
@@ -318,14 +330,14 @@ void DiscordBridge::DoGetToken(
                 LOGI("GetToken: calling UpdateToken...");
                 client_->UpdateToken(
                     tokenType, accessToken,
-                    [this, accessToken](discordpp::ClientResult r) {
+                    [this, accessToken, refreshToken, expiresIn](discordpp::ClientResult r) {
                         if (!r.Successful()) {
                             LOGE("UpdateToken FAILED: err=%s errCode=%d",
                                  r.Error().c_str(), r.ErrorCode());
                             return;
                         }
                         authorized_ = true;
-                        NotifyJavaAuthorized(accessToken);
+                        NotifyJavaAuthorized(accessToken, refreshToken, expiresIn);
                         LOGI("UpdateToken SUCCEEDED, calling Connect...");
                         client_->Connect();
                         LOGI("Connect called");
@@ -337,6 +349,63 @@ void DiscordBridge::DoGetToken(
         LOGE("DoGetToken threw exception: %s", e.what());
     } catch (...) {
         LOGE("DoGetToken threw unknown exception");
+    }
+}
+
+void DiscordBridge::ExchangeAuthorizationCode(
+    const char* code,
+    const char* redirectUri,
+    const char* codeVerifier
+) {
+    if (!code || !redirectUri || !codeVerifier) {
+        NotifyJavaError("authorization code exchange received incomplete PKCE values");
+        return;
+    }
+    DoGetToken(code, redirectUri, codeVerifier);
+}
+
+void DiscordBridge::RefreshToken(const char* refreshToken) {
+    if (!client_ || !refreshToken || !*refreshToken) {
+        NotifyJavaError("refresh token is unavailable");
+        return;
+    }
+    try {
+        client_->RefreshToken(
+            static_cast<uint64_t>(appId_),
+            std::string(refreshToken),
+            [this](discordpp::ClientResult result,
+                   std::string accessToken,
+                   std::string renewedRefreshToken,
+                   discordpp::AuthorizationTokenType tokenType,
+                   int32_t expiresIn,
+                   std::string scopes) {
+                if (!result.Successful()) {
+                    NotifyJavaError(
+                        std::string("token refresh failed, code=") +
+                        std::to_string(result.ErrorCode()) + ", error=" + result.Error()
+                    );
+                    return;
+                }
+                client_->UpdateToken(
+                    tokenType,
+                    accessToken,
+                    [this, accessToken, renewedRefreshToken, expiresIn](discordpp::ClientResult updateResult) {
+                        if (!updateResult.Successful()) {
+                            NotifyJavaError(
+                                std::string("refreshed token update failed, code=") +
+                                std::to_string(updateResult.ErrorCode()) + ", error=" + updateResult.Error()
+                            );
+                            return;
+                        }
+                        authorized_ = true;
+                        NotifyJavaAuthorized(accessToken, renewedRefreshToken, expiresIn);
+                        client_->Connect();
+                    }
+                );
+            }
+        );
+    } catch (const std::exception& e) {
+        NotifyJavaError(std::string("token refresh threw: ") + e.what());
     }
 }
 
@@ -638,6 +707,28 @@ Java_com_metrolist_music_discord_DiscordRpcManager_nativeSetTokenAndConnect(
         g_discordBridge.SetTokenAndConnect(tokenStr);
         env->ReleaseStringUTFChars(token, tokenStr);
     }
+}
+
+JNIEXPORT void JNICALL
+Java_com_metrolist_music_discord_DiscordRpcManager_nativeExchangeAuthorizationCode(
+    JNIEnv* env, jobject thiz, jstring code, jstring redirectUri, jstring codeVerifier
+) {
+    const char* codeStr = code ? env->GetStringUTFChars(code, nullptr) : nullptr;
+    const char* redirectUriStr = redirectUri ? env->GetStringUTFChars(redirectUri, nullptr) : nullptr;
+    const char* verifierStr = codeVerifier ? env->GetStringUTFChars(codeVerifier, nullptr) : nullptr;
+    g_discordBridge.ExchangeAuthorizationCode(codeStr, redirectUriStr, verifierStr);
+    if (codeStr) env->ReleaseStringUTFChars(code, codeStr);
+    if (redirectUriStr) env->ReleaseStringUTFChars(redirectUri, redirectUriStr);
+    if (verifierStr) env->ReleaseStringUTFChars(codeVerifier, verifierStr);
+}
+
+JNIEXPORT void JNICALL
+Java_com_metrolist_music_discord_DiscordRpcManager_nativeRefreshToken(
+    JNIEnv* env, jobject thiz, jstring refreshToken
+) {
+    const char* refreshTokenStr = refreshToken ? env->GetStringUTFChars(refreshToken, nullptr) : nullptr;
+    g_discordBridge.RefreshToken(refreshTokenStr);
+    if (refreshTokenStr) env->ReleaseStringUTFChars(refreshToken, refreshTokenStr);
 }
 
 JNIEXPORT void JNICALL

@@ -347,6 +347,7 @@ fun Thumbnail(
                 PlaybackError(
                     error = playbackError,
                     retry = playerConnection.player::prepare,
+                    skipNext = playerConnection.service::skipAfterExperimentalFailure,
                 )
             }
         }

@@ -164,6 +164,18 @@
     <string name="lyrics_romanize_macedonian">Romanizar letras em Macedônio</string>
     <string name="update_notifications">Ativar notificações de atualizações</string>
     <string name="update_available_title">Atualização disponível</string>
+    <string name="update_available_message">MetroFuse %1$s está disponível.</string>
+    <string name="update_now">Atualizar</string>
+    <string name="not_now">Agora não</string>
+    <string name="update_install">Instalar</string>
+    <string name="update_retry">Tentar novamente</string>
+    <string name="update_download_progress">%1$s de %2$s</string>
+    <string name="update_download_stats">%1$s/s • decorrido %2$s • restante %3$s</string>
+    <string name="update_size_unknown">tamanho desconhecido</string>
+    <string name="update_download_failed">Não foi possível baixar a atualização. Verifique a conexão e tente novamente.</string>
+    <string name="update_install_failed">Não foi possível abrir o instalador do Android.</string>
+    <string name="update_install_permission_required">Permita que o MetroFuse instale apps desconhecidos e toque em Instalar novamente.</string>
+    <string name="update_apk_not_found">Nenhum APK compatível foi encontrado nesta versão.</string>
     <string name="update_channel_name">Atualizações do aplicativo</string>
     <string name="update_channel_desc">Notificações sobre novas versões do app</string>
     <string name="discord_use_details">Usar detalhes em vez do estado</string>
@@ -825,6 +837,13 @@
     <string name="audio_quality_very_high">O mais alto possível</string>
     <string name="autoplay">Reprodução Automática</string>
     <string name="autoplay_desc">Reproduzir automaticamente a próxima música quando a atual terminar</string>
+    <string name="next_track_preload">Pré-carregar próximas músicas</string>
+    <string name="next_track_preload_desc">Armazena antecipadamente parte das próximas músicas da fila no cache para reduzir o tempo entre faixas.</string>
+    <string name="next_track_preload_disabled">Desativado</string>
+    <plurals name="next_track_preload_count">
+        <item quantity="one">%d música</item>
+        <item quantity="other">%d músicas</item>
+    </plurals>
     <string name="system_equalizer_desc">Abrir o Equalizador nativo do Android</string>
     <string name="eq_wizard">AutoEQ Wizard</string>
     <string name="eq_download_db">Baixar banco de dados do AutoEQ (17 MB)</string>
@@ -850,4 +869,5 @@
     <string name="show_most_stats_playlists_desc">Crie e mostre playlists das música mais tocadas com base em dados em Estatísticas e Biblioteca</string>
     <string name="pin">Fixar</string>
     <string name="unpin">Desfixar</string>
+    <string name="youtube_music_history_sync_failed">O YouTube Music não confirmou a entrada no histórico. Verifique se a conta continua conectada e se o histórico do YouTube está ativado.</string>
 </resources>

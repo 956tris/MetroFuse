@@ -648,7 +648,7 @@ constructor(
                 artist = it.orderedArtists.firstOrNull()?.name ?: "",
             )
         }
-        val resolved = YouTubeAudioProvider.resolve(mediaId, context, fallbackQuery)
+        val resolved = YouTubeAudioProvider.resolve(mediaId, fallbackQuery)
         return DownloadStreamResolution(
             uri = resolved.mediaUri,
             expiresAtMs = resolved.expiresAtMs,

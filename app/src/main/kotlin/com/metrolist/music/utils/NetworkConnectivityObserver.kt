@@ -10,8 +10,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Simple NetworkConnectivityObserver based on OuterTune's implementation
@@ -21,16 +21,24 @@ class NetworkConnectivityObserver(context: Context) {
     private val connectivityManager =
         context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
 
-    private val _networkStatus = Channel<Boolean>(Channel.CONFLATED)
-    val networkStatus = _networkStatus.receiveAsFlow()
+    private val _networkStatus = MutableStateFlow(false)
+    val networkStatus = _networkStatus.asStateFlow()
+    private var isCallbackRegistered = false
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
-            _networkStatus.trySend(true)
+            refreshConnectivityState()
         }
 
         override fun onLost(network: Network) {
-            _networkStatus.trySend(false)
+            refreshConnectivityState()
+        }
+
+        override fun onCapabilitiesChanged(
+            network: Network,
+            networkCapabilities: NetworkCapabilities,
+        ) {
+            refreshConnectivityState()
         }
     }
 
@@ -42,18 +50,17 @@ class NetworkConnectivityObserver(context: Context) {
         
         try {
             connectivityManager.registerNetworkCallback(request, networkCallback)
-        } catch (e: Exception) {
-            // Fallback: assume connected if registration fails
-            _networkStatus.trySend(true)
-        }
-        
-        // Send initial state
-        val isInitiallyConnected = isCurrentlyConnected()
-        _networkStatus.trySend(isInitiallyConnected)
+            isCallbackRegistered = true
+        } catch (_: Exception) {}
+
+        refreshConnectivityState()
     }
 
     fun unregister() {
-        connectivityManager.unregisterNetworkCallback(networkCallback)
+        if (isCallbackRegistered) {
+            connectivityManager.unregisterNetworkCallback(networkCallback)
+            isCallbackRegistered = false
+        }
     }
     
     /**
@@ -75,5 +82,9 @@ class NetworkConnectivityObserver(context: Context) {
         } catch (e: Exception) {
             false
         }
+    }
+
+    private fun refreshConnectivityState() {
+        _networkStatus.value = isCurrentlyConnected()
     }
 }

@@ -46,6 +46,7 @@ import com.metrolist.music.LocalDatabase
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.constants.AndroidAutoSectionsOrderKey
+import com.metrolist.music.constants.AndroidAutoSyncedLyricsKey
 import com.metrolist.music.constants.AndroidAutoTargetPlaylistKey
 import com.metrolist.music.constants.AndroidAutoYouTubePlaylistsKey
 import com.metrolist.music.constants.MediaSessionConstants
@@ -105,7 +106,12 @@ fun AndroidAutoSettings(
 
     val (youtubePlaylistsEnabled, onYoutubePlaylistsChange) = rememberPreference(
         key = AndroidAutoYouTubePlaylistsKey,
-        defaultValue = false
+        defaultValue = true
+    )
+
+    val (syncedLyricsEnabled, onSyncedLyricsChange) = rememberPreference(
+        key = AndroidAutoSyncedLyricsKey,
+        defaultValue = true
     )
 
     val (sectionsRaw, onSectionsChange) = rememberPreference(
@@ -317,6 +323,35 @@ fun AndroidAutoSettings(
                         )
                     },
                     onClick = { onYoutubePlaylistsChange(!youtubePlaylistsEnabled) }
+                )
+            )
+        )
+
+        Spacer(Modifier.height(27.dp))
+
+        Material3SettingsGroup(
+            title = stringResource(R.string.lyrics),
+            items = listOf(
+                Material3SettingsItem(
+                    icon = painterResource(R.drawable.lyrics),
+                    title = { Text(stringResource(R.string.android_auto_synced_lyrics)) },
+                    description = { Text(stringResource(R.string.android_auto_synced_lyrics_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = syncedLyricsEnabled,
+                            onCheckedChange = onSyncedLyricsChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        if (syncedLyricsEnabled) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize),
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onSyncedLyricsChange(!syncedLyricsEnabled) }
                 )
             )
         )

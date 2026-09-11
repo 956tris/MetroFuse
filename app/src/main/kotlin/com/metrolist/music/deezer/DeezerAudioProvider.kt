@@ -197,11 +197,29 @@ object DeezerAudioProvider {
     private val lastResolverRequestAtMs = AtomicLong(0L)
 
     fun resolve(query: Query): Resolved {
-        val resolverUrl = if (query.quality == DeezerAudioQuality.MP3_128) {
-            normalizeResolverUrl(DEFAULT_RESOLVER_URL_128)
-        } else {
-            normalizeResolverUrl(query.resolverUrl)
+        val resolverUrls = buildList {
+            if (query.quality == DeezerAudioQuality.MP3_128) {
+                add(DEFAULT_RESOLVER_URL_128)
+            }
+            add(query.resolverUrl)
         }
+            .map(::normalizeResolverUrl)
+            .distinct()
+        var lastError: Throwable? = null
+        resolverUrls.forEach { resolverUrl ->
+            runCatching {
+                resolveWithResolver(query.copy(resolverUrl = resolverUrl.toString()))
+            }.onSuccess { return it }
+                .onFailure { lastError = it }
+        }
+        throw DeezerResolutionException(
+            "All Deezer resolvers failed for ${query.title}",
+            lastError,
+        )
+    }
+
+    private fun resolveWithResolver(query: Query): Resolved {
+        val resolverUrl = normalizeResolverUrl(query.resolverUrl)
         val proxyUrl = normalizeProxyUrl(query.proxyUrl)
         val directTrackId = query.mediaId.toDeezerTrackIdOrNull(allowPlainNumeric = false)
         if (query.fastMode) {

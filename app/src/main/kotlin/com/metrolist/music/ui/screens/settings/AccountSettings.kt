@@ -43,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -70,6 +69,8 @@ import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.PreferenceEntry
 import com.metrolist.music.ui.component.TextFieldDialog
+import com.metrolist.music.ui.component.UpdateAvailableDialog
+import com.metrolist.music.utils.ReleaseInfo
 import com.metrolist.music.utils.Updater
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.viewmodels.AccountSettingsViewModel
@@ -82,7 +83,7 @@ fun AccountSettings(
     latestVersionName: String
 ) {
     val context = LocalContext.current
-    val uriHandler = LocalUriHandler.current
+    var updateDialogRelease by remember { mutableStateOf<ReleaseInfo?>(null) }
 
     val (accountNamePref, onAccountNameChange) = rememberPreference(AccountNameKey, "")
     val (accountEmail, onAccountEmailChange) = rememberPreference(AccountEmailKey, "")
@@ -412,9 +413,9 @@ fun AccountSettings(
 
             if (BuildConfig.UPDATER_AVAILABLE && latestVersionName != BuildConfig.VERSION_NAME) {
                 val releaseInfo = Updater.getCachedLatestRelease()
-                val downloadUrl = releaseInfo?.let { Updater.getDownloadUrlForCurrentVariant(it) }
+                val releaseAsset = releaseInfo?.let(Updater::getAssetForCurrentVariant)
                 
-                if (downloadUrl != null) {
+                if (releaseInfo != null && releaseAsset != null) {
                     PreferenceEntry(
                         title = {
                             Text(text = stringResource(R.string.new_version_available))
@@ -426,11 +427,19 @@ fun AccountSettings(
                             }
                         },
                         onClick = {
-                            uriHandler.openUri(downloadUrl)
+                            updateDialogRelease = releaseInfo
                         }
                     )
                 }
             }
         }
+    }
+
+    updateDialogRelease?.let { releaseInfo ->
+        UpdateAvailableDialog(
+            releaseInfo = releaseInfo,
+            releaseAsset = Updater.getAssetForCurrentVariant(releaseInfo),
+            onDismiss = { updateDialogRelease = null },
+        )
     }
 }
