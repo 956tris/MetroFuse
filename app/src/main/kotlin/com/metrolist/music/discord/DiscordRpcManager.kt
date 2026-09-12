@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import org.json.JSONObject
+import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
@@ -34,6 +35,7 @@ data class DiscordCredentials(
 object DiscordRpcManager {
     private val APP_ID = BuildConfig.DISCORD_RPC_APPLICATION_ID
     private const val AUTH_URL = "https://discord.com/oauth2/authorize"
+    private const val TOKEN_URL = "https://discord.com/api/v10/oauth2/token"
     private const val SCOPES = "openid sdk.social_layer_presence"
     private const val TOKEN_REFRESH_SKEW_MS = 60_000L
     private const val CONNECTION_READY_TIMEOUT_MS = 30_000L
@@ -274,13 +276,70 @@ object DiscordRpcManager {
         generation: Int,
     ) {
         if (generation != authorizeGeneration || authorizeCallback == null) return
-        try {
-            nativeExchangeAuthorizationCode(authCode, REDIRECT_URI, codeVerifier)
-        } catch (e: Exception) {
-            reportError("Discord RPC token exchange failed", e)
-            _connectionStatus.value = Status.Disconnected
-            completeAuthorization(false)
-        }
+        Thread {
+            try {
+                val body =
+                    "client_id=$APP_ID" +
+                        "&grant_type=authorization_code" +
+                        "&code=${URLEncoder.encode(authCode, "UTF-8")}" +
+                        "&redirect_uri=${URLEncoder.encode(REDIRECT_URI, "UTF-8")}" +
+                        "&code_verifier=$codeVerifier"
+                val conn = URL(TOKEN_URL).openConnection() as HttpURLConnection
+                conn.connectTimeout = 10_000
+                conn.readTimeout = 10_000
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                conn.setRequestProperty("Accept", "application/json")
+                OutputStreamWriter(conn.outputStream).use { it.write(body) }
+
+                val responseCode = conn.responseCode
+                val responseBody =
+                    if (responseCode in 200..299) {
+                        conn.inputStream.bufferedReader().readText()
+                    } else {
+                        conn.errorStream?.bufferedReader()?.readText().orEmpty()
+                    }
+                conn.disconnect()
+
+                if (responseCode !in 200..299) {
+                    mainHandler.post {
+                        if (generation != authorizeGeneration || authorizeCallback == null) return@post
+                        reportError("Discord RPC token exchange failed: HTTP $responseCode")
+                        _connectionStatus.value = Status.Disconnected
+                        completeAuthorization(false)
+                    }
+                    return@Thread
+                }
+
+                val json = JSONObject(responseBody)
+                val token = json.optString("access_token").takeIf { it.isNotBlank() }
+                val refreshToken = json.optString("refresh_token").orEmpty()
+                val expiresInSeconds = json.optLong("expires_in", 0L)
+                if (token == null) {
+                    mainHandler.post {
+                        if (generation != authorizeGeneration || authorizeCallback == null) return@post
+                        reportError("Discord RPC token exchange returned no access token")
+                        _connectionStatus.value = Status.Disconnected
+                        completeAuthorization(false)
+                    }
+                    return@Thread
+                }
+
+                mainHandler.post {
+                    if (generation != authorizeGeneration || authorizeCallback == null) return@post
+                    nativeSetTokenAndConnect(token)
+                    onNativeAuthorized(token, refreshToken, expiresInSeconds)
+                }
+            } catch (e: Exception) {
+                mainHandler.post {
+                    if (generation != authorizeGeneration || authorizeCallback == null) return@post
+                    reportError("Discord RPC token exchange failed", e)
+                    _connectionStatus.value = Status.Disconnected
+                    completeAuthorization(false)
+                }
+            }
+        }.apply { name = "DiscordTokenExchange" }.start()
     }
 
     private fun scheduleAuthorizationTimeout(generation: Int) {
