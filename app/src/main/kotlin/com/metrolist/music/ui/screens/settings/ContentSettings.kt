@@ -61,6 +61,7 @@ import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.ContentLanguageKey
 import com.metrolist.music.constants.CountryCodeToName
 import com.metrolist.music.constants.EnableBetterLyricsKey
+import com.metrolist.music.constants.EnableBiniLyricsKey
 import com.metrolist.music.constants.EnableKugouKey
 import com.metrolist.music.constants.EnableLrcLibKey
 import com.metrolist.music.constants.EnablePaxsenixAppleMusicKey
@@ -127,6 +128,7 @@ fun ContentSettings(
     val (enableKugou, onEnableKugouChange) = rememberPreference(key = EnableKugouKey, defaultValue = true)
     val (enableLrclib, onEnableLrclibChange) = rememberPreference(key = EnableLrcLibKey, defaultValue = true)
     val (enableBetterLyrics, onEnableBetterLyricsChange) = rememberPreference(key = EnableBetterLyricsKey, defaultValue = true)
+    val (enableBiniLyrics, onEnableBiniLyricsChange) = rememberPreference(key = EnableBiniLyricsKey, defaultValue = true)
     val (enablePaxsenixAppleMusic, onEnablePaxsenixAppleMusicChange) = rememberPreference(key = EnablePaxsenixAppleMusicKey, defaultValue = true)
     val (enableMusixmatch, onEnableMusixmatchChange) = rememberPreference(key = EnableMusixmatchKey, defaultValue = true)
     val (enablePaxsenixQQMusic, onEnablePaxsenixQQMusicChange) = rememberPreference(key = EnablePaxsenixQQMusicKey, defaultValue = true)
@@ -165,6 +167,7 @@ fun ContentSettings(
     val providerDisplayNames =
         mapOf(
             "BetterLyrics" to "Better Lyrics",
+            "BiniLyrics" to "BiniLyrics",
             "PaxsenixAppleMusic" to "Apple Music",
             "Musixmatch" to "Musixmatch",
             "PaxsenixQQMusic" to "QQ Music",
@@ -469,6 +472,35 @@ fun ContentSettings(
                         Column(
                             modifier = Modifier.weight(1f)
                         ) {
+                            Text(stringResource(R.string.enable_bini_lyrics))
+                            Text(
+                                text = stringResource(R.string.enable_bini_lyrics_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = enableBiniLyrics,
+                            onCheckedChange = onEnableBiniLyricsChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (enableBiniLyrics) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
                             Text(stringResource(R.string.enable_paxsenix_apple_music))
                             Text(
                                 text = stringResource(R.string.enable_paxsenix_apple_music_desc),
@@ -700,6 +732,7 @@ fun ContentSettings(
             "LrcLib".takeIf { enableLrclib },
             "KuGou".takeIf { enableKugou },
             "BetterLyrics".takeIf { enableBetterLyrics },
+            "BiniLyrics".takeIf { enableBiniLyrics },
             "PaxsenixAppleMusic".takeIf { enablePaxsenixAppleMusic },
             "Musixmatch".takeIf { enableMusixmatch },
             "PaxsenixQQMusic".takeIf { enablePaxsenixQQMusic },
@@ -709,7 +742,7 @@ fun ContentSettings(
         val lyricsIcon = painterResource(R.drawable.lyrics)
         val draggableItems = remember { mutableStateListOf<DraggableLyricsProviderItem>() }
 
-        LaunchedEffect(normalizedOrder, enableLrclib, enableKugou, enableBetterLyrics, enablePaxsenixAppleMusic, enableMusixmatch, enablePaxsenixQQMusic, enableLyricsPlus, enableSpotifyLyrics) {
+        LaunchedEffect(normalizedOrder, enableLrclib, enableKugou, enableBetterLyrics, enableBiniLyrics, enablePaxsenixAppleMusic, enableMusixmatch, enablePaxsenixQQMusic, enableLyricsPlus, enableSpotifyLyrics) {
             val orderedEnabledProviders = normalizedOrder.filter { it in enabledProviders }
             draggableItems.clear()
             draggableItems.addAll(
