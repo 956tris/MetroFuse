@@ -6176,13 +6176,21 @@ class MusicService :
         fun providerMediaId(provider: AudioProviderOrderItem): String =
             if (isForcedProvider(provider)) providerOverride?.providerMediaId().orEmpty().ifBlank { mediaId } else mediaId
 
+        // A YouTube Music attempt is worthwhile either when mediaId is already a
+        // real YouTube video id, or when we have enough metadata (title, at
+        // minimum) to search YouTube Music for a match — e.g. a Spotify-origin
+        // track (`spotify:track:...`) being played through the YT Music fallback.
+        // Without this, non-YouTube mediaIds (Spotify, Apple, etc.) never reach
+        // resolveYouTubeFallback's search-based resolution at all.
+        val youtubeSearchableTitle = song?.song?.title ?: queuedMetadata?.title
         fun canAttemptOrderedProvider(provider: AudioProviderOrderItem): Boolean =
             if (directTidalUsesDeezerStreams && provider != AudioProviderOrderItem.DEEZER) {
                 false
             } else {
                 when (provider) {
                     AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
-                    AudioProviderOrderItem.YOUTUBE_MUSIC -> mediaId.isYouTubeVideoId()
+                    AudioProviderOrderItem.YOUTUBE_MUSIC ->
+                        mediaId.isYouTubeVideoId() || !youtubeSearchableTitle.isNullOrBlank()
                     else -> true
                 }
             }
@@ -6451,7 +6459,7 @@ class MusicService :
 
         if (
             !attemptedProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC) &&
-            mediaId.isYouTubeVideoId()
+            (mediaId.isYouTubeVideoId() || !youtubeSearchableTitle.isNullOrBlank())
         ) {
             youtubeAttempt = runCatching {
                 resolveYouTubeFallback(mediaId, song = song, queuedMetadata = queuedMetadata)
@@ -6574,8 +6582,14 @@ class MusicService :
     ): PlaybackStreamResolution {
         val title = song?.song?.title ?: queuedMetadata?.title
         val artist = song?.orderedArtists?.firstOrNull()?.name ?: queuedMetadata?.artists?.firstOrNull()?.name
+        val durationSeconds = song?.song?.duration?.takeIf { it > 0 }
+            ?: queuedMetadata?.duration?.takeIf { it > 0 }
         val fallbackQuery = if (!title.isNullOrBlank()) {
-            YouTubeAudioProvider.TrackQuery(title = title, artist = artist.orEmpty())
+            YouTubeAudioProvider.TrackQuery(
+                title = title,
+                artist = artist.orEmpty(),
+                durationSeconds = durationSeconds,
+            )
         } else {
             null
         }

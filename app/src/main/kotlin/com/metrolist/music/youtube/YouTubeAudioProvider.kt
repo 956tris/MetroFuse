@@ -130,7 +130,12 @@ object YouTubeAudioProvider {
      * hitting "share" on a track and searching
      * `music.youtube.com/search?q=<title>+<artist>`.
      */
-    data class TrackQuery(val title: String, val artist: String)
+    data class TrackQuery(
+        val title: String,
+        val artist: String,
+        /** Expected track length in seconds, when known, used to disambiguate search results. */
+        val durationSeconds: Int? = null,
+    )
 
     /** A real YouTube video ID is always exactly 11 chars of this charset. */
     private val YOUTUBE_VIDEO_ID_REGEX = Regex("^[A-Za-z0-9_-]{11}$")
@@ -160,9 +165,12 @@ object YouTubeAudioProvider {
     }
 
     /**
-     * Searches YouTube Music for [query] and returns the top song result's
-     * real video ID — the same mechanism as manually sharing a track and
-     * pasting `https://music.youtube.com/search?q=<title>+<artist>`.
+     * Searches YouTube Music for [query] and returns the best-matching song
+     * result's real video ID — the same mechanism as manually sharing a
+     * track and pasting `https://music.youtube.com/search?q=<title>+<artist>`,
+     * except results are scored against the requested title/artist/duration
+     * rather than blindly taking whatever YT Music ranks first (which can be
+     * a cover, remix, or same-titled track by a different artist).
      */
     private suspend fun resolveViaSearch(query: TrackQuery): String {
         val searchQuery = listOf(query.title, query.artist)
@@ -179,12 +187,87 @@ object YouTubeAudioProvider {
             )
         }
 
-        val topSong = result.items.filterIsInstance<SongItem>().firstOrNull()
-            ?: throw YouTubeAudioResolutionException("No YouTube Music results for \"$searchQuery\"")
+        val candidates = result.items.filterIsInstance<SongItem>()
+        if (candidates.isEmpty()) {
+            throw YouTubeAudioResolutionException("No YouTube Music results for \"$searchQuery\"")
+        }
 
-        Timber.tag(TAG).i("Resolved \"$searchQuery\" -> YouTube video ${topSong.id} (${topSong.title})")
-        return topSong.id
+        val ranked = candidates
+            .map { it to matchScore(it, query) }
+            .sortedByDescending { it.second }
+
+        val (best, bestScore) = ranked.first()
+        if (bestScore < MIN_CONFIDENT_MATCH_SCORE) {
+            Timber.tag(TAG).w(
+                "Low-confidence YouTube match for \"$searchQuery\": ${best.title} by " +
+                    "${best.artists.joinToString { it.name }} (score=$bestScore) — using it anyway, no better candidate",
+            )
+        }
+
+        Timber.tag(TAG).i(
+            "Resolved \"$searchQuery\" -> YouTube video ${best.id} (${best.title}) score=$bestScore",
+        )
+        return best.id
     }
+
+    /** Below this score, no candidate confidently matches; we still use the top-ranked one but log a warning. */
+    private const val MIN_CONFIDENT_MATCH_SCORE = 15
+
+    /**
+     * Scores how well [candidate] matches [query]. Higher is better. Combines
+     * normalized title similarity, artist-name overlap, and duration
+     * proximity (when both sides know the duration) so that, e.g., a 7-minute
+     * extended remix doesn't win over the correct 3-minute studio version
+     * just because it ranked first in YT Music's search results.
+     */
+    private fun matchScore(candidate: SongItem, query: TrackQuery): Int {
+        var score = 0
+
+        val candidateTitle = normalizeForMatch(candidate.title)
+        val queryTitle = normalizeForMatch(query.title)
+        score += when {
+            queryTitle.isBlank() -> 0
+            candidateTitle == queryTitle -> 50
+            candidateTitle.contains(queryTitle) || queryTitle.contains(candidateTitle) -> 30
+            else -> 0
+        }
+
+        if (query.artist.isNotBlank()) {
+            val queryArtist = normalizeForMatch(query.artist)
+            val artistMatches = candidate.artists.any { artist ->
+                val candidateArtist = normalizeForMatch(artist.name)
+                candidateArtist.isNotBlank() &&
+                    (candidateArtist.contains(queryArtist) || queryArtist.contains(candidateArtist))
+            }
+            score += if (artistMatches) 35 else -20
+        }
+
+        query.durationSeconds?.takeIf { it > 0 }?.let { expected ->
+            candidate.duration?.takeIf { it > 0 }?.let { actual ->
+                val diffSeconds = kotlin.math.abs(expected - actual)
+                score += when {
+                    diffSeconds <= 3 -> 20
+                    diffSeconds <= 8 -> 10
+                    diffSeconds <= 20 -> 0
+                    else -> -25 // likely a remix/extended/edit/live version, not the same track
+                }
+            }
+        }
+
+        // OMV/UGC video results are more likely to be a different cut (live, extended
+        // intro) than the plain audio-only upload, so nudge them down slightly.
+        if (candidate.isVideoSong) score -= 5
+
+        return score
+    }
+
+    /** Lowercases and strips things like "(Official Video)", "[Lyrics]", "feat. X" and punctuation. */
+    private fun normalizeForMatch(input: String): String =
+        input.lowercase()
+            .replace(Regex("""\(.*?\)|\[.*?\]"""), " ")
+            .replace(Regex("""\bfeat\.?\b|\bft\.?\b"""), " ")
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .trim()
 
     private suspend fun resolveVideoId(videoId: String, now: Long, cacheKey: String): Resolved {
         var extractorFailure: Throwable? = null
