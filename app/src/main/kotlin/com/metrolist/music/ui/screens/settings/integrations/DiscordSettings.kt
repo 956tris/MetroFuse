@@ -74,6 +74,8 @@ import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.constants.DiscordAccessTokenKey
+import com.metrolist.music.constants.DiscordRefreshTokenKey
+import com.metrolist.music.constants.DiscordTokenExpiresAtKey
 import com.metrolist.music.constants.DiscordActivityNameKey
 import com.metrolist.music.constants.DiscordActivityTypeKey
 import com.metrolist.music.constants.DiscordAdvancedModeKey
@@ -134,6 +136,8 @@ fun DiscordSettings(
 
     // Preferences
     var discordAccessToken by rememberPreference(DiscordAccessTokenKey, "")
+    var discordRefreshToken by rememberPreference(DiscordRefreshTokenKey, "")
+    var discordTokenExpiresAt by rememberPreference(DiscordTokenExpiresAtKey, 0L)
     var discordUsername by rememberPreference(DiscordUsernameKey, "")
     var discordName by rememberPreference(DiscordNameKey, "")
     var discordAvatar by rememberPreference(DiscordAvatarKey, "")
@@ -224,7 +228,7 @@ fun DiscordSettings(
             return@LaunchedEffect
         }
         if (!DiscordRpcManager.isReady()) {
-            DiscordRpcManager.reconnectWithToken(token)
+            DiscordRpcManager.reconnectWithToken(token, discordRefreshToken, discordTokenExpiresAt)
         }
         launch(Dispatchers.IO) {
             val user = DiscordRpcManager.fetchCurrentUser(token) ?: DiscordRpcManager.currentUserFromSdk()
@@ -550,6 +554,8 @@ fun DiscordSettings(
                     OutlinedButton(onClick = {
                         discordName = ""
                         discordAccessToken = ""
+                        discordRefreshToken = ""
+                        discordTokenExpiresAt = 0L
                         discordUsername = ""
                         discordAvatar = ""
                         coroutineScope.launch(Dispatchers.IO) {

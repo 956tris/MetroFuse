@@ -22,6 +22,12 @@ data class YouTubeClient(
     val useSignatureTimestamp: Boolean = false,
     val isEmbedded: Boolean = false,
     val useWebPoTokens: Boolean = false,
+    /**
+     * Browser clients can use the selected account's data-sync identifier in the Innertube
+     * context. Native clients authenticate their account through request headers/cookies and
+     * reject this web-only context field.
+     */
+    val sendDataSyncIdInContext: Boolean = true,
     val apiFormatVersion: String = "2",
 ) {
     fun toContext(locale: YouTubeLocale, visitorData: String?, dataSyncId: String?) = Context(
@@ -38,7 +44,7 @@ data class YouTubeClient(
             visitorData = visitorData
         ),
         user = Context.User(
-            onBehalfOfUser = if (loginSupported) dataSyncId else null
+            onBehalfOfUser = if (loginSupported && sendDataSyncIdInContext) dataSyncId else null
         ),
     )
 

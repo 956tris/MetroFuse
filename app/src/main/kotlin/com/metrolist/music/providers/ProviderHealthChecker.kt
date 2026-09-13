@@ -121,7 +121,7 @@ object ProviderHealthChecker {
                 detail = "Official SoundCloud API used for homepage and client ID",
             ),
             getTarget(
-                id = "soundcloud_api",
+                id = "soundcloud_track_search",
                 group = "SoundCloud",
                 name = "SoundCloud API",
                 endpoint = "https://api-v2.soundcloud.com/search/tracks?q=test&limit=1",

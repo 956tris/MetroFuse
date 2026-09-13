@@ -76,6 +76,19 @@
     <string name="experiments">Experiments</string>
     <string name="experiments_settings_desc">Try unfinished MetroFuse UI ideas behind opt-in toggles</string>
     <string name="experiments_player">Player experiments</string>
+    <string name="experiments_playback_reliability">Playback reliability experiments</string>
+    <string name="experimental_provider_playback_timeout">Limit provider playback attempts</string>
+    <string name="experimental_provider_playback_timeout_desc">Stops waiting for one provider after 20 seconds and continues to the next source in order.</string>
+    <string name="experimental_deezer_first">Prefer Deezer for automatic playback</string>
+    <string name="experimental_deezer_first_desc">Moves Deezer to the first automatic playback attempt without changing your saved provider order.</string>
+    <string name="experimental_confirm_before_skip">Ask before skipping after playback failure</string>
+    <string name="experimental_confirm_before_skip_desc">After recovery and all audio sources fail, stops and lets you retry or skip instead of advancing automatically.</string>
+    <string name="experimental_playback_diagnostics">Detailed playback diagnostics</string>
+    <string name="experimental_playback_diagnostics_desc">Writes provider attempt order, duration and result to Android logcat for troubleshooting.</string>
+    <string name="experimental_preserve_song_cache_on_quality_change">Prefer cached audio after a quality change</string>
+    <string name="experimental_preserve_song_cache_on_quality_change_desc">Keeps cached audio when the selected quality changes. Playback can use the cached quality instead of downloading the new one.</string>
+    <string name="youtube_music_history_sync_failed">YouTube Music did not confirm the history entry. Check that the account is still signed in and YouTube watch history is enabled.</string>
+    <string name="skip_next">Skip next</string>
     <string name="experimental_apple_music_cover_fade">Fade Apple Music cover into UI</string>
     <string name="experimental_apple_music_cover_fade_desc">Uses tall Apple Music motion art as a soft full-player backdrop when available. Experimental and off by default.</string>
     <string name="experimental_galaxy_blur_adaptive_artwork">Adaptive galaxy artwork transparency</string>
@@ -541,6 +554,18 @@
     <string name="check_for_updates">Automatically check for updates</string>
     <string name="update_notifications">Enable update notifications</string>
     <string name="update_available_title">Update available</string>
+    <string name="update_available_message">MetroFuse %1$s is available.</string>
+    <string name="update_now">Update</string>
+    <string name="not_now">Not now</string>
+    <string name="update_install">Install</string>
+    <string name="update_retry">Retry</string>
+    <string name="update_download_progress">%1$s of %2$s</string>
+    <string name="update_download_stats">%1$s/s • elapsed %2$s • remaining %3$s</string>
+    <string name="update_size_unknown">unknown size</string>
+    <string name="update_download_failed">The update could not be downloaded. Check your connection and try again.</string>
+    <string name="update_install_failed">The Android installer could not be opened.</string>
+    <string name="update_install_permission_required">Allow MetroFuse to install unknown apps, then tap Install again.</string>
+    <string name="update_apk_not_found">No compatible APK was found in this release.</string>
     <string name="update_channel_name">App updates</string>
     <string name="update_channel_desc">Notifications about new app versions</string>
 
@@ -838,7 +863,7 @@
     <string name="wrapped_ready_title">YOUR WRAPPED IS READY!</string>
     <string name="wrapped_ready_subtitle">Time to see what you loved all this year…</string>
     <string name="wrapped_thank_you">Thank you for listening!</string>
-    <string name="wrapped_special_thanks">Special thanks to MO Agamy for creating MetroFuse</string>
+    <string name="wrapped_special_thanks">Special thanks to MO Agamy for creating the original MetroFuse</string>
     <string name="wrapped_close">Close Wrapped</string>
     <string name="wrapped_playlist_title">Your %s Wrapped</string>
     <string name="wrapped_create_playlist">Create playlist</string>
@@ -1315,6 +1340,15 @@
 
     <!-- Player and Audio Settings -->
     <string name="audio_quality_very_high">Highest possible</string>
+    <string name="next_track_preload">Preload next tracks</string>
+    <string name="next_track_preload_desc">Stores part of the upcoming tracks in the cache ahead of time to reduce the delay between tracks.</string>
+    <string name="next_track_preload_disabled">Disabled</string>
+    <string name="android_auto_synced_lyrics">Show synchronized lyrics</string>
+    <string name="android_auto_synced_lyrics_desc">Send synchronized lyrics as adaptive player subtitles while Android Auto is connected.</string>
+    <plurals name="next_track_preload_count">
+        <item quantity="one">%d track</item>
+        <item quantity="other">%d tracks</item>
+    </plurals>
     <string name="autoplay">Autoplay</string>
     <string name="autoplay_desc">Automatically play the next song when the current one ends</string>
     <string name="apple_music_fallback">Apple Music fallback</string>

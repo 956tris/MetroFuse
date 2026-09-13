@@ -47,6 +47,9 @@ import com.metrolist.music.constants.ExperimentalLiveWallpaperKey
 import com.metrolist.music.constants.ExperimentalGalaxyBlurAdaptiveArtworkKey
 import com.metrolist.music.constants.ExperimentalGalaxyBlurMirroredColorsKey
 import com.metrolist.music.constants.ExperimentalSmoothInlineLyricsKey
+import com.metrolist.music.constants.ExperimentalDeezerFirstKey
+import com.metrolist.music.constants.ExperimentalPlaybackDiagnosticsKey
+import com.metrolist.music.constants.ExperimentalPreserveSongCacheOnQualityChangeKey
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
@@ -87,6 +90,18 @@ fun ExperimentsSettings(
     val (liveWallpaper, onLiveWallpaperChange) = rememberPreference(
         key = ExperimentalLiveWallpaperKey,
         defaultValue = false,
+    )
+    val (deezerFirst, onDeezerFirstChange) = rememberPreference(
+        key = ExperimentalDeezerFirstKey,
+        defaultValue = false,
+    )
+    val (playbackDiagnostics, onPlaybackDiagnosticsChange) = rememberPreference(
+        key = ExperimentalPlaybackDiagnosticsKey,
+        defaultValue = false,
+    )
+    val (preserveSongCacheOnQualityChange, onPreserveSongCacheOnQualityChange) = rememberPreference(
+        key = ExperimentalPreserveSongCacheOnQualityChangeKey,
+        defaultValue = true,
     )
     var showAppleMusicLyricsSizeDialog by rememberSaveable { mutableStateOf(false) }
 
@@ -265,6 +280,33 @@ fun ExperimentsSettings(
             ),
         )
 
+        Material3SettingsGroup(
+            title = stringResource(R.string.experiments_playback_reliability),
+            items = listOfNotNull(
+                experimentalSwitchItem(
+                    icon = R.drawable.music_note,
+                    title = stringResource(R.string.experimental_deezer_first),
+                    description = stringResource(R.string.experimental_deezer_first_desc),
+                    checked = deezerFirst,
+                    onCheckedChange = onDeezerFirstChange,
+                ),
+                experimentalSwitchItem(
+                    icon = R.drawable.bug_report,
+                    title = stringResource(R.string.experimental_playback_diagnostics),
+                    description = stringResource(R.string.experimental_playback_diagnostics_desc),
+                    checked = playbackDiagnostics,
+                    onCheckedChange = onPlaybackDiagnosticsChange,
+                ),
+                experimentalSwitchItem(
+                    icon = R.drawable.cached,
+                    title = stringResource(R.string.experimental_preserve_song_cache_on_quality_change),
+                    description = stringResource(R.string.experimental_preserve_song_cache_on_quality_change_desc),
+                    checked = preserveSongCacheOnQualityChange,
+                    onCheckedChange = onPreserveSongCacheOnQualityChange,
+                ),
+            ),
+        )
+
         Spacer(modifier = Modifier.height(16.dp))
     }
 
@@ -348,3 +390,31 @@ fun ExperimentsSettings(
         }
     }
 }
+
+@Composable
+private fun experimentalSwitchItem(
+    icon: Int,
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+): Material3SettingsItem =
+    Material3SettingsItem(
+        icon = painterResource(icon),
+        title = { Text(title) },
+        description = { Text(description) },
+        trailingContent = {
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                thumbContent = {
+                    Icon(
+                        painter = painterResource(if (checked) R.drawable.check else R.drawable.close),
+                        contentDescription = null,
+                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                    )
+                },
+            )
+        },
+        onClick = { onCheckedChange(!checked) },
+    )

@@ -24,14 +24,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -54,6 +51,8 @@ import com.metrolist.music.constants.AutoSkipNextOnErrorKey
 import com.metrolist.music.constants.AutoplayKey
 import com.metrolist.music.constants.DisableLoadMoreWhenRepeatAllKey
 import com.metrolist.music.constants.EnableGoogleCastKey
+import com.metrolist.music.constants.ExperimentalConfirmBeforeSkipKey
+import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
 import com.metrolist.music.constants.HistoryDuration
 import com.metrolist.music.constants.KeepScreenOn
 import com.metrolist.music.constants.LoudnessLevel
@@ -61,6 +60,7 @@ import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.constants.MetroMixEnabledKey
 import com.metrolist.music.constants.MetroMixPreset
 import com.metrolist.music.constants.MetroMixPresetKey
+import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
@@ -75,7 +75,6 @@ import com.metrolist.music.constants.SkipSilenceKey
 import com.metrolist.music.constants.StopMusicOnTaskClearKey
 import com.metrolist.music.constants.StopOnProviderErrorKey
 import com.metrolist.music.constants.VarispeedKey
-import com.metrolist.music.constants.YtDlpUseNightlyChannelKey
 import com.metrolist.music.ui.component.DefaultDialog
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
@@ -86,10 +85,8 @@ import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
-import com.metrolist.music.youtube.YtDlpUpdater
 import java.util.Locale
 import kotlin.math.roundToInt
-import kotlinx.coroutines.launch
 import com.metrolist.music.ui.component.SleepTimerDialog
 import com.metrolist.music.constants.SleepTimerEnabledKey
 import com.metrolist.music.constants.SleepTimerRepeatKey
@@ -118,6 +115,14 @@ fun PlayerSettings(
         StopOnProviderErrorKey,
         defaultValue = false
     )
+    val (providerPlaybackTimeout, onProviderPlaybackTimeoutChange) = rememberPreference(
+        ExperimentalProviderPlaybackTimeoutKey,
+        defaultValue = false,
+    )
+    val (confirmBeforeSkip, onConfirmBeforeSkipChange) = rememberPreference(
+        ExperimentalConfirmBeforeSkipKey,
+        defaultValue = true,
+    )
     val (crossfadeEnabled, onCrossfadeEnabledChange) = rememberPreference(
         CrossfadeEnabledKey,
         defaultValue = false
@@ -129,6 +134,10 @@ fun PlayerSettings(
     val (crossfadeGapless, onCrossfadeGaplessChange) = rememberPreference(
         CrossfadeGaplessKey,
         defaultValue = true
+    )
+    val (nextTrackPreloadCount, onNextTrackPreloadCountChange) = rememberPreference(
+        NextTrackPreloadCountKey,
+        defaultValue = 3
     )
     val (metroMixEnabled, onMetroMixEnabledChange) = rememberPreference(
         MetroMixEnabledKey,
@@ -240,20 +249,6 @@ fun PlayerSettings(
         HistoryDuration,
         defaultValue = 30f
     )
-
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    var ytDlpStatusText by remember { mutableStateOf<String?>(null) }
-    var ytDlpChecking by remember { mutableStateOf(false) }
-    val (ytDlpUseNightly, onYtDlpUseNightlyChange) = rememberPreference(
-        YtDlpUseNightlyChannelKey,
-        defaultValue = false
-    )
-
-    LaunchedEffect(Unit) {
-        val installed = YtDlpUpdater.installedVersion()
-        ytDlpStatusText = installed?.let { "yt-dlp $it installed" } ?: "yt-dlp version unknown"
-    }
 
     var showAudioQualityDialog by remember {
         mutableStateOf(false)
@@ -407,57 +402,17 @@ fun PlayerSettings(
                     onClick = { onStopOnProviderErrorChange(!stopOnProviderError) }
                 ))
                 add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.bug_report),
-                    title = { Text("YT-DLP Status") },
-                    description = {
-                        Text(
-                            when {
-                                ytDlpChecking -> "Checking for updates\u2026"
-                                ytDlpStatusText != null -> ytDlpStatusText!!
-                                else -> "Checking installed version\u2026"
-                            }
-                        )
-                    },
-                    enabled = !ytDlpChecking,
-                    onClick = {
-                        if (!ytDlpChecking) {
-                            ytDlpChecking = true
-                            val channel = if (ytDlpUseNightly) {
-                                YtDlpUpdater.Channel.NIGHTLY
-                            } else {
-                                YtDlpUpdater.Channel.STABLE
-                            }
-                            coroutineScope.launch {
-                                ytDlpStatusText = when (val result = YtDlpUpdater.manualUpdateCheck(context, channel)) {
-                                    is YtDlpUpdater.ManualUpdateResult.Updated ->
-                                        "Updated to yt-dlp ${result.version}"
-                                    is YtDlpUpdater.ManualUpdateResult.AlreadyUpToDate ->
-                                        "Up to date (yt-dlp ${result.version})"
-                                    is YtDlpUpdater.ManualUpdateResult.CooldownActive -> {
-                                        val hoursLeft = (result.remainingMs / (60 * 60 * 1000L) + 1)
-                                            .coerceAtLeast(1)
-                                        "Already checked recently \u2014 try again in ~${hoursLeft}h"
-                                    }
-                                    is YtDlpUpdater.ManualUpdateResult.Failed ->
-                                        "Update check failed: ${result.message}"
-                                }
-                                ytDlpChecking = false
-                            }
-                        }
-                    }
-                ))
-                add(Material3SettingsItem(
-                    icon = painterResource(R.drawable.bug_report),
-                    title = { Text("YT-DLP Nightly Channel") },
-                    description = { Text("Use pre-release yt-dlp builds \u2014 useful if stable breaks after a YouTube change") },
+                    icon = painterResource(R.drawable.timer),
+                    title = { Text(stringResource(R.string.experimental_provider_playback_timeout)) },
+                    description = { Text(stringResource(R.string.experimental_provider_playback_timeout_desc)) },
                     trailingContent = {
                         Switch(
-                            checked = ytDlpUseNightly,
-                            onCheckedChange = onYtDlpUseNightlyChange,
+                            checked = providerPlaybackTimeout,
+                            onCheckedChange = onProviderPlaybackTimeoutChange,
                             thumbContent = {
                                 Icon(
                                     painter = painterResource(
-                                        id = if (ytDlpUseNightly) R.drawable.check else R.drawable.close
+                                        id = if (providerPlaybackTimeout) R.drawable.check else R.drawable.close
                                     ),
                                     contentDescription = null,
                                     modifier = Modifier.size(SwitchDefaults.IconSize)
@@ -465,7 +420,56 @@ fun PlayerSettings(
                             }
                         )
                     },
-                    onClick = { onYtDlpUseNightlyChange(!ytDlpUseNightly) }
+                    onClick = { onProviderPlaybackTimeoutChange(!providerPlaybackTimeout) }
+                ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.error),
+                    title = { Text(stringResource(R.string.experimental_confirm_before_skip)) },
+                    description = { Text(stringResource(R.string.experimental_confirm_before_skip_desc)) },
+                    trailingContent = {
+                        Switch(
+                            checked = confirmBeforeSkip,
+                            onCheckedChange = onConfirmBeforeSkipChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (confirmBeforeSkip) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onConfirmBeforeSkipChange(!confirmBeforeSkip) }
+                ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.cached),
+                    title = { Text(stringResource(R.string.next_track_preload)) },
+                    description = {
+                        Column {
+                            Text(stringResource(R.string.next_track_preload_desc))
+                            Text(
+                                if (nextTrackPreloadCount == 0) {
+                                    stringResource(R.string.next_track_preload_disabled)
+                                } else {
+                                    pluralStringResource(
+                                        R.plurals.next_track_preload_count,
+                                        nextTrackPreloadCount,
+                                        nextTrackPreloadCount,
+                                    )
+                                }
+                            )
+                            Slider(
+                                value = nextTrackPreloadCount.toFloat(),
+                                onValueChange = {
+                                    onNextTrackPreloadCountChange(it.roundToInt().coerceIn(0, 10))
+                                },
+                                valueRange = 0f..10f,
+                                steps = 9,
+                            )
+                        }
+                    },
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.shuffle),

@@ -54,6 +54,14 @@ class InnerTube {
         }
     private var cookieMap = emptyMap<String, String>()
 
+    val hasBrowserAuthentication: Boolean
+        get() = authenticationSapisid() != null
+
+    private fun authenticationSapisid(): String? =
+        cookieMap["__Secure-3PAPISID"]
+            ?: cookieMap["SAPISID"]
+            ?: cookieMap["__Secure-1PAPISID"]
+
     var proxy: Proxy? = null
         set(value) {
             field = value
@@ -165,9 +173,9 @@ class InnerTube {
             if (setLogin && client.loginSupported) {
                 cookie?.let { cookie ->
                     append("cookie", cookie)
-                    if ("SAPISID" !in cookieMap) return@let
+                    val sapisid = authenticationSapisid() ?: return@let
                     val currentTime = System.currentTimeMillis() / 1000
-                    val sapisidHash = sha1("$currentTime ${cookieMap["SAPISID"]} ${YouTubeClient.ORIGIN_YOUTUBE_MUSIC}")
+                    val sapisidHash = sha1("$currentTime $sapisid ${YouTubeClient.ORIGIN_YOUTUBE_MUSIC}")
                     append("Authorization", "SAPISIDHASH ${currentTime}_${sapisidHash}")
                 }
             }
@@ -313,12 +321,45 @@ class InnerTube {
         url: String,
         cpn: String,
         playlistId: String?,
+        customParameters: Map<String, String> = emptyMap(),
         client: YouTubeClient = YouTubeClient.WEB_REMIX,
     ) = withRetry {
         httpClient.get(url) {
             ytClient(client, true)
-            parameter("ver", "2")
-            parameter("c", client.clientName)
+            val now = System.currentTimeMillis().toString()
+            header("X-Goog-Event-Time", now)
+            header("X-Goog-Request-Time", now)
+            val requiredParameters =
+                mapOf(
+                    "ver" to "2",
+                    "c" to client.clientName,
+                    "cpn" to cpn,
+                ) + customParameters
+            requiredParameters.forEach { (key, value) ->
+                this.url.parameters.remove(key)
+                this.url.parameters.append(key, value)
+            }
+
+            if (playlistId != null) {
+                this.url.parameters.remove("list")
+                this.url.parameters.append("list", playlistId)
+                this.url.parameters.remove("referrer")
+                this.url.parameters.append("referrer", "https://music.youtube.com/playlist?list=$playlistId")
+            }
+        }
+    }
+
+    suspend fun registerPlaybackAttribution(
+        url: String,
+        cpn: String,
+        playlistId: String?,
+        client: YouTubeClient = YouTubeClient.WEB_REMIX,
+    ) = withRetry {
+        httpClient.post(url) {
+            ytClient(client, true)
+            val now = System.currentTimeMillis().toString()
+            header("X-Goog-Event-Time", now)
+            header("X-Goog-Request-Time", now)
             parameter("cpn", cpn)
 
             if (playlistId != null) {

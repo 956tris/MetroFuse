@@ -6,6 +6,8 @@
 package com.metrolist.music.providers
 
 import android.content.Context
+import com.metrolist.innertube.YouTube
+import com.metrolist.innertube.models.SongItem
 import com.metrolist.music.constants.AmazonAudioQualityKey
 import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.AudioProviderOrder
@@ -37,11 +39,26 @@ import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.utils.spotify.SpotifyCanvasClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 object ProviderMatchSearch {
+    private const val SEARCH_TIMEOUT_MS = 8_000L
+    private const val CACHE_TTL_MS = 90_000L
+
+    private data class CachedSearch(
+        val createdAtMs: Long,
+        val candidates: List<ProviderMatchCandidate>,
+    )
+
+    private val cache = ConcurrentHashMap<String, CachedSearch>()
+
     suspend fun search(
         context: Context,
         metadata: MediaMetadata,
@@ -49,17 +66,52 @@ object ProviderMatchSearch {
     ): List<ProviderMatchCandidate> =
         withContext(Dispatchers.IO) {
             val order = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
-            val candidates = mutableListOf<ProviderMatchCandidate>()
             val spotifyIsrc = resolveSpotifyIsrc(context, metadata)
-
-            order.forEach { provider ->
-                runCatching {
-                    candidates += searchProviderInternal(context, metadata, provider, perProviderLimit, spotifyIsrc)
-                }
-            }
-            candidates
-                .distinctBy { "${it.provider.name}:${it.providerTrackId}" }
+            searchFast(
+                context = context,
+                metadata = metadata,
+                order = order,
+                perProviderLimit = perProviderLimit,
+                spotifyIsrc = spotifyIsrc,
+            )
         }
+
+    private suspend fun searchFast(
+        context: Context,
+        metadata: MediaMetadata,
+        order: List<AudioProviderOrderItem>,
+        perProviderLimit: Int,
+        spotifyIsrc: String?,
+    ): List<ProviderMatchCandidate> {
+        val cacheKey = listOf(
+            metadata.id,
+            metadata.title,
+            metadata.artists.joinToString { it.name },
+            metadata.album?.title.orEmpty(),
+            metadata.duration,
+            order.joinToString(),
+            perProviderLimit,
+        ).joinToString("|")
+        val now = System.currentTimeMillis()
+        cache[cacheKey]
+            ?.takeIf { now - it.createdAtMs < CACHE_TTL_MS }
+            ?.let { return it.candidates }
+
+        val candidates = coroutineScope {
+            order.map { provider ->
+                async(Dispatchers.IO) {
+                    withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                        runCatching {
+                            searchProviderInternal(context, metadata, provider, perProviderLimit, spotifyIsrc)
+                        }.getOrDefault(emptyList())
+                    }.orEmpty()
+                }
+            }.awaitAll().flatten()
+        }.distinctBy { "${it.provider.name}:${it.providerTrackId}" }
+
+        cache[cacheKey] = CachedSearch(now, candidates)
+        return candidates
+    }
 
     suspend fun searchProvider(
         context: Context,
@@ -144,17 +196,24 @@ object ProviderMatchSearch {
                 }
             }
             AudioProviderOrderItem.YOUTUBE_MUSIC ->
-                listOf(
-                    ProviderMatchCandidate(
-                        provider = provider,
-                        providerTrackId = metadata.id,
-                        title = metadata.title,
-                        artist = metadata.artists.joinToString(", ") { it.name },
-                        album = metadata.album?.title,
-                        durationMs = metadata.duration.takeIf { it > 0 }?.toLong()?.times(1000L),
-                        shareUrl = "https://music.youtube.com/watch?v=${metadata.id}",
-                    ),
-                )
+                YouTube.search(
+                    query = metadata.searchTerm(),
+                    filter = YouTube.SearchFilter.FILTER_SONG,
+                ).getOrThrow()
+                    .items
+                    .filterIsInstance<SongItem>()
+                    .take(limit)
+                    .map { track ->
+                        ProviderMatchCandidate(
+                            provider = provider,
+                            providerTrackId = track.id,
+                            title = track.title,
+                            artist = track.artists.joinToString(", ") { it.name },
+                            album = track.album?.name,
+                            durationMs = track.duration?.toLong()?.times(1000L),
+                            shareUrl = track.shareLink,
+                        )
+                    }
             AudioProviderOrderItem.QOBUZ -> {
                 val backend = context.dataStore.get(QobuzBackendKey).toEnum<QobuzBackend>(QobuzBackend.KENNY)
                 val country = context.dataStore.get(QobuzCountryKey, "US")
