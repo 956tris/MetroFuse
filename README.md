@@ -14,7 +14,7 @@
 [![Android](https://img.shields.io/badge/platform-Android-3DDC84?style=for-the-badge&logo=android&logoColor=white&labelColor=0d1117)](#download)
 [![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=0d1117)](https://discord.gg/ddHxkVDgt3) join ts 💔
 <br/>
-
+telegram yes I can't be bothered for fancy stuff for this https://t.me/+gf0gsJE_xHEwNWI0
 [**Download**](#download) - [**Features**](#features) - [**Screenshots**](#screenshots) - [**Credits**](#credits) - [**Disclaimer**](#disclaimer)
 
 </div>
