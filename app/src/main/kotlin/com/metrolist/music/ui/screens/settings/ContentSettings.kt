@@ -68,6 +68,7 @@ import com.metrolist.music.constants.EnablePaxsenixAppleMusicKey
 import com.metrolist.music.constants.EnableMusixmatchKey
 import com.metrolist.music.constants.EnablePaxsenixQQMusicKey
 import com.metrolist.music.constants.EnableLyricsPlus
+import com.metrolist.music.constants.EnableDeezerLyricsKey
 import com.metrolist.music.constants.EnableSpotifyLyricsKey
 import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
@@ -134,6 +135,7 @@ fun ContentSettings(
     val (enablePaxsenixQQMusic, onEnablePaxsenixQQMusicChange) = rememberPreference(key = EnablePaxsenixQQMusicKey, defaultValue = true)
     val (enableLyricsPlus, onEnableLyricsPlusChange) = rememberPreference(key = EnableLyricsPlus, defaultValue = true)
     val (enableSpotifyLyrics, onEnableSpotifyLyricsChange) = rememberPreference(key = EnableSpotifyLyricsKey, defaultValue = true)
+    val (enableDeezerLyrics, onEnableDeezerLyricsChange) = rememberPreference(key = EnableDeezerLyricsKey, defaultValue = true)
     val (lyricsProviderOrder, onLyricsProviderOrderChange) = rememberPreference(
         key = LyricsProviderOrderKey,
         defaultValue = LyricsProviderRegistry.serializeProviderOrder(LyricsProviderRegistry.getDefaultProviderOrder())
@@ -175,6 +177,7 @@ fun ContentSettings(
             "KuGou" to "KuGou",
             "LyricsPlus" to "LyricsPlus",
             "Spotify" to "Spotify",
+            "Deezer" to "Deezer",
             "YouTubeSubtitle" to "YouTube Subtitles",
             "YouTube" to "YouTube",
         )
@@ -638,6 +641,35 @@ fun ContentSettings(
                             }
                         )
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(stringResource(R.string.enable_deezer_lyrics))
+                            Text(
+                                text = stringResource(R.string.enable_deezer_lyrics_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = enableDeezerLyrics,
+                            onCheckedChange = onEnableDeezerLyricsChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (enableDeezerLyrics) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    }
                     Column(modifier = Modifier.padding(2.dp)) {
                         Text(
                             text = stringResource(R.string.youtube_music_lyrics_note),
@@ -738,11 +770,12 @@ fun ContentSettings(
             "PaxsenixQQMusic".takeIf { enablePaxsenixQQMusic },
             "LyricsPlus".takeIf { enableLyricsPlus },
             "Spotify".takeIf { enableSpotifyLyrics },
+            "Deezer".takeIf { enableDeezerLyrics },
         ).filterNotNull().toSet()
         val lyricsIcon = painterResource(R.drawable.lyrics)
         val draggableItems = remember { mutableStateListOf<DraggableLyricsProviderItem>() }
 
-        LaunchedEffect(normalizedOrder, enableLrclib, enableKugou, enableBetterLyrics, enableBiniLyrics, enablePaxsenixAppleMusic, enableMusixmatch, enablePaxsenixQQMusic, enableLyricsPlus, enableSpotifyLyrics) {
+        LaunchedEffect(normalizedOrder, enableLrclib, enableKugou, enableBetterLyrics, enableBiniLyrics, enablePaxsenixAppleMusic, enableMusixmatch, enablePaxsenixQQMusic, enableLyricsPlus, enableSpotifyLyrics, enableDeezerLyrics) {
             val orderedEnabledProviders = normalizedOrder.filter { it in enabledProviders }
             draggableItems.clear()
             draggableItems.addAll(
@@ -1086,12 +1119,12 @@ fun ContentSettings(
                     description = { Text(stringResource(R.string.show_most_stats_playlists_desc)) },
                     trailingContent = {
                         Switch(
-                            checked = showMostStatsPlaylists,
-                            onCheckedChange = onShowMostStatsPlaylistsChange,
+                            checked = enableSpotifyLyrics,
+                            onCheckedChange = onEnableSpotifyLyricsChange,
                             thumbContent = {
                                 Icon(
                                     painter = painterResource(
-                                        id = if (showMostStatsPlaylists) R.drawable.check else R.drawable.close
+                                        id = if (enableSpotifyLyrics) R.drawable.check else R.drawable.close
                                     ),
                                     contentDescription = null,
                                     modifier = Modifier.size(SwitchDefaults.IconSize)

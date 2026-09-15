@@ -412,6 +412,10 @@ val MaxImageCacheSizeKey = intPreferencesKey("maxImageCacheSize")
 val MaxSongCacheSizeKey = intPreferencesKey("maxSongCacheSize")
 val EnableSongCacheKey = booleanPreferencesKey("enableSongCache")
 
+/** Requested square size (px) for YTM artwork URLs, 500..4000. YTM serves
+ * up to 4000x4000 and falls back to the highest available below that. */
+val ArtworkFetchQualityKey = intPreferencesKey("artworkFetchQuality")
+
 val PauseListenHistoryKey = booleanPreferencesKey("pauseListenHistory")
 val PauseSearchHistoryKey = booleanPreferencesKey("pauseSearchHistory")
 val DisableScreenshotKey = booleanPreferencesKey("disableScreenshot")

@@ -227,6 +227,7 @@ import com.metrolist.music.constants.SimilarContent
 import com.metrolist.music.constants.SkipSilenceInstantKey
 import com.metrolist.music.constants.SkipSilenceKey
 import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
+import com.metrolist.music.constants.ArtworkFetchQualityKey
 import com.metrolist.music.constants.ContentLanguageKey
 import com.metrolist.music.constants.JioSaavnAudioQuality
 import com.metrolist.music.constants.JioSaavnAudioQualityKey
@@ -6765,18 +6766,32 @@ class MusicService :
             return
         }
 
-        val tidalArtwork =
-            withTimeoutOrNull(2_750L) {
-                TidalHomeFeedProvider.resolveAlbumArtwork(
-                    title = metadata.title,
-                    artist = artist,
-                    album = metadata.album?.title,
-                    cookie = dataStore.get(TidalCookieKey, ""),
-                )
-            }?.takeIf { it.isNotBlank() }
-        val resolved =
-            tidalArtwork
-                ?: withTimeoutOrNull(2_750L) {
+        // Instant cover: the YTM thumbnail URL supports arbitrary =w sizes
+        // (up to 4000px, server falls back to the highest available), so
+        // show hi-res art synchronously instead of leaving the previous
+        // track's cover up through two sequential provider timeouts.
+        val fetchQuality = dataStore.get(ArtworkFetchQualityKey, 1200).coerceIn(500, 4000)
+        metadata.thumbnailUrl?.takeIf { it.isNotBlank() }?.let { thumb ->
+            if (currentMediaMetadata.value?.id == metadata.id) {
+                currentPreferredArtworkUrl.value = thumb.resize(fetchQuality, fetchQuality)
+            }
+        }
+
+        // Race both providers in parallel (2.75s wall, not 5.5s sequential)
+        // and upgrade to whichever hits first.
+        val resolved = coroutineScope {
+            val tidalDeferred = async {
+                withTimeoutOrNull(2_750L) {
+                    TidalHomeFeedProvider.resolveAlbumArtwork(
+                        title = metadata.title,
+                        artist = artist,
+                        album = metadata.album?.title,
+                        cookie = dataStore.get(TidalCookieKey, ""),
+                    )
+                }?.takeIf { it.isNotBlank() }
+            }
+            val deezerDeferred = async {
+                withTimeoutOrNull(2_750L) {
                     DeezerHomeFeedProvider.resolveAlbumArtwork(
                         title = metadata.title,
                         artist = artist,
@@ -6784,13 +6799,24 @@ class MusicService :
                         cookie = dataStore.get(DeezerCookieKey, ""),
                     )
                 }?.takeIf { it.isNotBlank() }
+            }
+            tidalDeferred.await() ?: deezerDeferred.await()
+        }
 
-        synchronized(preferredArtworkCache) {
-            preferredArtworkCache[cacheKey] = resolved
+        // Only cache genuine hits — a timeout null must retry next play,
+        // not poison the entry for the process lifetime.
+        if (resolved != null) {
+            synchronized(preferredArtworkCache) {
+                preferredArtworkCache[cacheKey] = resolved
+            }
         }
         if (currentMediaMetadata.value?.id == metadata.id) {
-            currentPreferredArtworkUrl.value = resolved
-            refreshDiscordRpcForPreferredArtwork(metadata.id)
+            // Provider art wins when found; otherwise the instant YTM art
+            // above stands (never regress to null/stale).
+            if (resolved != null) {
+                currentPreferredArtworkUrl.value = resolved
+                refreshDiscordRpcForPreferredArtwork(metadata.id)
+            }
         }
     }
 

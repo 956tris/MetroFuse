@@ -60,6 +60,7 @@ import com.metrolist.music.R
 import com.metrolist.music.constants.AppBackgroundStyle
 import com.metrolist.music.constants.AppBackgroundStyleKey
 import com.metrolist.music.constants.ChipSortTypeKey
+import com.metrolist.music.constants.ArtworkFetchQualityKey
 import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.DefaultOpenTabKey
 import com.metrolist.music.constants.DensityScale
@@ -225,6 +226,11 @@ fun AppearanceSettings(
         rememberPreference(
             CropAlbumArtKey,
             defaultValue = false,
+        )
+    val (artworkFetchQuality, onArtworkFetchQualityChange) =
+        rememberPreference(
+            ArtworkFetchQualityKey,
+            defaultValue = 1200,
         )
     val (playerBackground, onPlayerBackgroundChange) =
         rememberEnumPreference(
@@ -1388,6 +1394,23 @@ fun AppearanceSettings(
                             )
                         },
                         onClick = { onCropAlbumArtChange(!cropAlbumArt) },
+                    ),
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.insert_photo),
+                        title = { Text(stringResource(R.string.artwork_fetch_quality)) },
+                        description = {
+                            Column {
+                                Text(stringResource(R.string.artwork_fetch_quality_desc))
+                                Text("${artworkFetchQuality.coerceIn(500, 4000)} × ${artworkFetchQuality.coerceIn(500, 4000)}")
+                                Slider(
+                                    value = artworkFetchQuality.coerceIn(500, 4000).toFloat(),
+                                    onValueChange = {
+                                        onArtworkFetchQualityChange((it / 100).roundToInt() * 100)
+                                    },
+                                    valueRange = 500f..4000f,
+                                )
+                            }
+                        },
                     ),
                     Material3SettingsItem(
                         icon = painterResource(R.drawable.palette),

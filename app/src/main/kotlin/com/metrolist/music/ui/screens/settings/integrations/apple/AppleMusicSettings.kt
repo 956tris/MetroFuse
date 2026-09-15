@@ -93,6 +93,10 @@ fun AppleMusicSettings(
             ),
         )
 
+        InfoLabel(text = stringResource(R.string.apple_music_subscription_dead))
+
+        Spacer(Modifier.height(8.dp))
+
         Material3SettingsGroup(
             title = stringResource(R.string.general),
             items =

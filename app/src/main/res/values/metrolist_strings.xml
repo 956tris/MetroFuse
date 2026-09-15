@@ -126,6 +126,8 @@
     <string name="hide_player_thumbnail_desc">Replace the album artwork with the app logo in the player</string>
     <string name="crop_album_art">Crop album art</string>
     <string name="crop_album_art_desc">Force a square aspect ratio by cropping video thumbnails</string>
+    <string name="artwork_fetch_quality">Artwork fetch quality</string>
+    <string name="artwork_fetch_quality_desc">Resolution requested for album covers (YouTube Music serves up to 4000×4000, lower when unavailable)</string>
 
     <string name="already_in_playlist">Already in playlist: </string>
 
@@ -729,6 +731,8 @@
     <string name="spotify_sync_likes_description">Automatically add or remove songs you like in MetroFuse to your Spotify Liked Songs.</string>
     <string name="enable_spotify_lyrics">Spotify</string>
     <string name="enable_spotify_lyrics_desc">Fetch synced lyrics from Spotify. Requires a configured Spotify cookie.</string>
+    <string name="enable_deezer_lyrics">Deezer</string>
+    <string name="enable_deezer_lyrics_desc">Fetch word-by-word synced lyrics from Deezer. Requires a configured Deezer cookie.</string>
     <string name="spotify_listening_history_device_name">stupid ass client</string>
     <string name="spotify_listening_history_title">Spotify listening history</string>
     <string name="spotify_listening_history_login_required">Log in with Spotify to show your listening history</string>
@@ -1338,6 +1342,7 @@
     <string name="apple_music_integration">Apple Music</string>
     <string name="apple_music_integration_desc">Wrapper metadata and animated artwork options</string>
     <string name="apple_music_integration_info">Apple Music integration provides high-quality metadata, synchronized lyrics, and animated artwork for supported tracks.</string>
+    <string name="apple_music_subscription_dead">Maintainer\'s subscription has run out — the Apple Music API is dead until one is donated or a way is found to get one.</string>
     <string name="apple_music_wrapper_host">Apple Music wrapper host</string>
     <string name="apple_music_wrapper_host_desc">Current wrapper-manager: %1$s</string>
     <string name="apple_music_wrapper_host_placeholder">wm.wol.moe or 192.168.1.20:8080</string>
