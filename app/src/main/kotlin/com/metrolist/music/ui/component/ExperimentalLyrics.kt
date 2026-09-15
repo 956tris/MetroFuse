@@ -361,7 +361,11 @@ fun ExperimentalLyrics(
         var lastUpdateTime = System.currentTimeMillis()
         
         while (isActive) {
-            withFrameNanos { _ -> }
+            // Throttled, not per-vsync: line state flips on second-scale
+            // boundaries and the active row interpolates smoothly on its own
+            // frame loop. 10Hz while playing (500ms paused) cuts full-tree
+            // recomposition from 60-120Hz without visible scroll lag.
+            delay(if (playerConnection.player.isPlaying) 100 else 500)
             val now = System.currentTimeMillis()
             val sliderPosition = sliderPositionProvider()
             isSeeking = sliderPosition != null

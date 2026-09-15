@@ -114,6 +114,9 @@ data class SpotifyCanvasMedia(
     val headers: Map<String, String>,
 )
 
+/** Shared HTTP client for canvas video streams (one pool per process). */
+private val canvasVideoHttpClient by lazy { OkHttpClient() }
+
 @Composable
 fun rememberSpotifyCanvasMedia(
     mediaMetadata: MediaMetadata?,
@@ -152,7 +155,7 @@ fun SpotifyCanvasVideoBackground(
 
     val player = remember(media.url) {
         val mediaSourceFactory = DefaultMediaSourceFactory(
-            OkHttpDataSource.Factory(OkHttpClient())
+            OkHttpDataSource.Factory(canvasVideoHttpClient)
                 .setDefaultRequestProperties(media.headers)
         )
 

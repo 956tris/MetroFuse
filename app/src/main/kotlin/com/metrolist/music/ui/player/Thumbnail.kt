@@ -104,6 +104,13 @@ import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 
 /**
+ * Shared HTTP client for remote canvas video streams. Previously each
+ * canvas URL built its own client (no connection reuse, new pools per
+ * track) — one process-wide client fixes that.
+ */
+private val canvasHttpClient by lazy { OkHttpClient() }
+
+/**
  * Pre-calculated thumbnail dimensions to avoid repeated calculations during recomposition.
  * All values are computed once and cached.
  */
@@ -671,7 +678,18 @@ private fun ThumbnailImage(
     artworkUri: String?,
     cropArtwork: Boolean,
     modifier: Modifier = Modifier
-) {
+    ) {
+    val context = LocalContext.current
+    // Remember the request: rebuilding it every recomposition retriggers
+    // Coil's equality check and reload work while lyrics scroll at 10Hz+.
+    val request = remember(artworkUri, cropArtwork, context) {
+        ImageRequest.Builder(context)
+            .data(artworkUri)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .networkCachePolicy(CachePolicy.ENABLED)
+            .build()
+    }
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -682,12 +700,7 @@ private fun ThumbnailImage(
             .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
         AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(artworkUri)
-                .memoryCachePolicy(CachePolicy.ENABLED)
-                .diskCachePolicy(CachePolicy.ENABLED)
-                .networkCachePolicy(CachePolicy.ENABLED)
-                .build(),
+            model = request,
             contentDescription = null,
             contentScale = if (cropArtwork) ContentScale.Crop else ContentScale.Fit,
             modifier = Modifier.fillMaxSize()
@@ -709,7 +722,7 @@ fun CanvasVideo(
                 canvasUrl.startsWith("https://", ignoreCase = true)
 
         val dataSourceFactory = if (isRemoteCanvas) {
-            OkHttpDataSource.Factory(OkHttpClient())
+            OkHttpDataSource.Factory(canvasHttpClient)
                 .setDefaultRequestProperties(
                     mapOf(
                         "Origin" to "https://music.apple.com",
