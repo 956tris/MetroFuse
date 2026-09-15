@@ -6,6 +6,8 @@
 package com.metrolist.music.ui.player
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
@@ -105,69 +107,89 @@ fun GalaxyStarOverlay(
         }
     }
 
-    Canvas(modifier = modifier) {
-        val alphaScale = intensity.coerceIn(0f, 1f)
-        val timeSeconds = frameMillis / 1000f
+    // Split layers: the sky gradient + steady stars never change per frame,
+    // so they live in a Canvas that reads no frame state and paints once
+    // (repaints only on theme/size/intensity change). Only twinkling stars
+    // and meteors repaint on the frame clock above.
+    Box(modifier = modifier) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    0f to topColor,
+                    0.58f to midColor,
+                    1f to bottomColor,
+                ),
+                size = size,
+            )
 
-        drawRect(
-            brush = Brush.verticalGradient(
-                0f to topColor,
-                0.58f to midColor,
-                1f to bottomColor,
-            ),
-            size = size,
-        )
-
-        val starCount = ((size.width * size.height) / 9500f)
-            .roundToInt()
-            .coerceIn(16, stars.size)
-
-        for (index in 0 until starCount) {
-            val star = stars[index]
-            val center = Offset(size.width * star.x, size.height * star.y)
-            val coreRadius = star.sizePx / 2f
-            val coreAlpha = star.opacity * alphaScale
-            val glowAlpha =
-                if (star.twinkles) {
-                    coreAlpha * twinkleGlow(star.twinklePattern, timeSeconds)
-                } else {
-                    0f
-                }
-
-            if (glowAlpha > 0.02f) {
+            val alphaScale = intensity.coerceIn(0f, 1f)
+            val starCount = ((size.width * size.height) / 9500f)
+                .roundToInt()
+                .coerceIn(16, stars.size)
+            val white = Color.White
+            for (index in 0 until starCount) {
+                val star = stars[index]
+                if (star.twinkles) continue
+                val center = Offset(size.width * star.x, size.height * star.y)
                 drawCircle(
-                    color = glowColor.copy(alpha = glowAlpha * 0.08f),
-                    radius = coreRadius + 6f,
-                    center = center,
-                )
-                drawCircle(
-                    color = glowColor.copy(alpha = glowAlpha * 0.14f),
-                    radius = coreRadius + 3f,
+                    color = white.copy(alpha = star.opacity * alphaScale),
+                    radius = star.sizePx / 2f,
                     center = center,
                 )
             }
-            drawCircle(
-                color = Color.White.copy(alpha = coreAlpha),
-                radius = coreRadius,
-                center = center,
-            )
         }
 
-        shootingStars.forEachIndexed { index, star ->
-            val shiftedTime = timeSeconds + star.delaySeconds
-            val cycle = floor(shiftedTime / star.cycleSeconds).toInt()
-            val progress = (shiftedTime % star.cycleSeconds) / star.cycleSeconds
-            val fromTop = seededUnit(index + cycle * 17, 41, 5) < 0.75f
-            val edgePosition = seededUnit(index + cycle * 29, 73, 31) * 0.9f
-            val crossPosition = seededUnit(index + cycle * 37, 97, 43) * 0.5f
-            drawShootingStar(
-                fromTop = fromTop,
-                edgePosition = edgePosition,
-                crossPosition = crossPosition,
-                progress = progress,
-                alphaScale = alphaScale,
-                glowColor = glowColor,
-            )
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val alphaScale = intensity.coerceIn(0f, 1f)
+            val timeSeconds = frameMillis / 1000f
+
+            val starCount = ((size.width * size.height) / 9500f)
+                .roundToInt()
+                .coerceIn(16, stars.size)
+
+            for (index in 0 until starCount) {
+                val star = stars[index]
+                if (!star.twinkles) continue
+                val center = Offset(size.width * star.x, size.height * star.y)
+                val coreRadius = star.sizePx / 2f
+                val coreAlpha = star.opacity * alphaScale
+                val glowAlpha = coreAlpha * twinkleGlow(star.twinklePattern, timeSeconds)
+
+                if (glowAlpha > 0.02f) {
+                    drawCircle(
+                        color = glowColor.copy(alpha = glowAlpha * 0.08f),
+                        radius = coreRadius + 6f,
+                        center = center,
+                    )
+                    drawCircle(
+                        color = glowColor.copy(alpha = glowAlpha * 0.14f),
+                        radius = coreRadius + 3f,
+                        center = center,
+                    )
+                }
+                drawCircle(
+                    color = Color.White.copy(alpha = coreAlpha),
+                    radius = coreRadius,
+                    center = center,
+                )
+            }
+
+            shootingStars.forEachIndexed { index, star ->
+                val shiftedTime = timeSeconds + star.delaySeconds
+                val cycle = floor(shiftedTime / star.cycleSeconds).toInt()
+                val progress = (shiftedTime % star.cycleSeconds) / star.cycleSeconds
+                val fromTop = seededUnit(index + cycle * 17, 41, 5) < 0.75f
+                val edgePosition = seededUnit(index + cycle * 29, 73, 31) * 0.9f
+                val crossPosition = seededUnit(index + cycle * 37, 97, 43) * 0.5f
+                drawShootingStar(
+                    fromTop = fromTop,
+                    edgePosition = edgePosition,
+                    crossPosition = crossPosition,
+                    progress = progress,
+                    alphaScale = alphaScale,
+                    glowColor = glowColor,
+                )
+            }
         }
     }
 }

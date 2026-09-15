@@ -43,6 +43,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
@@ -116,17 +117,21 @@ fun BottomSheet(
             BackHandler(onBack = state::collapseSoft)
         }
 
-        // main content
-        if (!state.isCollapsed) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = ((state.progress - 0.15f) * 4).coerceIn(0f, 1f)
-                    },
-                content = content
-            )
-        }
+        // main content stays composed even while collapsed so expand
+        // gestures never pay first-composition mid-drag; hidden and
+        // de-semanticized until visible (GPU-only alpha, no re-layout).
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    alpha = ((state.progress - 0.15f) * 4).coerceIn(0f, 1f)
+                }
+                .then(
+                    if (!state.isCollapsed) Modifier
+                    else Modifier.clearAndSetSemantics { },
+                ),
+            content = content,
+        )
 
         if (!state.isExpanded && (onDismiss == null || !state.isDismissed)) {
             Box(

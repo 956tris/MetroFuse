@@ -1,0 +1,41 @@
+# Baseline Profile: hand-curated hot paths for startup + first navigation.
+# Libraries (Compose, Coil, Media3, Room) ship their own profiles; this file
+# covers app code only. Class-level rules (no method list) keep it robust
+# against refactors — unknown entries are ignored, never fatal.
+# Flags: H = hot, S = startup, P = post-startup.
+
+# ---- Startup ----
+HSPcom/metrolist/music/App;
+HSPcom/metrolist/music/MainActivity;
+HSPcom/metrolist/music/di/AppModule;
+HSPcom/metrolist/music/utils/CrashHandler;
+
+# ---- Playback core (every session) ----
+HSPcom/metrolist/music/playback/MusicService;
+HSPcom/metrolist/music/playback/DownloadUtil;
+HSPcom/metrolist/music/playback/ExoDownloadService;
+HSPcom/metrolist/music/playback/PlaybackCacheIndex;
+HSPcom/metrolist/music/playback/PublicDownloadExporter;
+HSPcom/metrolist/music/playback/AudioTagWriter;
+HSPcom/metrolist/music/db/MusicDatabase;
+
+# ---- First screens ----
+HSPcom/metrolist/music/ui/screens/HomeScreenKt;
+HSPcom/metrolist/music/ui/player/PlayerKt;
+HSPcom/metrolist/music/ui/player/ThumbnailKt;
+HSPcom/metrolist/music/ui/player/MiniPlayerKt;
+HSPcom/metrolist/music/viewmodels/HomeViewModel;
+HSPcom/metrolist/music/viewmodels/ThemeViewModel;
+
+# ---- Lyrics (hot during playback) ----
+HPcom/metrolist/music/lyrics/LyricsHelper;
+HPcom/metrolist/music/lyrics/LyricsUtils;
+HPcom/metrolist/music/viewmodels/LyricsViewModel;
+HPcom/metrolist/music/models/MediaMetadata;
+
+# ---- Provider resolution ----
+HPcom/metrolist/music/providers/IsrcResolver;
+HPcom/metrolist/music/providers/ProviderIsrc;
+HPcom/metrolist/music/providers/ProviderMatchSearch;
+HPcom/metrolist/music/deezer/DeezerAudioProvider;
+HPcom/metrolist/music/youtube/YouTubeAudioProvider;

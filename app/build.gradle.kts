@@ -440,6 +440,9 @@ dependencies {
     implementation(libs.activity)
     implementation(libs.hilt.navigation)
     implementation(libs.datastore)
+    // Installs the bundled Baseline Profile on user devices so release
+    // builds skip JIT warm-up on startup and first navigation.
+    implementation(libs.profileinstaller)
 
     implementation(libs.compose.runtime)
     implementation(libs.compose.foundation)

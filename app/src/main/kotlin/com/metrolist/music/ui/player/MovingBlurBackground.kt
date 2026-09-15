@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -57,40 +56,55 @@ fun MovingBlurBackground(
     useDarkTheme: Boolean,
     backgroundAlpha: Float,
     modifier: Modifier = Modifier,
+    // False while the sheet is collapsed: the infinite drift sleeps and a
+    // static frame shows instead of burning vsync on off-screen pixels.
+    animate: Boolean = true,
 ) {
     val transition = rememberInfiniteTransition(label = "movingBlur")
 
     // Scale breathes between 1.25 and 1.45 over ~12 s.
-    val scale by transition.animateFloat(
-        initialValue = 1.25f,
-        targetValue = 1.45f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 12_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "movingBlurScale",
-    )
-
-    // Two independent phase values drive the elliptical pan so X and Y don't
+    val scale: Float
+    // Two independent phases drive the elliptical pan so X and Y don't
     // move in lock-step — looks more organic than a synced diagonal drift.
-    val phaseX by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 15_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "movingBlurPhaseX",
-    )
-    val phaseY by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = (2 * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 21_000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "movingBlurPhaseY",
-    )
+    val phaseX: Float
+    val phaseY: Float
+    if (animate) {
+        val animatedScale by transition.animateFloat(
+            initialValue = 1.25f,
+            targetValue = 1.45f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 12_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "movingBlurScale",
+        )
+
+        val animatedPhaseX by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 15_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "movingBlurPhaseX",
+        )
+        val animatedPhaseY by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = (2 * PI).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 21_000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "movingBlurPhaseY",
+        )
+        scale = animatedScale
+        phaseX = animatedPhaseX
+        phaseY = animatedPhaseY
+    } else {
+        scale = 1.35f
+        phaseX = 0f
+        phaseY = 0f
+    }
 
     // Maximum pan distance in dp.
     val panRangeDp = 42.dp
@@ -98,7 +112,17 @@ fun MovingBlurBackground(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .alpha(backgroundAlpha)
+            // The drift transform lives on this PARENT layer, above the
+            // blur: each frame then only re-composites the already-blurred
+            // child bitmap on the GPU instead of re-executing the 150dp
+            // RenderEffect over the full screen. Same drift, ~free.
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+                translationX = (panRangeDp * cos(phaseX.toDouble()).toFloat()).toPx()
+                translationY = (panRangeDp * sin(phaseY.toDouble()).toFloat()).toPx()
+                alpha = backgroundAlpha
+            }
     ) {
         androidx.compose.animation.AnimatedContent(
             targetState = artworkUrl,
@@ -119,13 +143,7 @@ fun MovingBlurBackground(
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
-                            .blur(if (useDarkTheme) 150.dp else 110.dp)
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                translationX = (panRangeDp * cos(phaseX.toDouble()).toFloat()).toPx()
-                                translationY = (panRangeDp * sin(phaseY.toDouble()).toFloat()).toPx()
-                            },
+                            .blur(if (useDarkTheme) 150.dp else 110.dp),
                     )
                     Box(
                         modifier = Modifier

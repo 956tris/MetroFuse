@@ -1679,6 +1679,10 @@ fun BottomSheetPlayer(
                                 modifier = Modifier.fillMaxSize(),
                                 intensity = 1f,
                                 skyColors = galaxyColors,
+                                // No frame loop while collapsed: the layer is
+                                // translated off-screen, so ticking would burn
+                                // 30fps redrawing invisible pixels.
+                                animated = !state.isCollapsed,
                             )
                             if (mirroredGalaxyReadabilityScrimAlpha > 0f) {
                                 Box(
@@ -1737,6 +1741,7 @@ fun BottomSheetPlayer(
                             useDarkTheme = useDarkTheme,
                             backgroundAlpha = backgroundAlpha,
                             modifier = Modifier.fillMaxSize(),
+                            animate = !state.isCollapsed,
                         )
                     }
 

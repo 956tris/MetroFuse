@@ -586,6 +586,7 @@ constructor(
             quality = quality,
             trackIdOverride = JioSaavnAudioProvider.trackIdFromMediaId(mediaId)
                 .takeIf { JioSaavnAudioProvider.isJioSaavnTrackId(mediaId) },
+            explicit = song?.song?.explicit,
         )
     }
 

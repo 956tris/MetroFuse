@@ -538,6 +538,27 @@ class MusicService :
     val currentEmbeddedCanvasUrl = MutableStateFlow<String?>(null)
     val currentPreferredArtworkUrl = MutableStateFlow<String?>(null)
     val currentTidalArtworkUrl = currentPreferredArtworkUrl
+
+    /**
+     * The ONLY writer of [currentMediaMetadata]. Artwork/canvas flows are
+     * cleared in the same atomic step that publishes the new track, so UI
+     * collecting both can never observe (old cover, new track) no matter
+     * how the per-track resolvers race — Compose snapshots each
+     * composition, and the stale combo is unrepresentable across the two
+     * sequential sets.
+     */
+    private fun setCurrentMediaMetadata(metadata: com.metrolist.music.models.MediaMetadata?) {
+        // Only on real track changes: same-id re-emits (player callbacks
+        // re-publishing currentMetadata) must not flicker settled art.
+        if (currentMediaMetadata.value?.id != metadata?.id) {
+            currentPreferredArtworkUrl.value = null
+            currentTidalCanvasUrl.value = null
+            currentAppleCanvasUrl.value = null
+            currentAppleTallCanvasUrl.value = null
+            currentEmbeddedCanvasUrl.value = null
+        }
+        currentMediaMetadata.value = metadata
+    }
     private val preferredArtworkCache =
         object : LinkedHashMap<String, String?>(256, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean = size > 256
@@ -2674,7 +2695,7 @@ class MusicService :
                 database.query {
                     update(it.song.toggleLibrary())
                 }
-                currentMediaMetadata.value = player.currentMetadata
+                setCurrentMediaMetadata(player.currentMetadata)
             }
         }
     }
@@ -2718,7 +2739,7 @@ class MusicService :
                         )
                     }
                 }
-                currentMediaMetadata.value = player.currentMetadata
+                setCurrentMediaMetadata(player.currentMetadata)
             }
         }
     }
@@ -2761,7 +2782,7 @@ class MusicService :
                 ),
             )
         }
-        currentMediaMetadata.value = player.currentMetadata
+        setCurrentMediaMetadata(player.currentMetadata)
 
         // Sync with YouTube (handles login check internally)
         val setVideoId = if (isCurrentlySaved) database.getSetVideoId(songEntity.id)?.setVideoId else null
@@ -3454,7 +3475,7 @@ class MusicService :
         // Check if new item is an episode and restore its position
         val newMetadata = mediaItem?.metadata
         val transitionedMetadata = newMetadata ?: player.currentMetadata
-        currentMediaMetadata.value = transitionedMetadata
+        setCurrentMediaMetadata(transitionedMetadata)
         val transitionedMediaId = newMetadata?.id ?: mediaItem?.mediaId
         currentPlaybackFormat.value = null
         currentLivePlaybackBitrate.value = null
@@ -3624,7 +3645,7 @@ class MusicService :
             retryCount = 0
             waitingForNetworkConnection.value = false
             retryJob?.cancel()
-            currentMediaMetadata.value = player.currentMetadata
+            setCurrentMediaMetadata(player.currentMetadata)
             updateCurrentAudioFormatFromTracks(player.currentTracks)
             player.currentMediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let { mediaId ->
                 refreshCurrentPlaybackFormatFromDatabase(mediaId)
@@ -3731,7 +3752,7 @@ class MusicService :
                 Player.EVENT_MEDIA_ITEM_TRANSITION,
             )
         ) {
-            currentMediaMetadata.value = player.currentMediaItem?.metadata ?: player.currentMetadata
+            setCurrentMediaMetadata(player.currentMediaItem?.metadata ?: player.currentMetadata)
         }
         if (events.containsAny(
                 Player.EVENT_TRACKS_CHANGED,
@@ -4956,6 +4977,7 @@ class MusicService :
             DEEZER_FALLBACK_ITAG -> "deezer"
             SOUNDCLOUD_FALLBACK_ITAG -> "soundcloud"
             APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_FALLBACK_ITAG -> "apple music"
+            JIOSAAVN_FALLBACK_ITAG -> "jiosaavn"
             DIRECT_HTTP_AUDIO_ITAG -> "direct audio"
             else -> "youtube music".takeIf { itag > 0 }
         }
@@ -4968,6 +4990,7 @@ class MusicService :
             value.startsWith(deezerFallbackCacheKey(""), ignoreCase = true) -> "deezer"
             value.startsWith(soundCloudFallbackCacheKey(""), ignoreCase = true) -> "soundcloud"
             value.startsWith(appleMusicFallbackCacheKey(""), ignoreCase = true) -> "apple music"
+            value.startsWith(jiosaavnFallbackCacheKey(""), ignoreCase = true) -> "jiosaavn"
             value.startsWith(directHttpAudioCacheKey(""), ignoreCase = true) -> "direct audio"
             value.startsWith(youtubeFallbackCacheKey(""), ignoreCase = true) -> "youtube music"
             else -> null
@@ -6582,6 +6605,7 @@ class MusicService :
                 attemptMediaId != mediaId -> attemptMediaId
                 else -> null
             },
+            explicit = (song?.song?.explicit == true) || (queuedMetadata?.explicit == true),
         )
     }
 
@@ -6766,14 +6790,15 @@ class MusicService :
             return
         }
 
-        // Instant cover: the YTM thumbnail URL supports arbitrary =w sizes
-        // (up to 4000px, server falls back to the highest available), so
-        // show hi-res art synchronously instead of leaving the previous
-        // track's cover up through two sequential provider timeouts.
+        // Instant cover in two stages: a small YTM thumb paints immediately
+        // (tiny download, no network wait), then the full slider-quality
+        // URL swaps in. YTM serves arbitrary =w sizes up to 4000px, falling
+        // back to the highest available below that.
         val fetchQuality = dataStore.get(ArtworkFetchQualityKey, 1200).coerceIn(500, 4000)
-        metadata.thumbnailUrl?.takeIf { it.isNotBlank() }?.let { thumb ->
+        val ytmThumb = metadata.thumbnailUrl?.takeIf { it.isNotBlank() }
+        ytmThumb?.let { thumb ->
             if (currentMediaMetadata.value?.id == metadata.id) {
-                currentPreferredArtworkUrl.value = thumb.resize(fetchQuality, fetchQuality)
+                currentPreferredArtworkUrl.value = thumb.resize(720, 720)
             }
         }
 
@@ -6811,10 +6836,12 @@ class MusicService :
             }
         }
         if (currentMediaMetadata.value?.id == metadata.id) {
-            // Provider art wins when found; otherwise the instant YTM art
-            // above stands (never regress to null/stale).
+            // Provider art wins when found; otherwise the full-quality YTM
+            // art stands (never regress to null/stale).
+            currentPreferredArtworkUrl.value = resolved
+                ?: ytmThumb?.resize(fetchQuality, fetchQuality)
+                ?: currentPreferredArtworkUrl.value
             if (resolved != null) {
-                currentPreferredArtworkUrl.value = resolved
                 refreshDiscordRpcForPreferredArtwork(metadata.id)
             }
         }
@@ -9083,7 +9110,7 @@ class MusicService :
         val previousAudioSessionId = fadingPlayer?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET
         previousMediaItemIndex = targetIndex
         val transitionedMetadata = targetMediaItem?.metadata ?: player.currentMetadata
-        currentMediaMetadata.value = transitionedMetadata
+        setCurrentMediaMetadata(transitionedMetadata)
         updateCurrentAudioFormatFromTracks(player.currentTracks)
         _playerFlow.value = player
         updateNotification()

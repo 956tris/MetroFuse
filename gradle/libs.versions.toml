@@ -33,6 +33,7 @@ brotli = "0.1.2"
 desugaring = "2.1.5"
 junit = "4.13.2"
 timber = "5.0.1"
+profileinstaller = "1.4.1"
 materialKolor = "4.1.1"
 kuromojiIpadic = "0.9.0"
 bravepipeExtractor = "v0.26.0-2.3.4"
@@ -118,6 +119,7 @@ desugaring = { module = "com.android.tools:desugar_jdk_libs_nio", version.ref = 
 junit = { module = "junit:junit", version.ref = "junit" }
 
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
+profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version.ref = "profileinstaller" }
 
 # newpipeextractor = { module = "com.github.TeamNewPipe:NewPipeExtractor", version.ref = "newpipeextractor" }
 extractor = { module = "com.github.MetrolistGroup:MetrolistExtractor", version.ref = "extractor" }

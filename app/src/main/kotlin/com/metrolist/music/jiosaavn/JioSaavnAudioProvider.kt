@@ -62,6 +62,7 @@ object JioSaavnAudioProvider {
         val isrc: String? = null,
         val quality: JioSaavnAudioQuality = JioSaavnAudioQuality.HIGH,
         val trackIdOverride: String? = null,
+        val explicit: Boolean? = null,
     )
 
     data class Resolved(
@@ -599,6 +600,13 @@ object JioSaavnAudioProvider {
                     delta <= DURATION_HARD_REJECT_MS -> 0
                     else -> return null
                 }
+        }
+        // Explicit/clean versions are separate JioSaavn tracks with identical
+        // titles and near-identical durations, so text scoring ties and the
+        // wrong version wins coin-flips. Swing matches toward the requested
+        // version without ever rejecting the only available one.
+        query.explicit?.let { wantExplicit ->
+            score += if (candidate.explicit == wantExplicit) 25 else -40
         }
         val threshold = if (expectedMs == null) MIN_ACCEPT_SCORE_NO_DURATION else MIN_ACCEPT_SCORE
         return score.takeIf { it >= threshold }
