@@ -5,6 +5,7 @@
 
 package com.metrolist.music.providers
 
+import android.content.Context
 import com.metrolist.music.apple.AppleMusicCanvasProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.utils.CanvasQueryCleaner
@@ -12,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -22,15 +25,19 @@ import java.util.concurrent.ConcurrentHashMap
  * Resolution order:
  *  1. Caller-supplied candidate ISRC (local tag / MediaStore / cached
  *     metadata / provider field) — normalized + validated shape only.
- *  2. Deezer catalog search by song+artist (cheap, no auth) — first result
+ *  2. Harvested ISRCs previously learned by audio/canvas providers during
+ *     real playback (see [publish]) — exact duration bucket first, then a
+ *     duration-agnostic song+artist fallback.
+ *  3. Deezer catalog search by song+artist (cheap, no auth) — first result
  *     with a matching title/artist/duration wins.
- *  3. Apple Music catalog search by song+artist, using the same shared
+ *  4. Apple Music catalog search by song+artist, using the same shared
  *     token as [AppleMusicCanvasProvider].
  *
  * Every lookup is cached in-memory keyed by (song, artist, durationSeconds)
  * so repeat plays of the same track never re-hit the network — this keeps
  * ISRC resolution off the hot path and safe to call from the UI-adjacent
- * playback pipeline.
+ * playback pipeline. Positive results are additionally persisted to disk
+ * (see [IsrcDiskStore]) so learning survives process restarts.
  */
 object IsrcResolver {
 
@@ -42,7 +49,89 @@ object IsrcResolver {
     // level (throws NPE from putVal), so a sentinel is used instead of null
     // even though the value type here is nullable.
     private const val NEGATIVE_RESULT = "\u0000NEGATIVE_RESULT\u0000"
+    private const val TAG = "IsrcResolver"
+    private const val DISK_SECTION = "isrc"
     private val cache = ConcurrentHashMap<CacheKey, String>()
+
+    /**
+     * Duration-agnostic fallback: (clean song, clean artist) -> ISRC.
+     * Harvested entries often lack a trustworthy duration (or were learned
+     * under a different duration bucket than the current lookup), so the
+     * exact-bucket [cache] alone would miss them. Exact-bucket hits always
+     * win; this is only consulted on a bucket miss.
+     */
+    private val unversioned = ConcurrentHashMap<Pair<String, String>, String>()
+
+    @Volatile
+    private var diskLoaded = false
+    private val diskLock = Any()
+
+    /** Call once from `Application.onCreate` — preloads disk-learned ISRCs. */
+    fun init(context: Context) {
+        IsrcDiskStore.init(context)
+        synchronized(diskLock) {
+            if (diskLoaded) return
+            diskLoaded = true
+        }
+        runCatching {
+            val array = IsrcDiskStore.loadSection(DISK_SECTION) ?: return
+            for (i in 0 until array.length()) {
+                val entry = array.optJSONObject(i) ?: continue
+                val song = entry.optString("s").takeIf { it.isNotBlank() } ?: continue
+                val artist = entry.optString("a").takeIf { it.isNotBlank() } ?: continue
+                val isrc = ProviderIsrc.normalize(entry.optString("isrc")) ?: continue
+                val bucket = entry.opt("b")?.toString()?.toIntOrNull()
+                cache[CacheKey(song, artist, bucket)] = isrc
+                unversioned[song to artist] = isrc
+            }
+            Timber.tag(TAG).d("Preloaded ${array.length()} learned ISRCs from disk")
+        }.getOrElse { error ->
+            Timber.tag(TAG).d(error, "Failed to preload learned ISRCs")
+        }
+    }
+
+    /**
+     * Harvests an ISRC learned elsewhere (audio provider playback
+     * resolution, canvas matching, downloads). Only accepts structurally
+     * valid ISRCs; only stores when song+artist are non-blank after
+     * cleaning. Never throws — safe to call from any provider path.
+     *
+     * Both the caller's exact duration bucket and the duration-agnostic
+     * fallback are written so later lookups hit regardless of which
+     * duration variant they carry.
+     */
+    fun publish(
+        song: String,
+        artist: String,
+        isrc: String?,
+        durationSeconds: Int?,
+    ) {
+        val normalized = ProviderIsrc.normalize(isrc) ?: return
+        val clean = cleanPair(song, artist) ?: return
+        val (cleanSong, cleanArtist) = clean
+        val bucket = durationBucket(durationSeconds)
+        cache[CacheKey(cleanSong, cleanArtist, bucket)] = normalized
+        unversioned[cleanSong to cleanArtist] = normalized
+        persistAsync()
+    }
+
+    /**
+     * Synchronous cache-only lookup: caller tags, harvested entries and
+     * disk-learned ISRCs — never hits the network. Used by the canvas fast
+     * path to decide whether the precise ISRC-first route is available
+     * without paying discovery cost.
+     */
+    fun peek(
+        song: String,
+        artist: String,
+        durationSeconds: Int?,
+    ): String? {
+        val clean = cleanPair(song, artist) ?: return null
+        val (cleanSong, cleanArtist) = clean
+        val key = CacheKey(cleanSong, cleanArtist, durationBucket(durationSeconds))
+        cache[key]?.takeIf { it != NEGATIVE_RESULT }?.let { return it }
+        return unversioned[cleanSong to cleanArtist]
+    }
 
     /**
      * Returns a normalized, structurally valid ISRC, or null if none could
@@ -64,13 +153,18 @@ object IsrcResolver {
         // frontend tracks without ISRCs resolve to the same catalog entry.
         // Duration bucketed to 15s windows so radio edits/remasters of the
         // same song share a cache entry instead of forking keys.
-        val cleanSong = CanvasQueryCleaner.cleanTitle(song).ifBlank { song.trim() }
-        val cleanArtist = CanvasQueryCleaner.cleanArtist(artist).ifBlank { artist.trim() }
-        if (cleanSong.isBlank() || cleanArtist.isBlank()) return@withContext null
-        val durationBucket = durationSeconds?.takeIf { it > 30 }?.let { it / 15 }
+        val clean = cleanPair(song, artist) ?: return@withContext null
+        val (cleanSong, cleanArtist) = clean
+        val durationBucket = durationBucket(durationSeconds)
 
-        val key = CacheKey(cleanSong.lowercase(), cleanArtist.lowercase(), durationBucket)
+        val key = CacheKey(cleanSong, cleanArtist, durationBucket)
         cache[key]?.let { return@withContext if (it == NEGATIVE_RESULT) null else it }
+
+        // 2. Harvested / disk-learned ISRC under a different duration bucket.
+        unversioned[cleanSong to cleanArtist]?.let { harvested ->
+            cache[key] = harvested
+            return@withContext harvested
+        }
 
         val resolved = runCatching {
             coroutineScope {
@@ -119,6 +213,42 @@ object IsrcResolver {
             AppleMusicCanvasProvider.searchIsrcOnly(song, artist, durationSeconds, token)
         }.getOrNull()
 
+    private fun cleanPair(song: String, artist: String): Pair<String, String>? {
+        val cleanSong = CanvasQueryCleaner.cleanTitle(song).ifBlank { song.trim() }.lowercase()
+        val cleanArtist = CanvasQueryCleaner.cleanArtist(artist).ifBlank { artist.trim() }.lowercase()
+        if (cleanSong.isBlank() || cleanArtist.isBlank()) return null
+        return cleanSong to cleanArtist
+    }
+
+    private fun durationBucket(durationSeconds: Int?): Int? =
+        durationSeconds?.takeIf { it > 30 }?.let { it / 15 }
+
+    private fun persistAsync() {
+        runCatching {
+            val array = org.json.JSONArray()
+            // Persist positives only; negatives are cheap to recompute and
+            // may go stale as catalogs gain canvases.
+            cache.entries
+                .filter { it.value != NEGATIVE_RESULT }
+                .sortedByDescending { it.key.durationSeconds ?: -1 }
+                .forEach { (key, isrc) ->
+                    array.put(
+                        JSONObject()
+                            .put("s", key.song)
+                            .put("a", key.artist)
+                            .put("b", key.durationSeconds ?: JSONObject.NULL)
+                            .put("isrc", isrc),
+                    )
+                }
+            IsrcDiskStore.saveSection(DISK_SECTION, array)
+        }.onFailure { error ->
+            Timber.tag(TAG).d(error, "Failed to persist learned ISRCs")
+        }
+    }
+
     /** Test/debug hook — clears the in-memory resolution cache. */
-    fun clearCache() = cache.clear()
+    fun clearCache() {
+        cache.clear()
+        unversioned.clear()
+    }
 }

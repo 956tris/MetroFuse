@@ -6561,7 +6561,18 @@ class MusicService :
             } ?: return null
         val cookie = dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() } ?: return null
         return runCatching {
-            SpotifyCanvasClient.resolveTrackIsrc(spotifyTrackId, cookie)
+            SpotifyCanvasClient.resolveTrackIsrc(spotifyTrackId, cookie)?.also { isrc ->
+                // Harvest for the shared ISRC map (YTM-audio path).
+                runCatching {
+                    val title = song?.song?.title ?: queuedMetadata?.title ?: return@runCatching
+                    val artist = song?.orderedArtists?.firstOrNull()?.name
+                        ?: queuedMetadata?.artists?.firstOrNull()?.name
+                        ?: return@runCatching
+                    val durationSec = song?.song?.duration?.takeIf { it > 0 }
+                        ?: queuedMetadata?.duration?.takeIf { it > 0 }
+                    com.metrolist.music.providers.IsrcResolver.publish(title, artist, isrc, durationSec)
+                }
+            }
         }.onFailure { error ->
             Timber.tag("MusicService").w(error, "Spotify ISRC match lookup failed for $spotifyTrackId")
         }.getOrNull()

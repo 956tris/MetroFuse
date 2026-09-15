@@ -286,7 +286,13 @@ object ProviderMatchSearch {
                         it.contains("open.spotify.com/track/", ignoreCase = true)
             } ?: return null
         val cookie = context.dataStore.get(SpotifyCookieKey, "").takeIf { it.isNotBlank() } ?: return null
-        return SpotifyCanvasClient.resolveTrackIsrc(trackId, cookie)
+        return SpotifyCanvasClient.resolveTrackIsrc(trackId, cookie)?.also { isrc ->
+            // Harvest for the shared ISRC map (YTM-audio path).
+            runCatching {
+                val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return@runCatching
+                IsrcResolver.publish(metadata.title, artist, isrc, metadata.duration.takeIf { it > 0 })
+            }
+        }
     }
 
     private fun MediaMetadata.toTidalQuery(isrcOverride: String? = null): TidalAudioProvider.Query =

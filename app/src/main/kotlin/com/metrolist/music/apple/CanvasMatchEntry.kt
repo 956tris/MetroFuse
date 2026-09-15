@@ -5,6 +5,10 @@
 
 package com.metrolist.music.apple
 
+import com.metrolist.music.providers.IsrcDiskStore
+import org.json.JSONArray
+import org.json.JSONObject
+import timber.log.Timber
 import java.util.concurrent.ConcurrentHashMap
 
 /** How a [CanvasMatchEntry] was matched to its underlying track. */
@@ -44,8 +48,13 @@ data class CanvasMatchEntry(
  */
 object CanvasIndex {
 
+    private const val TAG = "CanvasIndex"
+    private const val DISK_SECTION = "canvas"
     private val byIsrc = ConcurrentHashMap<String, CanvasMatchEntry>()
     private val bySongArtist = ConcurrentHashMap<String, CanvasMatchEntry>()
+
+    @Volatile
+    private var diskLoaded = false
 
     /** O(1) lookup by normalized ISRC. */
     fun getByIsrc(isrc: String): CanvasMatchEntry? = byIsrc[isrc]
@@ -65,13 +74,90 @@ object CanvasIndex {
             val existing = byIsrc[entry.isrc]
             if (existing == null || entry.confidence >= existing.confidence) {
                 byIsrc[entry.isrc] = entry
+            } else {
+                return
             }
         } else {
             val key = songArtistKey(entry.title, entry.artist)
             val existing = bySongArtist[key]
             if (existing == null || entry.confidence >= existing.confidence) {
                 bySongArtist[key] = entry
+            } else {
+                return
             }
+        }
+        persistAsync()
+    }
+
+    /** Preloads disk-learned canvas matches. Call once on app start (IO thread). */
+    fun preloadFromDisk() {
+        synchronized(this) {
+            if (diskLoaded) return
+            diskLoaded = true
+        }
+        runCatching {
+            val array = IsrcDiskStore.loadSection(DISK_SECTION) ?: return
+            var count = 0
+            for (i in 0 until array.length()) {
+                val obj = array.optJSONObject(i) ?: continue
+                val url = obj.optString("url").takeIf { it.isNotBlank() } ?: continue
+                val tier = runCatching { CanvasMatchTier.valueOf(obj.optString("tier")) }.getOrNull()
+                    ?: CanvasMatchTier.FUZZY
+                val entry = CanvasMatchEntry(
+                    isrc = obj.optString("isrc").takeIf { it.isNotBlank() },
+                    appleCatalogId = obj.optString("catalogId").takeIf { it.isNotBlank() },
+                    title = obj.optString("title"),
+                    artist = obj.optString("artist"),
+                    album = obj.optString("album").takeIf { it.isNotBlank() },
+                    durationMs = obj.opt("durationMs")?.toString()?.toLongOrNull(),
+                    sourceUrl = url,
+                    matchTier = tier,
+                    confidence = obj.optInt("confidence", tier.baseConfidence),
+                    lastMatchedAtMs = obj.optLong("matchedAt", 0L),
+                )
+                // Route through put so confidence rules still apply.
+                if (entry.isrc != null) {
+                    val existing = byIsrc[entry.isrc]
+                    if (existing == null || entry.confidence >= existing.confidence) {
+                        byIsrc[entry.isrc] = entry
+                        count++
+                    }
+                } else {
+                    val key = songArtistKey(entry.title, entry.artist)
+                    val existing = bySongArtist[key]
+                    if (existing == null || entry.confidence >= existing.confidence) {
+                        bySongArtist[key] = entry
+                        count++
+                    }
+                }
+            }
+            Timber.tag(TAG).d("Preloaded $count learned canvas matches from disk")
+        }.getOrElse { error ->
+            Timber.tag(TAG).d(error, "Failed to preload learned canvas matches")
+        }
+    }
+
+    private fun persistAsync() {
+        runCatching {
+            val array = JSONArray()
+            (byIsrc.values + bySongArtist.values).distinct().forEach { entry ->
+                array.put(
+                    JSONObject()
+                        .put("isrc", entry.isrc.orEmpty())
+                        .put("catalogId", entry.appleCatalogId.orEmpty())
+                        .put("title", entry.title)
+                        .put("artist", entry.artist)
+                        .put("album", entry.album.orEmpty())
+                        .put("durationMs", entry.durationMs ?: JSONObject.NULL)
+                        .put("url", entry.sourceUrl)
+                        .put("tier", entry.matchTier.name)
+                        .put("confidence", entry.confidence)
+                        .put("matchedAt", entry.lastMatchedAtMs),
+                )
+            }
+            IsrcDiskStore.saveSection(DISK_SECTION, array)
+        }.onFailure { error ->
+            Timber.tag(TAG).d(error, "Failed to persist learned canvas matches")
         }
     }
 

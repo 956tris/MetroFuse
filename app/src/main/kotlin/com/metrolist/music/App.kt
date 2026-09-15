@@ -32,6 +32,8 @@ import com.metrolist.music.constants.*
 import com.metrolist.music.di.ApplicationScope
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.extensions.toInetSocketAddress
+import com.metrolist.music.apple.CanvasIndex
+import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.utils.CrashHandler
 import com.metrolist.music.utils.cipher.CipherDeobfuscator
 import com.metrolist.music.utils.dataStore
@@ -128,6 +130,15 @@ class App :
         // Pre-read Coil cache size on background to avoid runBlocking in newImageLoader
         applicationScope.launch(Dispatchers.IO) {
             cachedCoilCacheSize = dataStore.data.map { it[MaxImageCacheSizeKey] ?: 512 }.first()
+        }
+
+        // Preload disk-learned ISRCs + canvas matches so first plays hit
+        // the local match store instead of re-running catalog searches.
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching {
+                IsrcResolver.init(this@App)
+                CanvasIndex.preloadFromDisk()
+            }
         }
 
         // تهيئة إعدادات التطبيق عند الإقلاع

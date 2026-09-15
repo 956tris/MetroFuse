@@ -15,6 +15,7 @@ import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerProxyMode
+import com.metrolist.music.providers.IsrcResolver
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
@@ -234,6 +235,7 @@ object DeezerAudioProvider {
                     ?.also { trackCache[trackCacheKey] = it }
                 ?: throw DeezerResolutionException("Deezer match not found for ${query.title}")
         }
+        harvestIsrc(query, track)
 
         val now = System.currentTimeMillis()
         val errors = mutableListOf<String>()
@@ -353,6 +355,7 @@ object DeezerAudioProvider {
                     ?.also { trackCache[trackCacheKey] = it }
                 ?: throw DeezerResolutionException("Deezer fast match not found for ${query.title}")
         }
+        harvestIsrc(query, track)
 
         val now = System.currentTimeMillis()
         val qualities = qualityFallbackOrder(query.quality)
@@ -1342,6 +1345,26 @@ object DeezerAudioProvider {
             isrc = isrc,
             durationMs = durationMs,
         )
+
+    /**
+     * Feeds a resolved match's ISRC into the shared resolver cache — keyed
+     * by both the played query (often a YTM video-style title) and the
+     * canonical track form. Only scored matches reach here (MIN_MATCH_SCORE
+     * in findBestTrack / selectBestTrack), so a harvested ISRC is as
+     * trustworthy as a resolver lookup. Never throws.
+     */
+    private fun harvestIsrc(query: Query, track: MatchedTrack) {
+        val isrc = track.isrc?.takeIf { it.isNotBlank() } ?: return
+        runCatching {
+            val durationSec = (query.durationMs ?: track.durationMs)?.let { (it / 1000L).toInt() }
+            query.artists.firstOrNull()?.let { artist ->
+                IsrcResolver.publish(query.title, artist, isrc, durationSec)
+            }
+            track.artistNames.firstOrNull()?.let { artist ->
+                IsrcResolver.publish(track.title, artist, isrc, durationSec)
+            }
+        }
+    }
 
     private fun MatchedTrack.toCandidateMetadata(): CandidateMetadata =
         CandidateMetadata(

@@ -8,6 +8,7 @@ package com.metrolist.music.tidal
 import android.net.Uri
 import android.util.Base64
 import com.metrolist.music.constants.TidalAudioQuality
+import com.metrolist.music.providers.IsrcResolver
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -1071,6 +1072,21 @@ object TidalAudioProvider {
             Timber.tag("TidalAudio").i(
                 "Resolved TIDAL ${resolvedQuality.ifBlank { quality }} stream for ${track.trackId}: label=$resolvedLabel, local=${localFile != null}, dash=${manifest.isDash}, bitrate=$bitrate, sampleRate=$sampleRate",
             )
+
+            // Harvest: the winning track survived ISRC-first + scored
+            // matching, so its ISRC is trusted. Keyed by the canonical
+            // track form (lookups clean inputs first, so YTM video-style
+            // queries still hit).
+            runCatching {
+                val isrc = track.isrc?.takeIf { it.isNotBlank() } ?: return@runCatching
+                val artist = track.artistNames.firstOrNull()?.takeIf { it.isNotBlank() } ?: return@runCatching
+                IsrcResolver.publish(
+                    track.title,
+                    artist,
+                    isrc,
+                    (durationMs ?: track.durationMs)?.let { (it / 1000L).toInt() },
+                )
+            }
 
             return Resolved(
                 mediaUri = streamUri,

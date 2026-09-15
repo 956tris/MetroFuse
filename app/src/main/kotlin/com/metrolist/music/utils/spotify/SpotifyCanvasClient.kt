@@ -17,6 +17,7 @@ import com.metrolist.innertube.pages.SearchSummary
 import com.metrolist.innertube.pages.SearchSummaryPage
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.providers.ExternalPlaylistPage
+import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.providers.SpotifyHomeFeedParser
 import androidx.compose.runtime.Composable
@@ -986,6 +987,16 @@ object SpotifyCanvasClient {
                 ?: buildExpectation(mediaMetadata)?.let { resolveTrackUri(it, normalizedCookie) }
                 ?: return null
         val canvasUrl = resolveCanvas(trackUri, normalizedCookie) ?: return null
+        // Harvest: this trackUri survived scored Spotify matching AND has a
+        // canvas, so its Web-API ISRC is trusted. Keyed by the played
+        // metadata (often a YTM video-style title) — the YTM-audio harvest
+        // path. ISRC lookup itself is cached (6h), so repeats are free.
+        runCatching {
+            val artist = mediaMetadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return@runCatching
+            resolveTrackIsrc(trackUri, normalizedCookie)?.let { isrc ->
+                IsrcResolver.publish(mediaMetadata.title, artist, isrc, mediaMetadata.duration.takeIf { it > 0 })
+            }
+        }
         return SpotifyCanvasMedia(
             url = canvasUrl,
             headers = buildCanvasHeaders(trackUri),

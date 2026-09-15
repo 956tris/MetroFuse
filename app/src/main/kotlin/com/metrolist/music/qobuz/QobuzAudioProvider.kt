@@ -5,6 +5,7 @@
 
 package com.metrolist.music.qobuz
 
+import com.metrolist.music.providers.IsrcResolver
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -78,6 +79,7 @@ object QobuzAudioProvider {
         val bitDepth: Int?,
         val samplingRateKhz: Double?,
         val durationMs: Long?,
+        val isrc: String?,
     )
 
     private data class StreamAttempt(
@@ -134,6 +136,9 @@ object QobuzAudioProvider {
                     ?.also { trackCache[trackCacheKey] = it }
                 ?: throw QobuzResolutionException("Qobuz match not found for ${query.title}")
         }
+        // Harvest: a scored Qobuz match teaches the shared ISRC map, so
+        // YTM-frontend plays of the same song hit ISRC-exact next time.
+        harvestIsrc(query, track)
 
         var lastError: String? = null
         for (quality in buildQualityFallbackOrder(query.qualityCode)) {
@@ -402,6 +407,7 @@ object QobuzAudioProvider {
                         bitDepth = bitDepth,
                         samplingRateKhz = samplingRate,
                         durationMs = candidateDuration?.toLong()?.times(1000L),
+                        isrc = candidateIsrc.takeIf { it.isNotBlank() },
                     ),
                     score = score,
                 )
@@ -750,7 +756,22 @@ object QobuzAudioProvider {
             bitDepth = null,
             samplingRateKhz = null,
             durationMs = durationMs,
+            isrc = null,
         )
+
+    /**
+     * Feeds a scored match's ISRC into the shared resolver cache (keyed by
+     * both the played query and the canonical track form). Never throws.
+     */
+    private fun harvestIsrc(query: Query, track: MatchedTrack) {
+        val isrc = track.isrc?.takeIf { it.isNotBlank() } ?: return
+        runCatching {
+            val durationSec = (query.durationMs ?: track.durationMs)?.let { (it / 1000L).toInt() }
+            query.artists.firstOrNull()?.let { artist ->
+                IsrcResolver.publish(query.title, artist, isrc, durationSec)
+            }
+        }
+    }
 
     private fun String.toQobuzTrackIdOrNull(): String? {
         val trimmed = trim()

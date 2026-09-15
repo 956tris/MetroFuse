@@ -9,6 +9,8 @@ import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.utils.CanvasQueryCleaner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -179,81 +181,111 @@ object AppleMusicCanvasProvider {
                 return@withContext null
             }
 
-            // Resolve + VALIDATE a trusted ISRC via the shared multi-source
-            // resolver. A caller-supplied ISRC that fails ProviderIsrc's
-            // shape check is treated as absent, never passed through —
-            // a malformed tag must never be used as a lookup key.
-            //
-            // Once resolved, this ISRC is the single highest-priority
-            // identifier for the rest of this call: a later, lower-tier
-            // match (catalog search / fuzzy) is only ever used to fill in
-            // a canvas URL for *this same* ISRC-identified track, never to
-            // silently swap to a different track.
-            var resolvedIsrc = ProviderIsrc.normalize(isrc)
-            if (resolvedIsrc == null) {
-                resolvedIsrc = IsrcResolver.resolveAndValidate(
-                    candidateIsrc = null,
-                    song = cleanSong,
-                    artist = cleanArtist,
-                    durationSeconds = validDuration,
-                )
-                if (resolvedIsrc != null) {
-                    Timber.tag(TAG).d("Using resolver ISRC $resolvedIsrc for \"$cleanSong\" by $cleanArtist")
-                }
-            }
-
-            // Index short-circuit: an existing higher-or-equal confidence
-            // entry for this exact ISRC means we don't need to hit the
-            // network at all (separate from the raw HLS-URL [cache] above,
-            // this also captures the *reason* the match was made).
-            resolvedIsrc?.let { CanvasIndex.getByIsrc(it) }?.let { indexed ->
-                logMatchDecision(cleanSong, cleanArtist, resolvedIsrc, indexed.matchTier, indexed.confidence, indexed.title)
-                return@withContext AppleMusicCanvas(animated = indexed.sourceUrl).also {
-                    cache[key] = it
-                }
-            }
-
+            // Matching strategy (AMP is the source of truth — its search
+            // responses already carry motion data):
+            // - A synchronously-known ISRC (caller tag, harvested or
+            //   disk-learned cache hit) takes the precise ISRC-first route
+            //   with zero discovery cost.
+            // - Otherwise slow ISRC discovery races the direct AMP search;
+            //   a confident search hit needs no ISRC round-trip, while a
+            //   landed ISRC only ever confirms via fetchByIsrc.
+            // A caller-supplied ISRC that fails ProviderIsrc's shape check
+            // is treated as absent, never passed through.
+            var resolvedIsrc: String? = ProviderIsrc.normalize(isrc)
+                ?: IsrcResolver.peek(cleanSong, cleanArtist, validDuration)
             var searchTransportFailed = false
-            fun attempt(): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
-                // Tier 1: exact ISRC match — the most accurate identifier.
-                if (resolvedIsrc != null) {
-                    val (canvasResult, songItem) = fetchByIsrc(resolvedIsrc, token, preferredAspect)
-                    if (canvasResult != null) return Triple(canvasResult, CanvasMatchTier.ISRC_EXACT, songItem)
-                    if (songItem != null) {
+
+            // Tier 1: exact ISRC match. Returns (canvas, ISRC_EXACT, item)
+            // on a hit, (null, ISRC_EXACT, item) when the ISRC identifies a
+            // real track with no canvas (definitive negative — no retry),
+            // (null, null, item-or-null) when the ISRC matches nothing or
+            // points at a different artist's track (fall through to search).
+            fun tier1(activeToken: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
+                val current = resolvedIsrc ?: return Triple(null, null, null)
+                val (canvasResult, songItem) = fetchByIsrc(current, activeToken, preferredAspect)
+                if (canvasResult != null) return Triple(canvasResult, CanvasMatchTier.ISRC_EXACT, songItem)
+                if (songItem != null) {
+                    val matchedArtist =
+                        normalize(songItem.optJSONObject("attributes")?.optString("artistName").orEmpty())
+                    val wantArtist = normalize(cleanArtist)
+                    if (matchedArtist.isBlank() || matchedArtist == wantArtist ||
+                        matchedArtist.contains(wantArtist) || wantArtist.contains(matchedArtist)
+                    ) {
                         // ISRC matched a real catalog track but it has no
-                        // canvas — this is a correct negative result and
-                        // must NOT fall through to search/fuzzy matching,
-                        // which could otherwise attach a different track's
-                        // canvas to this ISRC.
+                        // canvas — a correct negative that must NOT fall
+                        // through to fuzzy matching for a different track.
                         return Triple(null, CanvasMatchTier.ISRC_EXACT, songItem)
                     }
+                    // Resolver ISRC belongs to another artist's recording
+                    // (common for single-word YTM titles) — drop it and let
+                    // the scored search pick the right track instead of
+                    // hard-blocking on the wrong one.
+                    Timber.tag(TAG).w("ISRC $current matched artist \"$matchedArtist\", want \"$cleanArtist\" — ignoring ISRC")
+                    resolvedIsrc = null
                 }
-                // Tier 3/4: catalog search fallback — scored against title +
-                // artist + duration (Tier 4 = FUZZY) unless the returned
-                // catalog item itself carries a matching ISRC (Tier 2 style
-                // confirmation), or album+artist+title line up exactly
-                // (Tier 3).
-                val search = fetchBySearch(cleanSong, cleanArtist, validDuration, token, preferredAspect)
+                return Triple(null, null, songItem)
+            }
+
+            // Tier 3/4: scored catalog search fallback.
+            fun searchLeg(activeToken: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
+                val search = fetchBySearch(cleanSong, cleanArtist, validDuration, activeToken, preferredAspect)
                 if (search.transportFailed) searchTransportFailed = true
                 // Raw-title retry: if cleaning overshot (rare), one attempt
                 // with the original query before giving up.
                 if (search.canvas == null && search.item == null &&
                     (cleanSong != song || cleanArtist != artist)
                 ) {
-                    val retry = fetchBySearch(song, artist, validDuration, token, preferredAspect)
+                    val retry = fetchBySearch(song, artist, validDuration, activeToken, preferredAspect)
                     if (retry.transportFailed) searchTransportFailed = true
                     return Triple(retry.canvas, retry.tier, retry.item)
                 }
                 return Triple(search.canvas, search.tier, search.item)
             }
 
-            var (canvas, tier, matchedItem) = attempt()
+            fun indexedHit(isrc: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?>? =
+                CanvasIndex.getByIsrc(isrc)?.let { indexed ->
+                    logMatchDecision(cleanSong, cleanArtist, isrc, indexed.matchTier, indexed.confidence, indexed.title)
+                    val hit = AppleMusicCanvas(animated = indexed.sourceUrl)
+                    cache[key] = hit
+                    Triple(hit, indexed.matchTier, null)
+                }
+
+            suspend fun runRound(activeToken: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
+                // Precise leg first whenever an ISRC is already in hand.
+                resolvedIsrc?.let { isrc ->
+                    indexedHit(isrc)?.let { return it }
+                    val t1 = tier1(activeToken)
+                    if (t1.first != null || t1.second == CanvasMatchTier.ISRC_EXACT) return t1
+                    return searchLeg(activeToken)
+                }
+
+                // No ISRC yet: race slow discovery against the direct AMP
+                // search instead of paying both sequentially.
+                val (discovered, search) = coroutineScope {
+                    val isrcD = async { IsrcResolver.resolveAndValidate(null, cleanSong, cleanArtist, validDuration) }
+                    val searchD = async { searchLeg(activeToken) }
+                    isrcD.await() to searchD.await()
+                }
+                if (discovered != null) {
+                    Timber.tag(TAG).d("Using resolver ISRC $discovered for \"$cleanSong\" by $cleanArtist")
+                    resolvedIsrc = discovered
+                    indexedHit(discovered)?.let { return it }
+                    val t1 = tier1(activeToken)
+                    if (t1.first != null || t1.second == CanvasMatchTier.ISRC_EXACT) return t1
+                }
+                // Search result was already awaited above — zero extra wait.
+                return search
+            }
+
+            var (canvas, tier, matchedItem) = runRound(token)
 
             // An empty result might mean the cached token is stale/rejected
-            // server-side, not that Apple has no canvas. Force-refresh + retry.
+            // server-side, not that Apple has no canvas. Force-refresh +
+            // retry (discovery hits memory cache on retry, so this costs
+            // one search).
             if (canvas == null && tier != CanvasMatchTier.ISRC_EXACT && !searchTransportFailed) {
                 token = getToken(forceRefresh = true) ?: token
-                val retry = attempt()
+                val retry = runRound(token)
                 canvas = retry.first
                 tier = retry.second
                 matchedItem = retry.third
@@ -270,6 +302,11 @@ object AppleMusicCanvasProvider {
             if (canvas != null) {
                 cache[key] = canvas
                 negativeCache.remove(key)
+                // Harvest: a confirmed canvas match teaches the shared ISRC
+                // map, so YTM-frontend plays skip discovery next time.
+                runCatching {
+                    effectiveIsrc?.let { IsrcResolver.publish(cleanSong, cleanArtist, it, validDuration) }
+                }
                 if (tier != null) {
                     CanvasIndex.put(
                         CanvasMatchEntry(
@@ -493,7 +530,7 @@ object AppleMusicCanvasProvider {
     ): SearchResult {
         val url = buildAmpUrl(
             "$AMP_BASE/v1/catalog/$STOREFRONT/search",
-            mapOf("term" to "$song $artist", "types" to "songs", "limit" to "10"),
+            mapOf("term" to "$song $artist", "types" to "songs", "limit" to "25"),
         )
 
         val body = runCatching {
