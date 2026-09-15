@@ -61,17 +61,25 @@ object DeezerLyricsProvider : LyricsProvider {
         val cookie = context.dataStore.get(DeezerCookieKey, "")
         val arl = deezerCookieValue(cookie, "arl")
         if (arl.isNullOrBlank()) {
+            Timber.tag(TAG).w("getLyrics: no ARL in stored Deezer cookie (cookieConfigured=${cookie.isNotBlank()})")
             return Result.failure(IllegalStateException("Deezer ARL not configured"))
         }
 
         val trackId = id.deezerTrackId() ?: searchTrackId(title, artist, duration)
-            ?: return Result.failure(NoSuchElementException("No Deezer track found for $title - $artist"))
+        if (trackId == null) {
+            Timber.tag(TAG).w("getLyrics: no Deezer track for \"$title\" - \"$artist\"")
+            return Result.failure(NoSuchElementException("No Deezer track found for $title - $artist"))
+        }
+        Timber.tag(TAG).d("getLyrics: resolved trackId=$trackId for \"$title\" - \"$artist\"")
 
         // Cached JWT first; a JwtTokenExpiredError mid-flight clears the
         // cache, so the second attempt transparently mints a fresh one.
         val lrc = fetchLyrics(trackId, arl, forceRefreshJwt = false)
             ?: fetchLyrics(trackId, arl, forceRefreshJwt = true)
-            ?: return Result.failure(NoSuchElementException("No Deezer lyrics found for $title - $artist"))
+        if (lrc == null) {
+            Timber.tag(TAG).w("getLyrics: pipe returned no usable lyrics for trackId=$trackId")
+            return Result.failure(NoSuchElementException("No Deezer lyrics found for $title - $artist"))
+        }
 
         return Result.success(lrc)
     }
@@ -121,10 +129,17 @@ object DeezerLyricsProvider : LyricsProvider {
                     .post(ByteArray(0).toRequestBody(null))
                     .build()
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@runCatching null
+                    if (!response.isSuccessful) {
+                        Timber.tag(TAG).w("JWT mint failed: HTTP ${response.code}")
+                        return@runCatching null
+                    }
                     JSONObject(response.body.string()).optString("jwt").takeIf { it.isNotBlank() }
+                        ?: Timber.tag(TAG).w("JWT mint returned 200 with no jwt field").let { null }
                 }
-            }.getOrNull()
+            }.getOrElse { error ->
+                Timber.tag(TAG).w(error, "JWT mint threw")
+                null
+            }
             if (!fresh.isNullOrBlank()) {
                 cachedJwt = fresh
                 cachedJwtArl = arl
@@ -144,7 +159,10 @@ object DeezerLyricsProvider : LyricsProvider {
     private fun searchTrackId(title: String, artist: String, durationSec: Int): String? =
         runCatching {
             if (title.isBlank() || artist.isBlank()) return@runCatching null
-            val query = "track:\"$title\" artist:\"$artist\""
+            // Plain query: field-qualified track:".." artist:".." combos
+            // return zero hits server-side (verified live). Scoring below
+            // disambiguates, so a broad query is correct here.
+            val query = "$title $artist"
             val url = "$SEARCH_URL?q=${URLEncoder.encode(query, Charsets.UTF_8.name())}&limit=10"
             val request = Request.Builder()
                 .url(url)
@@ -153,7 +171,10 @@ object DeezerLyricsProvider : LyricsProvider {
                 .get()
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
+                if (!response.isSuccessful) {
+                    Timber.tag(TAG).d("searchTrackId: HTTP ${response.code} for \"$title\" - \"$artist\"")
+                    return@use null
+                }
                 val data = JSONObject(response.body.string()).optJSONArray("data") ?: return@use null
                 var bestId: String? = null
                 var bestScore = Int.MIN_VALUE
@@ -174,8 +195,12 @@ object DeezerLyricsProvider : LyricsProvider {
                     }
                 }
                 bestId.takeIf { bestScore >= 60 }
+                    .also { Timber.tag(TAG).d("searchTrackId: best=$it score=$bestScore for \"$title\" - \"$artist\"") }
             }
-        }.getOrNull()
+        }.getOrElse { error ->
+            Timber.tag(TAG).d(error, "searchTrackId threw for \"$title\" - \"$artist\"")
+            null
+        }
 
     private fun scoreCandidate(
         itemTitle: String,
@@ -242,10 +267,19 @@ object DeezerLyricsProvider : LyricsProvider {
                 .post(payload)
                 .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@runCatching null
+                if (!response.isSuccessful) {
+                    Timber.tag(TAG).w("pipe GetLyrics failed: HTTP ${response.code} for trackId=$trackId")
+                    // Auth-shaped failures mean the JWT is dead — drop it so
+                    // the caller's retry mints a fresh one.
+                    if (response.code == 401 || response.code == 403) cachedJwt = null
+                    return@runCatching null
+                }
                 JSONObject(response.body.string())
             }
-        }.getOrNull() ?: return null
+        }.getOrElse { error ->
+            Timber.tag(TAG).w(error, "pipe GetLyrics threw for trackId=$trackId")
+            null
+        } ?: return null
 
         // Expired JWT mid-flight: drop the cache so the caller's retry mints fresh.
         val firstErrorType = body.optJSONArray("errors")?.optJSONObject(0)?.optString("type")
@@ -254,8 +288,20 @@ object DeezerLyricsProvider : LyricsProvider {
             Timber.tag(TAG).d("Deezer JWT expired mid-request for track $trackId")
             return null
         }
+        if (body.optJSONArray("errors") != null) {
+            Timber.tag(TAG).w("pipe GetLyrics errors for trackId=$trackId: ${body.optJSONArray("errors")}")
+        }
 
-        val lyrics = body.optJSONObject("data")?.optJSONObject("track")?.optJSONObject("lyrics") ?: return null
+        val lyrics = body.optJSONObject("data")?.optJSONObject("track")?.optJSONObject("lyrics")
+        if (lyrics == null) {
+            Timber.tag(TAG).d("pipe GetLyrics: no lyrics object for trackId=$trackId")
+            return null
+        }
+        Timber.tag(TAG).d(
+            "pipe GetLyrics: trackId=$trackId wordLines=${lyrics.optJSONArray("synchronizedWordByWordLines")?.length() ?: -1} " +
+                "lines=${lyrics.optJSONArray("synchronizedLines")?.length() ?: -1} " +
+                "hasText=${lyrics.optString("text").isNotBlank()}",
+        )
         return wordByWordLrc(lyrics) ?: syncedLinesLrc(lyrics) ?: lyrics.optString("text").takeIf { it.isNotBlank() }
     }
 
