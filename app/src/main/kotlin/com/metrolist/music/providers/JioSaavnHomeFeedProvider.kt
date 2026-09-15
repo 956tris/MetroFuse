@@ -146,9 +146,6 @@ object JioSaavnHomeFeedProvider {
         root: JSONObject,
         key: String,
     ): List<YTItem> {
-        root: JSONObject,
-        key: String,
-    ): List<YTItem> {
         val items = mutableListOf<YTItem>()
         root.optJSONArray(key)?.forEachObject { obj ->
             when (obj.optString("type")) {
