@@ -59,7 +59,6 @@ import com.metrolist.music.ui.screens.settings.SettingsScreen
 import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
-import com.metrolist.music.ui.screens.settings.integrations.AmazonMusicSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
@@ -455,10 +454,6 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/deezer/login") {
         DeezerLoginScreen(navController)
-    }
-
-    composable("settings/integrations/amazon_music") {
-        AmazonMusicSettings(navController)
     }
 
     composable("settings/integrations/apple") {

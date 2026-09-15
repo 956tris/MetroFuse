@@ -15,7 +15,6 @@ internal object PlaybackCacheIndex {
             "apple-wrapper-alac-v2:",
             "apple-wrapper-alac:",
             "apple-music-fallback-audio:",
-            "amazon-fallback-m4a:",
             "qobuz-fallback-v2:",
             "qobuz-fallback:",
             "tidal-flac-fallback-temp-v1:",

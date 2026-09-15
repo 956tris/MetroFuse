@@ -8,8 +8,6 @@ package com.metrolist.music.providers
 import android.content.Context
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.SongItem
-import com.metrolist.music.constants.AmazonAudioQualityKey
-import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
@@ -35,7 +33,6 @@ import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.qobuz.QobuzAudioProvider
-import com.metrolist.music.amazon.AmazonAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.utils.dataStore
@@ -258,21 +255,6 @@ object ProviderMatchSearch {
                 }
             }
 
-            AudioProviderOrderItem.AMAZON_MUSIC -> {
-                val country = context.dataStore.get(ContentCountryKey, "US")
-                val searchTerm = metadata.searchTerm()
-                AmazonAudioProvider.searchCandidates(context, searchTerm, country, limit).map { track ->
-                    ProviderMatchCandidate(
-                        provider = provider,
-                        providerTrackId = track.trackId,
-                        title = track.title,
-                        artist = track.artist,
-                        album = track.album,
-                        durationMs = track.durationMs,
-                        shareUrl = "https://music.amazon.com/tracks/${track.trackId}",
-                    )
-                }
-            }
             AudioProviderOrderItem.APPLE_MUSIC -> emptyList()
         }
 

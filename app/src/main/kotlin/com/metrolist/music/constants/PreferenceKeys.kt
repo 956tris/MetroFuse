@@ -126,9 +126,6 @@ val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
 val AppleAudioQualityKey = stringPreferencesKey("appleAudioQuality")
 val StopOnProviderErrorKey = booleanPreferencesKey("stopOnProviderError")
-val YtDlpLastManualUpdateAtKey = longPreferencesKey("ytDlpLastManualUpdateAt")
-val YtDlpManualUpdateTimestampsKey = stringPreferencesKey("ytDlpManualUpdateTimestamps")
-val YtDlpUseNightlyChannelKey = booleanPreferencesKey("ytDlpUseNightlyChannel")
 val AudioProviderOrderKey = stringPreferencesKey("audioProviderOrder")
 val AudioProviderDisabledKey = stringPreferencesKey("audioProviderDisabled")
 val AudioProviderMatchOverridesKey = stringPreferencesKey("audioProviderMatchOverrides")
@@ -137,7 +134,6 @@ enum class AudioProviderOrderItem {
     SOUNDCLOUD,
     TIDAL,
     DEEZER,
-    AMAZON_MUSIC,
     APPLE_MUSIC,
     JIOSAAVN,
     YOUTUBE_MUSIC,
@@ -153,7 +149,6 @@ object AudioProviderOrder {
             AudioProviderOrderItem.SOUNDCLOUD,
             AudioProviderOrderItem.TIDAL,
             AudioProviderOrderItem.DEEZER,
-            AudioProviderOrderItem.AMAZON_MUSIC,
             AudioProviderOrderItem.APPLE_MUSIC,
             AudioProviderOrderItem.JIOSAAVN,
             AudioProviderOrderItem.YOUTUBE_MUSIC,
@@ -215,9 +210,6 @@ val QobuzBackendKey = stringPreferencesKey("qobuzBackend")
 enum class QobuzBackend {
     KENNY,
 }
-val AmazonSearchApiUrlKey = stringPreferencesKey("amazonSearchApiUrl")
-val AmazonResolveApiUrlKey = stringPreferencesKey("amazonResolveApiUrl")
-val AmazonAudioQualityKey = stringPreferencesKey("amazonAudioQuality")
 val SoundCloudAudioQualityKey = stringPreferencesKey("soundCloudAudioQuality")
 
 enum class AppleAudioQuality {
@@ -280,11 +272,6 @@ enum class DeezerAudioQuality {
     FLAC,
 }
 
-enum class AmazonAudioQuality {
-    HI_RES,
-    ATMOS,
-}
-
 enum class SoundCloudAudioQuality {
     MP3_128,
     AAC_96,
@@ -322,12 +309,6 @@ val DeezerAudioQualityOptions =
         DeezerAudioQuality.MP3_128,
         DeezerAudioQuality.MP3_320,
         DeezerAudioQuality.FLAC,
-    )
-
-val AmazonAudioQualityOptions =
-    listOf(
-        AmazonAudioQuality.HI_RES,
-        AmazonAudioQuality.ATMOS,
     )
 
 val SoundCloudAudioQualityOptions =

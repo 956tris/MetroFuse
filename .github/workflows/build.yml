@@ -41,11 +41,6 @@ jobs:
           java-version: "21"
           distribution: "temurin"
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
@@ -78,11 +73,22 @@ jobs:
           OUTPUT_DIR="app/build/outputs/apk/${{ matrix.variant }}/release"
           mkdir -p "$OUTPUT_DIR/out"
           if [ "${{ matrix.variant }}" = "gms" ]; then
-            TARGET_NAME="app-universal-with-Google-Cast.apk"
+            BASE_NAME="app-with-Google-Cast"
           else
-            TARGET_NAME="app-universal-release.apk"
+            BASE_NAME="app-release"
           fi
-          find "$OUTPUT_DIR" -maxdepth 1 -name "*.apk" | xargs -I{} mv {} "$OUTPUT_DIR/out/$TARGET_NAME"
+          shopt -s nullglob
+          for APK in "$OUTPUT_DIR"/*.apk; do
+            if [[ "$APK" == *"arm64-v8a"* ]]; then
+              ABI="arm64-v8a"
+            elif [[ "$APK" == *"armeabi-v7a"* ]]; then
+              ABI="armeabi-v7a"
+            else
+              ABI="universal"
+            fi
+            mv "$APK" "$OUTPUT_DIR/out/${BASE_NAME}-${ABI}.apk"
+          done
+          ls -la "$OUTPUT_DIR/out/"
 
       - name: Upload Signed APK
         uses: actions/upload-artifact@v6
@@ -113,11 +119,6 @@ jobs:
         with:
           java-version: "21"
           distribution: "temurin"
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5

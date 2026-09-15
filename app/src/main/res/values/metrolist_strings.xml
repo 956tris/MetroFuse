@@ -16,7 +16,6 @@
     <string name="home_source_soundcloud">SoundCloud</string>
     <string name="home_source_deezer">Deezer</string>
     <string name="home_source_offline">Offline</string>
-    <string name="home_source_amazon">Amazon Music</string>
     <string name="search_soundcloud">Search SoundCloud</string>
     <string name="search_tidal">Search TIDAL</string>
     <string name="search_spotify">Search Spotify</string>
@@ -612,7 +611,6 @@
     <string name="audio_provider_jiosaavn">JioSaavn</string>
     <string name="audio_provider_youtube_music">YouTube Music</string>
     <string name="audio_provider_apple_music">Apple Music</string>
-    <string name="audio_provider_amazon_music">Amazon Music</string>
     <string name="audio_provider_qobuz">Qobuz</string>
     <string name="provider_qobuz">Qobuz</string>
     <string name="qobuz_integration">Qobuz</string>
@@ -624,15 +622,6 @@
     <string name="qobuz_custom_instances_helper">Add Qobuz resolver base URLs (one per line). These are tried in order.</string>
     <string name="qobuz_custom_instances_desc_default">No resolver instances configured.</string>
     <string name="qobuz_custom_instances_desc_custom">Using %1$d resolver instance(s).</string>
-    <string name="amazon_music_integration">Amazon Music</string>
-    <string name="amazon_search_api_url">Search API URL</string>
-    <string name="amazon_search_api_url_placeholder">https://t2tunes.site/api/amazon-music/search</string>
-    <string name="amazon_resolve_api_url">Resolve API URL</string>
-    <string name="amazon_resolve_api_url_placeholder">https://t2tunes.site/api/amazon-music/media-from-asin</string>
-    <string name="amazon_audio_quality">Amazon quality</string>
-    <string name="amazon_quality_hires">Hi-Res</string>
-    <string name="amazon_quality_atmos">Dolby Atmos</string>
-    <string name="amazon_integration_info">Amazon Music integration for search and ASIN resolution and audio :3. Decryption is performed locally.</string>
     <string name="username">Username</string>
     <string name="password">Password</string>
     <string name="soundcloud_integration">SoundCloud</string>

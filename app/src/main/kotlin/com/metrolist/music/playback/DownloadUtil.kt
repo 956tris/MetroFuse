@@ -7,7 +7,6 @@ package com.metrolist.music.playback
 
 import android.content.Context
 import androidx.core.net.toUri
-import androidx.media3.common.MimeTypes
 import androidx.media3.database.DatabaseProvider
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
@@ -16,9 +15,6 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.offline.Download
 import androidx.media3.exoplayer.offline.DownloadManager
 import androidx.media3.exoplayer.offline.DownloadNotificationHelper
-import com.metrolist.music.constants.AmazonAudioQuality
-import com.metrolist.music.constants.AmazonAudioQualityKey
-import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
@@ -57,10 +53,6 @@ import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
-import com.metrolist.music.amazon.AmazonAtmosDecryptor
-import com.metrolist.music.amazon.AmazonFfmpegDecryptor
-import com.metrolist.music.amazon.AmazonAudioProvider
-import com.metrolist.music.amazon.AmazonAudioProvider.toAmazonAsinOrNull
 import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.utils.dataStore
@@ -81,7 +73,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import timber.log.Timber
-import java.io.File
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
@@ -197,13 +188,6 @@ constructor(
                     .build()
             }
 
-            if (AmazonAudioProvider.isAmazonCdnUrl(dataSpec.uri.toString())) {
-                return@Factory dataSpec
-                    .buildUpon()
-                    .setKey(amazonFallbackCacheKey(mediaId))
-                    .build()
-            }
-
             val song = database.getSongByIdBlocking(mediaId)
             if (song?.song?.isLocal == true || song?.song?.isEpisode == true) {
                 return@Factory dataSpec
@@ -232,13 +216,6 @@ constructor(
                 upsert(resolved.format)
                 getSongByIdBlocking(mediaId)?.song?.let { existing ->
                     upsert(existing.copy(dateDownload = existing.dateDownload ?: LocalDateTime.now()))
-                }
-            }
-
-            resolved.decryptionKey?.let { key ->
-                val asin = mediaId.toAmazonAsinOrNull() ?: AmazonAudioProvider.extractAsinFromKey(resolved.cacheKey)
-                if (asin != null) {
-                    AmazonAudioProvider.registerDecryptionKey(asin, key)
                 }
             }
 
@@ -350,8 +327,6 @@ constructor(
             Result.failure(IllegalStateException("Deezer audio not enabled"))
         var appleAttempt: Result<AppleAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Apple Music not enabled"))
-        var amazonAttempt: Result<AmazonAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Amazon Music not enabled"))
         var youtubeAttempt: Result<DownloadStreamResolution> =
             Result.failure(IllegalStateException("YouTube Music not attempted yet"))
         var jiosaavnAttempt: Result<JioSaavnAudioProvider.Resolved> =
@@ -398,37 +373,6 @@ constructor(
                     deezerAttempt.getOrNull()?.let { resolved ->
                         Timber.tag(TAG).i("Using Deezer stream for download $mediaId: ${resolved.label}")
                         return resolved.toDownloadResolution()
-                    }
-                }
-                AudioProviderOrderItem.AMAZON_MUSIC -> {
-                    attemptedProviders += provider
-                    amazonAttempt = runCatching {
-                        AmazonAudioProvider.resolve(
-                            context,
-                            buildAmazonQuery(mediaId, song),
-                        )
-                    }
-                    amazonAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag(TAG).i("Using Amazon Music stream for download $mediaId: ${resolved.label}")
-                        val isAtmos = resolved.codecs.lowercase().contains("eac3")
-                        val localPath = if (isAtmos) {
-                            AmazonAtmosDecryptor.prepareStream(context, resolved)
-                        } else {
-                            AmazonFfmpegDecryptor.prepareStream(context, resolved)
-                        }
-
-                        val mimeType = if (isAtmos) MimeTypes.AUDIO_MP4 else MimeTypes.AUDIO_FLAC
-                        val itag = if (isAtmos) AMAZON_ATMOS_ITAG else AMAZON_FLAC_ITAG
-
-                        return DownloadStreamResolution(
-                            uri = android.net.Uri.fromFile(File(localPath)).toString(),
-                            expiresAtMs = resolved.expiresAtMs,
-                            cacheKey = amazonFallbackCacheKey(mediaId),
-                            format = amazonFallbackFormat(mediaId, resolved).copy(
-                                itag = itag,
-                                mimeType = mimeType,
-                            ),
-                        )
                     }
                 }
                 AudioProviderOrderItem.APPLE_MUSIC -> {
@@ -546,13 +490,6 @@ constructor(
         } else {
             ""
         }
-        val amazonDetail = if (attemptedProviders.contains(AudioProviderOrderItem.AMAZON_MUSIC)) {
-            amazonAttempt.exceptionOrNull()?.message
-                ?.let { "Amazon failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
         val appleDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
             appleAttempt.exceptionOrNull()?.message
                 ?.let { "Apple Music failed: $it; " }
@@ -569,7 +506,7 @@ constructor(
         }
         val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${amazonDetail}${appleDetail}${jiosaavnDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${appleDetail}${jiosaavnDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
             qobuzError,
         )
     }
@@ -649,27 +586,6 @@ constructor(
             quality = quality,
             trackIdOverride = JioSaavnAudioProvider.trackIdFromMediaId(mediaId)
                 .takeIf { JioSaavnAudioProvider.isJioSaavnTrackId(mediaId) },
-        )
-    }
-
-    private fun buildAmazonQuery(
-        mediaId: String,
-        song: Song?,
-    ): AmazonAudioProvider.Query {
-        val country = context.dataStore.get(ContentCountryKey, "US")
-        val quality = context.dataStore[AmazonAudioQualityKey].toEnum(AmazonAudioQuality.HI_RES).name
-
-        return AmazonAudioProvider.Query(
-            mediaId = mediaId,
-            title = song?.song?.title ?: mediaId,
-            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
-            album = song?.song?.albumName ?: song?.album?.title,
-            durationMs = song?.song?.duration
-                ?.takeIf { it > 0 }
-                ?.toLong()
-                ?.times(1000L),
-            country = country,
-            quality = quality,
         )
     }
 
@@ -797,14 +713,10 @@ constructor(
         private const val DEEZER_FALLBACK_ITAG = 100_033
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val JIOSAAVN_FALLBACK_ITAG = 100_053
-        private const val AMAZON_FALLBACK_ITAG = 100_045
-        private const val AMAZON_FLAC_ITAG = 100_046
-        private const val AMAZON_ATMOS_ITAG = 100_047
         const val APPLE_MUSIC_FALLBACK_ITAG = 100_050
         private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
         private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
-        private const val AMAZON_FALLBACK_CACHE_PREFIX = "amazon-fallback-audio:"
         private const val APPLE_MUSIC_FALLBACK_CACHE_PREFIX = "apple-music-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
@@ -814,8 +726,6 @@ constructor(
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun jiosaavnFallbackCacheKey(mediaId: String) = "$JIOSAAVN_FALLBACK_CACHE_PREFIX$mediaId"
-
-        private fun amazonFallbackCacheKey(mediaId: String) = "$AMAZON_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun appleMusicFallbackCacheKey(mediaId: String) = "$APPLE_MUSIC_FALLBACK_CACHE_PREFIX$mediaId"
 
@@ -829,7 +739,6 @@ constructor(
             .removePrefix(DEEZER_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
             .removePrefix(JIOSAAVN_FALLBACK_CACHE_PREFIX)
-            .removePrefix(AMAZON_FALLBACK_CACHE_PREFIX)
             .removePrefix(APPLE_MUSIC_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
@@ -876,22 +785,6 @@ constructor(
             bitrate = resolved.bitrate,
             sampleRate = resolved.sampleRate,
             contentLength = resolved.contentLength ?: 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun amazonFallbackFormat(
-            mediaId: String,
-            resolved: AmazonAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = AMAZON_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = resolved.sampleRate,
-            contentLength = 0L,
             loudnessDb = null,
             perceptualLoudnessDb = null,
             playbackUrl = null,

@@ -60,14 +60,14 @@ class ProviderFallbackMatcherTest {
             metadata = metadata("All I Want Is You", "Rebzyyx, hoshie star", 151),
             candidates = listOf(
                 candidate(
-                    provider = AudioProviderOrderItem.AMAZON_MUSIC,
+                    provider = AudioProviderOrderItem.APPLE_MUSIC,
                     trackId = "wrong-artist",
                     title = "All I Want Is You",
                     artist = "Andy Grammer",
                     durationMs = 151_000L,
                 ),
             ),
-            providerOrder = listOf(AudioProviderOrderItem.AMAZON_MUSIC),
+            providerOrder = listOf(AudioProviderOrderItem.APPLE_MUSIC),
         )
 
         assertTrue(selected.isEmpty())
@@ -79,7 +79,7 @@ class ProviderFallbackMatcherTest {
             metadata = metadata("All I Want Is You", "Rebzyyx, hoshie star", 151),
             candidates = listOf(
                 candidate(
-                    provider = AudioProviderOrderItem.AMAZON_MUSIC,
+                    provider = AudioProviderOrderItem.APPLE_MUSIC,
                     trackId = "title-only",
                     title = "All I Want Is You",
                     artist = "",
@@ -94,7 +94,7 @@ class ProviderFallbackMatcherTest {
                 ),
             ),
             providerOrder = listOf(
-                AudioProviderOrderItem.AMAZON_MUSIC,
+                AudioProviderOrderItem.APPLE_MUSIC,
                 AudioProviderOrderItem.YOUTUBE_MUSIC,
             ),
         )

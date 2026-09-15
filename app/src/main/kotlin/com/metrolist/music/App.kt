@@ -21,8 +21,6 @@ import coil3.memory.MemoryCache
 import coil3.request.CachePolicy
 import coil3.request.allowHardware
 import coil3.request.crossfade
-import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 import com.metrolist.innertube.YouTube
 import com.metrolist.innertube.models.YouTubeLocale
 import com.metrolist.kugou.KuGou
@@ -83,17 +81,6 @@ class App :
         // Initialize cipher deobfuscator for WEB_REMIX streaming
         CipherDeobfuscator.initialize(this)
 
-        // Initialize Chaquopy
-        if (!Python.isStarted()) {
-            Python.start(AndroidPlatform(this))
-        }
-
-        // If a yt-dlp self-update was staged on a previous run (see
-        // YtDlpUpdater), inject it onto sys.path now — must happen before
-        // anything imports yt_dlp/ytm_resolver, since sys.path order only
-        // matters for the first import in a process.
-        com.metrolist.music.youtube.YtDlpUpdater.applyStagedUpdateIfPresent(this)
-
         // TEMP DIAGNOSTIC — verifying PoTokenGenerator (dead code since the
         // yt-dlp refactor) still actually works before wiring it into the
         // resolution path. Remove once verified via logcat filtered on
@@ -107,22 +94,6 @@ class App :
                     "SUCCESS: player=${result.playerRequestPoToken.take(10)}... streaming=${result.streamingDataPoToken.take(10)}..."
                 else "FAILED: null result"
             )
-        }
-
-        // yt-dlp is our primary YouTube audio resolution path (see
-        // YouTubeAudioProvider); it needs to stay current with YouTube's
-        // extractor-breaking changes independent of app releases. Check PyPI
-        // and stage an update in the background — never blocks startup or
-        // playback. Respects the user's stable/nightly channel choice from
-        // Settings (defaults to stable).
-        applicationScope.launch(Dispatchers.IO) {
-            val useNightly = dataStore.data.first()[YtDlpUseNightlyChannelKey] ?: false
-            val channel = if (useNightly) {
-                com.metrolist.music.youtube.YtDlpUpdater.Channel.NIGHTLY
-            } else {
-                com.metrolist.music.youtube.YtDlpUpdater.Channel.STABLE
-            }
-            com.metrolist.music.youtube.YtDlpUpdater.updateIfNeeded(this@App, channel = channel)
         }
 
         Timber.plant(Timber.DebugTree())

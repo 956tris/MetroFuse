@@ -40,8 +40,6 @@ bravepipeExtractor = "v0.26.0-2.3.4"
 extractor = "6305155"
 tinypinyin = "2.0.3"
 protobuf = "4.34.1"
-ffmpegKit = "6.0.6"
-chaquopy = "17.0.0"
 
 [libraries]
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
@@ -131,16 +129,8 @@ tinypinyin = { module = "com.github.promeG:tinypinyin", version.ref = "tinypinyi
 protobuf-javalite = { module = "com.google.protobuf:protobuf-javalite", version.ref = "protobuf" }
 protobuf-kotlin-lite = { module = "com.google.protobuf:protobuf-kotlin-lite", version.ref = "protobuf" }
 
-# Community-maintained republish of the retired arthenica/ffmpeg-kit.
-# -https variant: adds gnutls so FFmpeg can fetch https:// URLs directly (needed for
-# AmazonFfmpegDataSource's progressive streaming decrypt, which reads the CloudFront CDN
-# URL as an FFmpeg input rather than a downloaded local file). The -min variant lacks any
-# TLS backend at all and fails with "https protocol not found" on any https:// -i input.
-ffmpeg-kit-min = { module = "io.github.maitrungduc1410:ffmpeg-kit-https", version.ref = "ffmpegKit" }
-
 [plugins]
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 kotlin-ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
-chaquopy = { id = "com.chaquo.python", version.ref = "chaquopy" }

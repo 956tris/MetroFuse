@@ -106,7 +106,6 @@ plugins {
     alias(libs.plugins.kotlin.ksp)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
-    alias(libs.plugins.chaquopy)
 }
 
 abstract class GenerateProtoTask : DefaultTask() {
@@ -197,13 +196,9 @@ android {
         buildConfigField("long", "DISCORD_RPC_APPLICATION_ID", "${discordRpcApplicationId}L")
         manifestPlaceholders["discordRpcApplicationId"] = discordRpcApplicationId
 
-        // Chaquopy requires ndk.abiFilters to always be set, regardless of
-        // whether release builds are also using `splits.abi` to produce
-        // per-ABI APKs — these are two independent mechanisms.
-        ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-        }
-
+        // ABI packaging is handled by splits.abi below (one APK per ABI);
+        // the cmake block only limits which ABIs get natively compiled to
+        // keep native build times down.
         externalNativeBuild {
             cmake {
                 abiFilters += listOf("arm64-v8a", "armeabi-v7a")
@@ -213,13 +208,10 @@ android {
 
     splits {
         abi {
-            // Disabled: Chaquopy requires defaultConfig.ndk.abiFilters to be
-            // set unconditionally, and AGP forbids ndk.abiFilters + a
-            // splits.abi filter set being active at the same time. abiFilters
-            // above now does the ABI restriction for both debug and release;
-            // this means release builds produce one combined APK covering
-            // arm64-v8a + armeabi-v7a instead of separate per-ABI APKs.
-            isEnable = false
+            // Per-ABI APKs for the smallest downloads: arm64 for modern
+            // devices, arm32 as fallback. No universal APK — CI uploads
+            // both and users pick their architecture.
+            isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
             isUniversalApk = false
@@ -367,30 +359,6 @@ android {
     }
 }
 
-chaquopy {
-    defaultConfig {
-        version = "3.11"
-        // Chaquopy requires buildPython to be an exact minor-version match
-        // for the target Python (3.11) — it hard-fails on any mismatch
-        // (3.14 was rejected outright). Resolved as: explicit override env
-        // var, else "python3.11" on PATH (Linux/macOS/CI), else the
-        // Windows installer path used for local dev on this machine.
-        val buildPythonOverride = System.getenv("CHAQUOPY_BUILD_PYTHON")?.takeIf { it.isNotBlank() }
-        val isWindows = System.getProperty("os.name").lowercase().contains("windows")
-        buildPython(
-            buildPythonOverride
-                ?: if (isWindows) {
-                    "C:/Users/Test/AppData/Local/Programs/Python/Python311/python.exe"
-                } else {
-                    "python3.11"
-                },
-        )
-        pip {
-            install("yt-dlp")
-        }
-    }
-}
-
 val protocVersion = libs.versions.protobuf.get()
 
 fun getProtocUrl(): String {
@@ -507,11 +475,6 @@ dependencies {
     implementation(libs.media3.hls)
     implementation(libs.media3.dash)
     implementation(libs.media3.ffmpeg.decoder)
-
-    // FFmpegKit - used by Amazon Music provider to decrypt CMAF/MP4 streams via
-    // `ffmpeg -decryption_key <hex> -i <enc> -c copy <out.flac>`. The -min variant
-    // is the smallest footprint build that still includes the mov demuxer.
-    implementation(libs.ffmpeg.kit.min)
 
     // Google Cast - only included in GMS flavor (not available in F-Droid/FOSS builds)
     "gmsImplementation"(libs.media3.cast)

@@ -31,11 +31,6 @@ jobs:
           java-version: "21"
           distribution: "temurin"
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
@@ -67,7 +62,18 @@ jobs:
         run: |
           OUTPUT_DIR="app/build/outputs/apk/foss/release"
           mkdir -p "$OUTPUT_DIR/out"
-          find "$OUTPUT_DIR" -maxdepth 1 -name "*.apk" | xargs -I{} mv {} "$OUTPUT_DIR/out/app-universal-test-release.apk"
+          shopt -s nullglob
+          for APK in "$OUTPUT_DIR"/*.apk; do
+            if [[ "$APK" == *"arm64-v8a"* ]]; then
+              ABI="arm64-v8a"
+            elif [[ "$APK" == *"armeabi-v7a"* ]]; then
+              ABI="armeabi-v7a"
+            else
+              ABI="universal"
+            fi
+            mv "$APK" "$OUTPUT_DIR/out/app-test-release-${ABI}.apk"
+          done
+          ls -la "$OUTPUT_DIR/out/"
 
       - name: Upload Signed APK
         uses: actions/upload-artifact@v6

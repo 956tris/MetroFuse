@@ -10,7 +10,6 @@ class PlaybackCacheIndexTest {
     @Test
     fun providerCacheKeysMapBackToTheSongId() {
         assertEquals("song-id", PlaybackCacheIndex.mediaIdForKey("qobuz-fallback-v2:song-id"))
-        assertEquals("song-id", PlaybackCacheIndex.mediaIdForKey("amazon-fallback-m4a:song-id"))
         assertEquals("song-id", PlaybackCacheIndex.mediaIdForKey("apple-music-fallback-audio:song-id"))
         assertEquals("song-id", PlaybackCacheIndex.mediaIdForKey("youtube-fallback-aac:song-id"))
     }

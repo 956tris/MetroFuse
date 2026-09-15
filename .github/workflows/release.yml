@@ -94,11 +94,6 @@ jobs:
           java-version: "21"
           distribution: "temurin"
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
@@ -131,25 +126,35 @@ jobs:
           OUTPUT_DIR="app/build/outputs/apk/${{ matrix.variant }}/release"
           mkdir -p "$OUTPUT_DIR/out"
 
-          SIGNED_APK=$(find "$OUTPUT_DIR" -maxdepth 1 -name "*.apk" | head -1)
+          if [ "${{ matrix.variant }}" = "gms" ]; then
+            BASE_NAME="MetroFuse-with-Google-Cast"
+          elif [ "${{ matrix.variant }}" = "izzy" ]; then
+            BASE_NAME="MetroFuse-izzy"
+          else
+            BASE_NAME="MetroFuse"
+          fi
 
-          if [ -z "$SIGNED_APK" ]; then
+          shopt -s nullglob
+          COUNT=0
+          for SIGNED_APK in "$OUTPUT_DIR"/*.apk; do
+            if [[ "$SIGNED_APK" == *"arm64-v8a"* ]]; then
+              ABI="arm64-v8a"
+            elif [[ "$SIGNED_APK" == *"armeabi-v7a"* ]]; then
+              ABI="armeabi-v7a"
+            else
+              ABI="universal"
+            fi
+            mv "$SIGNED_APK" "$OUTPUT_DIR/out/${BASE_NAME}-${ABI}.apk"
+            COUNT=$((COUNT + 1))
+          done
+
+          if [ "$COUNT" -eq 0 ]; then
             echo "No signed APK found for ${{ matrix.variant }}"
             ls -la "$OUTPUT_DIR"
             exit 1
           fi
 
-          if [ "${{ matrix.variant }}" = "gms" ]; then
-            TARGET_NAME="MetroFuse-with-Google-Cast.apk"
-          elif [ "${{ matrix.variant }}" = "izzy" ]; then
-            TARGET_NAME="MetroFuse-izzy.apk"
-          else
-            TARGET_NAME="MetroFuse.apk"
-          fi
-
-          mv "$SIGNED_APK" "$OUTPUT_DIR/out/$TARGET_NAME"
-
-          echo "APK renamed to: $TARGET_NAME"
+          echo "APKs renamed ($COUNT):"
           ls -la "$OUTPUT_DIR/out/"
 
       - name: Upload Signed APKs

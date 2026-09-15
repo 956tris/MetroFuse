@@ -134,11 +134,6 @@ import com.metrolist.music.utils.get
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.onEach
 import com.metrolist.music.constants.AutoDownloadOnLikeKey
-import com.metrolist.music.amazon.AmazonAtmosDecryptor
-import com.metrolist.music.amazon.AmazonFfmpegDecryptor
-import com.metrolist.music.amazon.AmazonAudioProvider
-import com.metrolist.music.amazon.AmazonAudioProvider.toAmazonAsinOrNull
-import com.metrolist.music.amazon.AmazonFfmpegDataSource
 import com.metrolist.music.constants.AutoLoadMoreKey
 import com.metrolist.music.constants.AutoSkipNextOnErrorKey
 import com.metrolist.music.constants.AutoplayKey
@@ -231,10 +226,7 @@ import com.metrolist.music.constants.ShufflePlaylistFirstKey
 import com.metrolist.music.constants.SimilarContent
 import com.metrolist.music.constants.SkipSilenceInstantKey
 import com.metrolist.music.constants.SkipSilenceKey
-import com.metrolist.music.constants.AmazonAudioQuality
-import com.metrolist.music.constants.AmazonAudioQualityKey
 import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
-import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.ContentLanguageKey
 import com.metrolist.music.constants.JioSaavnAudioQuality
 import com.metrolist.music.constants.JioSaavnAudioQualityKey
@@ -894,11 +886,6 @@ class MusicService :
         // Initialize Global Preference Cache to avoid runBlocking DataStore reads in hot paths
         PreferenceCache.initialize(this, scope)
 
-        // Initialize the Amazon FFmpeg decryptor cache directory so it can
-        // be queried from non-Context paths (invalidate, cache lookups).
-        AmazonFfmpegDecryptor.init(this)
-        AmazonAtmosDecryptor.init(this)
-
         setListener(
             object : MediaSessionService.Listener {
                 override fun onForegroundServiceStartNotAllowedException() {
@@ -1157,7 +1144,6 @@ class MusicService :
                             prefs[SoundCloudAudioQualityKey],
                             prefs[SoundCloudAuthTokenKey],
                             prefs[AppleAudioQualityKey],
-                            prefs[AmazonAudioQualityKey],
                             prefs[QobuzBackendKey],
                             prefs[QobuzCountryKey],
                             prefs[AudioProviderOrderKey],
@@ -4969,7 +4955,6 @@ class MusicService :
             DEEZER_FALLBACK_ITAG -> "deezer"
             SOUNDCLOUD_FALLBACK_ITAG -> "soundcloud"
             APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_FALLBACK_ITAG -> "apple music"
-            AMAZON_FALLBACK_ITAG, AMAZON_FLAC_ITAG -> "amazon music"
             DIRECT_HTTP_AUDIO_ITAG -> "direct audio"
             else -> "youtube music".takeIf { itag > 0 }
         }
@@ -4982,7 +4967,6 @@ class MusicService :
             value.startsWith(deezerFallbackCacheKey(""), ignoreCase = true) -> "deezer"
             value.startsWith(soundCloudFallbackCacheKey(""), ignoreCase = true) -> "soundcloud"
             value.startsWith(appleMusicFallbackCacheKey(""), ignoreCase = true) -> "apple music"
-            value.contains("amazon") && (value.contains(".com") || value.contains(".co")) -> "amazon music"
             value.startsWith(directHttpAudioCacheKey(""), ignoreCase = true) -> "direct audio"
             value.startsWith(youtubeFallbackCacheKey(""), ignoreCase = true) -> "youtube music"
             else -> null
@@ -5227,82 +5211,10 @@ class MusicService :
         provider: AudioProviderOrderItem,
     ): Boolean = true
 
-    /**
-     * Intercepts DataSource opens for resolved Amazon CDN URLs and routes them through
-     * AmazonFfmpegDataSource for progressive FFmpeg decryption, instead of streaming the
-     * still-encrypted CENC bytes straight through.
-     *
-     * This has to live at the DataSource level, not the MediaSource level: MediaSource.Factory
-     * .createMediaSource() runs before AmazonAudioProvider.resolve() has ever been called for
-     * a given mediaId (resolution only happens later, inside the ResolvingDataSource transform
-     * below, when the DataSource chain actually opens) - so a MediaSource-level check can never
-     * see a resolved stream on a first play. By wrapping the DataSource.Factory passed into
-     * ResolvingDataSource here, this sees the dataSpec only *after* the transform has already
-     * resolved it to the real CDN URL and populated AmazonAudioProvider.resolvedFor(), on the
-     * same synchronous call stack - so the lookup below is never racy.
-     */
-    // Amazon streaming-decrypt tracks are keyed by ASIN or mediaId here (both written), so
-    // AmazonFfmpegAwareDataSource.open() can look up the real known duration regardless of
-    // which identifier it recovers from the DataSpec's cache key.
-    private val knownDurationMsByTrackId = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    private inner class AmazonFfmpegAwareDataSourceFactory(
-        private val upstreamFactory: DataSource.Factory,
-    ) : DataSource.Factory {
-        override fun createDataSource(): DataSource = AmazonFfmpegAwareDataSource(upstreamFactory.createDataSource())
-    }
-
-    private inner class AmazonFfmpegAwareDataSource(
-        private val upstream: DataSource,
-    ) : DataSource {
-        private var active: DataSource = upstream
-        private val transferListeners = mutableListOf<TransferListener>()
-
-        override fun addTransferListener(transferListener: TransferListener) {
-            transferListeners += transferListener
-            upstream.addTransferListener(transferListener)
-        }
-
-        override fun open(dataSpec: DataSpec): Long {
-            val url = dataSpec.uri.toString()
-            val mediaId = dataSpec.key?.let(::mediaIdFromDataSpecKey)
-            val resolved = mediaId?.let { AmazonAudioProvider.resolvedFor(it) }
-            val isAtmos = resolved?.codecs?.lowercase()?.contains("eac3") == true
-            // Deliberately not also checking AmazonAudioProvider.isAmazonCdnUrl(url) here -
-            // that's a url.contains("amazon") text check and Amazon's real CDN URLs are on
-            // generic CloudFront domains (e.g. *.cloudfront.net) with no "amazon" substring at
-            // all, so it would always be false. resolvedFor(mediaId) is already unambiguous and
-            // provider-specific (only ever populated by AmazonAudioProvider.resolve()), so it's
-            // sufficient on its own.
-            active = if (resolved != null && !isAtmos) {
-                Timber.tag(TAG).d("Amazon FFmpeg streaming decrypt engaged for $mediaId")
-                val knownDurationMs = mediaId?.let { knownDurationMsByTrackId[it] } ?: knownDurationMsByTrackId[resolved.trackId]
-                AmazonFfmpegDataSource(applicationContext, resolved, knownDurationMs).also { ds ->
-                    transferListeners.forEach(ds::addTransferListener)
-                }
-            } else {
-                upstream
-            }
-            return active.open(dataSpec)
-        }
-
-        override fun read(
-            buffer: ByteArray,
-            offset: Int,
-            length: Int,
-        ): Int = active.read(buffer, offset, length)
-
-        override fun getUri() = active.uri
-
-        override fun close() = active.close()
-    }
-
     private fun createDataSourceFactory(): DataSource.Factory {
         val resolvingFactory =
             ResolvingDataSource.Factory(
-                AmazonFfmpegAwareDataSourceFactory(
-                    createCacheDataSource(),
-                ),
+                createCacheDataSource(),
             ) { dataSpec ->
                 val explicitProviderMediaId =
                     DeezerAudioDataSource.mediaIdFromUri(dataSpec.uri)
@@ -5346,13 +5258,6 @@ class MusicService :
                     return@Factory dataSpec
                         .buildUpon()
                         .setKey(deezerFallbackCacheKey(mediaId))
-                        .build()
-                }
-
-                if (AmazonAudioProvider.isAmazonCdnUrl(dataSpec.uri.toString())) {
-                    return@Factory dataSpec
-                        .buildUpon()
-                        .setKey(amazonFallbackCacheKey(mediaId))
                         .build()
                 }
 
@@ -5422,7 +5327,6 @@ class MusicService :
                                 key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) ||
-                                key.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
                     } == true
                     if (!currentDataSpecIsFallback || cached.isFallbackStream(mediaId)) {
@@ -5838,7 +5742,6 @@ class MusicService :
         val path = parsedUri.path.orEmpty().lowercase(Locale.US)
         return drmLicenseUri.isNullOrBlank() &&
             tempFilePath.isNullOrBlank() &&
-            !cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) &&
             parsedUri.getQueryParameter(SoundCloudAudioProvider.STREAM_HLS_MARKER_QUERY) != "1" &&
             mimeType != MimeTypes.APPLICATION_MPD &&
             mimeType != MimeTypes.APPLICATION_M3U8 &&
@@ -5854,7 +5757,6 @@ class MusicService :
             cacheKey.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) -> "deezer"
             cacheKey.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) -> "soundcloud"
             cacheKey.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) -> "apple"
-            cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) -> "amazon"
             cacheKey.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX) -> "youtube"
             cacheKey.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) -> "direct"
             else -> "unknown"
@@ -5865,7 +5767,6 @@ class MusicService :
         QobuzAudioProvider.invalidate(mediaId)
         TidalAudioProvider.invalidate(mediaId)
         DeezerAudioProvider.invalidate(mediaId)
-        AmazonAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
     }
@@ -5916,7 +5817,6 @@ class MusicService :
             AudioProviderOrderItem.DEEZER -> deezerFallbackCacheKey(mediaId)
             AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeFallbackCacheKey(mediaId)
             AudioProviderOrderItem.QOBUZ -> qobuzFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.AMAZON_MUSIC -> amazonFallbackCacheKey(mediaId)
             AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackCacheKey(mediaId)
             AudioProviderOrderItem.JIOSAAVN -> jiosaavnFallbackCacheKey(mediaId)
         }
@@ -6082,8 +5982,6 @@ class MusicService :
             Result.failure(IllegalStateException("TIDAL audio not enabled"))
         var deezerAttempt: Result<DeezerAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Deezer audio not enabled"))
-        var amazonAttempt: Result<AmazonAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Amazon Music not enabled"))
         var appleAttempt: Result<AppleAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Apple Music not enabled"))
         var youtubeAttempt: Result<PlaybackStreamResolution> =
@@ -6213,78 +6111,6 @@ class MusicService :
                     }
                     if (stopOnProviderError) {
                         throwProviderFailure("Deezer", deezerAttempt.exceptionOrNull())
-                    }
-                }
-                AudioProviderOrderItem.AMAZON_MUSIC -> {
-                    attemptedProviders += provider
-                    val amazonQuery = buildAmazonQuery(
-                        mediaId = attemptMediaId,
-                        song = song,
-                        metadataOverride = queuedMetadata,
-                    )
-
-                    amazonAttempt = runCatching {
-                        AmazonAudioProvider.resolve(this@MusicService, amazonQuery)
-                    }
-
-                    amazonAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Amazon Music stream for $mediaId: ${resolved.label}")
-                        // Stash the already-known track duration (from local DB/queued metadata,
-                        // not from Amazon) so AmazonFfmpegAwareDataSource can write a correct
-                        // WAV data-chunk size instead of leaving duration unknown - see
-                        // knownDurationMsByTrackId below.
-                        val durationMs = song?.song?.duration
-                            ?.takeIf { it > 0 }
-                            ?.toLong()
-                            ?.times(1000L)
-                            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-                        if (durationMs != null) {
-                            knownDurationMsByTrackId[resolved.trackId] = durationMs
-                            knownDurationMsByTrackId[mediaId] = durationMs
-                        }
-                        val isAtmos = resolved.codecs.lowercase().contains("eac3")
-                        if (isAtmos) {
-                            // Atmos/EAC3 still goes through the existing blocking decrypt -
-                            // AmazonFfmpegDataSource only handles the FLAC (-f flac) case below.
-                            val localPath = AmazonAtmosDecryptor.prepareStream(this@MusicService, resolved)
-                            return PlaybackStreamResolution(
-                                uri = android.net.Uri.fromFile(File(localPath)).toString(),
-                                expiresAtMs = resolved.expiresAtMs,
-                                cacheKey = amazonFallbackCacheKey(mediaId),
-                                format = amazonFallbackFormat(mediaId, resolved).copy(
-                                    itag = AMAZON_ATMOS_ITAG,
-                                    mimeType = MimeTypes.AUDIO_MP4,
-                                ),
-                                mimeType = MimeTypes.AUDIO_MP4,
-                            )
-                        }
-
-                        // FLAC path: don't block here on a full download + FFmpeg pass.
-                        // createMediaSource() picks this resolution up via
-                        // AmazonAudioProvider.resolvedFor(asin) and wires an
-                        // AmazonFfmpegDataSource that streams the CDN URL straight into FFmpeg,
-                        // decrypting progressively as bytes arrive and teeing the result into
-                        // the same cache slot for the next play.
-                        val cachedFlac = AmazonFfmpegDecryptor.getCachedFlac(resolved.trackId)
-                        val streamUri = if (cachedFlac != null && cachedFlac.exists() && cachedFlac.length() > 0) {
-                            Timber.tag("MusicService").d("Amazon FFmpeg cache hit for $mediaId -> ${cachedFlac.absolutePath}")
-                            android.net.Uri.fromFile(cachedFlac).toString()
-                        } else {
-                            resolved.mediaUri
-                        }
-                        return PlaybackStreamResolution(
-                            uri = streamUri,
-                            expiresAtMs = resolved.expiresAtMs,
-                            cacheKey = amazonFallbackCacheKey(mediaId),
-                            format = amazonFallbackFormat(mediaId, resolved).copy(
-                                itag = AMAZON_FLAC_ITAG,
-                                mimeType = MimeTypes.AUDIO_FLAC,
-                            ),
-                            mimeType = MimeTypes.AUDIO_FLAC,
-                        )
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("Amazon Music", amazonAttempt.exceptionOrNull())
                     }
                 }
                 AudioProviderOrderItem.JIOSAAVN -> {
@@ -6690,39 +6516,6 @@ class MusicService :
         )
     }
 
-    private fun buildAmazonQuery(
-        mediaId: String,
-        song: Song?,
-        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
-    ): AmazonAudioProvider.Query {
-        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
-        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
-        val artists = song?.orderedArtists?.map { it.name }
-            ?.takeIf { it.isNotEmpty() }
-            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
-        val album = song?.song?.albumName
-            ?: song?.album?.title
-            ?: queuedMetadata?.album?.title
-        val durationMs = song?.song?.duration
-            ?.takeIf { it > 0 }
-            ?.toLong()
-            ?.times(1000L)
-            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
-
-        val country = runBlocking { dataStore.get(ContentCountryKey, "US") }
-        val quality = runBlocking { dataStore.get<String>(AmazonAudioQualityKey).toEnum(AmazonAudioQuality.HI_RES).name }
-
-        return AmazonAudioProvider.Query(
-            mediaId = mediaId,
-            title = title,
-            artists = artists,
-            album = album,
-            durationMs = durationMs,
-            country = country,
-            quality = quality,
-        )
-    }
-
     private fun buildSoundCloudQuery(
         mediaId: String,
         song: Song?,
@@ -7029,11 +6822,6 @@ class MusicService :
     private fun String.isLocalMediaId(): Boolean =
         startsWith("content://", ignoreCase = true) ||
                 startsWith("file://", ignoreCase = true)
-
-    private fun MediaItem.isAmazonCdnStream(): Boolean {
-        val uri = localConfiguration?.uri?.toString() ?: return false
-        return AmazonAudioProvider.isAmazonCdnUrl(uri) || mediaId.startsWith("amazon:track:")
-    }
 
     private fun loadEmbeddedCanvasInBackground(mediaId: String) {
         scope.launch(Dispatchers.IO) {
@@ -9534,9 +9322,6 @@ class MusicService :
         private const val DEEZER_FALLBACK_ITAG = 100_033
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val JIOSAAVN_FALLBACK_ITAG = 100_053
-        private const val AMAZON_FALLBACK_ITAG = 100_045
-        private const val AMAZON_FLAC_ITAG = 100_046
-        private const val AMAZON_ATMOS_ITAG = 100_047
         private val YouTubeVideoIdRegex = Regex("^[A-Za-z0-9_-]{11}$")
 
         private fun String.isYouTubeVideoId(): Boolean =
@@ -9547,7 +9332,6 @@ class MusicService :
         private const val DIRECT_HTTP_AUDIO_ITAG = 100_051
         private const val DISCORD_RPC_MAX_IMAGE_URL_LENGTH = 300
         private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
-        private const val AMAZON_FALLBACK_CACHE_PREFIX = "amazon-fallback-m4a:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
         private const val OLD_TIDAL_FALLBACK_CACHE_PREFIX = "tidal-flac-fallback:"
         private const val TIDAL_FALLBACK_CACHE_PREFIX = "tidal-flac-fallback-temp-v1:"
@@ -9563,8 +9347,6 @@ class MusicService :
         private const val AUDIO_BUFFER_FOR_REBUFFER_MS = 2_500
         private const val AUDIO_TARGET_BUFFER_BYTES = 8 * 1024 * 1024
         private const val LEGACY_PLACEHOLDER_BPS = 4_000_000
-
-        private fun amazonFallbackCacheKey(mediaId: String) = "$AMAZON_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
 
@@ -9598,13 +9380,9 @@ class MusicService :
             key.startsWith(TIDAL_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
 
-        private fun isAmazonFallbackCacheKey(key: String): Boolean =
-            key.startsWith(AMAZON_FALLBACK_CACHE_PREFIX)
-
         private fun isProviderFallbackCacheKey(key: String): Boolean =
             key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
                     isTidalFallbackCacheKey(key) ||
-                    isAmazonFallbackCacheKey(key) ||
                     key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
@@ -9685,30 +9463,12 @@ class MusicService :
                 .removePrefix(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
                 .removePrefix(DEEZER_FALLBACK_CACHE_PREFIX)
                 .removePrefix(APPLE_MUSIC_FALLBACK_CACHE_PREFIX)
-                .removePrefix(AMAZON_FALLBACK_CACHE_PREFIX)
                 .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
                 .removePrefix(JIOSAAVN_FALLBACK_CACHE_PREFIX)
                 .removePrefix(DIRECT_HTTP_AUDIO_CACHE_PREFIX)
                 .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
                 .takeUnless { Uri.parse(it).isTidalPlaybackCdnUri() }
 
-
-        private fun amazonFallbackFormat(
-            mediaId: String,
-            resolved: AmazonAudioProvider.Resolved,
-        ): FormatEntity =
-            FormatEntity(
-                id = mediaId,
-                itag = AMAZON_FALLBACK_ITAG,
-                mimeType = resolved.mimeType,
-                codecs = resolved.codecs,
-                bitrate = resolved.bitrate,
-                sampleRate = resolved.sampleRate,
-                contentLength = 0L,
-                loudnessDb = null,
-                perceptualLoudnessDb = null,
-                playbackUrl = null,
-            )
 
         private fun appleMusicFallbackFormat(
             mediaId: String,

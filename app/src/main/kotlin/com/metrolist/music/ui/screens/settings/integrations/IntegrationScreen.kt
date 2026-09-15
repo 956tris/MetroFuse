@@ -86,13 +86,6 @@ fun IntegrationScreen(
                 ),
                 IntegrationCardItem(
                     icon = painterResource(R.drawable.music_note),
-                    title = { Text(stringResource(R.string.amazon_music_integration)) },
-                    onClick = {
-                        navController.navigate("settings/integrations/amazon_music")
-                    }
-                ),
-                IntegrationCardItem(
-                    icon = painterResource(R.drawable.music_note),
                     title = { Text(stringResource(R.string.apple_music_integration)) },
                     onClick = {
                         navController.navigate("settings/integrations/apple")
