@@ -240,6 +240,7 @@ private fun homeFeedSourceIcon(source: HomeFeedSource): Int =
         HomeFeedSource.SPOTIFY -> R.drawable.provider_spotify
         HomeFeedSource.SOUNDCLOUD -> R.drawable.provider_soundcloud
         HomeFeedSource.DEEZER -> R.drawable.provider_deezer
+        HomeFeedSource.JIOSAAVN -> R.drawable.provider_jiosaavn
         HomeFeedSource.OFFLINE -> R.drawable.offline
     }
 

@@ -28,6 +28,7 @@ import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.db.MusicDatabase
 import com.metrolist.music.db.entities.SearchHistory
 import com.metrolist.music.providers.DeezerHomeFeedProvider
+import com.metrolist.music.providers.JioSaavnHomeFeedProvider
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.utils.dataStore
@@ -68,7 +69,7 @@ class OnlineSearchSuggestionViewModel
                             // Check if query is a YouTube URL
                             val parsedUrl = YouTubeUrlParser.parse(query)
                             val selectedSource = selectedHomeFeedSource()
-                            if (selectedSource in setOf(HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER) && parsedUrl == null) {
+                            if (selectedSource in setOf(HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER, HomeFeedSource.JIOSAAVN) && parsedUrl == null) {
                                 val items =
                                     when (selectedSource) {
                                         HomeFeedSource.SOUNDCLOUD -> {
@@ -84,6 +85,10 @@ class OnlineSearchSuggestionViewModel
                                         HomeFeedSource.DEEZER -> {
                                             val cookie = context.dataStore.get(DeezerCookieKey, "")
                                             DeezerHomeFeedProvider.search(query, cookie)
+                                        }
+
+                                        HomeFeedSource.JIOSAAVN -> {
+                                            JioSaavnHomeFeedProvider.search(query)
                                         }
 
                                         else -> Result.failure(IllegalStateException("Unsupported search source"))

@@ -226,7 +226,7 @@ private const val QOBUZ_FALLBACK_ITAG = 100_027
 private const val TIDAL_FALLBACK_ITAG = 100_029
 private const val DEEZER_FALLBACK_ITAG = 100_033
 private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
-private const val INSTAGRAM_FALLBACK_ITAG = 100_041
+private const val JIOSAAVN_FALLBACK_ITAG = 100_053
 private const val AMAZON_FALLBACK_ITAG = 100_045
 private const val AMAZON_FLAC_ITAG = 100_046
 private const val APPLE_MUSIC_FALLBACK_ITAG = 100_050
@@ -249,7 +249,7 @@ private fun FormatEntity.audioSourceLabel(): String? =
         TIDAL_FALLBACK_ITAG -> "TIDAL"
         DEEZER_FALLBACK_ITAG -> "Deezer"
         SOUNDCLOUD_FALLBACK_ITAG -> "SoundCloud"
-        INSTAGRAM_FALLBACK_ITAG -> "Instagram"
+        JIOSAAVN_FALLBACK_ITAG -> "JioSaavn"
         LOCAL_FILE_ITAG -> "Local"
         AMAZON_FALLBACK_ITAG, AMAZON_FLAC_ITAG -> "Amazon Music"
         in YouTubeAudioItags -> "YouTube Music"
@@ -273,9 +273,8 @@ private fun String.audioSourceLabelFromUrl(): String? {
                 value.contains("dzmedia") -> "Deezer"
         value.contains("soundcloud.com") ||
                 value.contains("sndcdn.com") -> "SoundCloud"
-        value.contains("instagram.com") ||
-                value.contains("cdninstagram.com") ||
-                value.contains("fbcdn.net") -> "Instagram"
+        value.contains("saavncdn.com") ||
+                value.contains("jiosaavn.com") -> "JioSaavn"
         else -> null
     }
 }

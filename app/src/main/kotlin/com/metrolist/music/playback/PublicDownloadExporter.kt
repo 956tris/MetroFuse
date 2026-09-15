@@ -81,7 +81,7 @@ object PublicDownloadExporter {
     private const val OLD_QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback:"
     private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
     private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
-    private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
+    private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
     private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
 
     suspend fun export(
@@ -182,7 +182,7 @@ object PublicDownloadExporter {
                 "$OLD_QOBUZ_FALLBACK_CACHE_PREFIX$downloadId",
                 "$QOBUZ_FALLBACK_CACHE_PREFIX$downloadId",
                 "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$downloadId",
-                "$INSTAGRAM_FALLBACK_CACHE_PREFIX$downloadId",
+                "$JIOSAAVN_FALLBACK_CACHE_PREFIX$downloadId",
                 "$YOUTUBE_FALLBACK_CACHE_PREFIX$downloadId",
             ) +
                 downloadCache.keys.filter { key ->
@@ -202,7 +202,7 @@ object PublicDownloadExporter {
             .removePrefix(OLD_QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(QOBUZ_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
-            .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
+            .removePrefix(JIOSAAVN_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
     private fun completeCachedSpans(

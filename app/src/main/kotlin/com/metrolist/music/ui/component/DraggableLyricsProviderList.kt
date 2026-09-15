@@ -18,6 +18,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +40,8 @@ data class DraggableLyricsProviderItem(
     val id: String,
     val name: String,
     val icon: Painter,
+    val enabled: Boolean = true,
+    val onToggleEnabled: (() -> Unit)? = null,
 )
 
 @Composable
@@ -107,6 +110,13 @@ fun DraggableLyricsProviderList(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
+
+                        item.onToggleEnabled?.let { onToggle ->
+                            Switch(
+                                checked = item.enabled,
+                                onCheckedChange = { onToggle() },
+                            )
+                        }
                     }
                 }
             }

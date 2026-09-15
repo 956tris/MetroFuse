@@ -129,6 +129,7 @@ val YtDlpLastManualUpdateAtKey = longPreferencesKey("ytDlpLastManualUpdateAt")
 val YtDlpManualUpdateTimestampsKey = stringPreferencesKey("ytDlpManualUpdateTimestamps")
 val YtDlpUseNightlyChannelKey = booleanPreferencesKey("ytDlpUseNightlyChannel")
 val AudioProviderOrderKey = stringPreferencesKey("audioProviderOrder")
+val AudioProviderDisabledKey = stringPreferencesKey("audioProviderDisabled")
 val AudioProviderMatchOverridesKey = stringPreferencesKey("audioProviderMatchOverrides")
 
 enum class AudioProviderOrderItem {
@@ -137,7 +138,7 @@ enum class AudioProviderOrderItem {
     DEEZER,
     AMAZON_MUSIC,
     APPLE_MUSIC,
-    INSTAGRAM,
+    JIOSAAVN,
     YOUTUBE_MUSIC,
     QOBUZ,
 }
@@ -153,7 +154,7 @@ object AudioProviderOrder {
             AudioProviderOrderItem.DEEZER,
             AudioProviderOrderItem.AMAZON_MUSIC,
             AudioProviderOrderItem.APPLE_MUSIC,
-            AudioProviderOrderItem.INSTAGRAM,
+            AudioProviderOrderItem.JIOSAAVN,
             AudioProviderOrderItem.YOUTUBE_MUSIC,
             AudioProviderOrderItem.QOBUZ,
         )
@@ -173,7 +174,22 @@ object AudioProviderOrder {
         (providers + Default)
             .filter { it.isPlaybackProvider() }
             .distinct()
+
+    fun withoutDisabled(
+        providers: List<AudioProviderOrderItem>,
+        disabled: Set<AudioProviderOrderItem>,
+    ): List<AudioProviderOrderItem> = providers.filterNot { it in disabled }
 }
+
+fun serializeDisabledProviders(disabled: Set<AudioProviderOrderItem>): String =
+    disabled.map { it.name }.sorted().joinToString(",")
+
+fun deserializeDisabledProviders(value: String?): Set<AudioProviderOrderItem> =
+    value
+        ?.split(',')
+        ?.mapNotNull { raw -> AudioProviderOrderItem.entries.find { it.name == raw.trim() } }
+        .orEmpty()
+        .toSet()
 
 enum class AudioQuality {
     AUTO,
@@ -273,6 +289,22 @@ enum class SoundCloudAudioQuality {
     AAC_96,
     AAC_160,
 }
+
+enum class JioSaavnAudioQuality {
+    HIGH,
+    MEDIUM,
+    LOW,
+}
+
+val JioSaavnAudioQualityKey = stringPreferencesKey("jiosaavnAudioQuality")
+val JioSaavnHomeLanguageKey = stringPreferencesKey("jiosaavnHomeLanguage")
+
+val JioSaavnAudioQualityOptions =
+    listOf(
+        JioSaavnAudioQuality.HIGH,
+        JioSaavnAudioQuality.MEDIUM,
+        JioSaavnAudioQuality.LOW,
+    )
 
 enum class DeezerProxyMode {
     DIRECT,
@@ -505,10 +537,6 @@ val DeezerCookieKey = stringPreferencesKey("deezerCookie")
 val DeezerUseAccountKey = booleanPreferencesKey("deezerUseAccount")
 val SoundCloudAuthTokenKey = stringPreferencesKey("soundCloudAuthToken")
 val SoundCloudSessionClientIdKey = stringPreferencesKey("soundCloudSessionClientId")
-val InstagramCookieKey = stringPreferencesKey("instagramCookie")
-val InstagramUserAgentKey = stringPreferencesKey("instagramUserAgent")
-val InstagramAppIdKey = stringPreferencesKey("instagramAppId")
-val InstagramUuidKey = stringPreferencesKey("instagramUuid")
 
 val ScrobbleDelayPercentKey = floatPreferencesKey("scrobbleDelayPercent")
 val ScrobbleMinSongDurationKey = intPreferencesKey("scrobbleMinSongDuration")
@@ -576,6 +604,7 @@ enum class HomeFeedSource {
     SPOTIFY,
     SOUNDCLOUD,
     DEEZER,
+    JIOSAAVN,
     OFFLINE,
 }
 

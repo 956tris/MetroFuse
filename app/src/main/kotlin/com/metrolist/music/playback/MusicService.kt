@@ -116,6 +116,8 @@ import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderMatchOverridesKey
 import com.metrolist.music.constants.AudioProviderOrderKey
+import com.metrolist.music.constants.AudioProviderDisabledKey
+import com.metrolist.music.constants.deserializeDisabledProviders
 import com.metrolist.music.constants.AudioQualityKey
 import com.metrolist.music.constants.ExperimentalLiveWallpaperKey
 import com.metrolist.music.constants.ExperimentalConfirmBeforeSkipKey
@@ -200,10 +202,6 @@ import com.metrolist.music.constants.PauseListenHistoryKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
 import com.metrolist.music.constants.PersistentShuffleAcrossQueuesKey
-import com.metrolist.music.constants.InstagramCookieKey
-import com.metrolist.music.constants.InstagramAppIdKey
-import com.metrolist.music.constants.InstagramUserAgentKey
-import com.metrolist.music.constants.InstagramUuidKey
 import com.metrolist.music.constants.PlayerLegacyQualityLabelKey
 import com.metrolist.music.constants.LivePlaybackBitrateKey
 import com.metrolist.music.constants.TidalAnimatedCoversEnabledKey
@@ -238,6 +236,8 @@ import com.metrolist.music.constants.AmazonAudioQualityKey
 import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
 import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.ContentLanguageKey
+import com.metrolist.music.constants.JioSaavnAudioQuality
+import com.metrolist.music.constants.JioSaavnAudioQualityKey
 import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.SpotifyCanvasEnabledKey
@@ -306,11 +306,11 @@ import com.metrolist.music.providers.ExperimentalPlaybackPolicy
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
-import com.metrolist.music.instagram.InstagramAudioProvider
 import com.metrolist.music.apple.AppleAudioProvider
 import com.metrolist.music.constants.AppleAudioQuality
 import com.metrolist.music.constants.AppleAudioQualityKey
 import com.metrolist.music.tidal.TidalAudioProvider
+import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.ui.utils.resize
@@ -717,11 +717,7 @@ class MusicService :
     private var cachedNormalizationGainMb: Int? = null
     private var cachedNormalizationEnabled: Boolean = false
     @Volatile
-    private var cachedInstagramCookie: String = ""
-    @Volatile
     private var cachedSpotifyCookie: String = ""
-    @Volatile
-    private var cachedInstagramUserAgent: String = InstagramAudioProvider.DEFAULT_USER_AGENT
 
     @Volatile
     private var spotifyHistoryPresenceActiveValue = false
@@ -918,12 +914,7 @@ class MusicService :
         // handled in createExoPlayer
 
         seedLoudnessCacheFromPrefs()
-        cachedInstagramCookie = dataStore.get(InstagramCookieKey, "")
         cachedSpotifyCookie = dataStore.get(SpotifyCookieKey, "")
-        cachedInstagramUserAgent =
-            dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-                .takeIf { it.isNotBlank() }
-                ?: InstagramAudioProvider.DEFAULT_USER_AGENT
 
         if (!ensureStartedAsForegroundOrStop()) {
             return
@@ -1065,21 +1056,9 @@ class MusicService :
         audioQuality = dataStore.get<String>(AudioQualityKey).toEnum(com.metrolist.music.constants.AudioQuality.AUTO)
         playerVolume = MutableStateFlow(dataStore.get(PlayerVolumeKey, 1f).coerceIn(0f, 1f))
         dataStore.data
-            .map { it[InstagramCookieKey] ?: "" }
-            .distinctUntilChanged()
-            .collectLatest(scope) { cachedInstagramCookie = it }
-        dataStore.data
             .map { it[SpotifyCookieKey] ?: "" }
             .distinctUntilChanged()
             .collectLatest(scope) { cachedSpotifyCookie = it }
-        dataStore.data
-            .map { prefs ->
-                prefs[InstagramUserAgentKey]
-                    ?.takeIf { it.isNotBlank() }
-                    ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-            }
-            .distinctUntilChanged()
-            .collectLatest(scope) { cachedInstagramUserAgent = it }
 
         // Initialize Google Cast
         initializeCast()
@@ -1179,10 +1158,6 @@ class MusicService :
                             prefs[QobuzCountryKey],
                             prefs[AudioProviderOrderKey],
                             prefs[AudioProviderMatchOverridesKey],
-                            prefs[InstagramCookieKey],
-                            prefs[InstagramUserAgentKey],
-                            prefs[InstagramAppIdKey],
-                            prefs[InstagramUuidKey],
                             prefs[ProxyEnabledKey],
                             prefs[StopOnProviderErrorKey],
                         ).hashCode()
@@ -1240,7 +1215,6 @@ class MusicService :
                     TidalAudioProvider.invalidate(mediaId)
                     DeezerAudioProvider.invalidate(mediaId)
                     SoundCloudAudioProvider.invalidate(mediaId)
-                    InstagramAudioProvider.invalidate(mediaId)
                     YouTubeAudioProvider.invalidate(mediaId)
 
                     val preserveCachedAudio =
@@ -4154,7 +4128,7 @@ class MusicService :
                 isTidalFallbackCacheKey(cacheKey) ||
                 cacheKey == deezerFallbackCacheKey(mediaId) ||
                 cacheKey == soundCloudFallbackCacheKey(mediaId) ||
-                cacheKey == instagramFallbackCacheKey(mediaId) ||
+                cacheKey == jiosaavnFallbackCacheKey(mediaId) ||
                 cacheKey == directHttpAudioCacheKey(mediaId) ||
                 cacheKey == youtubeFallbackCacheKey(mediaId)
 
@@ -4990,7 +4964,6 @@ class MusicService :
             TIDAL_FALLBACK_ITAG -> "tidal"
             DEEZER_FALLBACK_ITAG -> "deezer"
             SOUNDCLOUD_FALLBACK_ITAG -> "soundcloud"
-            INSTAGRAM_FALLBACK_ITAG -> "instagram"
             APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_FALLBACK_ITAG -> "apple music"
             AMAZON_FALLBACK_ITAG, AMAZON_FLAC_ITAG -> "amazon music"
             DIRECT_HTTP_AUDIO_ITAG -> "direct audio"
@@ -5004,7 +4977,6 @@ class MusicService :
             value.startsWith(tidalFallbackCacheKey(""), ignoreCase = true) -> "tidal"
             value.startsWith(deezerFallbackCacheKey(""), ignoreCase = true) -> "deezer"
             value.startsWith(soundCloudFallbackCacheKey(""), ignoreCase = true) -> "soundcloud"
-            value.startsWith(instagramFallbackCacheKey(""), ignoreCase = true) -> "instagram"
             value.startsWith(appleMusicFallbackCacheKey(""), ignoreCase = true) -> "apple music"
             value.contains("amazon") && (value.contains(".com") || value.contains(".co")) -> "amazon music"
             value.startsWith(directHttpAudioCacheKey(""), ignoreCase = true) -> "direct audio"
@@ -5079,22 +5051,6 @@ class MusicService :
                                                 isApiStream = false,
                                                 isHlsStream = request.url.encodedPath.endsWith(".m3u8") || request.url.encodedPath.endsWith(".m4s")
                                             ).build()
-                                        }
-                                        if (InstagramAudioProvider.isInstagramPlaybackUrl(request.url)) {
-                                            val instagramClient =
-                                                InstagramAudioProvider.playbackClientProfile(request.url)
-                                            val instagramUserAgent =
-                                                InstagramAudioProvider.playbackUserAgent(request.url)
-                                                    ?: cachedInstagramUserAgent
-                                            val cleanUrl = InstagramAudioProvider.cleanPlaybackUrl(request.url)
-                                            request =
-                                                InstagramAudioProvider.addPlaybackHeaders(
-                                                    request.newBuilder().url(cleanUrl),
-                                                    cachedInstagramCookie,
-                                                    request.header("Range") != null,
-                                                    instagramClient,
-                                                    instagramUserAgent,
-                                                ).build()
                                         }
                                         if (request.url.queryParameter(PRIVATE_STREAM_MARKER) != null) {
                                             val cleanUrl =
@@ -5209,15 +5165,6 @@ class MusicService :
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
         val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
         val providerMatchOverrides = dataStore.get(AudioProviderMatchOverridesKey, "")
-        val instagramCookie = dataStore.get(InstagramCookieKey, "")
-        val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-        val instagramAppId = dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_APP_ID
-        val instagramUuid = dataStore.get(InstagramUuidKey, "")
-        val instagramCookieConfigured = instagramCookie.isNotBlank()
         val soundCloudAuthConfigured = dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
         val qobuzBackend = dataStore.get(QobuzBackendKey).toEnum<QobuzBackend>(QobuzBackend.KENNY)
         val qobuzCountry = dataStore.get(QobuzCountryKey, "US")
@@ -5236,11 +5183,6 @@ class MusicService :
             "stopOnProviderError=$stopOnProviderError",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "providerOverrides=${providerMatchOverrides.hashCode()}",
-            "instagramAuth=$instagramCookieConfigured",
-            "instagramCookie=${instagramCookie.hashCode()}",
-            "instagramUserAgent=${instagramUserAgent.hashCode()}",
-            "instagramAppId=${instagramAppId.hashCode()}",
-            "instagramUuid=${instagramUuid.hashCode()}",
             "soundCloudAuth=$soundCloudAuthConfigured",
             "backend=${qobuzBackend.name}",
             "country=$qobuzCountry",
@@ -5266,7 +5208,12 @@ class MusicService :
                     TidalAudioProvider.isTidalTrackId(mediaId) -> add(AudioProviderOrderItem.DEEZER)
                     DeezerAudioProvider.isDeezerTrackId(mediaId) -> add(AudioProviderOrderItem.DEEZER)
                 }
-                addAll(AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, "")))
+                addAll(
+                    AudioProviderOrder.withoutDisabled(
+                        AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, "")),
+                        deserializeDisabledProviders(dataStore.get(AudioProviderDisabledKey, "")),
+                    )
+                )
             }.distinct()
 
         return orderedProviders.firstOrNull { canAttemptProviderFromOrder(it) } == provider
@@ -5274,12 +5221,7 @@ class MusicService :
 
     private fun canAttemptProviderFromOrder(
         provider: AudioProviderOrderItem,
-    ): Boolean =
-        when (provider) {
-            AudioProviderOrderItem.INSTAGRAM ->
-                dataStore.get(InstagramCookieKey, "").isNotBlank()
-            else -> true
-        }
+    ): Boolean = true
 
     /**
      * Intercepts DataSource opens for resolved Amazon CDN URLs and routes them through
@@ -5475,7 +5417,6 @@ class MusicService :
                                 isTidalFallbackCacheKey(key) ||
                                 key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
-                                key.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) ||
                                 key.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
@@ -5908,7 +5849,6 @@ class MusicService :
             isTidalFallbackCacheKey(cacheKey) -> "tidal"
             cacheKey.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) -> "deezer"
             cacheKey.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) -> "soundcloud"
-            cacheKey.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) -> "instagram"
             cacheKey.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) -> "apple"
             cacheKey.startsWith(AMAZON_FALLBACK_CACHE_PREFIX) -> "amazon"
             cacheKey.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX) -> "youtube"
@@ -5923,7 +5863,6 @@ class MusicService :
         DeezerAudioProvider.invalidate(mediaId)
         AmazonAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
-        InstagramAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
     }
 
@@ -5971,11 +5910,11 @@ class MusicService :
             AudioProviderOrderItem.SOUNDCLOUD -> soundCloudFallbackCacheKey(mediaId)
             AudioProviderOrderItem.TIDAL -> tidalFallbackCacheKey(mediaId)
             AudioProviderOrderItem.DEEZER -> deezerFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.INSTAGRAM -> instagramFallbackCacheKey(mediaId)
             AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeFallbackCacheKey(mediaId)
             AudioProviderOrderItem.QOBUZ -> qobuzFallbackCacheKey(mediaId)
             AudioProviderOrderItem.AMAZON_MUSIC -> amazonFallbackCacheKey(mediaId)
             AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.JIOSAAVN -> jiosaavnFallbackCacheKey(mediaId)
         }
 
     private fun resolvePlaybackStreamBlocking(
@@ -6042,6 +5981,7 @@ class MusicService :
             )
         }
         val tidalQuality = dataStore.get<String>(TidalAudioQualityKey).toEnum(TidalAudioQuality.AAC_320)
+        val jiosaavnQuality = dataStore.get<String>(JioSaavnAudioQualityKey).toEnum(JioSaavnAudioQuality.HIGH)
         val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "https://igameten10-ez-hifi-api.hf.space/")
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get<String>(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
@@ -6053,16 +5993,12 @@ class MusicService :
             globalProxyEnabled = dataStore.get(ProxyEnabledKey, false),
         )
         val stopOnProviderError = dataStore.get(StopOnProviderErrorKey, false)
-        val audioProviderOrder = AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, ""))
+        val disabledProviders = deserializeDisabledProviders(dataStore.get(AudioProviderDisabledKey, ""))
+        val audioProviderOrder = AudioProviderOrder.withoutDisabled(
+            AudioProviderOrder.deserialize(dataStore.get(AudioProviderOrderKey, "")),
+            disabledProviders,
+        )
         val providerOverride = ProviderMatchOverrides.decode(dataStore.get(AudioProviderMatchOverridesKey, ""))[mediaId]
-        val instagramCookie = dataStore.get(InstagramCookieKey, "")
-        val instagramUserAgent = dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-        val instagramAppId = dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_APP_ID
-        val instagramUuid = dataStore.get(InstagramUuidKey, "")
         val soundCloudAuthToken = dataStore.get(SoundCloudAuthTokenKey, "")
         val soundCloudQuality = dataStore.get<String>(SoundCloudAudioQualityKey).toEnum(SoundCloudAudioQuality.AAC_160)
         val directTidalMediaId = TidalAudioProvider.isTidalTrackId(mediaId)
@@ -6100,21 +6036,21 @@ class MusicService :
                 mimeType = MimeTypes.AUDIO_MPEG,
             )
 
-        fun InstagramAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = instagramFallbackCacheKey(mediaId),
-                format = instagramFallbackFormat(mediaId, this),
-                mimeType = mimeType,
-            )
-
         fun AppleAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
             PlaybackStreamResolution(
                 uri = mediaUri,
                 expiresAtMs = expiresAtMs,
                 cacheKey = appleMusicFallbackCacheKey(mediaId),
                 format = appleMusicFallbackFormat(mediaId, this),
+                mimeType = mimeType,
+            )
+
+        fun JioSaavnAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
+            PlaybackStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = jiosaavnFallbackCacheKey(mediaId),
+                format = jiosaavnFallbackFormat(mediaId, this),
                 mimeType = mimeType,
             )
 
@@ -6144,14 +6080,14 @@ class MusicService :
             Result.failure(IllegalStateException("Deezer audio not enabled"))
         var amazonAttempt: Result<AmazonAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Amazon Music not enabled"))
-        var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Instagram audio not enabled"))
         var appleAttempt: Result<AppleAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Apple Music not enabled"))
         var youtubeAttempt: Result<PlaybackStreamResolution> =
             Result.failure(IllegalStateException("YouTube Music not attempted yet"))
         var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Qobuz not attempted yet"))
+        var jiosaavnAttempt: Result<JioSaavnAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("JioSaavn audio not enabled"))
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
         val spotifyIsrc = resolveSpotifyIsrcForMatching(mediaId, song, queuedMetadata)
         val orderedProviders =
@@ -6165,6 +6101,7 @@ class MusicService :
                     add(AudioProviderOrderItem.TIDAL)
                 }
                 if (directDeezerMediaId) add(AudioProviderOrderItem.DEEZER)
+                if (JioSaavnAudioProvider.isJioSaavnTrackId(mediaId)) add(AudioProviderOrderItem.JIOSAAVN)
                 addAll(audioProviderOrder)
                 }.distinct(),
                 enabled = dataStore.get(ExperimentalDeezerFirstKey, false),
@@ -6188,7 +6125,6 @@ class MusicService :
                 false
             } else {
                 when (provider) {
-                    AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
                     AudioProviderOrderItem.YOUTUBE_MUSIC ->
                         mediaId.isYouTubeVideoId() || !youtubeSearchableTitle.isNullOrBlank()
                     else -> true
@@ -6347,23 +6283,19 @@ class MusicService :
                         throwProviderFailure("Amazon Music", amazonAttempt.exceptionOrNull())
                     }
                 }
-                AudioProviderOrderItem.INSTAGRAM -> {
+                AudioProviderOrderItem.JIOSAAVN -> {
                     attemptedProviders += provider
-                    instagramAttempt = runCatching {
-                        InstagramAudioProvider.resolve(
-                            buildInstagramQuery(mediaId, song, queuedMetadata, spotifyIsrc),
-                            instagramCookie,
-                            instagramUuid,
-                            instagramUserAgent,
-                            instagramAppId,
+                    jiosaavnAttempt = runCatching {
+                        JioSaavnAudioProvider.resolve(
+                            buildJioSaavnQuery(attemptMediaId, mediaId, song, queuedMetadata, spotifyIsrc, jiosaavnQuality),
                         )
                     }
-                    instagramAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Instagram audio stream for $mediaId: ${resolved.title}")
+                    jiosaavnAttempt.getOrNull()?.let { resolved ->
+                        Timber.tag("MusicService").i("Using JioSaavn audio stream for $mediaId: ${resolved.title}")
                         return resolved.toPlaybackResolution()
                     }
                     if (stopOnProviderError) {
-                        throwProviderFailure("Instagram", instagramAttempt.exceptionOrNull())
+                        throwProviderFailure("JioSaavn", jiosaavnAttempt.exceptionOrNull())
                     }
                 }
                 AudioProviderOrderItem.YOUTUBE_MUSIC -> {
@@ -6450,7 +6382,9 @@ class MusicService :
             )
         }
 
-        if (!attemptedProviders.contains(AudioProviderOrderItem.SOUNDCLOUD) && !directSoundCloudMediaId) {
+        if (!attemptedProviders.contains(AudioProviderOrderItem.SOUNDCLOUD) && !directSoundCloudMediaId &&
+            !disabledProviders.contains(AudioProviderOrderItem.SOUNDCLOUD)
+        ) {
             soundCloudAttempt = runCatching {
                 resolveSoundCloudFallback(mediaId, song, queuedMetadata, soundCloudAuthToken)
             }
@@ -6459,6 +6393,7 @@ class MusicService :
 
         if (
             !attemptedProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC) &&
+            !disabledProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC) &&
             (mediaId.isYouTubeVideoId() || !youtubeSearchableTitle.isNullOrBlank())
         ) {
             youtubeAttempt = runCatching {
@@ -6521,16 +6456,16 @@ class MusicService :
         } else {
             ""
         }
-        val instagramDetail = if (attemptedProviders.contains(AudioProviderOrderItem.INSTAGRAM)) {
-            instagramAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "Instagram failed: $it; " }
+        val appleDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
+            appleAttempt.exceptionOrNull()?.readableMessage()
+                ?.let { "Apple Music failed: $it; " }
                 .orEmpty()
         } else {
             ""
         }
-        val appleDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
-            appleAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "Apple Music failed: $it; " }
+        val jiosaavnDetail = if (attemptedProviders.contains(AudioProviderOrderItem.JIOSAAVN)) {
+            jiosaavnAttempt.exceptionOrNull()?.readableMessage()
+                ?.let { "JioSaavn failed: $it; " }
                 .orEmpty()
         } else {
             ""
@@ -6539,7 +6474,7 @@ class MusicService :
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
         val providerDetails =
-            "${qobuzDetail}${tidalDetail}${deezerDetail}${instagramDetail}${appleDetail}" +
+            "${qobuzDetail}${tidalDetail}${deezerDetail}${jiosaavnDetail}${appleDetail}" +
                 "SoundCloud failed: ${soundCloudError.readableMessage()}; " +
                 "YouTube failed: ${youtubeError.readableMessage()}"
         throw PlaybackException(
@@ -6801,12 +6736,14 @@ class MusicService :
         )
     }
 
-    private fun buildInstagramQuery(
+    private fun buildJioSaavnQuery(
+        attemptMediaId: String,
         mediaId: String,
         song: Song?,
         metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
         isrcOverride: String? = null,
-    ): InstagramAudioProvider.Query {
+        quality: JioSaavnAudioQuality = JioSaavnAudioQuality.HIGH,
+    ): JioSaavnAudioProvider.Query {
         val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
         val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
         val artists = song?.orderedArtists?.map { it.name }
@@ -6821,13 +6758,21 @@ class MusicService :
             ?.times(1000L)
             ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
 
-        return InstagramAudioProvider.Query(
+        return JioSaavnAudioProvider.Query(
             mediaId = mediaId,
             title = title,
             artists = artists,
             album = album,
             durationMs = durationMs,
             isrc = isrcOverride ?: ProviderIsrc.firstOf(mediaId, song?.song?.id, queuedMetadata?.id),
+            quality = quality,
+            trackIdOverride = when {
+                JioSaavnAudioProvider.isJioSaavnTrackId(attemptMediaId) ->
+                    JioSaavnAudioProvider.trackIdFromMediaId(attemptMediaId)
+
+                attemptMediaId != mediaId -> attemptMediaId
+                else -> null
+            },
         )
     }
 
@@ -7463,11 +7408,11 @@ class MusicService :
                     rendererBitrate != null &&
                             (
                                     baseFormat.bitrate <= 0 ||
-                                            (!isAlac && baseFormat.itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
+                                            (!isAlac && baseFormat.itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG))
                                     )
                 val shouldUpdateSampleRate =
                     rendererSampleRate != null &&
-                            (baseFormat.sampleRate == null || baseFormat.sampleRate <= 0 || baseFormat.itag in setOf(TIDAL_FALLBACK_ITAG, DEEZER_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG))
+                            (baseFormat.sampleRate == null || baseFormat.sampleRate <= 0 || baseFormat.itag in setOf(TIDAL_FALLBACK_ITAG, DEEZER_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG))
                 if (
                     baseFormat == existing &&
                     !shouldClearBadAlacBitrate &&
@@ -7566,7 +7511,7 @@ class MusicService :
                 bitrate
             }
         val providerItag =
-            itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG, INSTAGRAM_FALLBACK_ITAG)
+            itag in setOf(TIDAL_FALLBACK_ITAG, SOUNDCLOUD_FALLBACK_ITAG)
         return copy(
             mimeType = resolvedMimeType,
             codecs = resolvedCodecs,
@@ -8795,7 +8740,6 @@ class MusicService :
             TIDAL_FALLBACK_ITAG,
             DEEZER_FALLBACK_ITAG,
             SOUNDCLOUD_FALLBACK_ITAG,
-            INSTAGRAM_FALLBACK_ITAG,
             APPLE_MUSIC_FALLBACK_ITAG,
             DIRECT_HTTP_AUDIO_ITAG,
         )
@@ -9503,7 +9447,7 @@ class MusicService :
         private const val TIDAL_FALLBACK_ITAG = 100_029
         private const val DEEZER_FALLBACK_ITAG = 100_033
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
-        private const val INSTAGRAM_FALLBACK_ITAG = 100_041
+        private const val JIOSAAVN_FALLBACK_ITAG = 100_053
         private const val AMAZON_FALLBACK_ITAG = 100_045
         private const val AMAZON_FLAC_ITAG = 100_046
         private const val AMAZON_ATMOS_ITAG = 100_047
@@ -9524,7 +9468,7 @@ class MusicService :
         private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
         private const val APPLE_MUSIC_FALLBACK_CACHE_PREFIX = "apple-music-fallback-audio:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
-        private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
+        private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
         private const val DIRECT_HTTP_AUDIO_CACHE_PREFIX = "direct-http-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
         private const val AUDIO_MIN_BUFFER_MS = 6_000
@@ -9558,7 +9502,7 @@ class MusicService :
 
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
-        private fun instagramFallbackCacheKey(mediaId: String) = "$INSTAGRAM_FALLBACK_CACHE_PREFIX$mediaId"
+        private fun jiosaavnFallbackCacheKey(mediaId: String) = "$JIOSAAVN_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun directHttpAudioCacheKey(mediaId: String) = "$DIRECT_HTTP_AUDIO_CACHE_PREFIX$mediaId"
 
@@ -9578,7 +9522,7 @@ class MusicService :
                     key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
-                    key.startsWith(INSTAGRAM_FALLBACK_CACHE_PREFIX) ||
+                    key.startsWith(JIOSAAVN_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) ||
                     key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
@@ -9657,7 +9601,7 @@ class MusicService :
                 .removePrefix(APPLE_MUSIC_FALLBACK_CACHE_PREFIX)
                 .removePrefix(AMAZON_FALLBACK_CACHE_PREFIX)
                 .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
-                .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
+                .removePrefix(JIOSAAVN_FALLBACK_CACHE_PREFIX)
                 .removePrefix(DIRECT_HTTP_AUDIO_CACHE_PREFIX)
                 .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
                 .takeUnless { Uri.parse(it).isTidalPlaybackCdnUri() }
@@ -9790,12 +9734,12 @@ class MusicService :
             playbackUrl = null,
         )
 
-        private fun instagramFallbackFormat(
+        private fun jiosaavnFallbackFormat(
             mediaId: String,
-            resolved: InstagramAudioProvider.Resolved,
+            resolved: JioSaavnAudioProvider.Resolved,
         ) = FormatEntity(
             id = mediaId,
-            itag = INSTAGRAM_FALLBACK_ITAG,
+            itag = JIOSAAVN_FALLBACK_ITAG,
             mimeType = resolved.mimeType,
             codecs = resolved.codecs,
             bitrate = resolved.bitrate,

@@ -21,7 +21,7 @@ data class ProviderMatchOverride(
             AudioProviderOrderItem.DEEZER -> "deezer:track:$providerTrackId"
             AudioProviderOrderItem.QOBUZ -> "qobuz:track:$providerTrackId"
             AudioProviderOrderItem.YOUTUBE_MUSIC -> providerTrackId
-            AudioProviderOrderItem.INSTAGRAM -> providerTrackId
+            AudioProviderOrderItem.JIOSAAVN -> providerTrackId
             AudioProviderOrderItem.AMAZON_MUSIC -> "amazon:track:$providerTrackId"
             AudioProviderOrderItem.APPLE_MUSIC -> "apple:track:$providerTrackId"
         }
@@ -91,7 +91,7 @@ fun AudioProviderOrderItem.displayName(): String =
         AudioProviderOrderItem.SOUNDCLOUD -> "SoundCloud"
         AudioProviderOrderItem.TIDAL -> "TIDAL"
         AudioProviderOrderItem.DEEZER -> "Deezer"
-        AudioProviderOrderItem.INSTAGRAM -> "Instagram"
+        AudioProviderOrderItem.JIOSAAVN -> "JioSaavn"
         AudioProviderOrderItem.YOUTUBE_MUSIC -> "YouTube Music"
         AudioProviderOrderItem.QOBUZ -> "Qobuz"
         AudioProviderOrderItem.AMAZON_MUSIC -> "Amazon Music"

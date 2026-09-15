@@ -22,7 +22,7 @@ internal object PlaybackCacheIndex {
             "tidal-flac-fallback:",
             "deezer-fallback-audio:",
             "soundcloud-fallback-mp3:",
-            "instagram-fallback-audio:",
+            "jiosaavn-fallback-mp3:",
             "direct-http-audio:",
             "youtube-fallback-aac:",
         )

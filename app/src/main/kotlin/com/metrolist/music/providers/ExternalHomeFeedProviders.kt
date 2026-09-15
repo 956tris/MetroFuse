@@ -1762,6 +1762,7 @@ object ExternalHomeItemIds {
             provider == "deezer" && type == "album" -> "online_playlist/$provider:$type:$id"
             provider == "deezer" && type == "artist" -> "online_playlist/$provider:$type:$id"
             provider == "deezer" && type == "mix" -> "online_playlist/$provider:$type:$id"
+            provider == "jiosaavn" && type in setOf("playlist", "album", "artist") -> "online_playlist/$provider:$type:$id"
             else -> null
         }
     }
@@ -1836,7 +1837,7 @@ object ExternalHomeItemIds {
 
     private fun String.externalIdPart(): String? = spotifyExternalId()
 
-    private val ExternalProviders = setOf("spotify", "tidal", "soundcloud", "deezer", "metrofuse")
+    private val ExternalProviders = setOf("spotify", "tidal", "soundcloud", "deezer", "jiosaavn", "metrofuse")
     private val ExternalTypes = listOf("playlist", "track", "album", "artist", "mix", "collection")
 
     fun searchQuery(item: YTItem): String =

@@ -22,6 +22,8 @@ import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
+import com.metrolist.music.constants.AudioProviderDisabledKey
+import com.metrolist.music.constants.deserializeDisabledProviders
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
@@ -29,10 +31,8 @@ import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
-import com.metrolist.music.constants.InstagramCookieKey
-import com.metrolist.music.constants.InstagramAppIdKey
-import com.metrolist.music.constants.InstagramUserAgentKey
-import com.metrolist.music.constants.InstagramUuidKey
+import com.metrolist.music.constants.JioSaavnAudioQuality
+import com.metrolist.music.constants.JioSaavnAudioQualityKey
 import com.metrolist.music.constants.ProxyEnabledKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
@@ -57,12 +57,12 @@ import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
-import com.metrolist.music.instagram.InstagramAudioProvider
 import com.metrolist.music.amazon.AmazonAtmosDecryptor
 import com.metrolist.music.amazon.AmazonFfmpegDecryptor
 import com.metrolist.music.amazon.AmazonAudioProvider
 import com.metrolist.music.amazon.AmazonAudioProvider.toAmazonAsinOrNull
 import com.metrolist.music.tidal.TidalAudioProvider
+import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.youtube.YouTubeAudioProvider
@@ -73,7 +73,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
@@ -125,34 +124,8 @@ constructor(
     private val songUrlCache = HashMap<String, CachedSongStream>()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    @Volatile
-    private var cachedInstagramCookie: String = context.dataStore.get(InstagramCookieKey, "")
-    @Volatile
-    private var cachedInstagramUserAgent: String =
-        context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
 
     val downloads = MutableStateFlow<Map<String, Download>>(emptyMap())
-
-    init {
-        scope.launch {
-            context.dataStore.data
-                .map { it[InstagramCookieKey] ?: "" }
-                .distinctUntilChanged()
-                .collect { cachedInstagramCookie = it }
-        }
-        scope.launch {
-            context.dataStore.data
-                .map { prefs ->
-                    prefs[InstagramUserAgentKey]
-                        ?.takeIf { it.isNotBlank() }
-                        ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-                }
-                .distinctUntilChanged()
-                .collect { cachedInstagramUserAgent = it }
-        }
-    }
 
     private val dataSourceFactory =
         ResolvingDataSource.Factory(
@@ -200,23 +173,6 @@ constructor(
                                                     request.header("Range") != null,
                                                     isApiStream,
                                                     isHlsStream,
-                                                ).build()
-                                        }
-                                        if (InstagramAudioProvider.isInstagramPlaybackUrl(request.url)) {
-                                            val instagramClient =
-                                                InstagramAudioProvider.playbackClientProfile(request.url)
-                                            val instagramUserAgent =
-                                                InstagramAudioProvider.playbackUserAgent(request.url)
-                                                    ?: cachedInstagramUserAgent
-                                            val cleanUrl =
-                                                InstagramAudioProvider.cleanPlaybackUrl(request.url)
-                                            request =
-                                                InstagramAudioProvider.addPlaybackHeaders(
-                                                    request.newBuilder().url(cleanUrl),
-                                                    cachedInstagramCookie,
-                                                    request.header("Range") != null,
-                                                    instagramClient,
-                                                    instagramUserAgent,
                                                 ).build()
                                         }
                                         chain.proceed(request)
@@ -312,15 +268,6 @@ constructor(
             globalProxyEnabled = context.dataStore.get(ProxyEnabledKey, false),
         )
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
-        val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
-        val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-        val instagramAppId = context.dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_APP_ID
-        val instagramUuid = context.dataStore.get(InstagramUuidKey, "")
-        val instagramCookieConfigured = instagramCookie.isNotBlank()
         val soundCloudAuthConfigured = context.dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
         return listOf(
             "deezerResolver=${deezerResolverUrl.hashCode()}",
@@ -328,11 +275,6 @@ constructor(
             "deezerFast=$deezerFastMode",
             "deezerProxy=${DeezerAudioProvider.normalizeProxyUrl(deezerProxyUrl).hashCode()}",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
-            "instagramAuth=$instagramCookieConfigured",
-            "instagramCookie=${instagramCookie.hashCode()}",
-            "instagramUserAgent=${instagramUserAgent.hashCode()}",
-            "instagramAppId=${instagramAppId.hashCode()}",
-            "instagramUuid=${instagramUuid.hashCode()}",
             "soundCloudAuth=$soundCloudAuthConfigured",
         ).joinToString(";")
     }
@@ -351,15 +293,11 @@ constructor(
             configuredProxyUrl = configuredDeezerProxyUrl,
             globalProxyEnabled = context.dataStore.get(ProxyEnabledKey, false),
         )
-        val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
-        val instagramCookie = context.dataStore.get(InstagramCookieKey, "")
-        val instagramUserAgent = context.dataStore.get(InstagramUserAgentKey, InstagramAudioProvider.DEFAULT_USER_AGENT)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_USER_AGENT
-        val instagramAppId = context.dataStore.get(InstagramAppIdKey, InstagramAudioProvider.DEFAULT_APP_ID)
-            .takeIf { it.isNotBlank() }
-            ?: InstagramAudioProvider.DEFAULT_APP_ID
-        val instagramUuid = context.dataStore.get(InstagramUuidKey, "")
+        val disabledProviders = deserializeDisabledProviders(context.dataStore.get(AudioProviderDisabledKey, ""))
+        val audioProviderOrder = AudioProviderOrder.withoutDisabled(
+            AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, "")),
+            disabledProviders,
+        )
         val soundCloudAuthToken = context.dataStore.get(SoundCloudAuthTokenKey, "")
         val directTidalMediaId = TidalAudioProvider.isTidalTrackId(mediaId)
         val directDeezerMediaId = DeezerAudioProvider.isDeezerTrackId(mediaId)
@@ -369,10 +307,7 @@ constructor(
             if (directTidalMediaId && provider != AudioProviderOrderItem.DEEZER) {
                 false
             } else {
-                when (provider) {
-                    AudioProviderOrderItem.INSTAGRAM -> instagramCookie.isNotBlank()
-                    else -> true
-                }
+                true
             }
 
         fun DeezerAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
@@ -391,14 +326,6 @@ constructor(
                 format = soundCloudFallbackFormat(mediaId, this),
             )
 
-        fun InstagramAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
-            DownloadStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = instagramFallbackCacheKey(mediaId),
-                format = instagramFallbackFormat(mediaId, this),
-            )
-
         fun AppleAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
             DownloadStreamResolution(
                 uri = mediaUri,
@@ -407,20 +334,28 @@ constructor(
                 format = appleMusicFallbackFormat(mediaId, this),
             )
 
+        fun JioSaavnAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
+            DownloadStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = jiosaavnFallbackCacheKey(mediaId),
+                format = jiosaavnFallbackFormat(mediaId, this),
+            )
+
         var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Qobuz not attempted yet"))
         var soundCloudAttempt: Result<SoundCloudAudioProvider.Resolved> =
             Result.failure(IllegalStateException("SoundCloud not attempted yet"))
         var deezerAttempt: Result<DeezerAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Deezer audio not enabled"))
-        var instagramAttempt: Result<InstagramAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Instagram audio not enabled"))
         var appleAttempt: Result<AppleAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Apple Music not enabled"))
         var amazonAttempt: Result<AmazonAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Amazon Music not enabled"))
         var youtubeAttempt: Result<DownloadStreamResolution> =
             Result.failure(IllegalStateException("YouTube Music not attempted yet"))
+        var jiosaavnAttempt: Result<JioSaavnAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("JioSaavn audio not enabled"))
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
         val orderedProviders =
             buildList {
@@ -462,22 +397,6 @@ constructor(
                     }
                     deezerAttempt.getOrNull()?.let { resolved ->
                         Timber.tag(TAG).i("Using Deezer stream for download $mediaId: ${resolved.label}")
-                        return resolved.toDownloadResolution()
-                    }
-                }
-                AudioProviderOrderItem.INSTAGRAM -> {
-                    attemptedProviders += provider
-                    instagramAttempt = runCatching {
-                        InstagramAudioProvider.resolve(
-                            buildInstagramQuery(mediaId, song),
-                            instagramCookie,
-                            instagramUuid,
-                            instagramUserAgent,
-                            instagramAppId,
-                        )
-                    }
-                    instagramAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag(TAG).i("Using Instagram audio stream for download $mediaId: ${resolved.title}")
                         return resolved.toDownloadResolution()
                     }
                 }
@@ -541,6 +460,16 @@ constructor(
                         return resolved
                     }
                 }
+                AudioProviderOrderItem.JIOSAAVN -> {
+                    attemptedProviders += provider
+                    jiosaavnAttempt = runCatching {
+                        JioSaavnAudioProvider.resolve(buildJioSaavnQuery(mediaId, song))
+                    }
+                    jiosaavnAttempt.getOrNull()?.let { resolved ->
+                        Timber.tag(TAG).i("Using JioSaavn stream for download $mediaId: ${resolved.title}")
+                        return resolved.toDownloadResolution()
+                    }
+                }
                 AudioProviderOrderItem.QOBUZ -> {
                     attemptedProviders += provider
                     qobuzAttempt = runCatching {
@@ -587,7 +516,9 @@ constructor(
             )
         }
 
-        if (!attemptedProviders.contains(AudioProviderOrderItem.SOUNDCLOUD) && !directSoundCloudMediaId) {
+        if (!attemptedProviders.contains(AudioProviderOrderItem.SOUNDCLOUD) && !directSoundCloudMediaId &&
+            !disabledProviders.contains(AudioProviderOrderItem.SOUNDCLOUD)
+        ) {
             soundCloudAttempt = runCatching {
                 SoundCloudAudioProvider.resolve(buildSoundCloudQuery(mediaId, song), soundCloudAuthToken)
             }
@@ -597,7 +528,9 @@ constructor(
             }
         }
 
-        if (!attemptedProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC)) {
+        if (!attemptedProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC) &&
+            !disabledProviders.contains(AudioProviderOrderItem.YOUTUBE_MUSIC)
+        ) {
             youtubeAttempt = runCatching {
                 resolveYouTubeFallback(mediaId, song)
             }
@@ -609,13 +542,6 @@ constructor(
         val deezerDetail = if (attemptedProviders.contains(AudioProviderOrderItem.DEEZER) || directDeezerMediaId) {
             deezerAttempt.exceptionOrNull()?.message
                 ?.let { "Deezer failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
-        val instagramDetail = if (attemptedProviders.contains(AudioProviderOrderItem.INSTAGRAM)) {
-            instagramAttempt.exceptionOrNull()?.message
-                ?.let { "Instagram failed: $it; " }
                 .orEmpty()
         } else {
             ""
@@ -634,9 +560,16 @@ constructor(
         } else {
             ""
         }
+        val jiosaavnDetail = if (attemptedProviders.contains(AudioProviderOrderItem.JIOSAAVN)) {
+            jiosaavnAttempt.exceptionOrNull()?.message
+                ?.let { "JioSaavn failed: $it; " }
+                .orEmpty()
+        } else {
+            ""
+        }
         val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${instagramDetail}${amazonDetail}${appleDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${amazonDetail}${appleDetail}${jiosaavnDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
             qobuzError,
         )
     }
@@ -698,11 +631,12 @@ constructor(
         )
     }
 
-    private fun buildInstagramQuery(
+    private fun buildJioSaavnQuery(
         mediaId: String,
         song: Song?,
-    ): InstagramAudioProvider.Query {
-        return InstagramAudioProvider.Query(
+    ): JioSaavnAudioProvider.Query {
+        val quality = context.dataStore[JioSaavnAudioQualityKey].toEnum(JioSaavnAudioQuality.HIGH)
+        return JioSaavnAudioProvider.Query(
             mediaId = mediaId,
             title = song?.song?.title ?: mediaId,
             artists = song?.orderedArtists?.map { it.name }.orEmpty(),
@@ -712,6 +646,9 @@ constructor(
                 ?.toLong()
                 ?.times(1000L),
             isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
+            quality = quality,
+            trackIdOverride = JioSaavnAudioProvider.trackIdFromMediaId(mediaId)
+                .takeIf { JioSaavnAudioProvider.isJioSaavnTrackId(mediaId) },
         )
     }
 
@@ -859,14 +796,14 @@ constructor(
         private const val TAG = "DownloadUtil"
         private const val DEEZER_FALLBACK_ITAG = 100_033
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
-        private const val INSTAGRAM_FALLBACK_ITAG = 100_041
+        private const val JIOSAAVN_FALLBACK_ITAG = 100_053
         private const val AMAZON_FALLBACK_ITAG = 100_045
         private const val AMAZON_FLAC_ITAG = 100_046
         private const val AMAZON_ATMOS_ITAG = 100_047
         const val APPLE_MUSIC_FALLBACK_ITAG = 100_050
         private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
-        private const val INSTAGRAM_FALLBACK_CACHE_PREFIX = "instagram-fallback-audio:"
+        private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
         private const val AMAZON_FALLBACK_CACHE_PREFIX = "amazon-fallback-audio:"
         private const val APPLE_MUSIC_FALLBACK_CACHE_PREFIX = "apple-music-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
@@ -876,7 +813,7 @@ constructor(
 
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
-        private fun instagramFallbackCacheKey(mediaId: String) = "$INSTAGRAM_FALLBACK_CACHE_PREFIX$mediaId"
+        private fun jiosaavnFallbackCacheKey(mediaId: String) = "$JIOSAAVN_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun amazonFallbackCacheKey(mediaId: String) = "$AMAZON_FALLBACK_CACHE_PREFIX$mediaId"
 
@@ -891,7 +828,7 @@ constructor(
             .removePrefix("qobuz-fallback-v2:")
             .removePrefix(DEEZER_FALLBACK_CACHE_PREFIX)
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
-            .removePrefix(INSTAGRAM_FALLBACK_CACHE_PREFIX)
+            .removePrefix(JIOSAAVN_FALLBACK_CACHE_PREFIX)
             .removePrefix(AMAZON_FALLBACK_CACHE_PREFIX)
             .removePrefix(APPLE_MUSIC_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
@@ -928,12 +865,12 @@ constructor(
             playbackUrl = null,
         )
 
-        private fun instagramFallbackFormat(
+        private fun jiosaavnFallbackFormat(
             mediaId: String,
-            resolved: InstagramAudioProvider.Resolved,
+            resolved: JioSaavnAudioProvider.Resolved,
         ) = FormatEntity(
             id = mediaId,
-            itag = INSTAGRAM_FALLBACK_ITAG,
+            itag = JIOSAAVN_FALLBACK_ITAG,
             mimeType = resolved.mimeType,
             codecs = resolved.codecs,
             bitrate = resolved.bitrate,

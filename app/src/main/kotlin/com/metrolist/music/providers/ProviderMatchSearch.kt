@@ -13,6 +13,8 @@ import com.metrolist.music.constants.ContentCountryKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
+import com.metrolist.music.constants.AudioProviderDisabledKey
+import com.metrolist.music.constants.deserializeDisabledProviders
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerFastModeKey
@@ -29,6 +31,7 @@ import com.metrolist.music.constants.TidalResolverEndpointsKey
 import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
+import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.qobuz.QobuzAudioProvider
@@ -65,7 +68,10 @@ object ProviderMatchSearch {
         perProviderLimit: Int = 6,
     ): List<ProviderMatchCandidate> =
         withContext(Dispatchers.IO) {
-            val order = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
+            val order = AudioProviderOrder.withoutDisabled(
+                AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, "")),
+                deserializeDisabledProviders(context.dataStore.get(AudioProviderDisabledKey, "")),
+            )
             val spotifyIsrc = resolveSpotifyIsrc(context, metadata)
             searchFast(
                 context = context,
@@ -234,7 +240,23 @@ object ProviderMatchSearch {
                 }
             }
 
-            AudioProviderOrderItem.INSTAGRAM -> emptyList()
+            AudioProviderOrderItem.JIOSAAVN -> {
+                JioSaavnAudioProvider.searchCandidates(
+                    title = metadata.title,
+                    artists = metadata.artists.map { it.name },
+                    limit = limit,
+                ).map { track ->
+                    ProviderMatchCandidate(
+                        provider = provider,
+                        providerTrackId = track.trackId,
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album,
+                        durationMs = track.durationMs,
+                        shareUrl = track.shareUrl,
+                    )
+                }
+            }
 
             AudioProviderOrderItem.AMAZON_MUSIC -> {
                 val country = context.dataStore.get(ContentCountryKey, "US")

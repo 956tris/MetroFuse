@@ -30,9 +30,12 @@ import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
+import com.metrolist.music.constants.AudioProviderDisabledKey
 import com.metrolist.music.constants.AudioProviderOrder
 import com.metrolist.music.constants.AudioProviderOrderItem
 import com.metrolist.music.constants.AudioProviderOrderKey
+import com.metrolist.music.constants.deserializeDisabledProviders
+import com.metrolist.music.constants.serializeDisabledProviders
 import com.metrolist.music.ui.component.DraggableLyricsProviderItem
 import com.metrolist.music.ui.component.DraggableLyricsProviderList
 import com.metrolist.music.ui.component.IconButton
@@ -48,13 +51,25 @@ fun ProviderOrderScreen(
         key = AudioProviderOrderKey,
         defaultValue = AudioProviderOrder.serialize(AudioProviderOrder.Default),
     )
+    val (disabledRaw, onDisabledChange) = rememberPreference(
+        key = AudioProviderDisabledKey,
+        defaultValue = "",
+    )
+    val disabled = deserializeDisabledProviders(disabledRaw)
+    fun setProviderEnabled(provider: AudioProviderOrderItem, enabled: Boolean) {
+        onDisabledChange(
+            serializeDisabledProviders(
+                if (enabled) disabled - provider else disabled + provider,
+            ),
+        )
+    }
     val normalizedOrder = AudioProviderOrder.deserialize(providerOrder)
     val draggableItems = remember { mutableStateListOf<DraggableLyricsProviderItem>() }
     val providerIcon = painterResource(R.drawable.music_note)
     val soundCloudName = stringResource(R.string.audio_provider_soundcloud)
     val tidalName = stringResource(R.string.audio_provider_tidal)
     val deezerName = stringResource(R.string.audio_provider_deezer)
-    val instagramName = stringResource(R.string.audio_provider_instagram)
+    val jiosaavnName = stringResource(R.string.audio_provider_jiosaavn)
     val youtubeMusicName = stringResource(R.string.audio_provider_youtube_music)
     val qobuzName = stringResource(R.string.audio_provider_qobuz)
     val appleMusicName = stringResource(R.string.audio_provider_apple_music)
@@ -62,10 +77,11 @@ fun ProviderOrderScreen(
 
     LaunchedEffect(
         providerOrder,
+        disabledRaw,
         soundCloudName,
         tidalName,
         deezerName,
-        instagramName,
+        jiosaavnName,
         youtubeMusicName,
         qobuzName,
         appleMusicName,
@@ -80,13 +96,17 @@ fun ProviderOrderScreen(
                         AudioProviderOrderItem.SOUNDCLOUD -> soundCloudName
                         AudioProviderOrderItem.TIDAL -> tidalName
                         AudioProviderOrderItem.DEEZER -> deezerName
-                        AudioProviderOrderItem.INSTAGRAM -> instagramName
+                        AudioProviderOrderItem.JIOSAAVN -> jiosaavnName
                         AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeMusicName
                         AudioProviderOrderItem.QOBUZ -> qobuzName
                         AudioProviderOrderItem.AMAZON_MUSIC -> amazonMusicName
                         AudioProviderOrderItem.APPLE_MUSIC -> appleMusicName
                     },
                     icon = providerIcon,
+                    enabled = provider !in disabled,
+                    onToggleEnabled = {
+                        setProviderEnabled(provider, provider in disabled)
+                    },
                 )
             },
         )
@@ -126,6 +146,7 @@ fun ProviderOrderScreen(
         TextButton(
             onClick = {
                 onProviderOrderChange(AudioProviderOrder.serialize(AudioProviderOrder.Default))
+                onDisabledChange("")
             },
             modifier = Modifier.padding(top = 8.dp),
         ) {

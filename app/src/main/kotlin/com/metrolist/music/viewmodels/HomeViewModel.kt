@@ -33,6 +33,7 @@ import com.metrolist.music.constants.HideYoutubeShortsKey
 import com.metrolist.music.constants.HomeFeedSource
 import com.metrolist.music.constants.HomeFeedSourceKey
 import com.metrolist.music.constants.InnerTubeCookieKey
+import com.metrolist.music.constants.JioSaavnHomeLanguageKey
 import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.constants.QuickPicks
 import com.metrolist.music.constants.QuickPicksKey
@@ -52,6 +53,7 @@ import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.SimilarRecommendation
 import com.metrolist.music.playback.PublicDownloadExporter
 import com.metrolist.music.providers.DeezerHomeFeedProvider
+import com.metrolist.music.providers.JioSaavnHomeFeedProvider
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.ui.screens.wrapped.WrappedAudioService
@@ -743,6 +745,13 @@ class HomeViewModel @Inject constructor(
             HomeFeedSource.DEEZER -> {
                 val cookie = context.dataStore.get(DeezerCookieKey, "")
                 DeezerHomeFeedProvider.load(cookie).onSuccess { page ->
+                    homePage.value = page.filtered(hideExplicit, hideVideoSongs, hideYoutubeShorts)
+                }.onFailure { reportException(it) }
+            }
+
+            HomeFeedSource.JIOSAAVN -> {
+                val language = context.dataStore.get(JioSaavnHomeLanguageKey, "hindi")
+                JioSaavnHomeFeedProvider.load(language).onSuccess { page ->
                     homePage.value = page.filtered(hideExplicit, hideVideoSongs, hideYoutubeShorts)
                 }.onFailure { reportException(it) }
             }

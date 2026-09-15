@@ -27,6 +27,7 @@ import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.providers.ExternalPlaylistPage
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
+import com.metrolist.music.providers.JioSaavnHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
@@ -65,7 +66,8 @@ class OnlinePlaylistViewModel @Inject constructor(
                     (provider == "spotify" && type in setOf("album", "artist", "collection", "mix")) ||
                     (provider == "tidal" && type in setOf("album", "mix")) ||
                     (provider == "soundcloud" && type in setOf("album", "mix")) ||
-                    (provider == "deezer" && type in setOf("album", "artist", "mix"))
+                    (provider == "deezer" && type in setOf("album", "artist", "mix")) ||
+                    (provider == "jiosaavn" && type in setOf("playlist", "album", "artist"))
             }
     val isExternalPlaylist = externalCollectionIdParts != null
     val isSpotifyArtist =
@@ -203,6 +205,17 @@ class OnlinePlaylistViewModel @Inject constructor(
                     .onSuccess { page -> setExternalPlaylist(page) }
                     .onFailure { throwable ->
                         _error.value = throwable.message ?: "Failed to load Deezer $type"
+                        _isLoading.value = false
+                        reportException(throwable)
+                    }
+            }
+
+            "jiosaavn" -> {
+                JioSaavnHomeFeedProvider
+                    .loadCollection(externalId, type)
+                    .onSuccess { page -> setExternalPlaylist(page) }
+                    .onFailure { throwable ->
+                        _error.value = throwable.message ?: "Failed to load JioSaavn $type"
                         _isLoading.value = false
                         reportException(throwable)
                     }

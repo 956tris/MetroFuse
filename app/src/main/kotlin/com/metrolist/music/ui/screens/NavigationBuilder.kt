@@ -63,9 +63,8 @@ import com.metrolist.music.ui.screens.settings.integrations.AmazonMusicSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
-import com.metrolist.music.ui.screens.settings.integrations.InstagramLoginScreen
-import com.metrolist.music.ui.screens.settings.integrations.InstagramSettings
 import com.metrolist.music.ui.screens.settings.integrations.IntegrationScreen
+import com.metrolist.music.ui.screens.settings.integrations.JioSaavnSettings
 import com.metrolist.music.ui.screens.settings.integrations.LastFMSettings
 import com.metrolist.music.ui.screens.settings.integrations.ListenTogetherSettings
 import com.metrolist.music.ui.screens.settings.integrations.QobuzSettings
@@ -474,12 +473,8 @@ fun NavGraphBuilder.navigationBuilder(
         SoundCloudLoginScreen(navController)
     }
 
-    composable("settings/integrations/instagram") {
-        InstagramSettings(navController)
-    }
-
-    composable("settings/integrations/instagram/login") {
-        InstagramLoginScreen(navController)
+    composable("settings/integrations/jiosaavn") {
+        JioSaavnSettings(navController)
     }
 
     composable(route = "settings/integrations/listen_together") {

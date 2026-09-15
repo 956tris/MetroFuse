@@ -108,10 +108,10 @@ fun IntegrationScreen(
                 ),
                 IntegrationCardItem(
                     icon = painterResource(R.drawable.music_note),
-                    title = { Text(stringResource(R.string.instagram_integration)) },
-                    description = { Text(stringResource(R.string.instagram_web_login_desc)) },
+                    title = { Text(stringResource(R.string.jiosaavn_integration)) },
+                    description = { Text(stringResource(R.string.jiosaavn_integration_desc)) },
                     onClick = {
-                        navController.navigate("settings/integrations/instagram")
+                        navController.navigate("settings/integrations/jiosaavn")
                     }
                 )
             )

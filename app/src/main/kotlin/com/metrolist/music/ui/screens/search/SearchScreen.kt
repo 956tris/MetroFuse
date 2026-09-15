@@ -213,6 +213,7 @@ fun SearchScreen(
                                                             HomeFeedSource.SOUNDCLOUD -> R.string.search_soundcloud
                                                             HomeFeedSource.TIDAL -> R.string.search_tidal
                                                             HomeFeedSource.DEEZER -> R.string.search_deezer
+                                                            HomeFeedSource.JIOSAAVN -> R.string.search_jiosaavn
                                                             else -> R.string.search_yt_music
                                                         }
                                                 },

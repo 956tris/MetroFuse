@@ -35,6 +35,7 @@ import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.models.ItemsPage
 import com.metrolist.music.providers.DeezerHomeFeedProvider
+import com.metrolist.music.providers.JioSaavnHomeFeedProvider
 import com.metrolist.music.providers.SoundCloudHomeFeedProvider
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.utils.dataStore
@@ -69,6 +70,8 @@ constructor(
         private set
     var isDeezerSearch by mutableStateOf(false)
         private set
+    var isJioSaavnSearch by mutableStateOf(false)
+        private set
     var isSpotifySearch by mutableStateOf(false)
         private set
     val viewStateMap = mutableStateMapOf<String, ItemsPage?>()
@@ -79,6 +82,7 @@ constructor(
             isSoundCloudSearch = source == HomeFeedSource.SOUNDCLOUD
             isTidalSearch = source == HomeFeedSource.TIDAL
             isDeezerSearch = source == HomeFeedSource.DEEZER
+            isJioSaavnSearch = source == HomeFeedSource.JIOSAAVN
             isSpotifySearch = source == HomeFeedSource.SPOTIFY
             when {
                 isSpotifySearch -> {
@@ -127,6 +131,16 @@ constructor(
                         }
                 }
 
+                isJioSaavnSearch -> {
+                    JioSaavnHomeFeedProvider
+                        .search(query)
+                        .onSuccess { page ->
+                            summaryPage = page
+                        }.onFailure {
+                            reportException(it)
+                        }
+                }
+
                 else -> {
                     YouTube
                         .searchSummary(query)
@@ -151,13 +165,14 @@ constructor(
             filter.collect { filter ->
                 if (filter == null) {
                     loadSummaryPage()
-                } else if (selectedHomeFeedSource() in setOf(HomeFeedSource.SPOTIFY, HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER)) {
+                } else if (selectedHomeFeedSource() in setOf(HomeFeedSource.SPOTIFY, HomeFeedSource.SOUNDCLOUD, HomeFeedSource.TIDAL, HomeFeedSource.DEEZER, HomeFeedSource.JIOSAAVN)) {
                     if (viewStateMap[filter.value] == null) {
                         val source = selectedHomeFeedSource()
                         isSpotifySearch = source == HomeFeedSource.SPOTIFY
                         isSoundCloudSearch = source == HomeFeedSource.SOUNDCLOUD
                         isTidalSearch = source == HomeFeedSource.TIDAL
                         isDeezerSearch = source == HomeFeedSource.DEEZER
+                        isJioSaavnSearch = source == HomeFeedSource.JIOSAAVN
                         loadSummaryPage()
                         viewStateMap[filter.value] =
                             ItemsPage(
@@ -232,7 +247,7 @@ constructor(
     }
 
     fun loadMore() {
-        if (isSpotifySearch || isSoundCloudSearch || isTidalSearch || isDeezerSearch) return
+        if (isSpotifySearch || isSoundCloudSearch || isTidalSearch || isDeezerSearch || isJioSaavnSearch) return
         val currentFilter = filter.value
         val filterValue = currentFilter?.value ?: return
         viewModelScope.launch {
