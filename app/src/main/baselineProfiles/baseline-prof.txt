@@ -5,37 +5,37 @@
 # Flags: H = hot, S = startup, P = post-startup.
 
 # ---- Startup ----
-HSPcom/metrolist/music/App;
-HSPcom/metrolist/music/MainActivity;
-HSPcom/metrolist/music/di/AppModule;
-HSPcom/metrolist/music/utils/CrashHandler;
+HSPLcom/metrolist/music/App;
+HSPLcom/metrolist/music/MainActivity;
+HSPLcom/metrolist/music/di/AppModule;
+HSPLcom/metrolist/music/utils/CrashHandler;
 
 # ---- Playback core (every session) ----
-HSPcom/metrolist/music/playback/MusicService;
-HSPcom/metrolist/music/playback/DownloadUtil;
-HSPcom/metrolist/music/playback/ExoDownloadService;
-HSPcom/metrolist/music/playback/PlaybackCacheIndex;
-HSPcom/metrolist/music/playback/PublicDownloadExporter;
-HSPcom/metrolist/music/playback/AudioTagWriter;
-HSPcom/metrolist/music/db/MusicDatabase;
+HSPLcom/metrolist/music/playback/MusicService;
+HSPLcom/metrolist/music/playback/DownloadUtil;
+HSPLcom/metrolist/music/playback/ExoDownloadService;
+HSPLcom/metrolist/music/playback/PlaybackCacheIndex;
+HSPLcom/metrolist/music/playback/PublicDownloadExporter;
+HSPLcom/metrolist/music/playback/AudioTagWriter;
+HSPLcom/metrolist/music/db/MusicDatabase;
 
 # ---- First screens ----
-HSPcom/metrolist/music/ui/screens/HomeScreenKt;
-HSPcom/metrolist/music/ui/player/PlayerKt;
-HSPcom/metrolist/music/ui/player/ThumbnailKt;
-HSPcom/metrolist/music/ui/player/MiniPlayerKt;
-HSPcom/metrolist/music/viewmodels/HomeViewModel;
-HSPcom/metrolist/music/viewmodels/ThemeViewModel;
+HSPLcom/metrolist/music/ui/screens/HomeScreenKt;
+HSPLcom/metrolist/music/ui/player/PlayerKt;
+HSPLcom/metrolist/music/ui/player/ThumbnailKt;
+HSPLcom/metrolist/music/ui/player/MiniPlayerKt;
+HSPLcom/metrolist/music/viewmodels/HomeViewModel;
+HSPLcom/metrolist/music/viewmodels/ThemeViewModel;
 
 # ---- Lyrics (hot during playback) ----
-HPcom/metrolist/music/lyrics/LyricsHelper;
-HPcom/metrolist/music/lyrics/LyricsUtils;
-HPcom/metrolist/music/viewmodels/LyricsViewModel;
-HPcom/metrolist/music/models/MediaMetadata;
+HPLcom/metrolist/music/lyrics/LyricsHelper;
+HPLcom/metrolist/music/lyrics/LyricsUtils;
+HPLcom/metrolist/music/viewmodels/LyricsViewModel;
+HPLcom/metrolist/music/models/MediaMetadata;
 
 # ---- Provider resolution ----
-HPcom/metrolist/music/providers/IsrcResolver;
-HPcom/metrolist/music/providers/ProviderIsrc;
-HPcom/metrolist/music/providers/ProviderMatchSearch;
-HPcom/metrolist/music/deezer/DeezerAudioProvider;
-HPcom/metrolist/music/youtube/YouTubeAudioProvider;
+HPLcom/metrolist/music/providers/IsrcResolver;
+HPLcom/metrolist/music/providers/ProviderIsrc;
+HPLcom/metrolist/music/providers/ProviderMatchSearch;
+HPLcom/metrolist/music/deezer/DeezerAudioProvider;
+HPLcom/metrolist/music/youtube/YouTubeAudioProvider;
