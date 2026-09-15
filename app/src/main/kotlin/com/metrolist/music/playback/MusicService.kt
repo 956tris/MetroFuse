@@ -793,7 +793,7 @@ class MusicService :
     @Volatile
     private var cachedSpotifyCanvasEnabled = false
     @Volatile
-    private var cachedDownloadCanvasMode = DownloadCanvasMode.OFF
+    private var cachedDownloadCanvasMode = DownloadCanvasMode.BOTH
 
     // URL cache for stream URLs - class-level so it can be invalidated on errors
     private val songUrlCache = Collections.synchronizedMap(
@@ -1080,6 +1080,10 @@ class MusicService :
                             currentEmbeddedCanvasUrl.value = null
                             if (isLocalMedia(metadata)) {
                                 loadEmbeddedCanvasInBackground(metadata.id)
+                            } else {
+                                // Streaming offline path (issue #88): reuse disk-cached
+                                // canvas video so it still plays without network.
+                                loadOfflineCanvasInBackground(metadata.id)
                             }
                         }
                     } else {
@@ -1092,7 +1096,7 @@ class MusicService :
             .map { prefs ->
                 Pair(
                     prefs[SpotifyCanvasEnabledKey] ?: false,
-                    prefs[DownloadCanvasModeKey].toEnum(DownloadCanvasMode.OFF),
+                    prefs[DownloadCanvasModeKey].toEnum(DownloadCanvasMode.BOTH),
                 )
             }
             .distinctUntilChanged()
@@ -6877,6 +6881,12 @@ class MusicService :
             currentAppleCanvasUrl.value = square
             currentAppleTallCanvasUrl.value = tall
         }
+
+        // Prefetch the winning canvas video into the offline disk cache
+        // (issue #88) so next playback works without network. Fire-and-forget.
+        (tall ?: square)?.takeIf { it.isNotBlank() }?.let { videoUrl ->
+            prefetchCanvasToOfflineCache(metadata.id, videoUrl, "Apple Music")
+        }
     }
 
     private suspend fun updateTidalCanvas(metadata: com.metrolist.music.models.MediaMetadata?) {
@@ -6903,17 +6913,23 @@ class MusicService :
         }
 
         val resolved =
-            withTimeoutOrNull(3_500L) {
+            withTimeoutOrNull(10_000L) {
                 TidalHomeFeedProvider.resolveAnimatedArtwork(
                     title = metadata.title,
                     artist = artist,
                     album = metadata.album?.title,
                     cookie = dataStore.get(TidalCookieKey, ""),
+                    durationSeconds = metadata.duration.takeIf { it > 30 },
                 )
             }?.takeIf { it.isNotBlank() }
 
-        synchronized(tidalAnimatedArtworkCache) {
-            tidalAnimatedArtworkCache[cacheKey] = resolved
+        // Only cache genuine hits. Timeouts / missing cookie / no-videoCover
+        // all resolve to null, and caching that for the process lifetime is
+        // what made the feature look permanently broken. Retry next play.
+        if (resolved != null) {
+            synchronized(tidalAnimatedArtworkCache) {
+                tidalAnimatedArtworkCache[cacheKey] = resolved
+            }
         }
         if (currentMediaMetadata.value?.id == metadata.id) {
             currentTidalCanvasUrl.value = resolved
@@ -7012,9 +7028,68 @@ class MusicService :
         scope.launch(Dispatchers.IO) {
             val embeddedCanvas =
                 AudioTagWriter.extractEmbeddedCanvasToCache(applicationContext, mediaId)
+                    ?: CanvasOfflineCache.cachedUriFor(applicationContext, mediaId)?.let {
+                        // Reuse the offline disk cache for local files that were
+                        // cached as streams before being downloaded.
+                        com.metrolist.music.playback.CachedEmbeddedCanvas(uri = it, provider = "OfflineCache")
+                    }
             withContext(Dispatchers.Main) {
                 if (currentMediaMetadata.value?.id == mediaId) {
                     currentEmbeddedCanvasUrl.value = embeddedCanvas?.uri
+                }
+            }
+        }
+    }
+
+    private fun loadOfflineCanvasInBackground(mediaId: String) {
+        scope.launch(Dispatchers.IO) {
+            val cachedUri =
+                runCatching {
+                    CanvasOfflineCache.cachedUriFor(applicationContext, mediaId)
+                }.getOrNull()
+            withContext(Dispatchers.Main) {
+                if (currentMediaMetadata.value?.id == mediaId && cachedUri != null) {
+                    currentEmbeddedCanvasUrl.value = cachedUri
+                }
+            }
+        }
+    }
+
+    private fun prefetchCanvasToOfflineCache(
+        mediaId: String,
+        videoUrl: String,
+        provider: String,
+    ) {
+        if (CanvasOfflineCache.cachedUriFor(applicationContext, mediaId) != null) return
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                val request =
+                    okhttp3.Request.Builder()
+                        .url(videoUrl)
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build()
+                val client = okhttp3.OkHttpClient.Builder().callTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@launch
+                    val isHls =
+                        videoUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true) ||
+                            response.header("Content-Type").orEmpty().contains("mpegurl", ignoreCase = true)
+                    // Skip HLS playlists here: they need multi-segment packaging
+                    // which already happens at download time. Caching the raw
+                    // m3u8 text would not be playable offline.
+                    if (isHls) return@launch
+                    val bytes = response.body.bytes()
+                    if (bytes.isEmpty() || bytes.size > 8 * 1024 * 1024) return@launch
+                    val mime =
+                        response.header("Content-Type")?.substringBefore(";")?.trim()
+                            ?.takeIf { it.startsWith("video/", ignoreCase = true) }
+                            ?: "video/mp4"
+                    CanvasOfflineCache.put(
+                        applicationContext,
+                        mediaId,
+                        EmbeddedCanvas(mimeType = mime, bytes = bytes, provider = provider),
+                        videoUrl,
+                    )
                 }
             }
         }

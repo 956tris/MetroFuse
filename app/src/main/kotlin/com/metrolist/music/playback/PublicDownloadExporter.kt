@@ -14,6 +14,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.annotation.RequiresApi
 import androidx.core.net.toUri
 import androidx.media3.datasource.cache.CacheSpan
 import androidx.media3.datasource.cache.SimpleCache
@@ -577,6 +578,7 @@ object PublicDownloadExporter {
     private fun publicRelativePath(): String =
         "${Environment.DIRECTORY_DOWNLOADS}/$PUBLIC_FOLDER_NAME"
 
+    @RequiresApi(Build.VERSION_CODES.Q)
     private fun downloadsCollection(): Uri =
         MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
 
@@ -882,11 +884,19 @@ object PublicDownloadExporter {
                     CanvasArtworkPriority.SPOTIFY -> spotifyCanvas() ?: appleCanvas()
                 }
             }
+        }?.also { embedded ->
+            // Warm the offline canvas disk cache (issue #88) so streaming
+            // playback can reuse this video without network, even if the
+            // user later plays the non-downloaded variant offline.
+            CanvasOfflineCache.put(context, source.song.id, embedded)
         }
     }
 
     private fun effectiveDownloadCanvasMode(context: Context): DownloadCanvasMode {
-        return context.dataStore.get(DownloadCanvasModeKey).toEnum(DownloadCanvasMode.OFF)
+        // Default BOTH restores pre-5.1 embed behavior: Apple works without
+        // any user cookie, Spotify is tried when configured. OFF silently
+        // dropping canvas is what made embed look "broken".
+        return context.dataStore.get(DownloadCanvasModeKey).toEnum(DownloadCanvasMode.BOTH)
     }
 
     private fun downloadCanvas(

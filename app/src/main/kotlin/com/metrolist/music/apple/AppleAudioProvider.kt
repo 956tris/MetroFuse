@@ -76,7 +76,7 @@ object AppleAudioProvider {
                     val searchResult = AppleMusicCanvasProvider.fetchBySearch(
                         query.song, query.artist, query.durationMs?.div(1000)?.toInt(), token, AppleMusicCanvasProvider.CanvasAspectPreference.SQUARE
                     )
-                    searchResult.second?.optJSONObject("attributes")?.optString("url")
+                    searchResult.item?.optJSONObject("attributes")?.optString("url")
                 } ?: throw AppleResolutionException("NO_APPLE_URL", "Could not find Apple Music URL for ISRC $isrc")
             
             appleUrlCache[isrc] = url

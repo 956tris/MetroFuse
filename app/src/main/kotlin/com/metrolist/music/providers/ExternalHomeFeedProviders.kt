@@ -16,6 +16,7 @@ import com.metrolist.innertube.pages.HomePage
 import com.metrolist.innertube.pages.SearchSummary
 import com.metrolist.innertube.pages.SearchSummaryPage
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
+import com.metrolist.music.utils.CanvasQueryCleaner
 import com.metrolist.music.utils.tidal.extractTidalAccessToken
 import com.metrolist.music.utils.tidal.extractTidalRefreshToken
 import kotlinx.coroutines.Dispatchers
@@ -235,10 +236,16 @@ object TidalHomeFeedProvider {
         artist: String?,
         album: String?,
         cookie: String = "",
+        durationSeconds: Int? = null,
     ): String? =
         runCatching {
             withContext(Dispatchers.IO) {
-                val normalizedTitle = title.normalizedArtworkMatch()
+                // Clean YTM video-style titles (" - Official Music Video") and
+                // auto-generated "Artist - Topic" channels before querying so
+                // the TIDAL search sees the real song name.
+                val queryTitle = CanvasQueryCleaner.cleanTitle(title).ifBlank { title }
+                val queryArtist = artist?.let { CanvasQueryCleaner.cleanArtist(it) }
+                val normalizedTitle = queryTitle.normalizedArtworkMatch()
                 if (normalizedTitle.isBlank()) return@withContext null
 
                 val auth = tidalAuthInput(cookie)
@@ -246,8 +253,8 @@ object TidalHomeFeedProvider {
 
                 val query =
                     listOfNotNull(
-                        title.takeIf { it.isNotBlank() },
-                        artist?.takeIf { it.isNotBlank() },
+                        queryTitle.takeIf { it.isNotBlank() },
+                        queryArtist?.takeIf { it.isNotBlank() },
                         album?.takeIf { it.isNotBlank() },
                     ).joinToString(" ")
 
@@ -269,9 +276,10 @@ object TidalHomeFeedProvider {
                     }
 
                 responseJson.bestTidalAnimatedArtworkCandidate(
-                    title = title,
-                    artist = artist,
+                    title = queryTitle,
+                    artist = queryArtist,
                     album = album,
+                    durationSeconds = durationSeconds?.takeIf { it > 30 },
                 )
             }
         }.getOrNull()
@@ -1142,7 +1150,13 @@ object TidalHomeFeedProvider {
         string("videoCover")?.tidalVideoUrl(size)
             ?: string("videoCoverUrl")?.tidalVideoUrl(size)
             ?: string("animatedCover")?.tidalVideoUrl(size)
+            ?: string("animatedCoverUrl")?.tidalVideoUrl(size)
             ?: string("motionCover")?.tidalVideoUrl(size)
+            ?: string("motionCoverUrl")?.tidalVideoUrl(size)
+            ?: string("coverVideo")?.tidalVideoUrl(size)
+            ?: string("coverVideoUrl")?.tidalVideoUrl(size)
+            ?: string("videoUrl")?.tidalVideoUrl(size)
+            ?: obj("cover")?.tidalVideoCoverUrl(size)
             ?: obj("album")?.tidalVideoCoverUrl(size)
 
     private fun JsonObject.bestTidalArtworkCandidate(
@@ -1204,11 +1218,14 @@ object TidalHomeFeedProvider {
         title: String,
         artist: String?,
         album: String?,
+        durationSeconds: Int? = null,
     ): String? {
         val normalizedTitle = title.normalizedArtworkMatch()
         val normalizedArtist = artist?.normalizedArtworkMatch().orEmpty()
         val normalizedAlbum = album?.normalizedArtworkMatch().orEmpty()
-        val threshold = if (normalizedArtist.isBlank()) 5 else 8
+        // Lowered 8 -> 6: cleaned YTM queries ("Song" vs "Song Official Video")
+        // now match on word overlap instead of requiring near-exact text.
+        val threshold = if (normalizedArtist.isBlank()) 4 else 6
 
         val trackCandidates =
             obj("tracks")
@@ -1227,6 +1244,7 @@ object TidalHomeFeedProvider {
                                 normalizedTitle = normalizedTitle,
                                 normalizedArtist = normalizedArtist,
                                 normalizedAlbum = normalizedAlbum,
+                                durationSeconds = durationSeconds,
                             ),
                     )
                 }
@@ -1245,6 +1263,7 @@ object TidalHomeFeedProvider {
                                 normalizedTitle = normalizedAlbum.ifBlank { normalizedTitle },
                                 normalizedArtist = normalizedArtist,
                                 normalizedAlbum = normalizedAlbum,
+                                durationSeconds = null,
                             ),
                     )
                 }
@@ -1264,6 +1283,7 @@ object TidalHomeFeedProvider {
         normalizedTitle: String,
         normalizedArtist: String,
         normalizedAlbum: String,
+        durationSeconds: Int? = null,
     ): Int {
         val itemTitle = tidalTitle()?.normalizedArtworkMatch().orEmpty()
         val itemAlbum = obj("album")?.tidalTitle()?.normalizedArtworkMatch().orEmpty()
@@ -1280,12 +1300,26 @@ object TidalHomeFeedProvider {
             (itemTitle.contains(normalizedTitle) || normalizedTitle.contains(itemTitle))
         ) {
             score += 3
+        } else if (normalizedTitle.isNotBlank() && itemTitle.isNotBlank()) {
+            // Word-overlap fallback for cleaned YTM titles where neither
+            // side contains the other ("midnight city" vs "midnight city remastered").
+            val queryWords = normalizedTitle.split(" ").filter { it.length > 3 }
+            if (queryWords.isNotEmpty()) {
+                val hits = queryWords.count { itemTitle.contains(it) }
+                score += (hits.toFloat() / queryWords.size * 3).toInt()
+            }
         }
 
         if (normalizedArtist.isNotBlank() && itemArtists.any { it == normalizedArtist }) {
             score += 5
         } else if (normalizedArtist.isNotBlank() && itemArtists.any { it.contains(normalizedArtist) || normalizedArtist.contains(it) }) {
             score += 3
+        } else if (normalizedArtist.isNotBlank()) {
+            val artistWords = normalizedArtist.split(" ").filter { it.length > 3 }
+            if (artistWords.isNotEmpty()) {
+                val best = itemArtists.maxOfOrNull { item -> artistWords.count { item.contains(it) } } ?: 0
+                score += (best.toFloat() / artistWords.size * 3).toInt()
+            }
         }
 
         if (normalizedAlbum.isNotBlank()) {
@@ -1299,11 +1333,27 @@ object TidalHomeFeedProvider {
             }
         }
 
+        // Duration check catches remixes/live versions sharing a title.
+        // Only trusted when the query duration is a real playback length;
+        // YTM frontend reports -1/unknown, which must not penalize.
+        if (durationSeconds != null && durationSeconds > 30) {
+            val itemDuration = long("duration")?.tidalDurationSeconds()
+            if (itemDuration != null && itemDuration > 30) {
+                val diff = kotlin.math.abs(durationSeconds - itemDuration)
+                when {
+                    diff < 4 -> score += 3
+                    diff < 12 -> score += 1
+                    diff > 25 -> score -= 3
+                }
+            }
+        }
+
         return score
     }
 
     private fun String.normalizedArtworkMatch(): String =
-        lowercase()
+        CanvasQueryCleaner.cleanArtist(CanvasQueryCleaner.cleanTitle(this))
+            .lowercase()
             .replace(Regex("""\([^)]*\)|\[[^]]*]"""), " ")
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()

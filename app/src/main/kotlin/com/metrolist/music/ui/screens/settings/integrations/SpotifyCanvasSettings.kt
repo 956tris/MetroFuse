@@ -69,7 +69,7 @@ fun SpotifyCanvasSettings(
     val (spotifySyncLikes, onSpotifySyncLikesChange) =
         rememberPreference(SpotifySyncLikesKey, false)
     var canvasArtworkPriority by rememberEnumPreference(CanvasArtworkPriorityKey, CanvasArtworkPriority.APPLE_MUSIC)
-    var downloadCanvasMode by rememberEnumPreference(DownloadCanvasModeKey, DownloadCanvasMode.OFF)
+    var downloadCanvasMode by rememberEnumPreference(DownloadCanvasModeKey, DownloadCanvasMode.BOTH)
     var spotifyCookie by rememberPreference(SpotifyCookieKey, "")
     val cookieConfigured = isSpotifyCookieConfigured(spotifyCookie)
 

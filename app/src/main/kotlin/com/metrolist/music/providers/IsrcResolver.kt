@@ -7,6 +7,7 @@ package com.metrolist.music.providers
 
 import com.metrolist.music.apple.AppleMusicCanvasProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
+import com.metrolist.music.utils.CanvasQueryCleaner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -59,13 +60,22 @@ object IsrcResolver {
 
         if (song.isBlank() || artist.isBlank()) return@withContext null
 
-        val key = CacheKey(song.trim().lowercase(), artist.trim().lowercase(), durationSeconds)
+        // Clean YTM video-style titles + "- Topic" artists before lookup so
+        // frontend tracks without ISRCs resolve to the same catalog entry.
+        // Duration bucketed to 15s windows so radio edits/remasters of the
+        // same song share a cache entry instead of forking keys.
+        val cleanSong = CanvasQueryCleaner.cleanTitle(song).ifBlank { song.trim() }
+        val cleanArtist = CanvasQueryCleaner.cleanArtist(artist).ifBlank { artist.trim() }
+        if (cleanSong.isBlank() || cleanArtist.isBlank()) return@withContext null
+        val durationBucket = durationSeconds?.takeIf { it > 30 }?.let { it / 15 }
+
+        val key = CacheKey(cleanSong.lowercase(), cleanArtist.lowercase(), durationBucket)
         cache[key]?.let { return@withContext if (it == NEGATIVE_RESULT) null else it }
 
         val resolved = runCatching {
             coroutineScope {
-                val deezerDeferred = async { resolveViaDeezer(song, artist, durationSeconds) }
-                val appleDeferred = async { resolveViaApple(song, artist, durationSeconds) }
+                val deezerDeferred = async { resolveViaDeezer(cleanSong, cleanArtist, durationSeconds) }
+                val appleDeferred = async { resolveViaApple(cleanSong, cleanArtist, durationSeconds) }
                 deezerDeferred.await() ?: appleDeferred.await()
             }
         }.getOrNull()
