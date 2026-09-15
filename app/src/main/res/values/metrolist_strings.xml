@@ -773,7 +773,7 @@
     <string name="tidal_artwork_fallback">High quality album covers</string>
     <string name="tidal_artwork_fallback_desc">Use TIDAL album artwork in the player when no Spotify or Apple animated canvas is available</string>
     <string name="tidal_animated_covers">TIDAL animated covers</string>
-    <string name="tidal_animated_covers_desc">Use TIDAL video covers in the player like Apple Music motion art. You need to be logged in with TIDAL for this to work.</string>
+    <string name="tidal_animated_covers_desc">Use TIDAL video covers in the player like Apple Music motion art. Works without logging in; logging in can improve match reliability.</string>
     <string name="tidal_audio_quality">TIDAL audio quality</string>
     <string name="tidal_resolver_endpoints">TIDAL API endpoints</string>
     <string name="tidal_resolver_endpoints_desc_default">No resolver endpoints configured.</string>

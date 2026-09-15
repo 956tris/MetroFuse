@@ -249,7 +249,6 @@ object TidalHomeFeedProvider {
                 if (normalizedTitle.isBlank()) return@withContext null
 
                 val auth = tidalAuthInput(cookie)
-                if (!auth.hasUserAuth) return@withContext null
 
                 val query =
                     listOfNotNull(
@@ -258,29 +257,39 @@ object TidalHomeFeedProvider {
                         album?.takeIf { it.isNotBlank() },
                     ).joinToString(" ")
 
-                val responseJson =
-                    client.newCall(
-                        tidalRequest(
-                            path = "v1/search",
-                            params =
-                                mapOf(
-                                    "query" to query,
-                                    "types" to "TRACKS,ALBUMS",
-                                    "limit" to "10",
+                // Authless-friendly: try an authenticated search first (user
+                // token when logged in, app client-credentials token
+                // otherwise), then fall back to a fully anonymous search.
+                // tidal.com serves video covers signed out, so either path
+                // can return them — whichever the API accepts wins.
+                suspend fun attempt(authenticated: Boolean): String? =
+                    runCatching {
+                        val responseJson =
+                            client.newCall(
+                                tidalRequest(
+                                    path = "v1/search",
+                                    params =
+                                        mapOf(
+                                            "query" to query,
+                                            "types" to "TRACKS,ALBUMS",
+                                            "limit" to "10",
+                                        ),
+                                    auth = auth,
+                                    authenticated = authenticated,
                                 ),
-                            auth = auth,
-                            authenticated = true,
-                        ),
-                    ).execute().use { response ->
-                        json.parseToJsonElement(response.requireTidalBody("TIDAL animated artwork search")).jsonObject
-                    }
+                            ).execute().use { response ->
+                                json.parseToJsonElement(response.requireTidalBody("TIDAL animated artwork search")).jsonObject
+                            }
 
-                responseJson.bestTidalAnimatedArtworkCandidate(
-                    title = queryTitle,
-                    artist = queryArtist,
-                    album = album,
-                    durationSeconds = durationSeconds?.takeIf { it > 30 },
-                )
+                        responseJson.bestTidalAnimatedArtworkCandidate(
+                            title = queryTitle,
+                            artist = queryArtist,
+                            album = album,
+                            durationSeconds = durationSeconds?.takeIf { it > 30 },
+                        )
+                    }.getOrNull()
+
+                attempt(authenticated = true) ?: attempt(authenticated = false)
             }
         }.getOrNull()
 
