@@ -1,41 +1,41 @@
 # Baseline Profile: hand-curated hot paths for startup + first navigation.
 # Libraries (Compose, Coil, Media3, Room) ship their own profiles; this file
-# covers app code only. Class-level rules (no method list) keep it robust
-# against refactors — unknown entries are ignored, never fatal.
-# Flags: H = hot, S = startup, P = post-startup.
+# covers app code only. Class-level rules (whole class, no flags — the ART
+# parser rejects flags on class rules) keep it robust against refactors:
+# unknown entries are ignored, never fatal.
 
 # ---- Startup ----
-HSPLcom/metrolist/music/App;
-HSPLcom/metrolist/music/MainActivity;
-HSPLcom/metrolist/music/di/AppModule;
-HSPLcom/metrolist/music/utils/CrashHandler;
+Lcom/metrolist/music/App;
+Lcom/metrolist/music/MainActivity;
+Lcom/metrolist/music/di/AppModule;
+Lcom/metrolist/music/utils/CrashHandler;
 
 # ---- Playback core (every session) ----
-HSPLcom/metrolist/music/playback/MusicService;
-HSPLcom/metrolist/music/playback/DownloadUtil;
-HSPLcom/metrolist/music/playback/ExoDownloadService;
-HSPLcom/metrolist/music/playback/PlaybackCacheIndex;
-HSPLcom/metrolist/music/playback/PublicDownloadExporter;
-HSPLcom/metrolist/music/playback/AudioTagWriter;
-HSPLcom/metrolist/music/db/MusicDatabase;
+Lcom/metrolist/music/playback/MusicService;
+Lcom/metrolist/music/playback/DownloadUtil;
+Lcom/metrolist/music/playback/ExoDownloadService;
+Lcom/metrolist/music/playback/PlaybackCacheIndex;
+Lcom/metrolist/music/playback/PublicDownloadExporter;
+Lcom/metrolist/music/playback/AudioTagWriter;
+Lcom/metrolist/music/db/MusicDatabase;
 
 # ---- First screens ----
-HSPLcom/metrolist/music/ui/screens/HomeScreenKt;
-HSPLcom/metrolist/music/ui/player/PlayerKt;
-HSPLcom/metrolist/music/ui/player/ThumbnailKt;
-HSPLcom/metrolist/music/ui/player/MiniPlayerKt;
-HSPLcom/metrolist/music/viewmodels/HomeViewModel;
-HSPLcom/metrolist/music/viewmodels/ThemeViewModel;
+Lcom/metrolist/music/ui/screens/HomeScreenKt;
+Lcom/metrolist/music/ui/player/PlayerKt;
+Lcom/metrolist/music/ui/player/ThumbnailKt;
+Lcom/metrolist/music/ui/player/MiniPlayerKt;
+Lcom/metrolist/music/viewmodels/HomeViewModel;
+Lcom/metrolist/music/viewmodels/ThemeViewModel;
 
 # ---- Lyrics (hot during playback) ----
-HPLcom/metrolist/music/lyrics/LyricsHelper;
-HPLcom/metrolist/music/lyrics/LyricsUtils;
-HPLcom/metrolist/music/viewmodels/LyricsViewModel;
-HPLcom/metrolist/music/models/MediaMetadata;
+Lcom/metrolist/music/lyrics/LyricsHelper;
+Lcom/metrolist/music/lyrics/LyricsUtils;
+Lcom/metrolist/music/viewmodels/LyricsViewModel;
+Lcom/metrolist/music/models/MediaMetadata;
 
 # ---- Provider resolution ----
-HPLcom/metrolist/music/providers/IsrcResolver;
-HPLcom/metrolist/music/providers/ProviderIsrc;
-HPLcom/metrolist/music/providers/ProviderMatchSearch;
-HPLcom/metrolist/music/deezer/DeezerAudioProvider;
-HPLcom/metrolist/music/youtube/YouTubeAudioProvider;
+Lcom/metrolist/music/providers/IsrcResolver;
+Lcom/metrolist/music/providers/ProviderIsrc;
+Lcom/metrolist/music/providers/ProviderMatchSearch;
+Lcom/metrolist/music/deezer/DeezerAudioProvider;
+Lcom/metrolist/music/youtube/YouTubeAudioProvider;
