@@ -105,6 +105,7 @@ val EnablePaxsenixMusixmatchKey = booleanPreferencesKey("enablePaxsenixMusixmatc
 val EnablePaxsenixQQMusicKey = booleanPreferencesKey("enablePaxsenixQQMusic")
 val EnableLyricsPlus = booleanPreferencesKey("enableLyricsPlus")
 val EnableSpotifyLyricsKey = booleanPreferencesKey("enableSpotifyLyrics")
+val EnableDeezerLyricsKey = booleanPreferencesKey("enableDeezerLyrics")
 val HideExplicitKey = booleanPreferencesKey("hideExplicit")
 val HideVideoSongsKey = booleanPreferencesKey("hideVideoSongs")
 val HideYoutubeShortsKey = booleanPreferencesKey("hideYoutubeShorts")

@@ -16,6 +16,7 @@ object LyricsProviderRegistry {
         "KuGou" to KuGouLyricsProvider,
         "LyricsPlus" to LyricsPlusProvider,
         "Spotify" to SpotifyLyricsProvider,
+        "Deezer" to DeezerLyricsProvider,
         "YouTubeSubtitle" to YouTubeSubtitleLyricsProvider,
         "YouTube" to YouTubeLyricsProvider,
     )
@@ -49,6 +50,7 @@ object LyricsProviderRegistry {
         "BiniLyrics",
         "LrcLib",
         "Spotify",
+        "Deezer",
         "KuGou",
         "PaxsenixAppleMusic",
         "Musixmatch",
