@@ -30,6 +30,20 @@ object JioSaavnAudioProvider {
     private const val TAG = "JioSaavnAudioProvider"
     private const val API_BASE_URL = "https://www.jiosaavn.com/api.php"
     private const val DES_KEY = "38346591"
+    // JioSaavn serves its full catalog (including Western labels) to Indian
+    // egress only; elsewhere the same queries return knockoffs or nothing.
+    // These headers pin us to the Indian catalog on every api.php call. The
+    // IPs are generated fresh on each app start inside verified-allocated
+    // Indian ranges and stay stable for the whole session (a normal user
+    // doesn't change location per request), with failover between ranges.
+    private val regionIps: List<String> by lazy {
+        val random = java.util.Random()
+        listOf(
+            "103.57.226.${random.nextInt(254) + 1}",
+            "49.248.${random.nextInt(256)}.${random.nextInt(254) + 1}",
+            "157.34.${random.nextInt(256)}.${random.nextInt(254) + 1}",
+        )
+    }
     private const val DESKTOP_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     private const val MAX_SEARCH_CANDIDATES = 10
@@ -363,15 +377,31 @@ object JioSaavnAudioProvider {
         quality: JioSaavnAudioQuality,
         has320: Boolean,
     ): Pair<String, Int> {
-        val ordered =
-            when (quality) {
-                JioSaavnAudioQuality.HIGH -> listOf("320" to 320_000, "160" to 160_000, "96" to 96_000)
-                JioSaavnAudioQuality.MEDIUM -> listOf("160" to 160_000, "96" to 96_000, "320" to 320_000)
-                JioSaavnAudioQuality.LOW -> listOf("96" to 96_000, "48" to 48_000, "160" to 160_000)
-            }
-        for ((suffix, bitrate) in ordered) {
+        val table = listOf(
+            "320" to 320_000,
+            "160" to 160_000,
+            "96" to 96_000,
+            "48" to 48_000,
+            "12" to 12_000,
+        )
+        val startIndex = when (quality) {
+            JioSaavnAudioQuality.HIGH -> 0
+            JioSaavnAudioQuality.MEDIUM -> 1
+            JioSaavnAudioQuality.LOW -> 2
+            JioSaavnAudioQuality.MINI -> 3
+            JioSaavnAudioQuality.ULTRA_LOW -> 4
+        }
+        // Walk down from the preferred quality, then back up: always play
+        // something rather than nothing, closest bitrate first.
+        val order = (startIndex downTo 0).toList() + ((startIndex + 1) until table.size).toList()
+        for (index in order) {
+            val (suffix, bitrate) = table[index]
             if (suffix == "320" && !has320) continue
-            val url = base96Url.replace("_96.mp4", "_${suffix}.mp4").replace("_96.mp3", "_${suffix}.mp3")
+            val url = base96Url
+                .replace("_96.mp4", "_${suffix}.mp4")
+                .replace("_96.mp3", "_${suffix}.mp3")
+                .replace("_160.mp4", "_${suffix}.mp4")
+                .replace("_160.mp3", "_${suffix}.mp3")
             if (url.startsWith("http", ignoreCase = true)) return url to bitrate
         }
         return base96Url to 96_000
@@ -406,7 +436,9 @@ object JioSaavnAudioProvider {
                 .addQueryParameter("api_version", "4")
                 .apply { params.forEach { (key, value) -> addQueryParameter(key, value) } }
                 .build()
+        var regionIp: String? = regionIps.firstOrNull()
         fun execute(): JSONObject {
+            val activeIp = regionIp
             val builder =
                 Request.Builder()
                     .url(url)
@@ -416,6 +448,10 @@ object JioSaavnAudioProvider {
                     .header("Accept-Language", "en-US,en;q=0.9")
                     .header("Referer", "https://www.jiosaavn.com/")
             if (!cookie.isNullOrBlank()) builder.header("Cookie", cookie)
+            if (!activeIp.isNullOrBlank()) {
+                builder.header("X-Forwarded-For", activeIp)
+                builder.header("X-Real-IP", activeIp)
+            }
             client.newCall(builder.build()).execute().use { response ->
                 val text = response.body.string()
                 if (!response.isSuccessful) {
@@ -429,9 +465,11 @@ object JioSaavnAudioProvider {
         try {
             return execute()
         } catch (throwable: Throwable) {
-            // The backend flakes with transient 500s; one immediate retry.
+            // The backend flakes with transient 500s; fail over to the next
+            // region IP once before giving up.
             if (!retry) throw throwable
-            Timber.tag(TAG).d(throwable, "JioSaavn $call failed, retrying once")
+            Timber.tag(TAG).d(throwable, "JioSaavn $call failed, failing over once")
+            regionIp = regionIps.getOrNull(1)
             Thread.sleep(800L)
             return execute()
         }

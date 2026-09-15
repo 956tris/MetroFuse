@@ -60,11 +60,15 @@ fun JioSaavnSettings(
     val qualityHigh = stringResource(R.string.jiosaavn_quality_high)
     val qualityMedium = stringResource(R.string.jiosaavn_quality_medium)
     val qualityLow = stringResource(R.string.jiosaavn_quality_low)
+    val qualityMini = stringResource(R.string.jiosaavn_quality_mini)
+    val qualityUltraLow = stringResource(R.string.jiosaavn_quality_ultra_low)
     fun qualityLabel(quality: JioSaavnAudioQuality): String =
         when (quality) {
             JioSaavnAudioQuality.HIGH -> qualityHigh
             JioSaavnAudioQuality.MEDIUM -> qualityMedium
             JioSaavnAudioQuality.LOW -> qualityLow
+            JioSaavnAudioQuality.MINI -> qualityMini
+            JioSaavnAudioQuality.ULTRA_LOW -> qualityUltraLow
         }
 
     if (showQualityDialog) {

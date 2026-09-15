@@ -989,6 +989,7 @@ class MainActivity : ComponentActivity() {
                         HomeFeedSource.SPOTIFY to stringResource(R.string.home_source_spotify),
                         HomeFeedSource.SOUNDCLOUD to stringResource(R.string.home_source_soundcloud),
                         HomeFeedSource.DEEZER to stringResource(R.string.home_source_deezer),
+                        HomeFeedSource.JIOSAAVN to stringResource(R.string.home_source_jiosaavn),
                         HomeFeedSource.OFFLINE to stringResource(R.string.home_source_offline),
                     )
                 val homeFeedSourceTitle =

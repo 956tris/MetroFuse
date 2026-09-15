@@ -691,6 +691,7 @@
     <string name="deezer_login_notice_subtitle">New in this update</string>
     <string name="deezer_login_notice_body">MetroFuse can now stream straight from your own Deezer account. Logging in gives you the most reliable playback and cuts loading to near-instant, because tracks resolve directly from Deezer instead of passing through a shared server.</string>
     <string name="deezer_login_notice_action">Log in to Deezer</string>
+    <string name="home_source_jiosaavn">JioSaavn</string>
     <string name="search_jiosaavn">Search JioSaavn</string>
     <string name="jiosaavn_integration">JioSaavn</string>
     <string name="jiosaavn_integration_desc">Stream full songs from JioSaavn. No login needed.</string>
@@ -699,6 +700,8 @@
     <string name="jiosaavn_quality_high">High (320 kbps)</string>
     <string name="jiosaavn_quality_medium">Medium (160 kbps)</string>
     <string name="jiosaavn_quality_low">Data saver (96 kbps)</string>
+    <string name="jiosaavn_quality_mini">Mini (48 kbps)</string>
+    <string name="jiosaavn_quality_ultra_low">Song 12 kbps</string>
     <string name="jiosaavn_home_language_title">JioSaavn home language</string>
     <string name="jiosaavn_home_language_desc">Language used for the JioSaavn home feed (trending, charts, new releases).</string>
 

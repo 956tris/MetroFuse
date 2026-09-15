@@ -294,6 +294,8 @@ enum class JioSaavnAudioQuality {
     HIGH,
     MEDIUM,
     LOW,
+    MINI,
+    ULTRA_LOW,
 }
 
 val JioSaavnAudioQualityKey = stringPreferencesKey("jiosaavnAudioQuality")
@@ -304,6 +306,8 @@ val JioSaavnAudioQualityOptions =
         JioSaavnAudioQuality.HIGH,
         JioSaavnAudioQuality.MEDIUM,
         JioSaavnAudioQuality.LOW,
+        JioSaavnAudioQuality.MINI,
+        JioSaavnAudioQuality.ULTRA_LOW,
     )
 
 enum class DeezerProxyMode {
