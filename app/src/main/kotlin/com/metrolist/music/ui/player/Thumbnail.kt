@@ -88,7 +88,6 @@ import coil3.request.ImageRequest
 import com.metrolist.music.LocalListenTogetherManager
 import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
-import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerBackgroundStyleKey
@@ -258,7 +257,6 @@ fun Thumbnail(
     val swipeThumbnailPref by rememberPreference(SwipeThumbnailKey, true)
     val swipeThumbnail = swipeThumbnailPref && !isListenTogetherGuest
     val hidePlayerThumbnail by rememberPreference(HidePlayerThumbnailKey, false)
-    val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
     val playerBackground by rememberEnumPreference(
         key = PlayerBackgroundStyleKey,
         defaultValue = PlayerBackgroundStyle.DEFAULT
@@ -434,7 +432,6 @@ fun Thumbnail(
                                 item = item,
                                 dimensions = dimensions,
                                 hidePlayerThumbnail = hidePlayerThumbnail,
-                                cropAlbumArt = cropAlbumArt,
                                 textBackgroundColor = textBackgroundColor,
                                 layoutDirection = layoutDirection,
                                 onSeek = onSeekCallback,
@@ -533,7 +530,6 @@ private fun ThumbnailItem(
     item: MediaItem,
     dimensions: ThumbnailDimensions,
     hidePlayerThumbnail: Boolean,
-    cropAlbumArt: Boolean,
     textBackgroundColor: Color,
     layoutDirection: LayoutDirection,
     onSeek: (String, Boolean) -> Unit,
@@ -627,7 +623,6 @@ private fun ThumbnailItem(
                 } else {
                     ThumbnailImage(
                         artworkUri = artworkUriToUse,
-                        cropArtwork = cropAlbumArt,
                         modifier =
                             Modifier.graphicsLayer {
                                 alpha = artworkAlpha.coerceIn(0f, 1f)
@@ -672,17 +667,18 @@ private fun HiddenThumbnailPlaceholder(
 
 /**
  * Actual thumbnail image with caching and hardware layer rendering.
+ * Always crops to fill the square bounds so non-square artwork
+ * (e.g. provider images) never shows letterbox bars.
  */
 @Composable
 private fun ThumbnailImage(
     artworkUri: String?,
-    cropArtwork: Boolean,
     modifier: Modifier = Modifier
     ) {
     val context = LocalContext.current
     // Remember the request: rebuilding it every recomposition retriggers
     // Coil's equality check and reload work while lyrics scroll at 10Hz+.
-    val request = remember(artworkUri, cropArtwork, context) {
+    val request = remember(artworkUri, context) {
         ImageRequest.Builder(context)
             .data(artworkUri)
             .memoryCachePolicy(CachePolicy.ENABLED)
@@ -702,7 +698,7 @@ private fun ThumbnailImage(
         AsyncImage(
             model = request,
             contentDescription = null,
-            contentScale = if (cropArtwork) ContentScale.Crop else ContentScale.Fit,
+            contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
     }

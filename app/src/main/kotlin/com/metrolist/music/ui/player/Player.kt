@@ -144,7 +144,6 @@ import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.playback.MusicService
 import com.metrolist.music.constants.CanvasArtworkPriority
 import com.metrolist.music.constants.CanvasArtworkPriorityKey
-import com.metrolist.music.constants.CropAlbumArtKey
 import com.metrolist.music.constants.DarkModeKey
 import com.metrolist.music.constants.ExperimentalAppleMusicCoverFadeKey
 import com.metrolist.music.constants.ExperimentalGalaxyBlurAdaptiveArtworkKey
@@ -507,7 +506,6 @@ fun BottomSheetPlayer(
     val currentLivePlaybackBitrate by playerConnection.currentLivePlaybackBitrate.collectAsStateWithLifecycle()
     val (hidePlayerThumbnail, onHidePlayerThumbnailChange) = rememberPreference(HidePlayerThumbnailKey, false)
     val (hideStatusBarOnFullscreen) = rememberPreference(HideStatusBarOnFullscreenKey, false)
-    val cropAlbumArt by rememberPreference(CropAlbumArtKey, false)
 
     var showInlineLyrics by rememberSaveable {
         mutableStateOf(false)
@@ -1857,7 +1855,7 @@ fun BottomSheetPlayer(
                                 AsyncImage(
                                     model = displayArtworkUrl,
                                     contentDescription = null,
-                                    contentScale = if (cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
+                                    contentScale = ContentScale.Crop,
                                     modifier =
                                         Modifier
                                             .size(56.dp)
