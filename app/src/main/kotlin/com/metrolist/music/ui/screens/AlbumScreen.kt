@@ -203,28 +203,32 @@ fun AlbumScreen(
             item(key = "album_header") {
                 if (immersiveHeader) {
                     val totalDurationImmersive = albumWithSongs.songs.sumOf { it.song.duration }
-                    AlbumFullBleedHeader(
-                        thumbnailModel = albumWithSongs.album.thumbnailUrl,
-                        canvasUrl = albumCanvasUrl,
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
+                        AlbumFullBleedHeader(
+                            thumbnailModel = albumWithSongs.album.thumbnailUrl,
+                            canvasUrl = albumCanvasUrl,
+                            headerHeight = 360.dp,
+                        ) {}
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 24.dp)
-                                    .padding(bottom = 20.dp),
+                                    .padding(horizontal = 32.dp)
+                                    .padding(top = 12.dp, bottom = 20.dp),
                         ) {
                             Text(
                                 text = albumWithSongs.album.title,
-                                style = MaterialTheme.typography.headlineMedium,
+                                style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 textAlign = TextAlign.Center,
-                                color = Color.White,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 buildAnnotatedString {
                                     withStyle(
@@ -232,7 +236,7 @@ fun AlbumScreen(
                                             MaterialTheme.typography.titleMedium
                                                 .copy(
                                                     fontWeight = FontWeight.Normal,
-                                                    color = Color.White,
+                                                    color = MaterialTheme.colorScheme.onBackground,
                                                 ).toSpanStyle(),
                                     ) {
                                         albumWithSongs.artists.fastForEachIndexed { index, artist ->
@@ -250,14 +254,13 @@ fun AlbumScreen(
                                     }
                                 },
                                 textAlign = TextAlign.Center,
-                                color = Color.White,
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(12.dp))
                             if (albumWithSongs.album.year != null) {
                                 Text(
                                     text = albumWithSongs.album.year.toString(),
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = 0.75f),
+                                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                                 )
                             }
                             Text(
@@ -276,9 +279,9 @@ fun AlbumScreen(
                                         }
                                     },
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.75f),
+                                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
                             )
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(24.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
@@ -291,7 +294,7 @@ fun AlbumScreen(
                                         }
                                     },
                                     shape = CircleShape,
-                                    color = Color.Black.copy(alpha = 0.45f),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
                                     modifier = Modifier.size(48.dp),
                                 ) {
                                     Box(
@@ -305,7 +308,7 @@ fun AlbumScreen(
                                                 ),
                                             contentDescription = null,
                                             tint =
-                                                if (albumWithSongs.album.bookmarkedAt != null) MaterialTheme.colorScheme.error else Color.White,
+                                                if (albumWithSongs.album.bookmarkedAt != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(24.dp),
                                         )
                                     }
@@ -350,7 +353,7 @@ fun AlbumScreen(
                                         }
                                     },
                                     shape = CircleShape,
-                                    color = Color.Black.copy(alpha = 0.45f),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
                                     modifier = Modifier.size(48.dp),
                                 ) {
                                     Box(
@@ -360,7 +363,6 @@ fun AlbumScreen(
                                         Icon(
                                             painter = painterResource(R.drawable.more_vert),
                                             contentDescription = null,
-                                            tint = Color.White,
                                             modifier = Modifier.size(24.dp),
                                         )
                                     }

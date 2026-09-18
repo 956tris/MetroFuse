@@ -66,6 +66,7 @@ fun ProviderOrderScreen(
     val normalizedOrder = AudioProviderOrder.deserialize(providerOrder)
     val draggableItems = remember { mutableStateListOf<DraggableLyricsProviderItem>() }
     val providerIcon = painterResource(R.drawable.music_note)
+    val offlineName = stringResource(R.string.audio_provider_offline)
     val soundCloudName = stringResource(R.string.audio_provider_soundcloud)
     val tidalName = stringResource(R.string.audio_provider_tidal)
     val deezerName = stringResource(R.string.audio_provider_deezer)
@@ -77,6 +78,7 @@ fun ProviderOrderScreen(
     LaunchedEffect(
         providerOrder,
         disabledRaw,
+        offlineName,
         soundCloudName,
         tidalName,
         deezerName,
@@ -91,6 +93,7 @@ fun ProviderOrderScreen(
                 DraggableLyricsProviderItem(
                     id = provider.name,
                     name = when (provider) {
+                        AudioProviderOrderItem.OFFLINE -> offlineName
                         AudioProviderOrderItem.SOUNDCLOUD -> soundCloudName
                         AudioProviderOrderItem.TIDAL -> tidalName
                         AudioProviderOrderItem.DEEZER -> deezerName
