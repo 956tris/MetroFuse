@@ -62,6 +62,7 @@ import com.metrolist.music.constants.AppBackgroundStyleKey
 import com.metrolist.music.constants.ChipSortTypeKey
 import com.metrolist.music.constants.ArtworkFetchQualityKey
 import com.metrolist.music.constants.CropAlbumArtKey
+import com.metrolist.music.constants.ImmersivePlaylistAlbumHeaderKey
 import com.metrolist.music.constants.DefaultOpenTabKey
 import com.metrolist.music.constants.DensityScale
 import com.metrolist.music.constants.DensityScaleKey
@@ -226,6 +227,11 @@ fun AppearanceSettings(
         rememberPreference(
             CropAlbumArtKey,
             defaultValue = false,
+        )
+    val (immersiveHeader, onImmersiveHeaderChange) =
+        rememberPreference(
+            ImmersivePlaylistAlbumHeaderKey,
+            defaultValue = true,
         )
     val (artworkFetchQuality, onArtworkFetchQualityChange) =
         rememberPreference(
@@ -1394,6 +1400,28 @@ fun AppearanceSettings(
                             )
                         },
                         onClick = { onCropAlbumArtChange(!cropAlbumArt) },
+                    ),
+                    Material3SettingsItem(
+                        icon = painterResource(R.drawable.insert_photo),
+                        title = { Text(stringResource(R.string.immersive_header)) },
+                        description = { Text(stringResource(R.string.immersive_header_desc)) },
+                        trailingContent = {
+                            Switch(
+                                checked = immersiveHeader,
+                                onCheckedChange = onImmersiveHeaderChange,
+                                thumbContent = {
+                                    Icon(
+                                        painter =
+                                            painterResource(
+                                                id = if (immersiveHeader) R.drawable.check else R.drawable.close,
+                                            ),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                },
+                            )
+                        },
+                        onClick = { onImmersiveHeaderChange(!immersiveHeader) },
                     ),
                     Material3SettingsItem(
                         icon = painterResource(R.drawable.insert_photo),

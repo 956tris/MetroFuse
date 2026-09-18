@@ -136,20 +136,31 @@ fun WavySlider(
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val y = size.height / 2f
-            drawLine(
-                color = inactiveColor,
-                start = Offset.Zero.copy(y = y),
-                end = Offset(size.width, y),
-                strokeWidth = strokeWidthPx,
-                cap = StrokeCap.Round,
-            )
-            drawLine(
-                color = bufferedColor,
-                start = Offset.Zero.copy(y = y),
-                end = Offset(size.width * normalizedBufferedValue, y),
-                strokeWidth = strokeWidthPx,
-                cap = StrokeCap.Round,
-            )
+            // Only draw straight tracks ahead of the wavy playhead. The active
+            // track is wavy and oscillates around center, so any straight line
+            // drawn behind it peeks through as an ugly line under the wave.
+            val progressX = size.width * displayValue
+            val bufferedEndX = size.width * normalizedBufferedValue
+            val bufferedStartX = progressX
+            val inactiveStartX = maxOf(progressX, bufferedEndX)
+            if (bufferedEndX > bufferedStartX + 0.5f) {
+                drawLine(
+                    color = bufferedColor,
+                    start = Offset(bufferedStartX, y),
+                    end = Offset(bufferedEndX, y),
+                    strokeWidth = strokeWidthPx,
+                    cap = StrokeCap.Round,
+                )
+            }
+            if (size.width > inactiveStartX + 0.5f) {
+                drawLine(
+                    color = inactiveColor,
+                    start = Offset(inactiveStartX, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = strokeWidthPx,
+                    cap = StrokeCap.Round,
+                )
+            }
         }
 
         LinearWavyProgressIndicator(

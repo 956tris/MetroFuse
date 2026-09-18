@@ -126,6 +126,8 @@
     <string name="hide_player_thumbnail_desc">Replace the album artwork with the app logo in the player</string>
     <string name="crop_album_art">Crop album art</string>
     <string name="crop_album_art_desc">Force a square aspect ratio by cropping video thumbnails</string>
+    <string name="immersive_header">Immersive covers</string>
+    <string name="immersive_header_desc">Blurred cover backdrop for playlists and full-bleed fading cover for albums</string>
     <string name="artwork_fetch_quality">Artwork fetch quality</string>
     <string name="artwork_fetch_quality_desc">Resolution requested for album covers (YouTube Music serves up to 4000×4000, lower when unavailable)</string>
 
