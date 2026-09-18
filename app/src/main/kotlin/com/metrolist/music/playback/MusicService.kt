@@ -292,6 +292,7 @@ import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.IsrcResolver
 import com.metrolist.music.providers.ProviderIsrc
 import com.metrolist.music.providers.ProviderFallbackMatcher
+import com.metrolist.music.local.OfflineAudioProvider
 import com.metrolist.music.providers.ProviderMatchOverride
 import com.metrolist.music.providers.ProviderMatchOverrides
 import com.metrolist.music.providers.ProviderMatchSearch
@@ -5350,6 +5351,7 @@ class MusicService :
                                 isTidalFallbackCacheKey(key) ||
                                 key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
+                                key.startsWith(OFFLINE_FALLBACK_CACHE_PREFIX) ||
                                 key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) ||
                                 key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
                     } == true
@@ -5843,6 +5845,7 @@ class MusicService :
             AudioProviderOrderItem.QOBUZ -> qobuzFallbackCacheKey(mediaId)
             AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackCacheKey(mediaId)
             AudioProviderOrderItem.JIOSAAVN -> jiosaavnFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.OFFLINE -> offlineFallbackCacheKey(mediaId)
         }
 
     private fun resolvePlaybackStreamBlocking(
@@ -5982,6 +5985,15 @@ class MusicService :
                 mimeType = mimeType,
             )
 
+        fun OfflineAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
+            PlaybackStreamResolution(
+                uri = localSongId,
+                expiresAtMs = Long.MAX_VALUE,
+                cacheKey = offlineFallbackCacheKey(mediaId),
+                format = offlineFallbackFormat(mediaId, this),
+                mimeType = mimeType,
+            )
+
         fun throwProviderFailure(
             provider: String,
             error: Throwable?,
@@ -6014,6 +6026,8 @@ class MusicService :
             Result.failure(IllegalStateException("Qobuz not attempted yet"))
         var jiosaavnAttempt: Result<JioSaavnAudioProvider.Resolved> =
             Result.failure(IllegalStateException("JioSaavn audio not enabled"))
+        var offlineAttempt: Result<OfflineAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Offline local match not attempted yet"))
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
         val spotifyIsrc = resolveSpotifyIsrcForMatching(mediaId, song, queuedMetadata)
         val orderedProviders =
@@ -6053,6 +6067,8 @@ class MusicService :
                 when (provider) {
                     AudioProviderOrderItem.YOUTUBE_MUSIC ->
                         mediaId.isYouTubeVideoId() || !youtubeSearchableTitle.isNullOrBlank()
+                    AudioProviderOrderItem.OFFLINE ->
+                        !youtubeSearchableTitle.isNullOrBlank()
                     else -> true
                 }
             }
@@ -6203,6 +6219,32 @@ class MusicService :
                     }
                     if (stopOnProviderError) {
                         throwProviderFailure("Qobuz", qobuzAttempt.exceptionOrNull())
+                    }
+                }
+                AudioProviderOrderItem.OFFLINE -> {
+                    attemptedProviders += provider
+                    offlineAttempt = runCatching {
+                        if (candidateTrackId != null) {
+                            val local =
+                                database.getSongByIdBlocking(candidateTrackId)?.takeIf { it.song.isLocal }
+                                    ?: throw IllegalStateException("Offline: override local file not found")
+                            OfflineAudioProvider.Resolved(
+                                localSongId = local.song.id,
+                                title = local.song.title,
+                                artist = local.orderedArtists.firstOrNull()?.name.orEmpty(),
+                                format = local.format,
+                                mimeType = local.format?.mimeType?.takeIf { it.isNotBlank() },
+                            )
+                        } else {
+                            OfflineAudioProvider.resolve(database, mediaId, song, queuedMetadata)
+                        }
+                    }
+                    offlineAttempt.getOrNull()?.let { resolved ->
+                        Timber.tag("MusicService").i("Using offline local file for $mediaId: ${resolved.title}")
+                        return resolved.toPlaybackResolution()
+                    }
+                    if (stopOnProviderError) {
+                        throwProviderFailure("Offline", offlineAttempt.exceptionOrNull())
                     }
                 }
             }
@@ -9391,6 +9433,8 @@ class MusicService :
         private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
         private const val APPLE_MUSIC_FALLBACK_CACHE_PREFIX = "apple-music-fallback-audio:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
+        private const val OFFLINE_FALLBACK_CACHE_PREFIX = "offline-local:"
+        private const val OFFLINE_LOCAL_ITAG = -2000
         private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
         private const val DIRECT_HTTP_AUDIO_CACHE_PREFIX = "direct-http-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
@@ -9423,6 +9467,8 @@ class MusicService :
 
         private fun soundCloudFallbackCacheKey(mediaId: String) = "$SOUNDCLOUD_FALLBACK_CACHE_PREFIX$mediaId"
 
+        private fun offlineFallbackCacheKey(mediaId: String) = "$OFFLINE_FALLBACK_CACHE_PREFIX$mediaId"
+
         private fun jiosaavnFallbackCacheKey(mediaId: String) = "$JIOSAAVN_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun directHttpAudioCacheKey(mediaId: String) = "$DIRECT_HTTP_AUDIO_CACHE_PREFIX$mediaId"
@@ -9440,6 +9486,7 @@ class MusicService :
                     key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(JIOSAAVN_FALLBACK_CACHE_PREFIX) ||
+                    key.startsWith(OFFLINE_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) ||
                     key.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
@@ -9644,6 +9691,22 @@ class MusicService :
             bitrate = resolved.bitrate,
             sampleRate = resolved.sampleRate,
             contentLength = resolved.contentLength ?: 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun offlineFallbackFormat(
+            mediaId: String,
+            resolved: OfflineAudioProvider.Resolved,
+        ) = resolved.format?.copy(id = mediaId) ?: FormatEntity(
+            id = mediaId,
+            itag = OFFLINE_LOCAL_ITAG,
+            mimeType = resolved.mimeType ?: "audio/mpeg",
+            codecs = "",
+            bitrate = 0,
+            sampleRate = null,
+            contentLength = 0L,
             loudnessDb = null,
             perceptualLoudnessDb = null,
             playbackUrl = null,

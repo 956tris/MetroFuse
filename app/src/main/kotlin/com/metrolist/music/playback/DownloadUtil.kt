@@ -356,6 +356,8 @@ constructor(
                     }
                 }
                 AudioProviderOrderItem.TIDAL -> return null
+                // Device-local files are played directly; nothing to download.
+                AudioProviderOrderItem.OFFLINE -> return null
                 AudioProviderOrderItem.DEEZER -> {
                     attemptedProviders += provider
                     deezerAttempt = runCatching {

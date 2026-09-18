@@ -609,6 +609,7 @@
     <string name="provider_order_settings_desc">Drag audio providers into the order MetroFuse should try them</string>
     <string name="provider_order_summary">Drag providers higher to try them earlier. Turn a provider off to skip it entirely. Providers that need their own integration toggle still only run when enabled.</string>
     <string name="provider_order_reset">Reset provider order</string>
+    <string name="audio_provider_offline">Offline</string>
     <string name="audio_provider_soundcloud">SoundCloud</string>
     <string name="audio_provider_tidal">TIDAL</string>
     <string name="audio_provider_deezer">Deezer</string>

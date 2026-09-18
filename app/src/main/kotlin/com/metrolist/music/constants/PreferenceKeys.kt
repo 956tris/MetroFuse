@@ -132,6 +132,7 @@ val AudioProviderDisabledKey = stringPreferencesKey("audioProviderDisabled")
 val AudioProviderMatchOverridesKey = stringPreferencesKey("audioProviderMatchOverrides")
 
 enum class AudioProviderOrderItem {
+    OFFLINE,
     SOUNDCLOUD,
     TIDAL,
     DEEZER,
@@ -147,6 +148,7 @@ fun AudioProviderOrderItem.isPlaybackProvider(): Boolean =
 object AudioProviderOrder {
     val Default: List<AudioProviderOrderItem> =
         listOf(
+            AudioProviderOrderItem.OFFLINE,
             AudioProviderOrderItem.SOUNDCLOUD,
             AudioProviderOrderItem.TIDAL,
             AudioProviderOrderItem.DEEZER,

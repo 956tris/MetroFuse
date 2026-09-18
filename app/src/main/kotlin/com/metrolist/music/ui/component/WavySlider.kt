@@ -141,8 +141,12 @@ fun WavySlider(
             // drawn behind it peeks through as an ugly line under the wave.
             val progressX = size.width * displayValue
             val bufferedEndX = size.width * normalizedBufferedValue
-            val bufferedStartX = progressX
-            val inactiveStartX = maxOf(progressX, bufferedEndX)
+            // Tuck the straight tracks slightly under the opaque thumb so there
+            // is no transparent notch between the wavy leading edge and the
+            // buffered/inactive segments ahead of it.
+            val aheadStartX = (progressX - thumbRadiusPx - strokeWidthPx * 0.5f).coerceAtLeast(0f)
+            val bufferedStartX = aheadStartX
+            val inactiveStartX = maxOf(aheadStartX, bufferedEndX)
             if (bufferedEndX > bufferedStartX + 0.5f) {
                 drawLine(
                     color = bufferedColor,
