@@ -141,12 +141,10 @@ fun WavySlider(
             // drawn behind it peeks through as an ugly line under the wave.
             val progressX = size.width * displayValue
             val bufferedEndX = size.width * normalizedBufferedValue
-            // Tuck the straight tracks slightly under the opaque thumb so there
-            // is no transparent notch between the wavy leading edge and the
-            // buffered/inactive segments ahead of it.
-            val aheadStartX = (progressX - thumbRadiusPx - strokeWidthPx * 0.5f).coerceAtLeast(0f)
-            val bufferedStartX = aheadStartX
-            val inactiveStartX = maxOf(aheadStartX, bufferedEndX)
+            // Start the straight tracks exactly at the playhead center. The
+            // opaque thumb covers the joint, so nothing peeks out behind it.
+            val bufferedStartX = progressX
+            val inactiveStartX = maxOf(progressX, bufferedEndX)
             if (bufferedEndX > bufferedStartX + 0.5f) {
                 drawLine(
                     color = bufferedColor,
@@ -174,8 +172,11 @@ fun WavySlider(
             trackColor = Color.Transparent,
             stroke = stroke,
             trackStroke = stroke,
-            gapSize = thumbRadius + 4.dp,
-            stopSize = WavyProgressIndicatorDefaults.LinearTrackStopIndicatorSize,
+            // No gap at the playhead: the thumb covers the wave/track joint,
+            // so a gap would only leave a transparent notch. No stop dot at
+            // the track end either.
+            gapSize = 0.dp,
+            stopSize = 0.dp,
             amplitude = { progress -> if (progress > 0f) animatedAmplitude else 0f },
             wavelength = wavelength,
             waveSpeed = waveSpeed
