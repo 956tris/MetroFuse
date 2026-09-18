@@ -97,6 +97,7 @@ import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.LocalSyncUtils
 import com.metrolist.music.R
 import com.metrolist.music.constants.HideExplicitKey
+import com.metrolist.music.constants.ImmersivePlaylistAlbumHeaderKey
 import com.metrolist.music.db.entities.Playlist
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.PlaylistSongMap
@@ -107,6 +108,7 @@ import com.metrolist.music.playback.queues.YouTubePlaylistQueue
 import com.metrolist.music.providers.ExternalHomeItemIds
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.LocalMenuState
+import com.metrolist.music.ui.component.PlaylistBlurredBackdrop
 import com.metrolist.music.ui.component.YouTubeListItem
 import com.metrolist.music.ui.menu.YouTubePlaylistMenu
 import com.metrolist.music.ui.menu.YouTubeSelectionSongMenu
@@ -829,16 +831,25 @@ private fun OnlinePlaylistHeader(
     val database = LocalDatabase.current
     val menuState = LocalMenuState.current
     val syncUtils = LocalSyncUtils.current
-    val artworkShape = if (isSpotifyArtist) CircleShape else RoundedCornerShape(3.dp)
-    val artworkSize = if (isSpotifyArtist) 220.dp else 240.dp
+    val immersiveHeader by rememberPreference(key = ImmersivePlaylistAlbumHeaderKey, defaultValue = true)
+    val useImmersiveOnline = immersiveHeader && playlist.thumbnail != null
+    val artworkShape = if (isSpotifyArtist) CircleShape else if (useImmersiveOnline) RoundedCornerShape(16.dp) else RoundedCornerShape(3.dp)
+    val artworkSize = if (isSpotifyArtist) 220.dp else if (useImmersiveOnline) 200.dp else 240.dp
 
-    Column(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp, bottom = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
+    Box(modifier = modifier.fillMaxWidth()) {
+        if (useImmersiveOnline) {
+            PlaylistBlurredBackdrop(
+                backgroundModel = ImageRequest.Builder(LocalContext.current).data(playlist.thumbnail).build(),
+                modifier = Modifier.fillMaxWidth(),
+            ) {}
+        }
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         Surface(
             modifier =
                 Modifier
@@ -1040,8 +1051,9 @@ private fun OnlinePlaylistHeader(
                 }
             }
         }
+        }
+        }
     }
-}
 }
 
 /** Horizontal-scroll section wrapper used for the Spotify artist overview rows. */

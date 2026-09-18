@@ -113,6 +113,7 @@ import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.LocalSyncUtils
 import com.metrolist.music.R
 import com.metrolist.music.constants.DarkModeKey
+import com.metrolist.music.constants.ImmersivePlaylistAlbumHeaderKey
 import com.metrolist.music.constants.PlaylistEditLockKey
 import com.metrolist.music.constants.PlaylistSongSortDescendingKey
 import com.metrolist.music.constants.PlaylistSongSortType
@@ -133,6 +134,7 @@ import com.metrolist.music.ui.component.EmptyPlaceholder
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.LocalMenuState
 import com.metrolist.music.ui.component.OverlayEditButton
+import com.metrolist.music.ui.component.PlaylistBlurredBackdrop
 import com.metrolist.music.ui.component.SongListItem
 import com.metrolist.music.ui.component.SortHeader
 import com.metrolist.music.ui.component.TextFieldDialog
@@ -902,6 +904,7 @@ fun LocalPlaylistHeader(
 
     val liked = playlist.playlist.bookmarkedAt != null
     val editable: Boolean = playlist.playlist.isEditable
+    val immersiveHeader by rememberPreference(key = ImmersivePlaylistAlbumHeaderKey, defaultValue = true)
 
     val overrideThumbnail = remember { mutableStateOf<String?>(null) }
     var isCustomThumbnail: Boolean =
@@ -1027,13 +1030,25 @@ fun LocalPlaylistHeader(
         }
     }
 
-    Column(
-        modifier =
-            modifier
-                .fillMaxWidth()
-                .padding(top = 8.dp, bottom = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+    val headerBgModel = overrideThumbnail.value ?: playlist.thumbnails.firstOrNull()
+    val useImmersivePlaylist = immersiveHeader && headerBgModel != null
+
+    Box(
+        modifier = modifier.fillMaxWidth(),
     ) {
+        if (useImmersivePlaylist) {
+            PlaylistBlurredBackdrop(
+                backgroundModel = headerBgModel,
+                modifier = Modifier.fillMaxWidth(),
+            ) {}
+        }
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
         if (showEditNoteDialog) {
             ActionPromptDialog(
                 title = stringResource(R.string.edit_playlist_cover),
@@ -1092,16 +1107,17 @@ fun LocalPlaylistHeader(
                 }
 
                 1 -> {
+                    val singleShape = if (useImmersivePlaylist) RoundedCornerShape(16.dp) else RoundedCornerShape(3.dp)
                     Surface(
                         modifier =
                             Modifier
-                                .size(240.dp)
+                                .size(if (useImmersivePlaylist) 200.dp else 240.dp)
                                 .shadow(
                                     elevation = 24.dp,
-                                    shape = RoundedCornerShape(3.dp),
+                                    shape = singleShape,
                                     spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                                 ),
-                        shape = RoundedCornerShape(3.dp),
+                        shape = singleShape,
                     ) {
                         AsyncImage(
                             model = overrideThumbnail.value ?: playlist.thumbnails[0],
@@ -1161,16 +1177,19 @@ fun LocalPlaylistHeader(
                 }
 
                 else -> {
+                    val mosaicShape = if (useImmersivePlaylist) RoundedCornerShape(16.dp) else RoundedCornerShape(3.dp)
+                    val mosaicSize = if (useImmersivePlaylist) 200.dp else 240.dp
+                    val mosaicTile = if (useImmersivePlaylist) 100.dp else 120.dp
                     Surface(
                         modifier =
                             Modifier
-                                .size(240.dp)
+                                .size(mosaicSize)
                                 .shadow(
                                     elevation = 24.dp,
-                                    shape = RoundedCornerShape(3.dp),
+                                    shape = mosaicShape,
                                     spotColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f),
                                 ),
-                        shape = RoundedCornerShape(3.dp),
+                        shape = mosaicShape,
                     ) {
                         Box(modifier = Modifier.fillMaxSize()) {
                             listOf(
@@ -1186,7 +1205,7 @@ fun LocalPlaylistHeader(
                                     modifier =
                                         Modifier
                                             .align(alignment)
-                                            .size(120.dp),
+                                            .size(mosaicTile),
                                 )
                             }
                         }
@@ -1432,6 +1451,7 @@ fun LocalPlaylistHeader(
                     )
                 }
             }
+        }
         }
     }
 }
