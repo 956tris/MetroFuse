@@ -369,6 +369,7 @@ import javax.inject.Inject
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
 import java.util.Collections
@@ -440,6 +441,14 @@ private data class AutomixPlan(
     val blendMode: AutomixBlendMode,
     val durationScale: Float,
     val bassSeparation: Float,
+    // Perceived loudness of each side in LUFS, best-effort from persisted
+    // stream loudness rows (null when never measured).
+    val lufsA: Double?,
+    val lufsB: Double?,
+    // Relative gain (dB) applied to the incoming track so both sides hit the
+    // same perceived level through the overlap. 0 when global normalization
+    // already handles it or when either side has no loudness data.
+    val incomingGainDb: Float,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
@@ -8819,6 +8828,22 @@ class MusicService :
     }
 
     /**
+     * Best-effort perceived loudness (LUFS) for Automix gain staging, using
+     * the same measurement the normalization pipeline uses. Null when the
+     * track's stream loudness was never persisted - the caller then blends
+     * with no relative compensation rather than guessing.
+     */
+    private fun measuredTrackLufs(mediaId: String?): Double? {
+        if (mediaId.isNullOrBlank()) return null
+        val format =
+            runCatching {
+                runBlocking(Dispatchers.IO) { database.getFormatByIdBlocking(mediaId) }
+            }.getOrNull() ?: return null
+        return format.perceptualLoudnessDb
+            ?: format.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs }
+    }
+
+    /**
      * Best-effort BPM lookup chain for Automix: queue tag first (cheapest),
      * then the in-memory prefetch cache, then the persisted song row. Warms
      * the cache on a database hit so repeat lookups within one transition
@@ -8838,8 +8863,7 @@ class MusicService :
         return dbBpm
     }
 
-    private fun resolvedAutomixKey(metadata: MediaMetadata?): String? {
-        metadata?.keySignature?.takeIf { it.isNotBlank() }?.let { return it }
+    private fun resolvedAutomixKey(metadata: MediaMetadata?): String? {        metadata?.keySignature?.takeIf { it.isNotBlank() }?.let { return it }
         val id = metadata?.id?.takeIf { it.isNotBlank() } ?: return null
         automixMetadataCache[id]?.keySignature?.takeIf { it.isNotBlank() }?.let { return it }
         val dbKey =
@@ -9008,6 +9032,21 @@ class MusicService :
                 else -> hint.bassSeparation
             }
 
+        // Gain staging (Spotify-style): match the incoming track to the
+        // outgoing track's perceived level through the overlap so playlist
+        // jumps in mastering never poke through the blend. Skipped when the
+        // global LoudnessEnhancer normalization is enabled (it already puts
+        // both sides on the same target) and clamped tight - this only trims
+        // small differences, never rides large ones.
+        val lufsA = measuredTrackLufs(outgoing?.id)
+        val lufsB = measuredTrackLufs(incoming?.id)
+        val incomingGainDb =
+            if (!normalizationEnabledCached && lufsA != null && lufsB != null) {
+                (lufsA - lufsB).toFloat().coerceIn(-6f, 6f)
+            } else {
+                0f
+            }
+
         return AutomixPlan(
             bpmA = bpmA,
             bpmB = bpmB,
@@ -9021,6 +9060,9 @@ class MusicService :
             blendMode = blendMode,
             durationScale = durationScale,
             bassSeparation = bassSeparation,
+            lufsA = lufsA,
+            lufsB = lufsB,
+            incomingGainDb = incomingGainDb,
         )
     }
 
@@ -9196,6 +9238,15 @@ class MusicService :
         return equalPowerIn(p) to equalPowerOut(p)
     }
 
+    /**
+     * Low-pass sweep start for TIGHT filter exits: as open as possible while
+     * staying under Nyquist on whatever rate the fading player is running at.
+     */
+    private fun automixSweepStartHz(eq: com.metrolist.music.eq.audio.CustomEqualizerAudioProcessor?): Double {
+        val nyquist = (eq?.getSampleRate()?.takeIf { it > 0 } ?: 44100) / 2.0
+        return minOf(19000.0, nyquist * 0.85).coerceAtLeast(4000.0)
+    }
+
     private fun performCrossfadeSwap(
         targetIndex: Int,
         targetMediaItem: MediaItem?,
@@ -9274,6 +9325,15 @@ class MusicService :
         }
 
         openAudioEffectSession()
+        // Loudness fix: the swap replaces the player object, so no
+        // onMediaItemTransition fires for the new track and the enhancer
+        // would otherwise keep the OUTGOING track's gain forever.
+        // Recompute here so the incoming track gets its own gain, and refresh
+        // the published format row alongside it.
+        setupLoudnessEnhancer()
+        targetMediaItem?.mediaId?.takeIf { it.isNotBlank() }?.let { mediaId ->
+            refreshCurrentPlaybackFormatFromDatabase(mediaId)
+        }
 
         crossfadeJob =
             scope.launch {
@@ -9287,16 +9347,38 @@ class MusicService :
                         1f
                     }
 
-                // Prepare the Automix low-end separation band when the locked
-                // plan calls for it (clashing or wide-tempo pairs need room).
+                // Full DJ-style EQ handoff, staged top-down per standard mixing
+                // practice: the incoming track enters with its lows killed so
+                // two basslines never stack, mids/highs settle first, and the
+                // low-end swap lands around the phrase midpoint. Cuts only,
+                // never boosts, so headroom is preserved through the overlap.
+                // Band layout per player: 0 = low shelf, 1 = mid peak,
+                // 2 = high shelf, plus 3 = low-pass sweep on the outgoing
+                // side for TIGHT (clashing) pairs - a DJ filter exit.
                 val fadingEq = playerEqProcessors[fadingPlayer as Player]
                 val currentEq = playerEqProcessors[player as Player]
+                val tightSweep = automixPlan?.blendMode == AutomixBlendMode.TIGHT
 
-                if ((automixPlan?.bassSeparation ?: 0f) > 0.05f) {
-                    val bassFilter = ParametricEQBand(frequency = 100.0, gain = 0.0, q = 0.7, filterType = FilterType.LSC)
-                    fadingEq?.setAutomixBands(listOf(bassFilter))
-                    currentEq?.setAutomixBands(listOf(bassFilter))
+                if (automixPlan != null) {
+                    fadingEq?.setAutomixBands(
+                        buildList {
+                            add(ParametricEQBand(frequency = AUTOMIX_EQ_LOW_HZ, gain = 0.0, q = 0.7, filterType = FilterType.LSC))
+                            add(ParametricEQBand(frequency = AUTOMIX_EQ_MID_HZ, gain = 0.0, q = 0.9, filterType = FilterType.PK))
+                            add(ParametricEQBand(frequency = AUTOMIX_EQ_HIGH_HZ, gain = 0.0, q = 0.7, filterType = FilterType.HSC))
+                            if (tightSweep) {
+                                add(ParametricEQBand(frequency = automixSweepStartHz(fadingEq), gain = 0.0, q = 0.7, filterType = FilterType.LPQ))
+                            }
+                        },
+                    )
+                    currentEq?.setAutomixBands(
+                        listOf(
+                            ParametricEQBand(frequency = AUTOMIX_EQ_LOW_HZ, gain = AUTOMIX_EQ_KILL_DB, q = 0.7, filterType = FilterType.LSC),
+                            ParametricEQBand(frequency = AUTOMIX_EQ_MID_HZ, gain = 0.0, q = 0.9, filterType = FilterType.PK),
+                            ParametricEQBand(frequency = AUTOMIX_EQ_HIGH_HZ, gain = 0.0, q = 0.7, filterType = FilterType.HSC),
+                        ),
+                    )
                 }
+                val sweepStartHz = automixSweepStartHz(fadingEq)
 
                 // Reuse the plan computed at startCrossfade time (same numbers
                 // that were used to phase-align the beat grids at seek time)
@@ -9306,9 +9388,11 @@ class MusicService :
                 // straight at 1.0x.
                 val automixSpeedA = automixPlan?.takeIf { it.tempoMatched }?.speedA
                 val automixSpeedB = automixPlan?.takeIf { it.tempoMatched }?.speedB
-                // Clashing keys get extra low-end separation on the outgoing
-                // track while the two overlap, so the dissonance is less audible.
-                val automixBassDuck = automixPlan?.bassSeparation ?: 0f
+                // Gain staging: relative loudness correction for the incoming
+                // track, eased in as it fades up so no step is ever audible.
+                val incomingGainDb = automixPlan?.incomingGainDb ?: 0f
+                val midTrim = automixPlan?.blendMode == AutomixBlendMode.TIGHT
+                val softMidTrim = automixPlan?.blendMode == AutomixBlendMode.NEUTRAL
 
                 fun range(p: Float, start: Float, end: Float) = ((p - start) / (end - start)).coerceIn(0f, 1f)
                 fun smooth(value: Float) = value.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
@@ -9327,9 +9411,16 @@ class MusicService :
                         } else {
                             plainCrossfadeVolumePair(progress)
                         }
+                    val centerWeight = 1.0 - kotlin.math.abs(2f * progress - 1f).toDouble()
+                    val loudnessComp =
+                        if (incomingGainDb != 0f) {
+                            10f.pow(incomingGainDb * smooth(range(progress, 0f, 0.7f)) / 20f).coerceIn(0.5f, 2f)
+                        } else {
+                            1f
+                        }
 
                     try {
-                        player.volume = startVolume * fadeIn
+                        player.volume = startVolume * fadeIn * loudnessComp
                         fadingPlayer?.volume = startVolume * fadeOut
 
                         if (automixSpeedA != null && automixSpeedB != null) {
@@ -9347,13 +9438,33 @@ class MusicService :
                             player.playbackParameters = PlaybackParameters(speedB.coerceIn(0.9f, 1.1f), 1f)
                         }
 
-                        if (automixBassDuck > 0.05f) {
-                            // Peaks at the center of the transition where both tracks'
-                            // low end overlaps most; keyed off harmonic compatibility so
-                            // clashing keys get more separation than compatible ones.
-                            val centerWeight = 1f - kotlin.math.abs(2f * progress - 1f)
-                            val duckDb = -24.0 * automixBassDuck * centerWeight
-                            fadingEq?.updateAutomixGain(0, duckDb)
+                        // Bass swap: outgoing lows exit as incoming lows enter,
+                        // crossing near the phrase midpoint so one bassline
+                        // owns the low end at any moment. Automix only - the
+                        // plain crossfade path stays a pure volume blend.
+                        if (automixPlan != null) {
+                            fadingEq?.updateAutomixGain(0, AUTOMIX_EQ_KILL_DB * smooth(range(progress, 0.4f, 0.7f)).toDouble())
+                            currentEq?.updateAutomixGain(0, AUTOMIX_EQ_KILL_DB * (1.0 - smooth(range(progress, 0.3f, 0.6f)).toDouble()))
+                            // Mids/highs: trim only where they clash. Tight pairs
+                            // get a real carve; neutral pairs a whisper; wide and
+                            // focused pairs run flat because the keys already agree.
+                            fadingEq?.updateAutomixGain(
+                                1,
+                                when {
+                                    midTrim -> -6.0 * centerWeight
+                                    softMidTrim -> -2.5 * centerWeight
+                                    else -> 0.0
+                                },
+                            )
+                            currentEq?.updateAutomixGain(1, if (midTrim) -4.0 * (1.0 - smooth(range(progress, 0.2f, 0.7f)).toDouble()) else 0.0)
+                            fadingEq?.updateAutomixGain(2, if (midTrim) -4.0 * centerWeight else 0.0)
+                            if (tightSweep) {
+                                // DJ filter exit: close the low-pass exponentially
+                                // over the blend so the outgoing track dissolves
+                                // instead of stepping out.
+                                val sweepHz = sweepStartHz * (AUTOMIX_SWEEP_END_HZ / sweepStartHz).toDouble().pow(progress.toDouble())
+                                fadingEq?.updateAutomixFrequency(3, sweepHz)
+                            }
                         }
                     } catch (e: Exception) {
                         break
@@ -9474,6 +9585,14 @@ class MusicService :
         private const val AUTOMIX_MAX_TEMPO_DELTA_BPM = 12f
         private const val AUTOMIX_SPEED_SNAP = 0.005f
         private const val AUTOMIX_MAX_BLEND_FRACTION = 0.3f
+        // DJ EQ handoff bands: low shelf owns kick/bass, mid peak owns
+        // vocals/body, high shelf owns hats/air. KILL is a full isolator-style
+        // cut; the sweep dissolves the outgoing track on clashing pairs.
+        private const val AUTOMIX_EQ_LOW_HZ = 120.0
+        private const val AUTOMIX_EQ_MID_HZ = 2500.0
+        private const val AUTOMIX_EQ_HIGH_HZ = 9000.0
+        private const val AUTOMIX_EQ_KILL_DB = -24.0
+        private const val AUTOMIX_SWEEP_END_HZ = 700.0
 
         // Was 4_000L — too short given the underlying OkHttpClient's own
         // 8s connect / 10s read timeouts, plus the token endpoint's cold-start

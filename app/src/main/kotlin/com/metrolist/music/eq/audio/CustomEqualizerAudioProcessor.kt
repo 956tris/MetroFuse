@@ -132,6 +132,13 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     fun isEnabled(): Boolean = equalizerEnabled
 
     /**
+     * Current PCM sample rate, or 0 when not configured yet. Used to keep
+     * automated Automix filter sweeps below Nyquist on any output rate.
+     */
+    @Synchronized
+    fun getSampleRate(): Int = sampleRate
+
+    /**
      * Create biquad filters from ParametricEQ bands
      * Only creates filters for enabled bands below Nyquist frequency
      * Supports PK (peaking), LSC (low-shelf), and HSC (high-shelf) filter types
