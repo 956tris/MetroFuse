@@ -19,6 +19,13 @@ import androidx.room.Index
         Index(value = ["incomingSongId"]),
     ],
 )
+/**
+ * Per-pair Automix override. Only [overlapBars] and the explicit
+ * [mixInStartMs]/[mixOutStartMs] timings are honored by the engine - the
+ * legacy [mixTransitionStyleOverride], [volumeCurve], [eqTemplate], and
+ * [effectType] columns are ignored but kept so existing databases keep
+ * migrating cleanly.
+ */
 data class SongTransitionEntity(
     val outgoingSongId: String,
     val incomingSongId: String,

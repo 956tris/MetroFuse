@@ -128,6 +128,9 @@ import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.playback.CanvasWallpaperService
 import com.metrolist.music.utils.PreferenceCache
+import com.metrolist.music.utils.mix.KeyCompatibility
+import com.metrolist.music.utils.mix.MixMetadata
+import com.metrolist.music.utils.mix.MixMetadataResolver
 import com.metrolist.music.utils.mix.harmonicMixHint
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
@@ -144,7 +147,6 @@ import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
 import com.metrolist.music.constants.DeezerCookieKey
 import com.metrolist.music.constants.DeezerUseAccountKey
-import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
@@ -176,16 +178,8 @@ import com.metrolist.music.constants.HideExplicitKey
 import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.HistoryDuration
 import com.metrolist.music.constants.LastFMUseNowPlaying
-import com.metrolist.music.constants.MetroMixEnabledKey
-import com.metrolist.music.constants.MetroMixBarsKey
-import com.metrolist.music.constants.MetroMixEffectCurve
-import com.metrolist.music.constants.MetroMixEffectCurveKey
-import com.metrolist.music.constants.MetroMixEqCurve
-import com.metrolist.music.constants.MetroMixEqCurveKey
-import com.metrolist.music.constants.MetroMixPreset
-import com.metrolist.music.constants.MetroMixPresetKey
-import com.metrolist.music.constants.MetroMixVolumeCurve
-import com.metrolist.music.constants.MetroMixVolumeCurveKey
+import com.metrolist.music.constants.AutomixBarsKey
+import com.metrolist.music.constants.AutomixEnabledKey
 import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.MediaSessionConstants
 import com.metrolist.music.constants.MediaSessionConstants.CommandAddToTargetPlaylist
@@ -386,25 +380,36 @@ private data class CrossfadePreferenceState(
     val crossfadeEnabled: Boolean,
     val crossfadeDuration: Float,
     val crossfadeGapless: Boolean,
-    val metroMixEnabled: Boolean,
-    val metroMixPreset: MetroMixPreset,
-    val metroMixBars: Int,
-    val metroMixVolumeCurve: MetroMixVolumeCurve,
-    val metroMixEqCurve: MetroMixEqCurve,
-    val metroMixEffectCurve: MetroMixEffectCurve,
-)
-
-private data class MetroMixRuntimeProfile(
-    val preset: MetroMixPreset?,
-    val durationMs: Long,
-    val volumeCurve: MetroMixVolumeCurve = MetroMixVolumeCurve.AUTO,
-    val eqCurve: MetroMixEqCurve = MetroMixEqCurve.AUTO,
-    val effectCurve: MetroMixEffectCurve = MetroMixEffectCurve.AUTO,
+    val automixEnabled: Boolean,
+    val automixBars: Int,
 )
 
 /**
+ * Resolved Automix transition width. A null profile means Automix is off and
+ * the plain crossfade path applies.
+ */
+private data class AutomixRuntimeProfile(
+    val durationMs: Long,
+)
+
+/** How wide the Automix blend may be, derived from tempo + key compatibility. */
+private enum class AutomixBlendMode {
+    /** Compatible keys with locked tempo: longest, widest overlap. */
+    WIDE,
+
+    /** Slightly tense (fourth/fifth shift): standard overlap. */
+    FOCUSED,
+
+    /** Clashing keys or unmatched tempo: short, EQ-separated overlap. */
+    TIGHT,
+
+    /** Missing key data: safe middle-ground overlap. */
+    NEUTRAL,
+}
+
+/**
  * Everything the Automix engine needs for one transition, computed once at
- * [MusicService.startCrossfade] time from BPM + Camelot key metadata and then
+ * [MusicService.startCrossfade] time from BPM + musical-key metadata and then
  * reused by both the beat-phase seek (so tracks start aligned) and the
  * crossfade tick loop (so the tempo ramp and duration scaling stay in sync
  * with the number that was actually used to align the beat grids).
@@ -413,16 +418,26 @@ private data class AutomixPlan(
     val bpmA: Float,
     val bpmB: Float,
     val targetBpm: Float,
-    // Playback speed multiplier for each track, capped to +/-8% so Sonic's
-    // pitch-preserving time-stretch stays inaudible.
+    // Playback speed multiplier for each track. Only applied when
+    // [tempoMatched] is true; otherwise both stay at 1.0x so the
+    // pitch-preserving time-stretch never becomes audible.
     val speedA: Float,
     val speedB: Float,
+    // True when both tempos were close enough to bend toward a shared target.
+    // False forces a straight 1.0x blend (wide tempo gaps, episodes, videos).
+    val tempoMatched: Boolean,
+    // True when the lock rides an octave hypothesis (e.g. 70 BPM hip-hop over
+    // 140 BPM house): beat grids are aligned half-time, which grooves
+    // differently than a straight match and earns a slightly tighter blend.
+    val halfTime: Boolean,
     // How far into track B to start playback so its downbeat lines up with
     // track A's beat grid at the moment the transition begins. Approximated
     // by assuming both tracks start on a downbeat, since no true onset/beat
     // tracker is available - a fair assumption for the mainstream catalog.
+    // Always clamped within a single beat so intros are never skipped.
     val phaseOffsetMs: Long,
-    val keyCompatibility: com.metrolist.music.utils.mix.KeyCompatibility,
+    val keyCompatibility: KeyCompatibility,
+    val blendMode: AutomixBlendMode,
     val durationScale: Float,
     val bassSeparation: Float,
 )
@@ -471,16 +486,22 @@ class MusicService :
     private var crossfadeEnabled = false
     private var crossfadeDuration = 5000f
     private var crossfadeGapless = true
-    private var activeMetroMixPreset: MetroMixPreset? = null
-    private var activeMetroMixBars = 8
-    private var activeMetroMixVolumeCurve = MetroMixVolumeCurve.AUTO
-    private var activeMetroMixEqCurve = MetroMixEqCurve.AUTO
-    private var activeMetroMixEffectCurve = MetroMixEffectCurve.AUTO
-    private var pendingMetroMixProfile: MetroMixRuntimeProfile? = null
+    private var activeAutomixEnabled = false
+    private var activeAutomixBars = 8
     private var activeCrossfadeDurationMs = 5000L
-    private var activeMetroMixRuntimePreset: MetroMixPreset? = null
-    private var activeMetroMixRuntimeProfile: MetroMixRuntimeProfile? = null
+    private var pendingAutomixProfile: AutomixRuntimeProfile? = null
+    private var activeAutomixProfile: AutomixRuntimeProfile? = null
     private var activeAutomixPlan: AutomixPlan? = null
+    private var automixPrefetchJob: Job? = null
+    // Recently resolved BPM/key rows, keyed by media id. Bounded LRU so a
+    // long session cannot grow it without limit. Backs transitions for
+    // streaming tracks whose queue tags carry no mix metadata yet.
+    private val automixMetadataCache =
+        Collections.synchronizedMap(
+            object : LinkedHashMap<String, MixMetadata>(32, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MixMetadata>?): Boolean = size > 48
+            },
+        )
     private var crossfadeTriggerJob: Job? = null
     private var crossfadePrepareJob: Job? = null
 
@@ -626,9 +647,8 @@ class MusicService :
         crossfadePrepareJob = null
         crossfadeJob?.cancel()
         crossfadeJob = null
-        pendingMetroMixProfile = null
-        activeMetroMixRuntimePreset = null
-        activeMetroMixRuntimeProfile = null
+        pendingAutomixProfile = null
+        activeAutomixProfile = null
 
         if (secondaryPlayer != null) {
             cleanupSecondaryCrossfadePlayer(scheduleNext = false)
@@ -1161,7 +1181,6 @@ class MusicService :
                             prefs[TidalResolverEndpointsKey],
                             prefs[DeezerAudioQualityKey],
                             prefs[DeezerResolverUrlKey],
-                            prefs[DeezerFastModeKey],
                             prefs[DeezerProxyModeKey],
                             prefs[DeezerProxyUrlKey],
                             prefs[SoundCloudAudioQualityKey],
@@ -1476,9 +1495,9 @@ class MusicService :
         combine(
             dataStore.data.map { it[AudioOffload] ?: false },
             dataStore.data.map { it[CrossfadeEnabledKey] ?: false },
-            dataStore.data.map { it[MetroMixEnabledKey] ?: false },
-        ) { offloadPref, crossfadeEnabled, metroMixEnabled ->
-            shouldEnableAudioOffload(offloadPref, crossfadeEnabled || metroMixEnabled)
+            dataStore.data.map { it[AutomixEnabledKey] ?: false },
+        ) { offloadPref, crossfadeEnabled, automixEnabled ->
+            shouldEnableAudioOffload(offloadPref, crossfadeEnabled || automixEnabled)
         }.distinctUntilChanged()
             .collectLatest(scope) { useOffload ->
                 player.setOffloadEnabled(useOffload)
@@ -1699,39 +1718,29 @@ class MusicService :
                     crossfadeEnabled = prefs[CrossfadeEnabledKey] ?: false,
                     crossfadeDuration = prefs[CrossfadeDurationKey] ?: 5f,
                     crossfadeGapless = prefs[CrossfadeGaplessKey] ?: true,
-                    metroMixEnabled = prefs[MetroMixEnabledKey] ?: false,
-                    metroMixPreset = prefs[MetroMixPresetKey].toEnum(defaultValue = MetroMixPreset.AUTO),
-                    metroMixBars = prefs[MetroMixBarsKey] ?: 8,
-                    metroMixVolumeCurve = prefs[MetroMixVolumeCurveKey].toEnum(defaultValue = MetroMixVolumeCurve.AUTO),
-                    metroMixEqCurve = prefs[MetroMixEqCurveKey].toEnum(defaultValue = MetroMixEqCurve.AUTO),
-                    metroMixEffectCurve = prefs[MetroMixEffectCurveKey].toEnum(defaultValue = MetroMixEffectCurve.AUTO),
+                    automixEnabled = prefs[AutomixEnabledKey] ?: false,
+                    automixBars = prefs[AutomixBarsKey] ?: 8,
                 )
             },
             listenTogetherManager.roomState,
         ) { prefs, roomState ->
             // Disable crossfade if user is in a listen together room
             CrossfadePreferenceState(
-                crossfadeEnabled = (prefs.crossfadeEnabled || prefs.metroMixEnabled) && roomState == null,
-                crossfadeDuration = if (prefs.metroMixEnabled) prefs.metroMixPreset.durationSeconds else prefs.crossfadeDuration,
-                crossfadeGapless = if (prefs.metroMixEnabled) false else prefs.crossfadeGapless,
-                metroMixEnabled = prefs.metroMixEnabled && roomState == null,
-                metroMixPreset = prefs.metroMixPreset,
-                metroMixBars = prefs.metroMixBars,
-                metroMixVolumeCurve = prefs.metroMixVolumeCurve,
-                metroMixEqCurve = prefs.metroMixEqCurve,
-                metroMixEffectCurve = prefs.metroMixEffectCurve,
+                crossfadeEnabled = (prefs.crossfadeEnabled || prefs.automixEnabled) && roomState == null,
+                crossfadeDuration = prefs.crossfadeDuration,
+                crossfadeGapless = prefs.crossfadeGapless,
+                automixEnabled = prefs.automixEnabled && roomState == null,
+                automixBars = prefs.automixBars,
             )
         }.distinctUntilChanged()
             .collect(scope) { prefs ->
                 crossfadeEnabled = prefs.crossfadeEnabled
                 crossfadeDuration = prefs.crossfadeDuration * 1000f // Convert to ms
                 crossfadeGapless = prefs.crossfadeGapless
-                activeMetroMixPreset = prefs.metroMixPreset.takeIf { prefs.metroMixEnabled }
-                activeMetroMixBars = prefs.metroMixBars.coerceIn(2, 32)
-                activeMetroMixVolumeCurve = prefs.metroMixVolumeCurve
-                activeMetroMixEqCurve = prefs.metroMixEqCurve
-                activeMetroMixEffectCurve = prefs.metroMixEffectCurve
+                activeAutomixEnabled = prefs.automixEnabled
+                activeAutomixBars = prefs.automixBars.coerceIn(2, 32)
                 scheduleCrossfade()
+                maybePrefetchAutomixMetadata()
             }
 
         // Observe and cache common preferences to avoid runBlocking reads in playback callbacks
@@ -1879,6 +1888,7 @@ class MusicService :
                 .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor))
                 .setTrackSelector(createAudioTrackSelector())
                 .setLoadControl(createLoadControl())
+                .setUseLazyPreparation(false)
                 .setHandleAudioBecomingNoisy(true)
                 .setWakeMode(C.WAKE_MODE_NETWORK)
                 .setAudioAttributes(
@@ -1899,8 +1909,8 @@ class MusicService :
             runBlocking {
                 val offload = dataStore.get(AudioOffload, false)
                 val crossfade = dataStore.get(CrossfadeEnabledKey, false)
-                val metroMix = dataStore.get(MetroMixEnabledKey, false)
-                val useOffload = shouldEnableAudioOffload(offload, crossfade || metroMix)
+                val automix = dataStore.get(AutomixEnabledKey, false)
+                val useOffload = shouldEnableAudioOffload(offload, crossfade || automix)
                 setOffloadEnabled(useOffload)
                 skipSilenceEnabled = dataStore.get(SkipSilenceKey, false)
             }
@@ -3592,6 +3602,10 @@ class MusicService :
         if (cachedPersistentQueue) {
             saveQueueToDisk()
         }
+
+        // Warm BPM/key data for the current + next track so the Automix plan
+        // can lock tempo and key instead of falling back to a plain blend.
+        maybePrefetchAutomixMetadata()
     }
 
     override fun onPlaybackStateChanged(
@@ -5970,7 +5984,6 @@ class MusicService :
         val tidalResolverEndpoints = dataStore.get(TidalResolverEndpointsKey, "https://igameten10-ez-hifi-api.hf.space/")
         val deezerResolverUrl = dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = dataStore.get<String>(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
-        val deezerFastMode = dataStore.get(DeezerFastModeKey, false)
         val configuredDeezerProxyUrl = dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
         val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
             configuredProxyModeValue = dataStore.get(DeezerProxyModeKey, ""),
@@ -6193,7 +6206,6 @@ class MusicService :
                                 metadataOverride = queuedMetadata,
                                 resolverUrl = deezerResolverUrl,
                                 quality = deezerQuality,
-                                fastMode = if (directTidalUsesDeezerStreams) false else deezerFastMode,
                                 proxyUrl = deezerProxyUrl,
                                 isrcOverride = spotifyIsrc,
                             ),
@@ -6600,7 +6612,6 @@ class MusicService :
         metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
         resolverUrl: String,
         quality: DeezerAudioQuality,
-        fastMode: Boolean = false,
         proxyUrl: String = DeezerAudioProvider.DEFAULT_PROXY_URL,
         isrcOverride: String? = null,
     ): DeezerAudioProvider.Query {
@@ -6629,7 +6640,6 @@ class MusicService :
             durationMs = durationMs,
             resolverUrl = resolverUrl,
             quality = quality,
-            fastMode = fastMode,
             proxyUrl = proxyUrl,
             cookie = deezerCookie,
             useAccount = deezerUseAccount,
@@ -8696,20 +8706,25 @@ class MusicService :
         crossfadeTriggerJob?.cancel()
         crossfadeTriggerJob = null
         if (isCrossfading || secondaryPlayer != null) return
-        val mixProfile = currentMetroMixProfile()
-        if (!crossfadeEnabled || player.duration == C.TIME_UNSET || player.duration <= mixProfile.durationMs) return
+        val automixProfile = currentAutomixProfile()
+        // Automix carries its own bar-derived duration; otherwise the plain
+        // crossfade duration applies.
+        val durationMs = automixProfile?.durationMs ?: crossfadeDuration.toLong().coerceIn(750L, 32_000L)
+        if (!crossfadeEnabled || player.duration == C.TIME_UNSET || player.duration <= durationMs) return
         if (crossfadeGapless && isNextItemGapless()) return
         if (!player.hasNextMediaItem() && player.repeatMode != REPEAT_MODE_ONE) return
 
-        val triggerTime = player.duration - mixProfile.durationMs
+        val triggerTime = player.duration - durationMs
+        // Automix always starts on a phrase boundary, like a DJ would, instead
+        // of at an arbitrary offset from the end of the file.
         val phraseAlignedTrigger =
-            if (mixProfile.preset == MetroMixPreset.AUTOMIX) {
+            if (automixProfile != null) {
                 alignToPhraseStart(triggerTime, player.duration)
             } else {
                 triggerTime
             }
         val delayMs = phraseAlignedTrigger - player.currentPosition
-        pendingMetroMixProfile = mixProfile
+        pendingAutomixProfile = automixProfile
         if (delayMs <= 250L) {
             startCrossfade()
             return
@@ -8738,7 +8753,7 @@ class MusicService :
         naturalTriggerMs: Long,
         trackDurationMs: Long,
     ): Long {
-        val bpm = player.currentMediaItem?.metadata?.bpm?.takeIf { it in 40f..240f } ?: return naturalTriggerMs
+        val bpm = resolvedAutomixBpm(player.currentMediaItem?.metadata) ?: return naturalTriggerMs
         val barMs = 60_000f / bpm * 4f // 4/4 assumed - the overwhelming majority of streamed music
         val phraseMs = (barMs * 8f).toLong().coerceAtLeast(1L) // 8-bar phrase, the standard pop/EDM unit
 
@@ -8767,94 +8782,138 @@ class MusicService :
             DIRECT_HTTP_AUDIO_ITAG,
         )
 
-    private fun currentMetroMixProfile(): MetroMixRuntimeProfile {
+    /**
+     * Resolves the Automix transition width. Returns null when Automix is off
+     * (the plain crossfade path applies). Explicit per-pair timings saved
+     * previously are honored; otherwise the width comes from the configured
+     * bar count at the outgoing track's tempo, falling back to a safe default
+     * when no BPM is known yet.
+     */
+    private fun currentAutomixProfile(): AutomixRuntimeProfile? {
+        if (!activeAutomixEnabled) return null
         val currentSongId = player.currentMediaItem?.mediaId
         val nextIndex = player.nextMediaItemIndex
         val nextSongId = if (nextIndex != C.INDEX_UNSET) player.getMediaItemAt(nextIndex).mediaId else null
 
+        var bars = activeAutomixBars.coerceIn(2, 32)
         if (currentSongId != null && nextSongId != null) {
             val transition = runBlocking(Dispatchers.IO) { database.getTransition(currentSongId, nextSongId) }
             if (transition != null) {
-                val bpm = transition.bpmA ?: player.currentMediaItem?.metadata?.bpm
-                val bars = transition.overlapBars.coerceIn(2, 32)
-                val barDurationMs = bpm?.takeIf { it in 40f..240f }?.let { (60_000f / it * 4f * bars).toLong() }
-
-                val styleOverride = transition.mixTransitionStyleOverride?.let {
-                    runCatching { MetroMixPreset.valueOf(it) }.getOrNull()
+                bars = transition.overlapBars.coerceIn(2, 32)
+                val customMs =
+                    transition.mixOutStartMs?.let { outStart ->
+                        transition.mixInStartMs?.let { inStart ->
+                            (outStart - inStart).coerceAtLeast(0L)
+                        }
+                    }?.takeIf { it > 0L }
+                if (customMs != null) {
+                    return AutomixRuntimeProfile(durationMs = customMs.coerceIn(750L, 32_000L))
                 }
-
-                val durationMs = transition.mixOutStartMs?.let { outStart ->
-                    transition.mixInStartMs?.let { inStart ->
-                        (outStart - inStart).coerceAtLeast(0L)
-                    }
-                } ?: barDurationMs ?: ((styleOverride?.durationSeconds ?: (crossfadeDuration / 1000f)) * 1000f).toLong()
-
-                return MetroMixRuntimeProfile(
-                    preset = styleOverride ?: activeMetroMixPreset?.let { if (it == MetroMixPreset.AUTO) inferAutoMetroMixPreset() else it },
-                    durationMs = durationMs.coerceIn(750L, 60_000L),
-                    volumeCurve = runCatching { MetroMixVolumeCurve.valueOf(transition.volumeCurve) }.getOrDefault(activeMetroMixVolumeCurve),
-                    eqCurve = runCatching { MetroMixEqCurve.valueOf(transition.eqTemplate) }.getOrDefault(activeMetroMixEqCurve),
-                    effectCurve = runCatching { MetroMixEffectCurve.valueOf(transition.effectType) }.getOrDefault(activeMetroMixEffectCurve),
-                )
             }
         }
 
-        val selectedPreset = activeMetroMixPreset
-        val runtimePreset =
-            when (selectedPreset) {
-                null -> null
-                MetroMixPreset.AUTO -> inferAutoMetroMixPreset()
-                else -> selectedPreset
-            }
-        val bpm = player.currentMediaItem?.metadata?.bpm
-        val bars = activeMetroMixBars.coerceIn(2, 32)
-        val barDurationMs = bpm?.takeIf { it in 40f..240f }?.let { (60_000f / it * 4f * bars).toLong() }
-        val presetDurationMs = ((runtimePreset?.durationSeconds ?: (crossfadeDuration / 1000f)) * 1000f).toLong()
-        val durationMs =
-            if (selectedPreset != null) {
-                barDurationMs ?: (presetDurationMs * (bars / 8f)).toLong()
-            } else {
-                presetDurationMs
-            }.coerceIn(750L, 32_000L)
-        return MetroMixRuntimeProfile(
-            preset = runtimePreset,
-            durationMs = durationMs,
-            volumeCurve = activeMetroMixVolumeCurve,
-            eqCurve = activeMetroMixEqCurve,
-            effectCurve = activeMetroMixEffectCurve,
-        )
+        val bpm = resolvedAutomixBpm(player.currentMediaItem?.metadata)
+        val barDurationMs = bpm?.let { (60_000f / it * 4f * bars).toLong() }
+        val fallbackMs = (AUTOMIX_DEFAULT_DURATION_S * 1000f * (bars / 8f)).toLong()
+        return AutomixRuntimeProfile(durationMs = (barDurationMs ?: fallbackMs).coerceIn(2_000L, 20_000L))
     }
 
-    private fun inferAutoMetroMixPreset(): MetroMixPreset {
-        val current = player.currentMediaItem?.mediaMetadata
+    /**
+     * Best-effort BPM lookup chain for Automix: queue tag first (cheapest),
+     * then the in-memory prefetch cache, then the persisted song row. Warms
+     * the cache on a database hit so repeat lookups within one transition
+     * stay off the IO thread.
+     */
+    private fun resolvedAutomixBpm(metadata: MediaMetadata?): Float? {
+        metadata?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }?.let { return it }
+        val id = metadata?.id?.takeIf { it.isNotBlank() } ?: return null
+        automixMetadataCache[id]?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }?.let { return it }
+        val dbBpm =
+            runCatching {
+                runBlocking(Dispatchers.IO) { database.getSongByIdBlocking(id) }?.song?.bpm
+            }.getOrNull()?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
+        if (dbBpm != null) {
+            automixMetadataCache[id] = MixMetadata(bpm = dbBpm, keySignature = automixMetadataCache[id]?.keySignature)
+        }
+        return dbBpm
+    }
+
+    private fun resolvedAutomixKey(metadata: MediaMetadata?): String? {
+        metadata?.keySignature?.takeIf { it.isNotBlank() }?.let { return it }
+        val id = metadata?.id?.takeIf { it.isNotBlank() } ?: return null
+        automixMetadataCache[id]?.keySignature?.takeIf { it.isNotBlank() }?.let { return it }
+        val dbKey =
+            runCatching {
+                runBlocking(Dispatchers.IO) { database.getSongByIdBlocking(id) }?.song?.keySignature
+            }.getOrNull()?.takeIf { it.isNotBlank() }
+        if (dbKey != null) {
+            automixMetadataCache[id] = MixMetadata(bpm = automixMetadataCache[id]?.bpm, keySignature = dbKey)
+        }
+        return dbKey
+    }
+
+    /**
+     * Warms [automixMetadataCache] for the current + next track while Automix
+     * is enabled. Streaming queue items rarely carry BPM/key tags, and the
+     * online lookup takes seconds, so this runs ahead of the transition on
+     * IO and re-arms the crossfade timer when fresh data lands - provided the
+     * track hasn't changed underneath it. Never touches the players, so it is
+     * always safe to run, cancel, or re-run.
+     */
+    private fun maybePrefetchAutomixMetadata() {
+        if (!activeAutomixEnabled) return
+        if (castConnectionHandler?.isCasting?.value == true) return
+        automixPrefetchJob?.cancel()
+        val current = player.currentMediaItem?.metadata
         val nextIndex = player.nextMediaItemIndex
         val next =
             if (nextIndex != C.INDEX_UNSET) {
-                player.getMediaItemAt(nextIndex).mediaMetadata
+                runCatching { player.getMediaItemAt(nextIndex) }.getOrNull()?.metadata
             } else {
                 null
             }
-        val currentTitle = current?.title?.toString().orEmpty()
-        val nextTitle = next?.title?.toString().orEmpty()
-        val titles = "$currentTitle $nextTitle".lowercase(Locale.US)
-        val currentAlbum = current?.albumTitle?.toString().orEmpty()
-        val nextAlbum = next?.albumTitle?.toString().orEmpty()
-        val sameAlbum = currentAlbum.isNotBlank() && currentAlbum == nextAlbum
-        val currentDuration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
-
-        return when {
-            sameAlbum -> MetroMixPreset.SMOOTH
-            titles.containsAny("skit", "interlude", "intro") || currentDuration in 1L..95_000L -> MetroMixPreset.QUICK_CUT
-            titles.containsAny("outro", "acoustic", "live", "remaster") -> MetroMixPreset.VOCAL_BLEND
-            titles.containsAny("club", "extended", "remix", "mix", "edit") -> MetroMixPreset.CLUB_BLEND
-            currentDuration >= 300_000L -> MetroMixPreset.BEAT_BLEND
-            currentDuration in 1L..150_000L -> MetroMixPreset.RADIO_EDIT
-            else -> MetroMixPreset.SMART_DJ
-        }
+        val targets =
+            listOfNotNull(current, next)
+                .filter { it.bpm == null && !it.isEpisode && !it.isVideoSong && it.id.isNotBlank() }
+                .distinctBy { it.id }
+                .filter { !automixMetadataCache.containsKey(it.id) }
+                .take(2)
+        if (targets.isEmpty()) return
+        val cookie = cachedSpotifyCookie
+        val triggerMediaId = player.currentMediaItem?.mediaId
+        automixPrefetchJob =
+            scope.launch(Dispatchers.IO) {
+                var resolvedAny = false
+                targets.forEach { metadata ->
+                    if (!isActive) return@launch
+                    val resolved = runCatching { MixMetadataResolver.resolve(metadata, cookie) }.getOrNull()
+                    if (resolved != null && (resolved.bpm != null || resolved.keySignature != null)) {
+                        automixMetadataCache[metadata.id] = resolved
+                        runCatching {
+                            database.getSongByIdBlocking(metadata.id)?.let { song ->
+                                if (song.song.bpm == null || song.song.keySignature == null) {
+                                    database.update(
+                                        song.song.copy(
+                                            bpm = song.song.bpm ?: resolved.bpm,
+                                            keySignature = song.song.keySignature ?: resolved.keySignature,
+                                            mixMetadataSource = song.song.mixMetadataSource ?: resolved.source,
+                                        ),
+                                    )
+                                }
+                            }
+                        }
+                        resolvedAny = true
+                    }
+                }
+                if (resolvedAny && isActive) {
+                    withContext(Dispatchers.Main) {
+                        if (player.currentMediaItem?.mediaId == triggerMediaId && !isCrossfading && secondaryPlayer == null) {
+                            scheduleCrossfade()
+                        }
+                    }
+                }
+            }
     }
-
-    private fun String.containsAny(vararg needles: String): Boolean =
-        needles.any { contains(it) }
 
     private fun isNextItemGapless(): Boolean {
         val current = player.currentMediaItem?.mediaMetadata ?: return false
@@ -8865,34 +8924,89 @@ class MusicService :
     }
 
     /**
-     * Computes the full Automix transition plan from BPM + Camelot key on both
-     * tracks: shared target tempo, per-track speed ratios, a beat-phase seek
-     * offset for the incoming track, and a harmonic-mixing-driven duration/EQ
-     * adjustment. Returns null when either track is missing BPM data (the
-     * caller falls back to the plain equal-power AUTOMIX curve in that case).
+     * Computes the full Automix transition plan from BPM + musical key on both
+     * tracks: a shared target tempo (only when both tempos are already close),
+     * per-track speed ratios, a beat-phase seek offset for the incoming track,
+     * and a key-driven blend width + low-end separation. Returns null when the
+     * pair cannot be tempo-locked (missing BPM, episodes, videos, or tempos
+     * too far apart) - the caller then runs a safe straight blend at 1.0x
+     * with no speed bending instead of forcing a bad match.
      */
     private fun buildAutomixPlan(
         outgoing: MediaMetadata?,
         incoming: MediaMetadata?,
         outgoingPositionMs: Long,
     ): AutomixPlan? {
-        val bpmA = outgoing?.bpm?.takeIf { it in 40f..240f } ?: return null
-        val bpmB = incoming?.bpm?.takeIf { it in 40f..240f } ?: return null
-        val targetBpm = (bpmA + bpmB) / 2f
-        val speedA = (targetBpm / bpmA).coerceIn(0.92f, 1.08f)
-        val speedB = (targetBpm / bpmB).coerceIn(0.92f, 1.08f)
+        if (outgoing?.isEpisode == true || incoming?.isEpisode == true) return null
+        if (outgoing?.isVideoSong == true || incoming?.isVideoSong == true) return null
+        val bpmA = resolvedAutomixBpm(outgoing) ?: return null
+        val bpmB = resolvedAutomixBpm(incoming) ?: return null
+        // Only bend tempo when the tracks are already close: beyond ~12% the
+        // pitch-preserving stretch turns audible and hurts more than it helps.
+        // Octave-apart tempos get a second chance first: doubling/halving is
+        // the most common BPM metadata mistake, and half-time mixing is a real
+        // DJ technique (70 BPM hip-hop rides 140 BPM house), so the faster
+        // track's grid is halved and the pair locks half-time instead.
+        var effA = bpmA
+        var effB = bpmB
+        var halfTime = false
+        val straightRatio = maxOf(bpmA, bpmB) / minOf(bpmA, bpmB)
+        val straightDelta = abs(bpmA - bpmB)
+        if (straightRatio > AUTOMIX_MAX_TEMPO_RATIO || straightDelta > AUTOMIX_MAX_TEMPO_DELTA_BPM) {
+            val octaveRatio = maxOf(bpmA, bpmB) / minOf(bpmA, bpmB)
+            if (octaveRatio in 1.9f..2.1f) {
+                if (bpmA > bpmB) effA = bpmA / 2f else effB = bpmB / 2f
+                halfTime = true
+            }
+        }
+        val ratio = maxOf(effA, effB) / minOf(effA, effB)
+        val tempoMatched = ratio <= AUTOMIX_MAX_TEMPO_RATIO && abs(effA - effB) <= AUTOMIX_MAX_TEMPO_DELTA_BPM
+        val targetBpm = (effA + effB) / 2f
+        // Tighter than before (+/-6%): keeps Sonic's time-stretch inaudible.
+        // Speeds landing within 0.5% of 1.0x snap straight to it, so the
+        // time-stretcher never touches near-identical tempos at all.
+        fun snap(speed: Float) = if (abs(speed - 1f) < AUTOMIX_SPEED_SNAP) 1f else speed
+        val speedA = if (tempoMatched) snap((targetBpm / effA).coerceIn(AUTOMIX_MIN_SPEED, AUTOMIX_MAX_SPEED)) else 1f
+        val speedB = if (tempoMatched) snap((targetBpm / effB).coerceIn(AUTOMIX_MIN_SPEED, AUTOMIX_MAX_SPEED)) else 1f
 
         // Beat-phase alignment: assume both tracks' downbeat 1 lands at
         // track-time 0 (the standard assumption absent a true onset/beat
         // tracker), find how far track A currently sits into its own beat
         // cycle at tempo-matched speed, and start track B at the equivalent
         // point in its cycle so the two beat grids line up from the first bar.
-        val beatMsA = 60_000f / (bpmA * speedA)
-        val beatMsB = 60_000f / (bpmB * speedB)
+        // Half-time pairs align on the halved grid, which still lands exactly
+        // on a true downbeat of the faster track.
+        val beatMsA = 60_000f / (effA * speedA)
+        val beatMsB = 60_000f / (effB * speedB)
         val phaseA = outgoingPositionMs.toFloat().mod(beatMsA)
+        // Clamped within one incoming beat so an intro is never skipped.
         val phaseOffsetMs = ((phaseA / beatMsA) * beatMsB).toLong().coerceIn(0L, beatMsB.toLong().coerceAtLeast(1L) - 1L)
 
-        val hint = harmonicMixHint(outgoing.keySignature, incoming.keySignature)
+        val hint = harmonicMixHint(resolvedAutomixKey(outgoing), resolvedAutomixKey(incoming))
+        var blendMode =
+            when {
+                !tempoMatched || hint.compatibility == KeyCompatibility.CLASHING -> AutomixBlendMode.TIGHT
+                hint.compatibility == KeyCompatibility.UNKNOWN -> AutomixBlendMode.NEUTRAL
+                hint.compatibility == KeyCompatibility.ENERGY_SHIFT -> AutomixBlendMode.FOCUSED
+                else -> AutomixBlendMode.WIDE
+            }
+        // Half-time grooves sit differently than straight matches: even with
+        // compatible keys, cap the width so the blend never drags.
+        if (halfTime && blendMode == AutomixBlendMode.WIDE) blendMode = AutomixBlendMode.FOCUSED
+        // Clashing or tempo-unmatched pairs get in and out quickly with extra
+        // low-end separation; compatible pairs earn the full wide blend.
+        val durationScale =
+            when (blendMode) {
+                AutomixBlendMode.WIDE -> hint.durationScale
+                AutomixBlendMode.FOCUSED -> 0.95f
+                AutomixBlendMode.NEUTRAL -> 1f
+                AutomixBlendMode.TIGHT -> minOf(hint.durationScale, 0.7f)
+            }
+        val bassSeparation =
+            when (blendMode) {
+                AutomixBlendMode.TIGHT -> maxOf(hint.bassSeparation, 0.2f)
+                else -> hint.bassSeparation
+            }
 
         return AutomixPlan(
             bpmA = bpmA,
@@ -8900,10 +9014,13 @@ class MusicService :
             targetBpm = targetBpm,
             speedA = speedA,
             speedB = speedB,
+            tempoMatched = tempoMatched,
+            halfTime = halfTime,
             phaseOffsetMs = phaseOffsetMs,
             keyCompatibility = hint.compatibility,
-            durationScale = hint.durationScale,
-            bassSeparation = hint.bassSeparation,
+            blendMode = blendMode,
+            durationScale = durationScale,
+            bassSeparation = bassSeparation,
         )
     }
 
@@ -8911,11 +9028,11 @@ class MusicService :
         if (isCrossfading) return
         if (secondaryPlayer != null) return
         if (castConnectionHandler?.isCasting?.value == true) return
-        val mixProfile = pendingMetroMixProfile ?: currentMetroMixProfile()
-        pendingMetroMixProfile = null
-        activeCrossfadeDurationMs = mixProfile.durationMs
-        activeMetroMixRuntimePreset = mixProfile.preset
-        activeMetroMixRuntimeProfile = mixProfile
+        val automixProfile = pendingAutomixProfile ?: currentAutomixProfile()
+        pendingAutomixProfile = null
+        activeAutomixProfile = automixProfile
+        activeCrossfadeDurationMs =
+            automixProfile?.durationMs ?: crossfadeDuration.toLong().coerceIn(750L, 32_000L)
         activeAutomixPlan = null
 
         // Preserve player state before creating the secondary player
@@ -8933,7 +9050,7 @@ class MusicService :
         if (targetIndex == C.INDEX_UNSET) return
         val targetMediaItem = runCatching { player.getMediaItemAt(targetIndex) }.getOrNull()
 
-        if (mixProfile.preset == MetroMixPreset.AUTOMIX) {
+        if (automixProfile != null) {
             val plan =
                 buildAutomixPlan(
                     outgoing = player.currentMediaItem?.metadata,
@@ -8942,20 +9059,39 @@ class MusicService :
                 )
             activeAutomixPlan = plan
             if (plan != null) {
-                // Harmonic mixing drives blend width: compatible keys sustain a
-                // longer overlap, clashing keys get in and out fast.
-                activeCrossfadeDurationMs = (activeCrossfadeDurationMs * plan.durationScale).toLong().coerceIn(1_500L, 20_000L)
+                // Tempo + key drive blend width: compatible pairs sustain a
+                // longer overlap, clashing or tempo-unmatched pairs get in
+                // and out fast with extra low-end separation.
+                activeCrossfadeDurationMs = (activeCrossfadeDurationMs * plan.durationScale).toLong().coerceIn(2_000L, 16_000L)
+                // Never let the blend eat a short track: cap it at a fraction
+                // of the shorter side so skits, interludes, and short songs
+                // keep their identity instead of drowning in overlap.
+                val outgoingDurMs = player.duration.takeIf { it != C.TIME_UNSET } ?: Long.MAX_VALUE
+                val incomingDurMs = targetMediaItem?.metadata?.duration?.takeIf { it > 0 }?.times(1000L) ?: Long.MAX_VALUE
+                val shortestMs = minOf(outgoingDurMs, incomingDurMs)
+                if (shortestMs != Long.MAX_VALUE) {
+                    val capMs = (shortestMs * AUTOMIX_MAX_BLEND_FRACTION).toLong()
+                    activeCrossfadeDurationMs = minOf(activeCrossfadeDurationMs, capMs).coerceIn(750L, 32_000L)
+                }
                 Timber.tag(TAG).d(
-                    "Automix plan: %.1f->%.1f bpm (target %.1f), speed %.3f/%.3f, phase +%dms, key=%s, duration=%dms",
+                    "Automix plan: %.1f->%.1f bpm (target %.1f, matched=%s, halfTime=%s), speed %.3f/%.3f, phase +%dms, key=%s mode=%s, duration=%dms",
                     plan.bpmA,
                     plan.bpmB,
                     plan.targetBpm,
+                    plan.tempoMatched,
+                    plan.halfTime,
                     plan.speedA,
                     plan.speedB,
                     plan.phaseOffsetMs,
                     plan.keyCompatibility,
+                    plan.blendMode,
                     activeCrossfadeDurationMs,
                 )
+            } else {
+                // No tempo/key lock (missing metadata, episode, video, or a
+                // wide tempo gap): safe equal-power blend at 1.0x, no speed
+                // bending, bounded width.
+                activeCrossfadeDurationMs = activeCrossfadeDurationMs.coerceIn(2_000L, 10_000L)
             }
         }
 
@@ -9019,140 +9155,45 @@ class MusicService :
             }
     }
 
-    private fun crossfadeVolumePair(
+    /**
+     * The single Automix volume curve: an equal-power blend across the
+     * tempo-synced window. Beat/tempo alignment happens via playback speed
+     * ramping in the crossfade tick loop, so the volume curve itself stays a
+     * clean blend that never fights the tempo ramp. The center duck scales
+     * with the blend mode so overlapping low end never stacks into an audible
+     * bump on tight/clashing transitions.
+     */
+    private fun automixVolumePair(
         progress: Float,
-        preset: MetroMixPreset?,
-        profile: MetroMixRuntimeProfile? = null,
+        plan: AutomixPlan?,
     ): Pair<Float, Float> {
         val p = progress.coerceIn(0f, 1f)
         fun smooth(value: Float) = value * value * (3f - 2f * value)
-        fun easeOut(value: Float) = 1f - (1f - value) * (1f - value)
-        fun easeIn(value: Float) = value * value
         fun range(value: Float, start: Float, end: Float) = ((value - start) / (end - start)).coerceIn(0f, 1f)
         fun equalPowerIn(value: Float) = sin(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
         fun equalPowerOut(value: Float) = cos(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
-        fun centerDuck(amount: Float): Float {
-            val distanceFromCenter = (2f * p - 1f).coerceIn(-1f, 1f)
-            return 1f - amount * (1f - distanceFromCenter * distanceFromCenter)
-        }
-        fun pair(fadeIn: Float, fadeOut: Float, headroom: Float = 1f): Pair<Float, Float> =
-            (fadeIn.coerceIn(0f, 1f) * headroom) to (fadeOut.coerceIn(0f, 1f) * headroom)
-        val effectivePreset =
-            when {
-                profile?.effectCurve == MetroMixEffectCurve.ECHO -> MetroMixPreset.ECHO_OUT
-                profile?.effectCurve == MetroMixEffectCurve.WAVE -> MetroMixPreset.BEAT_BLEND
-                profile?.eqCurve == MetroMixEqCurve.BASS_SWAP -> MetroMixPreset.BASS_SWAP
-                profile?.eqCurve == MetroMixEqCurve.VOCAL_SPACE -> MetroMixPreset.VOCAL_BLEND
-                profile?.volumeCurve == MetroMixVolumeCurve.PUNCHY -> MetroMixPreset.ENERGY_MATCH
-                profile?.volumeCurve == MetroMixVolumeCurve.MELT -> MetroMixPreset.LOOP_OUT
-                profile?.volumeCurve == MetroMixVolumeCurve.WAVE -> MetroMixPreset.BEAT_BLEND
-                profile?.volumeCurve == MetroMixVolumeCurve.BALANCED -> MetroMixPreset.SMART_DJ
-                else -> preset
+        val centerDuck =
+            when (plan?.blendMode) {
+                AutomixBlendMode.WIDE -> 0.07f
+                AutomixBlendMode.FOCUSED -> 0.12f
+                AutomixBlendMode.TIGHT -> 0.18f
+                AutomixBlendMode.NEUTRAL, null -> 0.10f
             }
+        val distanceFromCenter = (2f * p - 1f).coerceIn(-1f, 1f)
+        val headroom = 1f - centerDuck * (1f - distanceFromCenter * distanceFromCenter)
+        val shaped = smooth(range(p, 0.02f, 0.98f))
+        return (equalPowerIn(shaped) * headroom).coerceIn(0f, 1f) to (equalPowerOut(shaped) * headroom).coerceIn(0f, 1f)
+    }
 
-        return when (effectivePreset) {
-            null -> {
-                val fadeIn = easeOut(p)
-                val fadeOut = (1f - p) * (1f - p)
-                pair(fadeIn, fadeOut)
-            }
-
-            MetroMixPreset.AUTO,
-            MetroMixPreset.SMART_DJ,
-            MetroMixPreset.SMOOTH -> {
-                val duck = centerDuck(0.10f)
-                pair(equalPowerIn(smooth(p)), equalPowerOut(smooth(p)), duck)
-            }
-
-            MetroMixPreset.AUTOMIX -> {
-                // Full-width equal-power blend across the tempo-synced window; the
-                // actual beat/tempo alignment happens via playback speed ramping
-                // in the crossfade tick loop (see applyAutomixTempoSync), so the
-                // volume curve itself just needs to be a clean, wide, low-duck
-                // blend that won't fight the tempo ramp.
-                val fadeIn = equalPowerIn(smooth(range(p, 0.02f, 0.98f)))
-                val fadeOut = equalPowerOut(smooth(range(p, 0.02f, 0.98f)))
-                pair(fadeIn, fadeOut, centerDuck(0.09f))
-            }
-
-            MetroMixPreset.BEAT_BLEND -> {
-                val fadeIn = equalPowerIn(smooth(range(p, 0.05f, 0.95f)))
-                val fadeOut = equalPowerOut(smooth(range(p, 0.05f, 0.95f)))
-                pair(fadeIn, fadeOut, centerDuck(0.08f))
-            }
-
-            MetroMixPreset.ENERGY_MATCH -> {
-                val fadeIn = easeOut(range(p, 0.02f, 0.92f))
-                val fadeOut = 1f - easeIn(range(p, 0.08f, 1f))
-                pair(fadeIn, fadeOut, centerDuck(0.14f))
-            }
-
-            MetroMixPreset.CLUB_BLEND -> {
-                val fadeIn = smooth(range(p, 0.00f, 0.86f))
-                val fadeOut = 1f - smooth(range(p, 0.18f, 1f))
-                pair(fadeIn, fadeOut, centerDuck(0.16f))
-            }
-
-            MetroMixPreset.VOCAL_BLEND -> {
-                val fadeIn = smooth(range(p, 0.34f, 1f))
-                val fadeOut = 1f - smooth(range(p, 0.08f, 0.76f))
-                pair(fadeIn, fadeOut, centerDuck(0.06f))
-            }
-
-            MetroMixPreset.BASS_SWAP -> {
-                val fadeIn = easeOut(range(p, 0.18f, 0.74f))
-                val fadeOut = 1f - smooth(range(p, 0.38f, 0.80f))
-                pair(fadeIn, fadeOut, centerDuck(0.18f))
-            }
-
-            MetroMixPreset.RADIO_EDIT -> {
-                val curve = smooth(p)
-                pair(equalPowerIn(curve), equalPowerOut(curve), centerDuck(0.12f))
-            }
-
-            MetroMixPreset.QUICK_CUT -> {
-                val fadeIn = smooth(range(p, 0.04f, 0.52f))
-                val fadeOut = 1f - smooth(range(p, 0.20f, 0.58f))
-                pair(fadeIn, fadeOut, centerDuck(0.05f))
-            }
-
-            MetroMixPreset.LOOP_OUT -> {
-                val fadeIn = equalPowerIn(smooth(p))
-                val fadeOut = (1f - smooth(range(p, 0.10f, 1f))) * (1f - 0.15f * p)
-                pair(fadeIn, fadeOut, centerDuck(0.18f))
-            }
-
-            MetroMixPreset.FADE -> pair(p, 1f - p)
-
-            MetroMixPreset.RISE -> {
-                val fadeIn = easeOut(p)
-                val fadeOut = 1f - smooth(p)
-                pair(fadeIn, fadeOut)
-            }
-
-            MetroMixPreset.BLEND -> {
-                val fadeIn = smooth(p)
-                val fadeOut = (1f - easeIn(p)).coerceIn(0f, 1f)
-                pair(fadeIn, fadeOut, centerDuck(0.10f))
-            }
-
-            MetroMixPreset.DROP -> {
-                val delayed = ((p - 0.35f) / 0.65f).coerceIn(0f, 1f)
-                pair(smooth(delayed), if (p < 0.42f) 1f else (1f - smooth(delayed)))
-            }
-
-            MetroMixPreset.ECHO_OUT -> {
-                val fadeIn = smooth(p)
-                val remaining = 1f - p
-                pair(fadeIn, remaining * remaining * remaining)
-            }
-
-            MetroMixPreset.LONG_BLEND -> {
-                val fadeIn = easeOut(p)
-                val fadeOut = 1f - easeIn(p)
-                pair(fadeIn, fadeOut, centerDuck(0.12f))
-            }
-        }
+    /**
+     * Plain-crossfade volume curve used when Automix is off: a simple
+     * equal-power fade with no tempo or EQ shaping.
+     */
+    private fun plainCrossfadeVolumePair(progress: Float): Pair<Float, Float> {
+        val p = progress.coerceIn(0f, 1f)
+        fun equalPowerIn(value: Float) = sin(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
+        fun equalPowerOut(value: Float) = cos(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
+        return equalPowerIn(p) to equalPowerOut(p)
     }
 
     private fun performCrossfadeSwap(
@@ -9162,8 +9203,9 @@ class MusicService :
         val nextPlayer = secondaryPlayer ?: return
         isCrossfading = true
         val currentPlayer = player
-        val metroMixPreset = activeMetroMixRuntimePreset ?: activeMetroMixPreset
-        val metroMixProfile = activeMetroMixRuntimeProfile
+        // Snapshot of the Automix decision for this transition; null means a
+        // plain crossfade (Automix off or unlocked pair).
+        val automixPlan = activeAutomixPlan
 
         fadingPlayer = currentPlayer
         player = nextPlayer
@@ -9245,25 +9287,25 @@ class MusicService :
                         1f
                     }
 
-                // Prepare MetroMix Filters if preset is active
+                // Prepare the Automix low-end separation band when the locked
+                // plan calls for it (clashing or wide-tempo pairs need room).
                 val fadingEq = playerEqProcessors[fadingPlayer as Player]
                 val currentEq = playerEqProcessors[player as Player]
 
-                if (metroMixPreset == MetroMixPreset.BASS_SWAP ||
-                    (metroMixPreset == MetroMixPreset.AUTOMIX && (activeAutomixPlan?.bassSeparation ?: 0f) > 0.05f)
-                ) {
+                if ((automixPlan?.bassSeparation ?: 0f) > 0.05f) {
                     val bassFilter = ParametricEQBand(frequency = 100.0, gain = 0.0, q = 0.7, filterType = FilterType.LSC)
-                    fadingEq?.setMetroMixBands(listOf(bassFilter))
-                    currentEq?.setMetroMixBands(listOf(bassFilter))
+                    fadingEq?.setAutomixBands(listOf(bassFilter))
+                    currentEq?.setAutomixBands(listOf(bassFilter))
                 }
 
-                // AUTOMIX: reuse the plan computed at startCrossfade time (same
-                // numbers that were used to phase-align the beat grids at seek
-                // time) rather than recomputing BPM here, so the tempo ramp and
-                // the phase alignment never drift apart mid-transition.
-                val automixPlan = activeAutomixPlan
-                val automixSpeedA = automixPlan?.speedA
-                val automixSpeedB = automixPlan?.speedB
+                // Reuse the plan computed at startCrossfade time (same numbers
+                // that were used to phase-align the beat grids at seek time)
+                // rather than recomputing BPM here, so the tempo ramp and the
+                // phase alignment never drift apart mid-transition. Speed is
+                // only bent for tempo-matched pairs; everything else blends
+                // straight at 1.0x.
+                val automixSpeedA = automixPlan?.takeIf { it.tempoMatched }?.speedA
+                val automixSpeedB = automixPlan?.takeIf { it.tempoMatched }?.speedB
                 // Clashing keys get extra low-end separation on the outgoing
                 // track while the two overlap, so the dissonance is less audible.
                 val automixBassDuck = automixPlan?.bassSeparation ?: 0f
@@ -9279,7 +9321,12 @@ class MusicService :
                     }
 
                     val progress = i / steps.toFloat()
-                    val (fadeIn, fadeOut) = crossfadeVolumePair(progress, metroMixPreset, metroMixProfile)
+                    val (fadeIn, fadeOut) =
+                        if (automixPlan != null) {
+                            automixVolumePair(progress, automixPlan)
+                        } else {
+                            plainCrossfadeVolumePair(progress)
+                        }
 
                     try {
                         player.volume = startVolume * fadeIn
@@ -9296,38 +9343,17 @@ class MusicService :
                             // pitch-preserving time-stretch when pitch is pinned to 1,
                             // otherwise the single-arg constructor ties pitch to speed
                             // and you get the chipmunk/slowdown effect instead.
-                            fadingPlayer?.playbackParameters = PlaybackParameters(speedA.coerceIn(0.85f, 1.15f), 1f)
-                            player.playbackParameters = PlaybackParameters(speedB.coerceIn(0.85f, 1.15f), 1f)
+                            fadingPlayer?.playbackParameters = PlaybackParameters(speedA.coerceIn(0.9f, 1.1f), 1f)
+                            player.playbackParameters = PlaybackParameters(speedB.coerceIn(0.9f, 1.1f), 1f)
                         }
 
-                        // Apply dynamic EQ effects
-                        when (metroMixPreset) {
-                            MetroMixPreset.BASS_SWAP -> {
-                                // Fade out bass on old track, fade in on new track
-                                // Bass swap happens in the middle
-                                val fadeOutBass = (1.0 - range(progress, 0.3f, 0.6f)) * -24.0
-                                val fadeInBass = (range(progress, 0.4f, 0.7f) - 1.0) * -24.0
-                                fadingEq?.updateMetroMixGain(0, fadeOutBass)
-                                currentEq?.updateMetroMixGain(0, fadeInBass)
-                            }
-                            MetroMixPreset.VOCAL_BLEND -> {
-                                // Duck the old track's vocals using a band-stop or high-shelf
-                                // VOCAL_BLEND: Fade out old vocals quickly while keeping the beat,
-                                // then bring in new track.
-                                val vocalDuck = range(progress, 0.05f, 0.45f) * -22.0
-                                fadingEq?.updateMetroMixGain(1, vocalDuck) // Assuming index 1 is vocal band
-                            }
-                            MetroMixPreset.AUTOMIX -> {
-                                if (automixBassDuck > 0.05f) {
-                                    // Peaks at the center of the transition where both tracks'
-                                    // low end overlaps most; keyed off harmonic compatibility so
-                                    // clashing keys get more separation than compatible ones.
-                                    val centerWeight = 1f - kotlin.math.abs(2f * progress - 1f)
-                                    val duckDb = -24.0 * automixBassDuck * centerWeight
-                                    fadingEq?.updateMetroMixGain(0, duckDb)
-                                }
-                            }
-                            else -> {}
+                        if (automixBassDuck > 0.05f) {
+                            // Peaks at the center of the transition where both tracks'
+                            // low end overlaps most; keyed off harmonic compatibility so
+                            // clashing keys get more separation than compatible ones.
+                            val centerWeight = 1f - kotlin.math.abs(2f * progress - 1f)
+                            val duckDb = -24.0 * automixBassDuck * centerWeight
+                            fadingEq?.updateAutomixGain(0, duckDb)
                         }
                     } catch (e: Exception) {
                         break
@@ -9339,8 +9365,8 @@ class MusicService :
                 try {
                     fadingPlayer?.volume = 0f
                     player.volume = startVolume
-                    fadingEq?.setMetroMixBands(emptyList())
-                    currentEq?.setMetroMixBands(emptyList())
+                    fadingEq?.setAutomixBands(emptyList())
+                    currentEq?.setAutomixBands(emptyList())
                     if (automixSpeedA != null && automixSpeedB != null) {
                         // The fading player is about to be released; the surviving player
                         // must land back on normal speed or it'll keep playing pitched.
@@ -9367,10 +9393,9 @@ class MusicService :
         secondaryPlayer = null
         nextTrackPreloadCoordinator?.requestRefresh()
         isCrossfading = false
-        activeMetroMixRuntimePreset = null
-        activeMetroMixRuntimeProfile = null
+        activeAutomixProfile = null
         activeAutomixPlan = null
-        pendingMetroMixProfile = null
+        pendingAutomixProfile = null
         if (scheduleNext) {
             scheduleCrossfade()
         }
@@ -9387,10 +9412,9 @@ class MusicService :
         fadingPlayer?.release()
         fadingPlayer = null
         isCrossfading = false
-        activeMetroMixRuntimePreset = null
-        activeMetroMixRuntimeProfile = null
+        activeAutomixProfile = null
         activeAutomixPlan = null
-        pendingMetroMixProfile = null
+        pendingAutomixProfile = null
         applyEffectiveVolume()
         sleepTimer.notifySongTransition()
 
@@ -9436,6 +9460,20 @@ class MusicService :
         private const val PRELOAD_TAG = "NextTrackPreload"
         private const val PRELOAD_MIN_URL_LIFETIME_MS = 60_000L
         private const val PRELOAD_READ_BUFFER_BYTES = 64 * 1024
+
+        // Automix tuning. Speeds stay within +/-6% so Sonic's
+        // pitch-preserving stretch stays inaudible; tempo is only locked when
+        // both tracks sit within ~12% / 12 BPM of each other. Wider gaps blend
+        // straight at 1.0x instead of forcing an audible stretch.
+        private const val AUTOMIX_DEFAULT_DURATION_S = 8f
+        private const val AUTOMIX_MIN_BPM = 40f
+        private const val AUTOMIX_MAX_BPM = 240f
+        private const val AUTOMIX_MIN_SPEED = 0.94f
+        private const val AUTOMIX_MAX_SPEED = 1.06f
+        private const val AUTOMIX_MAX_TEMPO_RATIO = 1.12f
+        private const val AUTOMIX_MAX_TEMPO_DELTA_BPM = 12f
+        private const val AUTOMIX_SPEED_SNAP = 0.005f
+        private const val AUTOMIX_MAX_BLEND_FRACTION = 0.3f
 
         // Was 4_000L — too short given the underlying OkHttpClient's own
         // 8s connect / 10s read timeouts, plus the token endpoint's cold-start
@@ -9494,7 +9532,7 @@ class MusicService :
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
         private const val AUDIO_MIN_BUFFER_MS = 15_000
         private const val AUDIO_MAX_BUFFER_MS = 30_000
-        private const val AUDIO_BUFFER_FOR_PLAYBACK_MS = 150
+        private const val AUDIO_BUFFER_FOR_PLAYBACK_MS = 50
         private const val AUDIO_BUFFER_FOR_REBUFFER_MS = 750
         private const val AUDIO_TARGET_BUFFER_BYTES = 8 * 1024 * 1024
         private const val LEGACY_PLACEHOLDER_BPS = 4_000_000

@@ -1793,7 +1793,7 @@ fun BottomSheetPlayer(
                                 skyColors = galaxyColors,
                                 animated = !state.isCollapsed,
                                 // Let the multi-colour blur glow through.
-                                skyAlpha = 0.55f,
+                                skyAlpha = 0.7f,
                             )
                             if (mirroredGalaxyReadabilityScrimAlpha > 0f) {
                                 Box(

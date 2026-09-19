@@ -57,9 +57,8 @@ import com.metrolist.music.constants.HistoryDuration
 import com.metrolist.music.constants.KeepScreenOn
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
-import com.metrolist.music.constants.MetroMixEnabledKey
-import com.metrolist.music.constants.MetroMixPreset
-import com.metrolist.music.constants.MetroMixPresetKey
+import com.metrolist.music.constants.AutomixBarsKey
+import com.metrolist.music.constants.AutomixEnabledKey
 import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
@@ -80,7 +79,6 @@ import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
-import com.metrolist.music.ui.component.MetroMixStudioDialog
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.rememberEnumPreference
@@ -99,8 +97,6 @@ import com.metrolist.music.ui.component.encodeDayTimes
 import com.metrolist.music.constants.SleepTimerFadeOutKey
 import com.metrolist.music.constants.SleepTimerStopAfterCurrentSongKey
 import com.metrolist.music.ui.utils.getLoudnessLevelLabel
-import com.metrolist.music.ui.utils.metroMixPresetDescription
-import com.metrolist.music.ui.utils.metroMixPresetLabel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,13 +135,13 @@ fun PlayerSettings(
         NextTrackPreloadCountKey,
         defaultValue = 3
     )
-    val (metroMixEnabled, onMetroMixEnabledChange) = rememberPreference(
-        MetroMixEnabledKey,
+    val (automixEnabled, onAutomixEnabledChange) = rememberPreference(
+        AutomixEnabledKey,
         defaultValue = false
     )
-    val (metroMixPreset, onMetroMixPresetChange) = rememberEnumPreference(
-        MetroMixPresetKey,
-        defaultValue = MetroMixPreset.AUTO
+    val (automixBars, onAutomixBarsChange) = rememberPreference(
+        AutomixBarsKey,
+        defaultValue = 8
     )
     val (persistentQueue, onPersistentQueueChange) = rememberPreference(
         PersistentQueueKey,
@@ -257,12 +253,6 @@ fun PlayerSettings(
     var showLoudnessLevelDialog by remember {
         mutableStateOf(false)
     }
-    var showMetroMixPresetDialog by remember {
-        mutableStateOf(false)
-    }
-    var showMetroMixStudioDialog by remember {
-        mutableStateOf(false)
-    }
 
     if (showAudioQualityDialog) {
         EnumDialog(
@@ -296,29 +286,6 @@ fun PlayerSettings(
             current = loudnessLevel,
             values = LoudnessLevel.values().toList(),
             valueText = { getLoudnessLevelLabel(it) }
-        )
-    }
-
-    if (showMetroMixPresetDialog) {
-        EnumDialog(
-            onDismiss = { showMetroMixPresetDialog = false },
-            onSelect = {
-                onMetroMixPresetChange(it)
-                showMetroMixPresetDialog = false
-            },
-            title = stringResource(R.string.metromix_preset),
-            current = metroMixPreset,
-            values = MetroMixPreset.values().toList(),
-            valueText = { metroMixPresetLabel(it) },
-            valueDescription = { metroMixPresetDescription(it) },
-        )
-    }
-
-    if (showMetroMixStudioDialog) {
-        MetroMixStudioDialog(
-            current = null,
-            next = null,
-            onDismiss = { showMetroMixStudioDialog = false },
         )
     }
 
@@ -473,25 +440,19 @@ fun PlayerSettings(
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.shuffle),
-                    title = { Text(stringResource(R.string.metromix)) },
+                    title = { Text(stringResource(R.string.automix)) },
                     description = {
-                        Text(
-                            if (metroMixEnabled) {
-                                stringResource(R.string.metromix_enabled_desc, metroMixPresetLabel(metroMixPreset))
-                            } else {
-                                stringResource(R.string.metromix_desc)
-                            }
-                        )
+                        Text(stringResource(R.string.automix_desc))
                     },
                     showBadge = true,
                     trailingContent = {
                         Switch(
-                            checked = metroMixEnabled,
-                            onCheckedChange = onMetroMixEnabledChange,
+                            checked = automixEnabled,
+                            onCheckedChange = onAutomixEnabledChange,
                             thumbContent = {
                                 Icon(
                                     painter = painterResource(
-                                        id = if (metroMixEnabled) R.drawable.check else R.drawable.close
+                                        id = if (automixEnabled) R.drawable.check else R.drawable.close
                                     ),
                                     contentDescription = null,
                                     modifier = Modifier.size(SwitchDefaults.IconSize)
@@ -499,20 +460,25 @@ fun PlayerSettings(
                             }
                         )
                     },
-                    onClick = { onMetroMixEnabledChange(!metroMixEnabled) }
+                    onClick = { onAutomixEnabledChange(!automixEnabled) }
                 ))
-                if (metroMixEnabled) {
-                    add(Material3SettingsItem(
-                        icon = painterResource(R.drawable.graphic_eq),
-                        title = { Text(stringResource(R.string.metromix_studio)) },
-                        description = { Text(stringResource(R.string.metromix_studio_desc)) },
-                        onClick = { showMetroMixStudioDialog = true }
-                    ))
+                if (automixEnabled) {
                     add(Material3SettingsItem(
                         icon = painterResource(R.drawable.tune),
-                        title = { Text(stringResource(R.string.metromix_preset)) },
-                        description = { Text(metroMixPresetDescription(metroMixPreset)) },
-                        onClick = { showMetroMixPresetDialog = true }
+                        title = { Text(stringResource(R.string.automix_transition_bars)) },
+                        description = {
+                            Column {
+                                Text(stringResource(R.string.automix_transition_bars_desc, automixBars))
+                                Slider(
+                                    value = automixBars.toFloat(),
+                                    onValueChange = {
+                                        onAutomixBarsChange(it.roundToInt().coerceIn(2, 16))
+                                    },
+                                    valueRange = 2f..16f,
+                                    steps = 13,
+                                )
+                            }
+                        },
                     ))
                 }
                 add(Material3SettingsItem(
@@ -679,19 +645,19 @@ fun PlayerSettings(
                     title = { Text(stringResource(R.string.audio_offload)) },
                     description = {
                         Text(
-                            if (crossfadeEnabled || metroMixEnabled) stringResource(R.string.audio_offload_disabled_by_transitions)
+                            if (crossfadeEnabled || automixEnabled) stringResource(R.string.audio_offload_disabled_by_transitions)
                             else stringResource(R.string.audio_offload_description)
                         )
                     },
                     trailingContent = {
                         Switch(
-                            checked = if (crossfadeEnabled || metroMixEnabled) false else audioOffload,
+                            checked = if (crossfadeEnabled || automixEnabled) false else audioOffload,
                             onCheckedChange = onAudioOffloadChange,
-                            enabled = !crossfadeEnabled && !metroMixEnabled,
+                            enabled = !crossfadeEnabled && !automixEnabled,
                             thumbContent = {
                                 Icon(
                                     painter = painterResource(
-                                        id = if (!crossfadeEnabled && !metroMixEnabled && audioOffload) R.drawable.check else R.drawable.close
+                                        id = if (!crossfadeEnabled && !automixEnabled && audioOffload) R.drawable.check else R.drawable.close
                                     ),
                                     contentDescription = null,
                                     modifier = Modifier.size(SwitchDefaults.IconSize)
@@ -699,7 +665,7 @@ fun PlayerSettings(
                             }
                         )
                     },
-                    onClick = { if (!crossfadeEnabled && !metroMixEnabled) onAudioOffloadChange(!audioOffload) }
+                    onClick = { if (!crossfadeEnabled && !automixEnabled) onAudioOffloadChange(!audioOffload) }
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.graphic_eq),

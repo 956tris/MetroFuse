@@ -179,8 +179,8 @@ object IsrcResolver {
     }
 
     // Uses DeezerAudioProvider.findBestMatch, which runs the same
-    // ISRC-first -> scored title/artist/album/duration search -> song.link
-    // fallback chain used for actual playback resolution. This matters:
+    // ISRC-first -> scored title/artist/album/duration search chain used
+    // for actual playback resolution. This matters:
     // a naive "first search result that happens to carry an ISRC" can
     // easily grab a cover, remix, or same-titled track by a different
     // artist, which then silently poisons the Apple Music canvas match
@@ -199,7 +199,6 @@ object IsrcResolver {
                 durationMs = durationSeconds?.toLong()?.times(1000L),
                 resolverUrl = DeezerAudioProvider.DEFAULT_RESOLVER_URL,
                 quality = com.metrolist.music.constants.DeezerAudioQuality.MP3_128,
-                fastMode = false,
                 proxyUrl = DeezerAudioProvider.DEFAULT_PROXY_URL,
             )
             DeezerAudioProvider.findBestMatch(query)

@@ -6,9 +6,8 @@
 package com.metrolist.music.utils.mix
 
 /**
- * Harmonic-mixing helpers shared by the MetroMix studio preview and the
- * live Automix engine in MusicService, so the waveform editor and the
- * actual playback behavior never disagree about key compatibility.
+ * Harmonic-mixing helpers for the Automix engine in MusicService, which blends
+ * tracks by tempo, musical key, and beat phase.
  */
 
 /** How well two Camelot-wheel keys mix together, from best to worst. */
@@ -56,8 +55,8 @@ fun camelotCompatibility(
     keyA: String?,
     keyB: String?,
 ): KeyCompatibility {
-    val a = keyA?.let(::parseCamelot) ?: return KeyCompatibility.UNKNOWN
-    val b = keyB?.let(::parseCamelot) ?: return KeyCompatibility.UNKNOWN
+    val a = keyA?.let(::normalizeToCamelot)?.let(::parseCamelot) ?: return KeyCompatibility.UNKNOWN
+    val b = keyB?.let(::normalizeToCamelot)?.let(::parseCamelot) ?: return KeyCompatibility.UNKNOWN
     val (numberA, minorA) = a
     val (numberB, minorB) = b
 
@@ -83,5 +82,54 @@ fun harmonicMixHint(
         KeyCompatibility.ENERGY_SHIFT -> HarmonicMixHint(compatibility, durationScale = 0.95f, bassSeparation = 0.16f)
         KeyCompatibility.CLASHING -> HarmonicMixHint(compatibility, durationScale = 0.75f, bassSeparation = 0.22f)
         KeyCompatibility.UNKNOWN -> HarmonicMixHint(compatibility, durationScale = 1f, bassSeparation = 0.12f)
+    }
+}
+
+/**
+ * Normalizes a raw musical key ("F#m", "Bb major", "8A", "G# minor") to a
+ * Camelot code ("11A", "6B"). Returns null for blank input, and passes
+ * already-valid Camelot codes straight through. Unrecognized but non-blank
+ * values fall through to [camelotCompatibility]'s UNKNOWN path via null -
+ * callers must not guess, since a wrong key sounds worse than no key data.
+ */
+fun normalizeToCamelot(raw: String?): String? {
+    if (raw.isNullOrBlank()) return null
+    val normalized =
+        raw.trim()
+            .replace("minor", "m", ignoreCase = true)
+            .replace("major", "", ignoreCase = true)
+            .replace("maj", "", ignoreCase = true)
+            .replace("min", "m", ignoreCase = true)
+            .replace(" ", "")
+            .replace('\u266F', '#')
+            .replace('\u266D', 'b')
+            .uppercase()
+    if (Regex("""^(?:[1-9]|1[0-2])[AB]$""").matches(normalized)) return normalized
+    return when (normalized) {
+        "G#M", "ABM" -> "1A"
+        "B" -> "1B"
+        "D#M", "EBM" -> "2A"
+        "F#" -> "2B"
+        "A#M", "BBM" -> "3A"
+        "C#" -> "3B"
+        "FM" -> "4A"
+        "AB" -> "4B"
+        "CM" -> "5A"
+        "EB" -> "5B"
+        "GM" -> "6A"
+        "BB" -> "6B"
+        "DM" -> "7A"
+        "F" -> "7B"
+        "AM" -> "8A"
+        "C" -> "8B"
+        "EM" -> "9A"
+        "G" -> "9B"
+        "BM" -> "10A"
+        "D" -> "10B"
+        "F#M", "GBM" -> "11A"
+        "A" -> "11B"
+        "C#M", "DBM" -> "12A"
+        "E" -> "12B"
+        else -> null
     }
 }

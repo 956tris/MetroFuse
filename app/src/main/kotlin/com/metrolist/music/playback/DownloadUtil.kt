@@ -23,7 +23,6 @@ import com.metrolist.music.constants.deserializeDisabledProviders
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
-import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
@@ -237,7 +236,6 @@ constructor(
     private fun currentStreamSelectionKey(context: Context): String {
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore[DeezerAudioQualityKey].toEnum(DeezerAudioQuality.MP3_128)
-        val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val configuredDeezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
         val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
             configuredProxyModeValue = context.dataStore.get(DeezerProxyModeKey, ""),
@@ -249,7 +247,6 @@ constructor(
         return listOf(
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
-            "deezerFast=$deezerFastMode",
             "deezerProxy=${DeezerAudioProvider.normalizeProxyUrl(deezerProxyUrl).hashCode()}",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "soundCloudAuth=$soundCloudAuthConfigured",
@@ -263,7 +260,6 @@ constructor(
     ): DownloadStreamResolution {
         val deezerResolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
         val deezerQuality = context.dataStore[DeezerAudioQualityKey].toEnum(DeezerAudioQuality.MP3_128)
-        val deezerFastMode = context.dataStore.get(DeezerFastModeKey, false)
         val configuredDeezerProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
         val deezerProxyUrl = DeezerAudioProvider.effectiveProxyUrl(
             configuredProxyModeValue = context.dataStore.get(DeezerProxyModeKey, ""),
@@ -367,7 +363,6 @@ constructor(
                                 song = song,
                                 resolverUrl = deezerResolverUrl,
                                 quality = deezerQuality,
-                                fastMode = if (directTidalMediaId) false else deezerFastMode,
                                 proxyUrl = deezerProxyUrl,
                             ),
                         )
@@ -550,7 +545,6 @@ constructor(
         song: Song?,
         resolverUrl: String,
         quality: DeezerAudioQuality,
-        fastMode: Boolean = false,
         proxyUrl: String = DeezerAudioProvider.DEFAULT_PROXY_URL,
     ): DeezerAudioProvider.Query {
         return DeezerAudioProvider.Query(
@@ -565,7 +559,6 @@ constructor(
                 ?.times(1000L),
             resolverUrl = resolverUrl,
             quality = quality,
-            fastMode = fastMode,
             proxyUrl = proxyUrl,
         )
     }

@@ -59,22 +59,21 @@ object DeezerAudioProvider {
     private const val BROWSER_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
     private const val SEARCH_API_URL = "https://api.deezer.com/search/track"
-    private const val SONG_LINK_API_URL = "https://api.song.link/v1-alpha.1/links"
     private const val STREAM_CACHE_MS = 45 * 60 * 1000L
     private const val MIN_MATCH_SCORE = 80
     private const val REJECT_SCORE = -1_000_000
-    private const val NORMAL_SEARCH_LIMIT = 12
-    private const val FAST_SEARCH_LIMIT = 4
+    private const val SEARCH_LIMIT = 4
     private const val RESOLVER_MAX_IN_FLIGHT = 4
     private const val RESOLVER_PERMIT_TIMEOUT_MS = 4_000L
-    private const val RESOLVER_FAST_MIN_INTERVAL_MS = 40L
-    private const val RESOLVER_NORMAL_MIN_INTERVAL_MS = 70L
+    private const val RESOLVER_MIN_INTERVAL_MS = 40L
     private const val DEFAULT_PROXY_PORT = 3128
     private const val DEFAULT_MEDIA_PROXY_PATH = "/deezer-media-proxy"
     private const val DEFAULT_API_PROXY_PATH = "/deezer-api-proxy"
     private const val GW_LIGHT_URL = "https://www.deezer.com/ajax/gw-light.php"
     private const val GET_URL_URL = "https://media.deezer.com/v1/get_url"
     private const val ACCOUNT_SESSION_TTL_MS = 30 * 60 * 1000L
+    private const val TRACK_TOKEN_FALLBACK_TTL_MS = 10 * 60 * 1000L
+    private const val TRACK_TOKEN_CACHE_MAX_SIZE = 200
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     private val AMAZON_DATE = DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss'Z'", Locale.US)
 
@@ -87,7 +86,6 @@ object DeezerAudioProvider {
         val durationMs: Long?,
         val resolverUrl: String,
         val quality: DeezerAudioQuality,
-        val fastMode: Boolean = false,
         val proxyUrl: String = DEFAULT_PROXY_URL,
         val cookie: String = "",
         val useAccount: Boolean = true,
@@ -145,6 +143,12 @@ object DeezerAudioProvider {
         val expiresAtMs: Long,
     )
 
+    private data class AccountTrackToken(
+        val token: String,
+        val expiresAtMs: Long,
+        val createdAtMs: Long,
+    )
+
     private class DeezerAccountCookieJar(initialCookieHeader: String) : CookieJar {
         private val jarCookies = ConcurrentHashMap<String, String>()
 
@@ -192,6 +196,7 @@ object DeezerAudioProvider {
 
     private val trackCache = ConcurrentHashMap<String, MatchedTrack>()
     private val streamCache = ConcurrentHashMap<String, Resolved>()
+    private val accountTrackTokens = ConcurrentHashMap<String, AccountTrackToken>()
     private val proxiedClients = ConcurrentHashMap<String, OkHttpClient>()
     private val accountSessions = ConcurrentHashMap<String, AccountSession>()
     private val resolverPermits = Semaphore(RESOLVER_MAX_IN_FLIGHT, true)
@@ -223,9 +228,6 @@ object DeezerAudioProvider {
         val resolverUrl = normalizeResolverUrl(query.resolverUrl)
         val proxyUrl = normalizeProxyUrl(query.proxyUrl)
         val directTrackId = query.mediaId.toDeezerTrackIdOrNull(allowPlainNumeric = false)
-        if (query.fastMode) {
-            return resolveFast(query, resolverUrl, directTrackId)
-        }
         val track = if (directTrackId != null) {
             query.toDirectMatchedTrack(directTrackId)
         } else {
@@ -238,24 +240,21 @@ object DeezerAudioProvider {
         harvestIsrc(query, track)
 
         val now = System.currentTimeMillis()
-        val errors = mutableListOf<String>()
         val qualities = qualityFallbackOrder(query.quality)
-        val batchCacheKey =
+        val cacheKey =
             listOf(
                 query.mediaId,
                 track.trackId,
                 query.quality.name,
-                if (query.fastMode) "fast" else "batch",
                 resolverUrl.toString().hashCode(),
                 proxyUrl.hashCode(),
-            )
-                .joinToString("::")
-        streamCache[batchCacheKey]
+            ).joinToString("::")
+        streamCache[cacheKey]
             ?.takeIf { it.expiresAtMs > now + 20_000L }
             ?.let { return it }
 
         if (query.useAccount && query.cookie.isNotBlank()) {
-            val accountCacheKey = "acct::$batchCacheKey"
+            val accountCacheKey = "acct::$cacheKey"
             streamCache[accountCacheKey]
                 ?.takeIf { it.expiresAtMs > now + 20_000L }
                 ?.let { return it }
@@ -281,91 +280,6 @@ object DeezerAudioProvider {
         }
 
         val resolverStartMs = System.currentTimeMillis()
-        val batchAttempt = requestResolverStream(
-            resolverUrl = resolverUrl,
-            mediaId = query.mediaId,
-            trackId = track.trackId,
-            preferredQuality = query.quality,
-            qualities = qualities,
-            durationMs = query.durationMs ?: track.durationMs,
-            fastMode = false,
-            proxyUrl = proxyUrl,
-        )
-        batchAttempt.resolved?.let { resolved ->
-            Timber.tag("DeezerLatency").d(
-                "resolver resolve for ${track.trackId}: ${System.currentTimeMillis() - resolverStartMs}ms (hit)",
-            )
-            streamCache[batchCacheKey] = resolved
-            return resolved
-        }
-        Timber.tag("DeezerLatency").d(
-            "resolver resolve for ${track.trackId}: ${System.currentTimeMillis() - resolverStartMs}ms (miss)",
-        )
-        batchAttempt.error?.takeIf { it.isNotBlank() }?.let(errors::add)
-
-        if (!query.fastMode) {
-            for (quality in qualities) {
-                val streamCacheKey = listOf(
-                    query.mediaId,
-                    track.trackId,
-                    quality.name,
-                    resolverUrl.toString().hashCode(),
-                    proxyUrl.hashCode(),
-                )
-                    .joinToString("::")
-                streamCache[streamCacheKey]
-                    ?.takeIf { it.expiresAtMs > now + 20_000L }
-                    ?.let { return it }
-
-                val attempt = requestResolverStream(
-                    resolverUrl = resolverUrl,
-                    mediaId = query.mediaId,
-                    trackId = track.trackId,
-                    preferredQuality = quality,
-                    qualities = listOf(quality),
-                    durationMs = query.durationMs ?: track.durationMs,
-                    fastMode = false,
-                    proxyUrl = proxyUrl,
-                )
-                attempt.resolved?.let { resolved ->
-                    streamCache[streamCacheKey] = resolved
-                    return resolved
-                }
-                attempt.error?.takeIf { it.isNotBlank() }?.let(errors::add)
-            }
-        }
-
-        throw DeezerResolutionException(
-            errors.lastOrNull() ?: "Deezer stream not found for ${query.title}",
-        )
-    }
-
-    private fun resolveFast(
-        query: Query,
-        resolverUrl: HttpUrl,
-        directTrackId: String?,
-    ): Resolved {
-        val proxyUrl = normalizeProxyUrl(query.proxyUrl)
-        val track = if (directTrackId != null) {
-            query.toDirectMatchedTrack(directTrackId)
-        } else {
-            val trackCacheKey = query.copy(proxyUrl = proxyUrl).trackCacheKey()
-            trackCache[trackCacheKey]
-                ?: findBestTrackFast(query)
-                    ?.also { trackCache[trackCacheKey] = it }
-                ?: throw DeezerResolutionException("Deezer fast match not found for ${query.title}")
-        }
-        harvestIsrc(query, track)
-
-        val now = System.currentTimeMillis()
-        val qualities = qualityFallbackOrder(query.quality)
-        val cacheKey =
-            listOf(query.mediaId, track.trackId, query.quality.name, "fast", resolverUrl.toString().hashCode(), proxyUrl.hashCode())
-                .joinToString("::")
-        streamCache[cacheKey]
-            ?.takeIf { it.expiresAtMs > now + 20_000L }
-            ?.let { return it }
-
         val attempt = requestResolverStream(
             resolverUrl = resolverUrl,
             mediaId = query.mediaId,
@@ -373,16 +287,21 @@ object DeezerAudioProvider {
             preferredQuality = query.quality,
             qualities = qualities,
             durationMs = query.durationMs ?: track.durationMs,
-            fastMode = true,
             proxyUrl = proxyUrl,
         )
         attempt.resolved?.let { resolved ->
+            Timber.tag("DeezerLatency").d(
+                "resolver resolve for ${track.trackId}: ${System.currentTimeMillis() - resolverStartMs}ms (hit)",
+            )
             streamCache[cacheKey] = resolved
             return resolved
         }
+        Timber.tag("DeezerLatency").d(
+            "resolver resolve for ${track.trackId}: ${System.currentTimeMillis() - resolverStartMs}ms (miss)",
+        )
 
         throw DeezerResolutionException(
-            attempt.error ?: "Deezer fast stream not found for ${query.title}",
+            attempt.error ?: "Deezer stream not found for ${query.title}",
         )
     }
 
@@ -498,14 +417,13 @@ object DeezerAudioProvider {
         limit: Int = 8,
     ): List<CandidateMetadata> {
         val results = linkedMapOf<String, CandidateMetadata>()
-        resolveIsrcTrack(query, fastMode = query.fastMode)?.let { track ->
+        resolveIsrcTrack(query)?.let { track ->
             results[track.trackId] = track.toCandidateMetadata()
         }
         for (term in searchTerms(query)) {
             val array = searchTracks(
                 term = term,
-                limit = if (query.fastMode) FAST_SEARCH_LIMIT else NORMAL_SEARCH_LIMIT,
-                fastMode = query.fastMode,
+                limit = SEARCH_LIMIT,
                 proxyUrl = query.proxyUrl,
             ) ?: continue
             for (index in 0 until array.length()) {
@@ -533,42 +451,17 @@ object DeezerAudioProvider {
      * positive.
      */
     fun findBestMatch(query: Query): CandidateMetadata? =
-        (if (query.fastMode) findBestTrackFast(query) else findBestTrack(query))?.toCandidateMetadata()
+        findBestTrack(query)?.toCandidateMetadata()
 
     private fun findBestTrack(query: Query): MatchedTrack? {
-        resolveIsrcTrack(query, fastMode = false)?.let { track ->
+        resolveIsrcTrack(query)?.let { track ->
             Timber.tag("DeezerAudio").i("Resolved Deezer track ${track.trackId} through ISRC for ${query.title}")
             return track
         }
-        for (term in searchTerms(query).let { terms -> if (query.fastMode) terms.take(1) else terms }) {
-            val results = searchTracks(
-                term = term,
-                limit = if (query.fastMode) FAST_SEARCH_LIMIT else NORMAL_SEARCH_LIMIT,
-                fastMode = query.fastMode,
-                proxyUrl = query.proxyUrl,
-            ) ?: continue
-            selectBestTrack(results, query)?.let { return it }
-        }
-        if (!query.fastMode) {
-            resolveSongLinkDeezerTrackId(query)?.let { trackId ->
-                Timber.tag("DeezerAudio").i("Resolved Deezer track $trackId through song.link for ${query.title}")
-                return query.toDirectMatchedTrack(trackId)
-            }
-        }
-        return null
-    }
-
-    private fun findBestTrackFast(query: Query): MatchedTrack? {
-        resolveIsrcTrack(query, fastMode = true)?.let { track ->
-            Timber.tag("DeezerAudio").i("Fast resolved Deezer track ${track.trackId} through ISRC for ${query.title}")
-            return track
-        }
-
         val term = searchTerms(query).firstOrNull() ?: return null
         val results = searchTracks(
             term = term,
-            limit = FAST_SEARCH_LIMIT,
-            fastMode = true,
+            limit = SEARCH_LIMIT,
             proxyUrl = query.proxyUrl,
         ) ?: return null
         return selectBestTrack(results, query)
@@ -576,7 +469,6 @@ object DeezerAudioProvider {
 
     private fun resolveIsrcTrack(
         query: Query,
-        fastMode: Boolean,
     ): MatchedTrack? {
         val isrc = query.isrc
             ?.trim()
@@ -593,7 +485,7 @@ object DeezerAudioProvider {
                 .header("User-Agent", BROWSER_USER_AGENT)
                 .build()
         return runCatching {
-            httpClient(fastMode, query.proxyUrl).newCall(request).execute().use { response ->
+            httpClient(query.proxyUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
                 val obj = JSONObject(payload)
@@ -616,14 +508,13 @@ object DeezerAudioProvider {
     private fun searchTracks(
         term: String,
         limit: Int,
-        fastMode: Boolean,
         proxyUrl: String,
     ): JSONArray? {
         val url = SEARCH_API_URL
             .toHttpUrl()
             .newBuilder()
             .addQueryParameter("q", term)
-            .addQueryParameter("limit", limit.coerceIn(1, NORMAL_SEARCH_LIMIT).toString())
+            .addQueryParameter("limit", limit.coerceIn(1, SEARCH_LIMIT).toString())
             .build()
         val request =
             Request
@@ -634,7 +525,7 @@ object DeezerAudioProvider {
                 .header("User-Agent", BROWSER_USER_AGENT)
                 .build()
         return runCatching {
-            httpClient(fastMode, proxyUrl).newCall(request).execute().use { response ->
+            httpClient(proxyUrl).newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
                 JSONObject(payload).optJSONArray("data")
@@ -750,7 +641,6 @@ object DeezerAudioProvider {
         preferredQuality: DeezerAudioQuality,
         qualities: List<DeezerAudioQuality>,
         durationMs: Long?,
-        fastMode: Boolean,
         proxyUrl: String,
     ): StreamAttempt {
         val bodyJson = JSONObject()
@@ -761,14 +651,8 @@ object DeezerAudioProvider {
                 },
             )
             .put("ids", JSONArray().put(trackId.toLongOrNull() ?: trackId))
-            .put("fast", fastMode)
-        val targetUrl = if (fastMode) {
-            resolverUrl.newBuilder()
-                .addQueryParameter("mode", "fast")
-                .build()
-        } else {
-            resolverUrl
-        }
+            .put("fast", false)
+        val targetUrl = resolverUrl
         val request =
             Request
                 .Builder()
@@ -779,12 +663,12 @@ object DeezerAudioProvider {
                 .build()
 
         return runCatching {
-            paceResolverRequests(fastMode)
+            paceResolverRequests()
             if (!resolverPermits.tryAcquire(RESOLVER_PERMIT_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 return StreamAttempt(error = "Deezer resolver is busy")
             }
             try {
-                httpClient(fastMode, proxyUrl).newCall(request).execute().use { response ->
+                httpClient(proxyUrl).newCall(request).execute().use { response ->
                     val payload = response.body.string()
                     if (!response.isSuccessful) {
                         return@use StreamAttempt(error = "Deezer resolver HTTP ${response.code}: ${payload.take(160)}")
@@ -918,13 +802,21 @@ object DeezerAudioProvider {
                     expiresAtMs = now + ACCOUNT_SESSION_TTL_MS,
                 )
             }
-        }.getOrNull()?.also { accountSessions[cacheKey] = it }
+        }.getOrNull()?.also {
+            // Track tokens are minted against this session: drop tokens from
+            // the previous session so a rotated api_token can't serve stale ones.
+            accountTrackTokens.clear()
+            accountSessions[cacheKey] = it
+        }
     }
 
     private fun fetchAccountTrackToken(
         session: AccountSession,
         trackId: String,
     ): String? {
+        val now = System.currentTimeMillis()
+        val cacheKey = "${session.apiToken.hashCode()}::$trackId"
+        accountTrackTokens[cacheKey]?.takeIf { it.expiresAtMs > now + 20_000L }?.let { return it.token }
         val url = GW_LIGHT_URL.toHttpUrl().newBuilder()
             .addQueryParameter("method", "song.getListData")
             .addQueryParameter("input", "3")
@@ -943,11 +835,24 @@ object DeezerAudioProvider {
             session.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
-                JSONObject(payload)
+                val data = JSONObject(payload)
                     .optJSONObject("results")
                     ?.optJSONArray("data")
-                    ?.optJSONObject(0)
-                    ?.stringOrNull("TRACK_TOKEN")
+                    ?.optJSONObject(0) ?: return@use null
+                val token = data.stringOrNull("TRACK_TOKEN") ?: return@use null
+                val expiresAtMs = data.optLong("TRACK_TOKEN_EXPIRE", 0L)
+                    .takeIf { it > 0L }
+                    ?.times(1000L)
+                    ?.minus(30_000L)
+                    ?: (now + TRACK_TOKEN_FALLBACK_TTL_MS)
+                accountTrackTokens[cacheKey] = AccountTrackToken(token, expiresAtMs, now)
+                if (accountTrackTokens.size > TRACK_TOKEN_CACHE_MAX_SIZE) {
+                    repeat((accountTrackTokens.size - TRACK_TOKEN_CACHE_MAX_SIZE).coerceAtLeast(1)) {
+                        val oldest = accountTrackTokens.entries.minByOrNull { it.value.createdAtMs } ?: return@repeat
+                        accountTrackTokens.remove(oldest.key)
+                    }
+                }
+                token
             }
         }.getOrNull()
     }
@@ -1039,8 +944,8 @@ object DeezerAudioProvider {
         }
     }
 
-    private fun paceResolverRequests(fastMode: Boolean) {
-        val minIntervalMs = if (fastMode) RESOLVER_FAST_MIN_INTERVAL_MS else RESOLVER_NORMAL_MIN_INTERVAL_MS
+    private fun paceResolverRequests() {
+        val minIntervalMs = RESOLVER_MIN_INTERVAL_MS
         while (true) {
             val now = System.currentTimeMillis()
             val previous = lastResolverRequestAtMs.get()
@@ -1074,10 +979,9 @@ object DeezerAudioProvider {
     }
 
     private fun httpClient(
-        fastMode: Boolean,
         proxyUrl: String = DEFAULT_PROXY_URL,
     ): OkHttpClient =
-        clientForProxy(if (fastMode) fastClient else client, proxyUrl)
+        clientForProxy(fastClient, proxyUrl)
 
     private fun proxyConfig(value: String): ProxyConfig? {
         val raw = value.trim()
@@ -1170,66 +1074,6 @@ object DeezerAudioProvider {
             return authority.substringAfter("]", "").startsWith(":")
         }
         return authority.contains(':') && authority.substringAfterLast(':').toIntOrNull() != null
-    }
-
-    private fun resolveSongLinkDeezerTrackId(query: Query): String? {
-        for (sourceUrl in songLinkSourceUrls(query.mediaId)) {
-            val url =
-                SONG_LINK_API_URL
-                    .toHttpUrl()
-                    .newBuilder()
-                    .addQueryParameter("url", sourceUrl)
-                    .build()
-            val request =
-                Request
-                    .Builder()
-                    .url(url)
-                    .get()
-                    .header("Accept", "application/json")
-                    .header("User-Agent", BROWSER_USER_AGENT)
-                    .build()
-            runCatching {
-                httpClient(fastMode = false, proxyUrl = query.proxyUrl).newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use null
-                    val body = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
-                    val root = JSONObject(body)
-                    root.optJSONObject("linksByPlatform")
-                        ?.optJSONObject("deezer")
-                        ?.stringOrNull("url")
-                        ?.toDeezerTrackIdOrNull(allowPlainNumeric = false)
-                        ?: root.optJSONObject("songUrls")
-                            ?.stringIgnoreCase("Deezer")
-                            ?.toDeezerTrackIdOrNull(allowPlainNumeric = false)
-                }
-            }.getOrNull()?.let { return it }
-        }
-        return null
-    }
-
-    private fun songLinkSourceUrls(mediaId: String): List<String> {
-        val trimmed = mediaId.trim()
-        if (trimmed.isBlank()) return emptyList()
-        return buildList {
-            if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-                add(trimmed)
-            }
-            Regex("""^tidal:track:([A-Za-z0-9_-]+)$""", RegexOption.IGNORE_CASE)
-                .find(trimmed)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.let { add("https://listen.tidal.com/track/$it") }
-            Regex("""spotify[:/](?:track[:/])?([A-Za-z0-9]{22})""", RegexOption.IGNORE_CASE)
-                .find(trimmed)
-                ?.groupValues
-                ?.getOrNull(1)
-                ?.let { add("https://open.spotify.com/track/$it") }
-            if (trimmed.matches(Regex("[A-Za-z0-9]{22}"))) {
-                add("https://open.spotify.com/track/$trimmed")
-            }
-            if (trimmed.matches(Regex("[A-Za-z0-9_-]{11}"))) {
-                add("https://music.youtube.com/watch?v=$trimmed")
-            }
-        }.distinct()
     }
 
     private fun searchTerms(query: Query): List<String> =
@@ -1397,7 +1241,6 @@ object DeezerAudioProvider {
             album.normalized(),
             isrc?.trim()?.uppercase(Locale.US).orEmpty(),
             durationMs?.div(1000L)?.toString().orEmpty(),
-            "fast=$fastMode",
             "proxy=${normalizeProxyUrl(proxyUrl).hashCode()}",
         ).joinToString("::")
 
