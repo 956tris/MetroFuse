@@ -51,8 +51,6 @@ import com.metrolist.music.utils.spotify.SpotifyCanvasClient
 import com.metrolist.music.utils.spotify.normalizeSpotifyCookieInput
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
-import okhttp3.HttpUrl
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
@@ -64,8 +62,6 @@ import java.security.MessageDigest
 import java.time.LocalDateTime
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.math.max
 import kotlin.math.min
 
@@ -948,143 +944,19 @@ object PublicDownloadExporter {
         headers: Map<String, String>,
         provider: String,
     ): EmbeddedCanvas? {
-        val baseUrl = playlistUrl.toHttpUrlOrNull() ?: return null
-        val mediaPlaylistUrl = selectHlsVariant(baseUrl, playlist)
-        val mediaBaseUrl = mediaPlaylistUrl ?: baseUrl
-        val mediaPlaylist =
-            if (mediaPlaylistUrl == null) {
-                playlist
-            } else {
-                fetchCanvasText(mediaPlaylistUrl.toString(), headers) ?: return null
-            }
-        if (!mediaPlaylist.contains("#EXTINF")) return null
-
-        val packageBytes = packageHlsPlaylist(mediaBaseUrl, mediaPlaylist, headers) ?: return null
+        val packageBytes = HlsCanvasPackager.downloadAndPackage(
+            playlistUrl = playlistUrl,
+            playlist = playlist,
+            headers = headers,
+            client = canvasClient,
+            maxBytes = MAX_EMBEDDED_CANVAS_BYTES,
+        ) ?: return null
         return EmbeddedCanvas(
             mimeType = AudioTagWriter.METROFUSE_HLS_CANVAS_MIME,
             bytes = packageBytes,
             provider = provider,
         )
     }
-
-    private fun selectHlsVariant(
-        baseUrl: HttpUrl,
-        playlist: String,
-    ): HttpUrl? {
-        val variants = mutableListOf<Pair<Int, HttpUrl>>()
-        var pendingBandwidth: Int? = null
-        playlist.lineSequence().forEach { rawLine ->
-            val line = rawLine.trim()
-            when {
-                line.startsWith("#EXT-X-STREAM-INF", ignoreCase = true) -> {
-                    pendingBandwidth = HLS_BANDWIDTH_ATTRIBUTE.find(line)
-                        ?.groupValues
-                        ?.getOrNull(1)
-                        ?.toIntOrNull()
-                }
-                pendingBandwidth != null && line.isNotBlank() && !line.startsWith("#") -> {
-                    baseUrl.resolve(line)?.let { variants += (pendingBandwidth ?: Int.MAX_VALUE) to it }
-                    pendingBandwidth = null
-                }
-            }
-        }
-        return variants.minByOrNull { it.first }?.second
-    }
-
-    private fun packageHlsPlaylist(
-        baseUrl: HttpUrl,
-        playlist: String,
-        headers: Map<String, String>,
-    ): ByteArray? =
-        runCatching {
-            val output = java.io.ByteArrayOutputStream()
-            var unpackedBytes = 0L
-            var segmentIndex = 0
-            var initIndex = 0
-            var keyIndex = 0
-            val rewrittenLines = mutableListOf<String>()
-
-            ZipOutputStream(output).use { zip ->
-                fun addEntry(
-                    name: String,
-                    bytes: ByteArray,
-                ) {
-                    unpackedBytes += bytes.size
-                    if (unpackedBytes > MAX_EMBEDDED_CANVAS_BYTES) error("Canvas HLS package is too large")
-                    zip.putNextEntry(ZipEntry(name))
-                    zip.write(bytes)
-                    zip.closeEntry()
-                }
-
-                playlist.lineSequence().forEach { rawLine ->
-                    val line = rawLine.trim()
-                    when {
-                        line.startsWith("#EXT-X-MAP", ignoreCase = true) -> {
-                            val uri = HLS_URI_ATTRIBUTE.find(line)?.groupValues?.getOrNull(1)
-                            val resolved = uri?.let { baseUrl.resolve(it) }
-                            val bytes = resolved?.let { fetchCanvasBytes(it.toString(), headers) }
-                            if (resolved != null && bytes != null) {
-                                val entryName = "init_${initIndex++}.${hlsExtension(resolved, "mp4")}"
-                                addEntry(entryName, bytes)
-                                rewrittenLines += HLS_URI_ATTRIBUTE.replace(line, "URI=\"$entryName\"")
-                            } else {
-                                rewrittenLines += line
-                            }
-                        }
-                        line.startsWith("#EXT-X-KEY", ignoreCase = true) -> {
-                            val uri = HLS_URI_ATTRIBUTE.find(line)?.groupValues?.getOrNull(1)
-                            val resolved = uri?.let { baseUrl.resolve(it) }
-                            val bytes = resolved?.let { fetchCanvasBytes(it.toString(), headers) }
-                            if (resolved != null && bytes != null) {
-                                val entryName = "key_${keyIndex++}.key"
-                                addEntry(entryName, bytes)
-                                rewrittenLines += HLS_URI_ATTRIBUTE.replace(line, "URI=\"$entryName\"")
-                            } else {
-                                rewrittenLines += line
-                            }
-                        }
-                        line.isBlank() || line.startsWith("#") -> rewrittenLines += line
-                        else -> {
-                            val resolved = baseUrl.resolve(line)
-                            val bytes = resolved?.let { fetchCanvasBytes(it.toString(), headers) }
-                            if (resolved != null && bytes != null) {
-                                val entryName = "segment_${segmentIndex++}.${hlsExtension(resolved, "m4s")}"
-                                addEntry(entryName, bytes)
-                                rewrittenLines += entryName
-                            }
-                        }
-                    }
-                }
-
-                val manifest = rewrittenLines.joinToString("\n").toByteArray(Charsets.UTF_8)
-                addEntry("manifest.m3u8", manifest)
-            }
-
-            output.toByteArray().takeIf { it.size <= MAX_EMBEDDED_CANVAS_BYTES }
-        }.getOrElse { error ->
-            Timber.tag(TAG).d(error, "Failed to package Apple Music Canvas HLS")
-            null
-        }
-
-    private fun fetchCanvasText(
-        url: String,
-        headers: Map<String, String>,
-    ): String? =
-        canvasClient.newCall(canvasRequest(url, headers)).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            response.body.string()
-        }
-
-    private fun fetchCanvasBytes(
-        url: String,
-        headers: Map<String, String>,
-    ): ByteArray? =
-        canvasClient.newCall(canvasRequest(url, headers)).execute().use { response ->
-            if (!response.isSuccessful) return@use null
-            val body = response.body
-            if (body.contentLength() > MAX_EMBEDDED_CANVAS_BYTES) return@use null
-            body.bytes().takeIf { it.size <= MAX_EMBEDDED_CANVAS_BYTES }
-        }
 
     private fun canvasRequest(
         url: String,
@@ -1101,17 +973,6 @@ object PublicDownloadExporter {
                 }
             }
             .build()
-
-    private fun hlsExtension(
-        url: HttpUrl,
-        fallback: String,
-    ): String {
-        val segment = url.pathSegments.lastOrNull().orEmpty().substringBefore("?")
-        val extension = segment.substringAfterLast('.', "")
-        return extension
-            .takeIf { it.isNotBlank() && it.length <= 5 && it.all { char -> char.isLetterOrDigit() } }
-            ?: fallback
-    }
 
     private fun normalizeArtwork(bitmap: Bitmap): NormalizedArtwork {
         val maxSide = max(bitmap.width, bitmap.height)
@@ -1172,8 +1033,6 @@ object PublicDownloadExporter {
     private const val MAX_EMBEDDED_ARTWORK_SIDE = 1024
     private const val EMBEDDED_ARTWORK_JPEG_QUALITY = 92
     private const val MAX_EMBEDDED_CANVAS_BYTES = 8 * 1024 * 1024
-    private val HLS_URI_ATTRIBUTE = Regex("""URI="([^"]+)"""")
-    private val HLS_BANDWIDTH_ATTRIBUTE = Regex("""BANDWIDTH=(\d+)""")
 
     private data class LyricsForExport(
         val lyrics: String,

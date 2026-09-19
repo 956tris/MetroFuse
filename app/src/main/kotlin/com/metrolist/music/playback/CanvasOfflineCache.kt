@@ -87,6 +87,11 @@ internal object CanvasOfflineCache {
                 return
             }
             target.outputStream().use { it.write(canvas.bytes) }
+            if (ext == "m3u8.zip") {
+                // Drop the previous extraction so a refreshed package can't
+                // keep serving stale segments from the old zip.
+                dir.resolve("${digest}_hls").deleteRecursively()
+            }
             dir.resolve("$digest.meta").writeText(
                 listOf(canvas.provider, canvas.mimeType, sourceUrl.orEmpty(), System.currentTimeMillis().toString())
                     .joinToString("\n"),
@@ -123,7 +128,10 @@ internal object CanvasOfflineCache {
                     zip.closeEntry()
                 }
             }
-            manifest.takeIf { it.exists() }?.toUri()?.toString()
+            // Only advertise a manifest that actually parses as HLS with
+            // segments. A partial/corrupt zip must not produce a canvas URL
+            // that hides the artwork and renders nothing.
+            manifest.takeIf { it.exists() && it.isValidHlsManifest() }?.toUri()?.toString()
         }.getOrElse { error ->
             Timber.tag(TAG).d(error, "Failed to extract cached HLS canvas")
             null
@@ -147,6 +155,14 @@ internal object CanvasOfflineCache {
     private fun touch(file: File) {
         file.setLastModified(System.currentTimeMillis())
     }
+
+    private fun File.isValidHlsManifest(): Boolean =
+        runCatching {
+            if (!exists() || length() <= 0L || length() > 256 * 1024L) return false
+            val text = readText(Charsets.UTF_8)
+            text.contains("#EXTM3U") &&
+                (text.contains("#EXTINF") || text.contains("#EXT-X-STREAM-INF"))
+        }.getOrDefault(false)
 
     private fun stableDigest(value: String): String =
         MessageDigest.getInstance("SHA-1")

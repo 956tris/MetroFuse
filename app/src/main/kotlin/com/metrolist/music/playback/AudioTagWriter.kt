@@ -1029,7 +1029,13 @@ internal object AudioTagWriter {
             }
         }
 
+        // Only advertise a manifest that actually parses as HLS with
+        // segments. A partial/corrupt embed must fall back to artwork, not
+        // to a canvas URL that renders nothing.
         val manifest = targetDir.resolve(METROFUSE_HLS_MANIFEST_NAME).takeIf { it.exists() } ?: return null
+        val manifestText = runCatching { manifest.readText(Charsets.UTF_8) }.getOrNull() ?: return null
+        if (!manifestText.contains("#EXTM3U")) return null
+        if (!manifestText.contains("#EXTINF") && !manifestText.contains("#EXT-X-STREAM-INF")) return null
         return manifest.toUri().toString()
     }
 

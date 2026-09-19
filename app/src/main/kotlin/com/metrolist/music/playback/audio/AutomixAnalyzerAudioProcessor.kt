@@ -96,7 +96,7 @@ class AutomixAnalyzerAudioProcessor : AudioProcessor {
         return inputAudioFormat
     }
 
-    override fun isActive(): Boolean = true
+    override fun isActive(): Boolean = analysisEnabled
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         if (!inputBuffer.hasRemaining()) {

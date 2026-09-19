@@ -74,20 +74,31 @@ object OfflineAudioProvider {
 
         val queryTitle = normalize(query.title)
         if (queryTitle.isBlank()) return null
+        val queryTitleTokens = tokens(queryTitle).toSet()
         val queryArtists = query.artists.map(::normalize).filter { it.isNotBlank() }
+        val queryArtistTokens = queryArtists.flatMap(::tokens).toSet()
         val queryDurationMs = query.durationMs?.takeIf { it > 0 }
 
         var best: Song? = null
-        var bestScore = 0
+        var bestScore = MIN_MATCH_SCORE - 1
         for (candidate in candidates) {
             if (candidate.song.title.isBlank() || isUnknown(candidate.song.title)) continue
-            val score = scoreCandidate(candidate, queryTitle, queryArtists, query.album, queryDurationMs)
+            val score =
+                scoreCandidate(
+                    candidate = candidate,
+                    queryTitle = queryTitle,
+                    queryTitleTokens = queryTitleTokens,
+                    queryArtists = queryArtists,
+                    queryArtistTokens = queryArtistTokens,
+                    queryAlbum = query.album,
+                    queryDurationMs = queryDurationMs,
+                )
             if (score > bestScore) {
                 bestScore = score
                 best = candidate
             }
         }
-        return best
+        return best.takeIf { bestScore >= MIN_MATCH_SCORE }
     }
 
     suspend fun resolve(
@@ -113,21 +124,37 @@ object OfflineAudioProvider {
     private fun scoreCandidate(
         candidate: Song,
         queryTitle: String,
+        queryTitleTokens: Set<String>,
         queryArtists: List<String>,
+        queryArtistTokens: Set<String>,
         queryAlbum: String?,
         queryDurationMs: Long?,
     ): Int {
         val candidateTitle = normalize(candidate.song.title)
+        if (candidateTitle.isBlank()) return 0
+        val candidateTitleTokens = tokens(candidateTitle).toSet()
         val titleScore =
             when {
                 candidateTitle == queryTitle -> 100
                 candidateTitle.contains(queryTitle) || queryTitle.contains(candidateTitle) -> 70
-                tokenCoverScore(candidateTitle, queryTitle) >= 0.8f -> 40
-                else -> return 0
+                else -> {
+                    // Token-set F1 on content words: catches word-order
+                    // differences ("Love Me Do" vs "Do Love Me") without the
+                    // 0.8 recall gate that rejected them before, while still
+                    // rejecting unrelated titles sharing one stopword-free
+                    // token.
+                    val f1 = tokenF1(candidateTitleTokens, queryTitleTokens)
+                    when {
+                        f1 >= 0.8f -> 55
+                        f1 >= 0.6f -> 35
+                        else -> return 0
+                    }
+                }
             }
 
         val candidateArtists =
             candidate.orderedArtists.map { normalize(it.name) }.filter { it.isNotBlank() && !isUnknown(it) }
+        val candidateArtistTokens = candidateArtists.flatMap(::tokens).toSet()
         val artistScore =
             if (queryArtists.isEmpty() || candidateArtists.isEmpty()) {
                 0
@@ -136,42 +163,61 @@ object OfflineAudioProvider {
             } else if (queryArtists.any { q -> candidateArtists.any { c -> c.contains(q) || q.contains(c) } }) {
                 20
             } else {
-                return 0
+                // Token overlap as a last resort before rejecting: handles
+                // "John Lennon" vs "Lennon, John" style tag differences.
+                val overlap = tokenF1(candidateArtistTokens, queryArtistTokens)
+                if (overlap >= 0.5f) {
+                    15
+                } else {
+                    return 0
+                }
             }
 
         val candidateDurationMs = candidate.song.duration.takeIf { it > 0 }?.toLong()?.times(1000L)
         if (queryDurationMs != null && queryDurationMs > 0 && candidateDurationMs != null && candidateDurationMs > 0) {
-            val diffMs = kotlin.math.abs(queryDurationMs - candidateDurationMs)
-            if (diffMs > 20_000L) return 0
+            // A large duration gap means a different recording (live,
+            // extended, ringtone-length rip) even when names match.
+            if (kotlin.math.abs(queryDurationMs - candidateDurationMs) > MAX_DURATION_DELTA_MS) return 0
         }
         val durationBonus =
-            if (queryDurationMs != null && queryDurationMs > 0 && candidateDurationMs != null && candidateDurationMs > 0 &&
-                kotlin.math.abs(queryDurationMs - candidateDurationMs) <= 10_000L
-            ) {
-                10
+            if (queryDurationMs != null && queryDurationMs > 0 && candidateDurationMs != null && candidateDurationMs > 0) {
+                val durationDelta = kotlin.math.abs(queryDurationMs - candidateDurationMs)
+                when {
+                    durationDelta <= 5_000L -> 15
+                    durationDelta <= 10_000L -> 10
+                    else -> 0
+                }
             } else {
                 0
             }
 
         var albumBonus = 0
-        val queryAlbum = queryAlbum?.let(::normalize)
-        val candidateAlbum = (candidate.song.albumName ?: candidate.album?.title)?.let(::normalize)
-        if (!queryAlbum.isNullOrBlank() && !candidateAlbum.isNullOrBlank() &&
-            (candidateAlbum == queryAlbum || candidateAlbum.contains(queryAlbum) || queryAlbum.contains(candidateAlbum))
+        val normalizedQueryAlbum = queryAlbum?.let(::normalize)
+        val normalizedCandidateAlbum = (candidate.song.albumName ?: candidate.album?.title)?.let(::normalize)
+        if (!normalizedQueryAlbum.isNullOrBlank() && !normalizedCandidateAlbum.isNullOrBlank() &&
+            !isUnknown(normalizedQueryAlbum) && !isUnknown(normalizedCandidateAlbum)
         ) {
-            albumBonus = 5
+            albumBonus = when {
+                normalizedCandidateAlbum == normalizedQueryAlbum -> 8
+                normalizedCandidateAlbum.contains(normalizedQueryAlbum) ||
+                    normalizedQueryAlbum.contains(normalizedCandidateAlbum) -> 4
+                else -> 0
+            }
         }
 
         return titleScore + artistScore + durationBonus + albumBonus
     }
 
-    private fun tokenCoverScore(candidateTitle: String, queryTitle: String): Float {
-        val queryTokens = tokens(queryTitle)
-        if (queryTokens.isEmpty()) return 0f
-        val candidateTokens = tokens(candidateTitle).toSet()
-        if (candidateTokens.isEmpty()) return 0f
-        val covered = queryTokens.count { it in candidateTokens }
-        return covered.toFloat() / queryTokens.size.toFloat()
+    private fun tokenF1(
+        candidateTokens: Set<String>,
+        queryTokens: Set<String>,
+    ): Float {
+        if (candidateTokens.isEmpty() || queryTokens.isEmpty()) return 0f
+        val intersection = candidateTokens.intersect(queryTokens).size.toFloat()
+        if (intersection == 0f) return 0f
+        val precision = intersection / candidateTokens.size
+        val recall = intersection / queryTokens.size
+        return 2 * precision * recall / (precision + recall)
     }
 
     private fun tokens(value: String): List<String> =
@@ -184,7 +230,14 @@ object OfflineAudioProvider {
     }
 
     private fun normalize(value: String): String {
+        // Strip " - Topic" channel suffixes and bracketed credits
+        // ("(feat. X)", "[with Y]") that live in the title on one side and
+        // in the artist field on the other. Recording markers (remix, live,
+        // acoustic, version) are deliberately kept: they denote a different
+        // recording and must not fuzzy-match the original.
         var text = value.lowercase()
+        text = text.replace(TOPIC_SUFFIX, " ")
+        text = text.replace(BRACKETED_CREDIT, " ")
         for (noise in NOISE_SUFFIXES) {
             text = text.replace(noise, " ")
         }
@@ -193,6 +246,13 @@ object OfflineAudioProvider {
             .filter { it.isNotBlank() }
             .joinToString(separator = " ")
     }
+
+    private const val MIN_MATCH_SCORE = 80
+    private const val MAX_DURATION_DELTA_MS = 15_000L
+
+    private val TOPIC_SUFFIX = Regex("""\s+-\s*topic\s*$""")
+    private val BRACKETED_CREDIT =
+        Regex("""[(\[].*?\b(feat\.?|ft\.?|featuring|with|prod\.?|by)\b[^)\]]*[)\]]""")
 
     private val NOISE_SUFFIXES = listOf(
         "official music video",
