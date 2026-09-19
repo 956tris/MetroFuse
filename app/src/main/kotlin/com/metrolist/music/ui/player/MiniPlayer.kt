@@ -101,6 +101,7 @@ import com.metrolist.music.playback.PlayerConnection
 import com.metrolist.music.ui.screens.settings.DarkMode
 import com.metrolist.music.ui.utils.resize
 import com.metrolist.music.utils.rememberEnumPreference
+import com.metrolist.music.utils.rememberMiniPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.launch
 import kotlin.math.absoluteValue
@@ -108,7 +109,6 @@ import kotlin.math.roundToInt
 import com.metrolist.music.ui.component.Icon as MIcon
 import androidx.compose.ui.draw.blur
 import com.metrolist.music.constants.MiniPlayerBackgroundStyle
-import com.metrolist.music.constants.MiniPlayerBackgroundStyleKey
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
@@ -182,10 +182,7 @@ private fun NewMiniPlayer(
     val menuState = LocalMenuState.current
 
     // Theme settings - these rarely change
-    val miniPlayerBackground by rememberEnumPreference(
-        MiniPlayerBackgroundStyleKey,
-        defaultValue = MiniPlayerBackgroundStyle.DEFAULT,
-    )
+    val miniPlayerBackground by rememberMiniPlayerBackgroundStyle()
     val context = LocalContext.current
     var gradientColors by remember { mutableStateOf<List<Color>>(emptyList()) }
     var galaxyColors by remember { mutableStateOf<List<Color>>(emptyList()) }
@@ -264,6 +261,7 @@ private fun NewMiniPlayer(
         galaxyColors = emptyList()
         if (
             miniPlayerBackground == MiniPlayerBackgroundStyle.GRADIENT ||
+            miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY ||
             miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR
         ) {
             val url = playerColorArtworkUrl
@@ -338,12 +336,14 @@ private fun NewMiniPlayer(
         MiniPlayerBackgroundStyle.DEFAULT    -> MaterialTheme.colorScheme.surfaceContainer
         MiniPlayerBackgroundStyle.TRANSPARENT -> Color.Black.copy(alpha = 0.25f)
         MiniPlayerBackgroundStyle.BLUR       -> MaterialTheme.colorScheme.surfaceContainer
+        MiniPlayerBackgroundStyle.GALAXY     -> MaterialTheme.colorScheme.surfaceContainer
         MiniPlayerBackgroundStyle.GALAXY_BLUR -> MaterialTheme.colorScheme.surfaceContainer
         MiniPlayerBackgroundStyle.GRADIENT   -> MaterialTheme.colorScheme.surfaceContainer
         MiniPlayerBackgroundStyle.PURE_BLACK -> Color.Black
     }
     val forceLightColors = !useDarkTheme && (miniPlayerBackground == MiniPlayerBackgroundStyle.PURE_BLACK ||
             miniPlayerBackground == MiniPlayerBackgroundStyle.BLUR ||
+            miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY ||
             miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR ||
             miniPlayerBackground == MiniPlayerBackgroundStyle.GRADIENT)
 
@@ -440,9 +440,11 @@ private fun NewMiniPlayer(
         ) {
             when (miniPlayerBackground) {
                 MiniPlayerBackgroundStyle.BLUR,
+                MiniPlayerBackgroundStyle.GALAXY,
                 MiniPlayerBackgroundStyle.GALAXY_BLUR -> {
                     if (
-                        miniPlayerBackground == MiniPlayerBackgroundStyle.BLUR &&
+                        (miniPlayerBackground == MiniPlayerBackgroundStyle.BLUR ||
+                            miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR) &&
                         android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S
                     ) {
                         displayArtworkUrl?.let { url ->
@@ -461,11 +463,15 @@ private fun NewMiniPlayer(
                             )
                         }
                     }
-                    if (miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR) {
+                    if (miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY ||
+                        miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR
+                    ) {
                         GalaxyStarOverlay(
                             modifier = Modifier.fillMaxSize(),
                             intensity = 0.9f,
                             skyColors = galaxyColors,
+                            // Let the blurred artwork glow through on Galaxy blur.
+                            skyAlpha = if (miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR) 0.55f else 1f,
                         )
                     }
                 }

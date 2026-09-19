@@ -19,6 +19,9 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
+import com.metrolist.music.constants.MiniPlayerBackgroundStyle
+import com.metrolist.music.constants.MiniPlayerBackgroundStyleGalaxyMigratedKey
+import com.metrolist.music.constants.MiniPlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerBackgroundStyleGalaxyMigratedKey
 import com.metrolist.music.constants.PlayerBackgroundStyleKey
@@ -141,6 +144,32 @@ fun rememberPlayerBackgroundStyle(): MutableState<PlayerBackgroundStyle> {
     return rememberEnumPreference(
         key = PlayerBackgroundStyleKey,
         defaultValue = PlayerBackgroundStyle.DEFAULT,
+    )
+}
+
+@Composable
+fun rememberMiniPlayerBackgroundStyle(): MutableState<MiniPlayerBackgroundStyle> {
+    val context = LocalContext.current
+    // Same rename as the player style: old GALAXY_BLUR (single-colour
+    // galaxy) became GALAXY, and GALAXY_BLUR is now the multi-colour blur.
+    LaunchedEffect(Unit) {
+        val migrated =
+            runCatching { context.dataStore.data.first()[MiniPlayerBackgroundStyleGalaxyMigratedKey] }
+                .getOrNull() == true
+        if (!migrated) {
+            runCatching {
+                context.dataStore.edit { settings ->
+                    if (settings[MiniPlayerBackgroundStyleKey] == MiniPlayerBackgroundStyle.GALAXY_BLUR.name) {
+                        settings[MiniPlayerBackgroundStyleKey] = MiniPlayerBackgroundStyle.GALAXY.name
+                    }
+                    settings[MiniPlayerBackgroundStyleGalaxyMigratedKey] = true
+                }
+            }
+        }
+    }
+    return rememberEnumPreference(
+        key = MiniPlayerBackgroundStyleKey,
+        defaultValue = MiniPlayerBackgroundStyle.DEFAULT,
     )
 }
 
