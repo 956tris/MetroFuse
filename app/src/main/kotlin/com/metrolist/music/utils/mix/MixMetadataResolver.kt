@@ -438,6 +438,17 @@ private val MediaMetadata.matchKey: String
             duration.takeIf { it > 0 }?.toString().orEmpty(),
         ).joinToString("::")
 
+private val RECCO_ID_REGEX = Regex("""^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$""")
+private val ISRC_REGEX = Regex("""^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$""")
+private val SPOTIFY_ID_REGEX = Regex("^[A-Za-z0-9]{22}$")
+private val SPOTIFY_URI_REGEX = Regex("""spotify:track:([A-Za-z0-9]{22})""")
+private val SPOTIFY_URL_REGEX = Regex("""open\.spotify\.com/track/([A-Za-z0-9]{22})""")
+private val DEEZER_ID_REGEX = Regex("""(?:^deezer:track:|deezer\.com/track/)(\d+)""", RegexOption.IGNORE_CASE)
+private val YTM_SUFFIX_REGEX = Regex("""\s+[-–—]\s+YouTube\s+Music$""", RegexOption.IGNORE_CASE)
+private val OFFICIAL_TAG_REGEX = Regex("""\s+\((?:official\s+)?(?:audio|video|lyrics?|visualizer|remaster(?:ed)?|explicit)\)""", RegexOption.IGNORE_CASE)
+private val FEAT_REGEX = Regex("""\b(feat|ft|featuring)\.?\b""")
+private val NON_ALNUM_REGEX = Regex("""[^a-z0-9]+""")
+
 private fun MediaMetadata.directReccoIds(): List<String> =
     listOfNotNull(
         id.isrc(),
@@ -447,7 +458,7 @@ private fun MediaMetadata.directReccoIds(): List<String> =
 private fun String.reccoLookupId(): String? =
     isrc()
         ?: spotifyTrackId()
-        ?: takeIf { Regex("""^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$""").matches(trim()) }
+        ?: takeIf { RECCO_ID_REGEX.matches(trim()) }
 
 private fun String.isrc(): String? {
     val normalized =
@@ -455,18 +466,18 @@ private fun String.isrc(): String? {
             .uppercase(Locale.US)
             .replace("-", "")
             .replace(" ", "")
-    return normalized.takeIf { Regex("""^[A-Z]{2}[A-Z0-9]{3}[0-9]{7}$""").matches(it) }
+    return normalized.takeIf { ISRC_REGEX.matches(it) }
 }
 
 private fun String.spotifyTrackId(): String? {
     val trimmed = trim()
-    if (Regex("^[A-Za-z0-9]{22}$").matches(trimmed)) return trimmed
-    Regex("""spotify:track:([A-Za-z0-9]{22})""")
+    if (SPOTIFY_ID_REGEX.matches(trimmed)) return trimmed
+    SPOTIFY_URI_REGEX
         .find(trimmed)
         ?.groupValues
         ?.getOrNull(1)
         ?.let { return it }
-    Regex("""open\.spotify\.com/track/([A-Za-z0-9]{22})""")
+    SPOTIFY_URL_REGEX
         .find(trimmed)
         ?.groupValues
         ?.getOrNull(1)
@@ -475,14 +486,14 @@ private fun String.spotifyTrackId(): String? {
 }
 
 private fun String.deezerTrackId(): String? =
-    Regex("""(?:^deezer:track:|deezer\.com/track/)(\d+)""", RegexOption.IGNORE_CASE)
+    DEEZER_ID_REGEX
         .find(this)
         ?.groupValues
         ?.getOrNull(1)
 
 private fun String.cleanRecordingQuery(): String =
-    replace(Regex("""\s+[-–—]\s+YouTube\s+Music$""", RegexOption.IGNORE_CASE), "")
-        .replace(Regex("""\s+\((?:official\s+)?(?:audio|video|lyrics?|visualizer|remaster(?:ed)?|explicit)\)""", RegexOption.IGNORE_CASE), "")
+    replace(YTM_SUFFIX_REGEX, "")
+        .replace(OFFICIAL_TAG_REGEX, "")
         .trim()
 
 private fun String.luceneQuoted(): String = replace("\\", " ").replace("\"", " ").trim()
@@ -491,8 +502,8 @@ private fun String.matchText(): String =
     cleanRecordingQuery()
         .lowercase(Locale.ROOT)
         .replace("&", "and")
-        .replace(Regex("""\b(feat|ft|featuring)\.?\b"""), " ")
-        .replace(Regex("""[^a-z0-9]+"""), " ")
+        .replace(FEAT_REGEX, " ")
+        .replace(NON_ALNUM_REGEX, " ")
         .trim()
 
 private fun spotifyPitchKey(

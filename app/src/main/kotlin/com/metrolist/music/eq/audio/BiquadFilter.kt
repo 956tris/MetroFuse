@@ -270,6 +270,31 @@ class BiquadFilter(
     }
 
     /**
+     * Allocation-free stereo processing for the per-sample hot path: writes
+     * left to [out][0] and right to [out][1]. The caller reuses [out].
+     */
+    fun processStereoInto(
+        inputLeft: Double,
+        inputRight: Double,
+        out: DoubleArray,
+    ) {
+        val outputLeft = b0 * inputLeft + b1 * x1L + b2 * x2L - a1 * y1L - a2 * y2L
+        x2L = x1L
+        x1L = inputLeft
+        y2L = y1L
+        y1L = outputLeft
+
+        val outputRight = b0 * inputRight + b1 * x1R + b2 * x2R - a1 * y1R - a2 * y2R
+        x2R = x1R
+        x1R = inputRight
+        y2R = y1R
+        y1R = outputRight
+
+        out[0] = outputLeft
+        out[1] = outputRight
+    }
+
+    /**
      * Reset filter state (clears history)
      */
     fun reset() {
