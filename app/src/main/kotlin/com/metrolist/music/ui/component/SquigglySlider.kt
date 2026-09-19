@@ -146,6 +146,10 @@ fun SquigglySlider(
                                 },
                                 onDragCancel = {
                                     isDragging = false
+                                    // A cancelled drag must still finish: otherwise the
+                                    // pending seek value sticks forever and the
+                                    // position/buffer UI freezes at the touch point.
+                                    onValueChangeFinished?.invoke()
                                 },
                                 onDrag = { change, _ ->
                                     change.consume()

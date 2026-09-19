@@ -3,8 +3,10 @@ package com.metrolist.music.utils.potoken
 import android.content.Context
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.annotation.MainThread
 import androidx.collection.ArrayMap
 import com.metrolist.innertube.YouTube
@@ -51,6 +53,23 @@ class PoTokenWebView private constructor(
 
         // so that we can run async functions and get back the result
         webView.addJavascriptInterface(this, JS_INTERFACE)
+
+        // Without this, a dead renderer (crashing/broken system WebView)
+        // kills the whole app process instantly. Handle it instead so
+        // token generation just fails and playback falls back gracefully.
+        webView.webViewClient = object : WebViewClient() {
+            override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                Timber.tag(TAG).w("WebView renderer gone (crashed=${detail.didCrash()}); failing PoToken gracefully")
+                runCatching { close() }
+                val error = PoTokenException("WebView renderer gone (crashed=${detail.didCrash()})")
+                // The init continuation may already be resumed; never crash on double-resume.
+                runCatching { continuation.resumeWithException(error) }
+                popAllPoTokenContinuations().forEach { (_, cont) ->
+                    runCatching { cont.resumeWithException(error) }
+                }
+                return true
+            }
+        }
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onConsoleMessage(m: ConsoleMessage): Boolean {
