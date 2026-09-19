@@ -7329,7 +7329,7 @@ class MusicService :
         DefaultLoadControl
             .Builder()
             .setTargetBufferBytes(AUDIO_TARGET_BUFFER_BYTES)
-            .setPrioritizeTimeOverSizeThresholds(false)
+            .setPrioritizeTimeOverSizeThresholds(true)
             .setBufferDurationsMs(
                 AUDIO_MIN_BUFFER_MS,
                 AUDIO_MAX_BUFFER_MS,
@@ -9492,10 +9492,10 @@ class MusicService :
         private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
         private const val DIRECT_HTTP_AUDIO_CACHE_PREFIX = "direct-http-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
-        private const val AUDIO_MIN_BUFFER_MS = 6_000
-        private const val AUDIO_MAX_BUFFER_MS = 22_000
-        private const val AUDIO_BUFFER_FOR_PLAYBACK_MS = 800
-        private const val AUDIO_BUFFER_FOR_REBUFFER_MS = 2_500
+        private const val AUDIO_MIN_BUFFER_MS = 3_000
+        private const val AUDIO_MAX_BUFFER_MS = 15_000
+        private const val AUDIO_BUFFER_FOR_PLAYBACK_MS = 150
+        private const val AUDIO_BUFFER_FOR_REBUFFER_MS = 750
         private const val AUDIO_TARGET_BUFFER_BYTES = 8 * 1024 * 1024
         private const val LEGACY_PLACEHOLDER_BPS = 4_000_000
 

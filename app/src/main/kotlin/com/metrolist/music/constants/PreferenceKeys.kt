@@ -23,6 +23,7 @@ val PureBlackMiniPlayerKey = booleanPreferencesKey("pureBlackMiniPlayer")
 val MiniPlayerOutlineKey = booleanPreferencesKey("miniPlayerOutline")
 val AppBackgroundStyleKey = stringPreferencesKey("appBackgroundStyle")
 val MiniPlayerBackgroundStyleKey = stringPreferencesKey("miniPlayerBackgroundStyle")
+val MiniPlayerBackgroundStyleGalaxyMigratedKey = booleanPreferencesKey("miniPlayerBackgroundStyleGalaxyMigrated")
 
 val EnableMusixmatchKey = booleanPreferencesKey("enableMusixmatch")
 val MusixmatchForceLineSyncedKey = booleanPreferencesKey("musixmatchForceLineSynced")
@@ -37,6 +38,7 @@ enum class MiniPlayerBackgroundStyle {
     DEFAULT,
     TRANSPARENT,
     BLUR,
+    GALAXY,
     GALAXY_BLUR,
     GRADIENT,
     PURE_BLACK,

@@ -86,7 +86,6 @@ import com.metrolist.music.constants.LyricsScrollKey
 import com.metrolist.music.constants.LyricsTextPositionKey
 import com.metrolist.music.constants.LyricsTextSizeKey
 import com.metrolist.music.constants.MiniPlayerBackgroundStyle
-import com.metrolist.music.constants.MiniPlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
 import com.metrolist.music.constants.PlayerButtonsStyle
 import com.metrolist.music.constants.PlayerButtonsStyleKey
@@ -123,6 +122,7 @@ import com.metrolist.music.ui.theme.PlayerSliderColors
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.IconUtils
 import com.metrolist.music.utils.rememberEnumPreference
+import com.metrolist.music.utils.rememberMiniPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.launch
@@ -201,14 +201,12 @@ fun AppearanceSettings(
             defaultValue = false,
         )
     val (miniPlayerBackground, onMiniPlayerBackgroundChange) =
-        rememberEnumPreference(
-            MiniPlayerBackgroundStyleKey,
-            defaultValue = MiniPlayerBackgroundStyle.DEFAULT,
-        )
+        rememberMiniPlayerBackgroundStyle()
 
     val availableMiniPlayerBackgroundStyles =
         MiniPlayerBackgroundStyle.entries.filter {
-            it != MiniPlayerBackgroundStyle.BLUR || Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            (it != MiniPlayerBackgroundStyle.BLUR && it != MiniPlayerBackgroundStyle.GALAXY_BLUR) ||
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         }
 
     var showMiniPlayerBackgroundDialog by rememberSaveable { mutableStateOf(false) }
@@ -663,6 +661,7 @@ fun AppearanceSettings(
                     MiniPlayerBackgroundStyle.DEFAULT -> stringResource(R.string.follow_theme)
                     MiniPlayerBackgroundStyle.TRANSPARENT -> stringResource(R.string.transparent)
                     MiniPlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
+                    MiniPlayerBackgroundStyle.GALAXY -> stringResource(R.string.player_background_galaxy)
                     MiniPlayerBackgroundStyle.GALAXY_BLUR -> stringResource(R.string.player_background_galaxy_blur)
                     MiniPlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                     MiniPlayerBackgroundStyle.PURE_BLACK -> stringResource(R.string.pure_black)
@@ -1247,6 +1246,7 @@ fun AppearanceSettings(
                                                 MiniPlayerBackgroundStyle.DEFAULT -> stringResource(R.string.follow_theme)
                                                 MiniPlayerBackgroundStyle.TRANSPARENT -> stringResource(R.string.transparent)
                                                 MiniPlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
+                                                MiniPlayerBackgroundStyle.GALAXY -> stringResource(R.string.player_background_galaxy)
                                                 MiniPlayerBackgroundStyle.GALAXY_BLUR -> stringResource(R.string.player_background_galaxy_blur)
                                                 MiniPlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                                                 MiniPlayerBackgroundStyle.PURE_BLACK -> stringResource(R.string.pure_black)

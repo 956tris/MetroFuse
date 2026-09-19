@@ -50,6 +50,9 @@ fun GalaxyStarOverlay(
     intensity: Float = 1f,
     skyColors: List<Color> = emptyList(),
     animated: Boolean = true,
+    // Lets a blurred-artwork base glow through underneath (Galaxy blur).
+    // Full opacity keeps the classic solid Galaxy look.
+    skyAlpha: Float = 1f,
 ) {
     val stars = remember {
         List(StarPoolSize) { index ->
@@ -72,18 +75,19 @@ fun GalaxyStarOverlay(
         }
     }
     var frameMillis by remember { mutableLongStateOf(0L) }
+    val skyAlphaClamped = skyAlpha.coerceIn(0f, 1f)
     val topColor by animateColorAsState(
-        targetValue = skyColors.getOrNull(0) ?: Color.Black,
+        targetValue = (skyColors.getOrNull(0) ?: Color.Black).copy(alpha = skyAlphaClamped),
         animationSpec = tween(900),
         label = "galaxyTopColor",
     )
     val midColor by animateColorAsState(
-        targetValue = skyColors.getOrNull(1) ?: Color(0xFF020202),
+        targetValue = (skyColors.getOrNull(1) ?: Color(0xFF020202)).copy(alpha = skyAlphaClamped),
         animationSpec = tween(900),
         label = "galaxyMidColor",
     )
     val bottomColor by animateColorAsState(
-        targetValue = skyColors.getOrNull(2) ?: Color.Black,
+        targetValue = (skyColors.getOrNull(2) ?: Color.Black).copy(alpha = skyAlphaClamped),
         animationSpec = tween(900),
         label = "galaxyBottomColor",
     )
