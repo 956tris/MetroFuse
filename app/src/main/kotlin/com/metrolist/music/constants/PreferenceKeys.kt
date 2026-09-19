@@ -205,7 +205,6 @@ val TidalAnimatedCoversEnabledKey = booleanPreferencesKey("tidalAnimatedCoversEn
 val TidalResolverEndpointsKey = stringPreferencesKey("tidalResolverEndpoints")
 val DeezerResolverUrlKey = stringPreferencesKey("deezerResolverUrl")
 val DeezerAudioQualityKey = stringPreferencesKey("deezerAudioQuality")
-val DeezerFastModeKey = booleanPreferencesKey("deezerFastMode")
 val DeezerProxyModeKey = stringPreferencesKey("deezerProxyMode")
 val DeezerProxyUrlKey = stringPreferencesKey("deezerProxyUrl")
 val QobuzCustomInstancesKey = stringPreferencesKey("qobuzCustomInstances")
@@ -359,59 +358,13 @@ val CrossfadeEnabledKey = booleanPreferencesKey("crossfadeEnabled")
 val CrossfadeDurationKey = floatPreferencesKey("crossfadeDurationFloat")
 val CrossfadeGaplessKey = booleanPreferencesKey("crossfadeGapless")
 val NextTrackPreloadCountKey = intPreferencesKey("nextTrackPreloadCount")
-val MetroMixEnabledKey = booleanPreferencesKey("metroMixEnabled")
-val MetroMixPresetKey = stringPreferencesKey("metroMixPreset")
-val MetroMixBarsKey = intPreferencesKey("metroMixBars")
-val MetroMixVolumeCurveKey = stringPreferencesKey("metroMixVolumeCurve")
-val MetroMixEqCurveKey = stringPreferencesKey("metroMixEqCurve")
-val MetroMixEffectCurveKey = stringPreferencesKey("metroMixEffectCurve")
-
-enum class MetroMixPreset(
-    val durationSeconds: Float,
-) {
-    AUTOMIX(8f),
-    AUTO(7f),
-    SMART_DJ(8f),
-    BEAT_BLEND(10f),
-    ENERGY_MATCH(8f),
-    CLUB_BLEND(12f),
-    VOCAL_BLEND(6f),
-    BASS_SWAP(5f),
-    RADIO_EDIT(3f),
-    QUICK_CUT(1.5f),
-    LOOP_OUT(8f),
-    FADE(5f),
-    RISE(8f),
-    BLEND(10f),
-    DROP(2f),
-    ECHO_OUT(6f),
-    SMOOTH(7f),
-    LONG_BLEND(12f),
-}
-
-enum class MetroMixVolumeCurve {
-    AUTO,
-    BALANCED,
-    PUNCHY,
-    MELT,
-    WAVE,
-}
-
-enum class MetroMixEqCurve {
-    AUTO,
-    CLEAN,
-    BASS_SWAP,
-    VOCAL_SPACE,
-    FULL,
-}
-
-enum class MetroMixEffectCurve {
-    AUTO,
-    NONE,
-    FILTER,
-    ECHO,
-    WAVE,
-}
+/**
+ * Automix (formerly MetroMix): a single DJ-style transition engine with tempo,
+ * key, and beat-phase matching. Backing DataStore strings keep the legacy
+ * "metroMix" names so existing user settings migrate automatically.
+ */
+val AutomixEnabledKey = booleanPreferencesKey("metroMixEnabled")
+val AutomixBarsKey = intPreferencesKey("metroMixBars")
 
 val MaxImageCacheSizeKey = intPreferencesKey("maxImageCacheSize")
 val MaxSongCacheSizeKey = intPreferencesKey("maxSongCacheSize")

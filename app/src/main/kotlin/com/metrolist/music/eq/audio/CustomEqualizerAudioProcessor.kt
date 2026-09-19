@@ -30,7 +30,7 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     private var inputEnded = false
 
     private var filters: List<BiquadFilter> = emptyList()
-    private var metroMixFilters: List<BiquadFilter> = emptyList()
+    private var automixFilters: List<BiquadFilter> = emptyList()
     private var preampGain: Double = 1.0  // Linear preamp gain multiplier
     private var pendingProfile: ParametricEQ? = null
 
@@ -66,12 +66,12 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     }
 
     /**
-     * Set MetroMix filters for temporary effects during crossfades
+     * Set Automix filters for temporary effects during crossfades
      */
     @Synchronized
-    fun setMetroMixBands(bands: List<ParametricEQBand>) {
+    fun setAutomixBands(bands: List<ParametricEQBand>) {
         if (sampleRate == 0) return
-        metroMixFilters = bands
+        automixFilters = bands
             .filter { it.enabled && it.frequency < sampleRate / 2.0 }
             .map { band ->
                 BiquadFilter(
@@ -85,32 +85,32 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     }
 
     /**
-     * Update gain of a specific MetroMix band by index
+     * Update gain of a specific Automix band by index
      */
     @Synchronized
-    fun updateMetroMixGain(index: Int, gain: Double) {
-        if (index in metroMixFilters.indices) {
-            metroMixFilters[index].updateGain(gain)
+    fun updateAutomixGain(index: Int, gain: Double) {
+        if (index in automixFilters.indices) {
+            automixFilters[index].updateGain(gain)
         }
     }
 
     /**
-     * Update frequency of a specific MetroMix band by index
+     * Update frequency of a specific Automix band by index
      */
     @Synchronized
-    fun updateMetroMixFrequency(index: Int, frequency: Double) {
-        if (index in metroMixFilters.indices) {
-            metroMixFilters[index].updateFrequency(frequency)
+    fun updateAutomixFrequency(index: Int, frequency: Double) {
+        if (index in automixFilters.indices) {
+            automixFilters[index].updateFrequency(frequency)
         }
     }
 
     /**
-     * Update Q of a specific MetroMix band by index
+     * Update Q of a specific Automix band by index
      */
     @Synchronized
-    fun updateMetroMixQ(index: Int, q: Double) {
-        if (index in metroMixFilters.indices) {
-            metroMixFilters[index].updateQ(q)
+    fun updateAutomixQ(index: Int, q: Double) {
+        if (index in automixFilters.indices) {
+            automixFilters[index].updateQ(q)
         }
     }
 
@@ -194,7 +194,7 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     override fun isActive(): Boolean = isActive
 
     override fun queueInput(inputBuffer: ByteBuffer) {
-        if (!formatSupported || (!equalizerEnabled && metroMixFilters.isEmpty())) {
+        if (!formatSupported || (!equalizerEnabled && automixFilters.isEmpty())) {
             // Passthrough mode - directly use input as output
             val remaining = inputBuffer.remaining()
             if (remaining == 0) return
@@ -267,8 +267,8 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
                         processed = filter.processSample(processed)
                     }
 
-                    // Apply MetroMix filters
-                    for (filter in metroMixFilters) {
+                    // Apply Automix filters
+                    for (filter in automixFilters) {
                         processed = filter.processSample(processed)
                     }
 
@@ -294,8 +294,8 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
                         processedRight = right
                     }
 
-                    // Apply MetroMix filters
-                    for (filter in metroMixFilters) {
+                    // Apply Automix filters
+                    for (filter in automixFilters) {
                         val (left, right) = filter.processStereo(processedLeft, processedRight)
                         processedLeft = left
                         processedRight = right

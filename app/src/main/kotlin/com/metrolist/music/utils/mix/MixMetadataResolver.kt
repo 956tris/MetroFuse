@@ -99,7 +99,7 @@ private object ReccoBeatsClient {
                 val track = lookupTracks(normalizedIds).bestMatch(mediaMetadata) ?: return@runCatching null
                 resolveAudioFeatures(track.id, source)
             }.onFailure { error ->
-                Timber.tag("MetroMix").d(error, "ReccoBeats metadata lookup failed for ${mediaMetadata.title}")
+                Timber.tag("Automix").d(error, "ReccoBeats metadata lookup failed for ${mediaMetadata.title}")
             }.getOrNull()
 
         cache[cacheKey] = CachedMixMetadata(result, now)
@@ -125,7 +125,7 @@ private object ReccoBeatsClient {
             client.newCall(request).execute().use { response ->
                 val body = response.body.string()
                 if (!response.isSuccessful) {
-                    Timber.tag("MetroMix").d("ReccoBeats track lookup failed: ${response.code} ${body.take(120)}")
+                    Timber.tag("Automix").d("ReccoBeats track lookup failed: ${response.code} ${body.take(120)}")
                     return@withContext emptyList()
                 }
 
@@ -154,7 +154,7 @@ private object ReccoBeatsClient {
             client.newCall(request).execute().use { response ->
                 val body = response.body.string()
                 if (!response.isSuccessful) {
-                    Timber.tag("MetroMix").d("ReccoBeats audio features failed: ${response.code} ${body.take(120)}")
+                    Timber.tag("Automix").d("ReccoBeats audio features failed: ${response.code} ${body.take(120)}")
                     return@withContext null
                 }
 
@@ -262,7 +262,7 @@ private object  ProviderIsrcClient {
                     }
                 }
             }.onFailure { error ->
-                Timber.tag("MetroMix").d(error, "Provider ISRC lookup failed for ${mediaMetadata.id}")
+                Timber.tag("Automix").d(error, "Provider ISRC lookup failed for ${mediaMetadata.id}")
             }.getOrNull()
 
         cache[deezerId] = CachedIsrc(result, now)
@@ -308,7 +308,7 @@ private object MusicBrainzClient {
                     .distinct()
                     .take(MAX_LOOKUP_IDS)
             }.onFailure { error ->
-                Timber.tag("MetroMix").d(error, "MusicBrainz ISRC lookup failed for ${mediaMetadata.title}")
+                Timber.tag("Automix").d(error, "MusicBrainz ISRC lookup failed for ${mediaMetadata.title}")
             }.getOrElse { emptyList() }
 
         cache[cacheKey] = CachedIsrcs(result, now)
@@ -349,7 +349,7 @@ private object MusicBrainzClient {
                         lastRequestAt = System.currentTimeMillis()
                         val body = response.body.string()
                         if (!response.isSuccessful) {
-                            Timber.tag("MetroMix").d("MusicBrainz lookup failed: ${response.code} ${body.take(120)}")
+                            Timber.tag("Automix").d("MusicBrainz lookup failed: ${response.code} ${body.take(120)}")
                             return@withContext emptyList()
                         }
 

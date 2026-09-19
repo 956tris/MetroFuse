@@ -471,7 +471,7 @@ private fun NewMiniPlayer(
                             intensity = 0.9f,
                             skyColors = galaxyColors,
                             // Let the blurred artwork glow through on Galaxy blur.
-                            skyAlpha = if (miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR) 0.55f else 1f,
+                            skyAlpha = if (miniPlayerBackground == MiniPlayerBackgroundStyle.GALAXY_BLUR) 0.7f else 1f,
                         )
                     }
                 }

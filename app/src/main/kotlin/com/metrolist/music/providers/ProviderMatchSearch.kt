@@ -15,7 +15,6 @@ import com.metrolist.music.constants.AudioProviderDisabledKey
 import com.metrolist.music.constants.deserializeDisabledProviders
 import com.metrolist.music.constants.DeezerAudioQuality
 import com.metrolist.music.constants.DeezerAudioQualityKey
-import com.metrolist.music.constants.DeezerFastModeKey
 import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
@@ -179,14 +178,13 @@ object ProviderMatchSearch {
             AudioProviderOrderItem.DEEZER -> {
                 val quality = context.dataStore.get(DeezerAudioQualityKey).toEnum(DeezerAudioQuality.MP3_128)
                 val resolverUrl = context.dataStore.get(DeezerResolverUrlKey, DeezerAudioProvider.DEFAULT_RESOLVER_URL)
-                val fastMode = context.dataStore.get(DeezerFastModeKey, false)
                 val configuredProxyUrl = context.dataStore.get(DeezerProxyUrlKey, DeezerAudioProvider.DEFAULT_PROXY_URL)
                 val proxyUrl = DeezerAudioProvider.effectiveProxyUrl(
                     configuredProxyModeValue = context.dataStore.get(DeezerProxyModeKey, ""),
                     configuredProxyUrl = configuredProxyUrl,
                     globalProxyEnabled = context.dataStore.get(ProxyEnabledKey, false),
                 )
-                DeezerAudioProvider.searchCandidates(metadata.toDeezerQuery(resolverUrl, quality, fastMode, proxyUrl, isrcOverride), limit).map { track ->
+                DeezerAudioProvider.searchCandidates(metadata.toDeezerQuery(resolverUrl, quality, proxyUrl, isrcOverride), limit).map { track ->
                     ProviderMatchCandidate(
                         provider = provider,
                         providerTrackId = track.trackId,
@@ -293,7 +291,6 @@ object ProviderMatchSearch {
     private fun MediaMetadata.toDeezerQuery(
         resolverUrl: String,
         quality: DeezerAudioQuality,
-        fastMode: Boolean,
         proxyUrl: String,
         isrcOverride: String? = null,
     ): DeezerAudioProvider.Query =
@@ -306,7 +303,6 @@ object ProviderMatchSearch {
             durationMs = duration.takeIf { it > 0 }?.toLong()?.times(1000L),
             resolverUrl = resolverUrl,
             quality = quality,
-            fastMode = fastMode,
             proxyUrl = proxyUrl,
         )
 

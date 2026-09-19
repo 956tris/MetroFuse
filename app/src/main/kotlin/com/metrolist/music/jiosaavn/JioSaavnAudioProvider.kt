@@ -46,12 +46,15 @@ object JioSaavnAudioProvider {
     }
     private const val DESKTOP_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    private const val MAX_SEARCH_CANDIDATES = 10
+    private const val MAX_SEARCH_CANDIDATES = 6
     private const val STREAM_CACHE_TTL_MS = 30 * 60 * 1000L
     private const val STREAM_CACHE_MAX_SIZE = 80
-    private const val MIN_ACCEPT_SCORE = 65
+    private const val MIN_ACCEPT_SCORE = 80
     private const val MIN_ACCEPT_SCORE_NO_DURATION = 90
-    private const val DURATION_HARD_REJECT_MS = 15_000L
+    // Exact title (100 + 40 contains) + artist (35) = 175. A hit at this level
+    // essentially always wins maxBy, so later query orderings can be skipped.
+    private const val HIGH_CONFIDENCE_SCORE = 170
+    private const val DURATION_HARD_REJECT_MS = 10_000L
 
     data class Query(
         val mediaId: String,
@@ -156,7 +159,9 @@ object JioSaavnAudioProvider {
             return buildResolved(details, query, cacheKey)
         }
 
-        val candidates = searchTracks(query.title, query.artists)
+        val candidates = searchTracks(query.title, query.artists) { details ->
+            (scoreCandidate(details, query) ?: 0) >= HIGH_CONFIDENCE_SCORE
+        }
         if (candidates.isEmpty()) {
             throw JioSaavnResolutionException(
                 "JioSaavn search returned nothing for ${query.title} ${query.artists.firstOrNull().orEmpty()}",
@@ -313,9 +318,12 @@ object JioSaavnAudioProvider {
     private fun searchTracks(
         title: String,
         artists: List<String>,
+        isConfident: ((SongDetails) -> Boolean)? = null,
     ): List<SongDetails> {
         // The backend is picky about multi-word queries ("Down Jay Sean" 500s
         // while "Jay Sean Down" works), so fan out across orderings and merge.
+        // When the caller can recognize a high-confidence hit, stop after the
+        // first query that produces one instead of paying for all 3 round-trips.
         val firstArtist = artists.firstOrNull().orEmpty()
         val queries = linkedSetOf(
             listOf(title, firstArtist).filter { it.isNotBlank() }.joinToString(" "),
@@ -325,7 +333,7 @@ object JioSaavnAudioProvider {
         if (queries.isEmpty()) return emptyList()
 
         val found = linkedMapOf<String, SongDetails>()
-        queries.forEach { text ->
+        for (text in queries) {
             runCatching {
                 val json = apiGet(
                     call = "search.getResults",
@@ -336,6 +344,9 @@ object JioSaavnAudioProvider {
                     .orEmpty()
             }.onSuccess { songs ->
                 songs.forEach { found.putIfAbsent(it.id, it) }
+                if (isConfident != null && found.values.any(isConfident)) {
+                    return found.values.toList()
+                }
             }.onFailure {
                 Timber.tag(TAG).w(it, "JioSaavn search failed for query=$text")
             }
@@ -471,7 +482,7 @@ object JioSaavnAudioProvider {
             if (!retry) throw throwable
             Timber.tag(TAG).d(throwable, "JioSaavn $call failed, failing over once")
             regionIp = regionIps.getOrNull(1)
-            Thread.sleep(800L)
+            Thread.sleep(200L)
             return execute()
         }
     }
@@ -575,7 +586,11 @@ object JioSaavnAudioProvider {
             val queryTokens = normalizedTitle.split(' ').filter { it.length > 2 }.toSet()
             val candidateTokens = normalizedCandidateTitle.split(' ').toSet()
             val overlap = queryTokens.intersect(candidateTokens).size
-            if (queryTokens.isNotEmpty() && overlap * 2 >= queryTokens.size) score += 15
+            // Same artist + similar duration is not a match on its own: without
+            // any real title anchor this is a different song. Only a full token
+            // overlap (e.g. word reorder) still qualifies.
+            if (queryTokens.isEmpty() || overlap < queryTokens.size) return null
+            score += 15
         }
         val normalizedArtists = candidate.artists.joinToString(" ").normalizedSearchText()
         query.artists.forEach { artist ->
