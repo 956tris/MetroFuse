@@ -9492,8 +9492,8 @@ class MusicService :
         private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
         private const val DIRECT_HTTP_AUDIO_CACHE_PREFIX = "direct-http-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
-        private const val AUDIO_MIN_BUFFER_MS = 3_000
-        private const val AUDIO_MAX_BUFFER_MS = 15_000
+        private const val AUDIO_MIN_BUFFER_MS = 15_000
+        private const val AUDIO_MAX_BUFFER_MS = 30_000
         private const val AUDIO_BUFFER_FOR_PLAYBACK_MS = 150
         private const val AUDIO_BUFFER_FOR_REBUFFER_MS = 750
         private const val AUDIO_TARGET_BUFFER_BYTES = 8 * 1024 * 1024
