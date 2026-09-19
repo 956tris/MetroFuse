@@ -1,6 +1,11 @@
 /**
  * Metrolist Project (C) 2026
  * Licensed under GPL-3.0 | See git history for contributors
+ *
+ * Wavy slider with a self-drawn sine wave. Everything (played wave,
+ * buffered segment, inactive track, thumb) lives in one canvas and one
+ * coordinate space so the segments always line up: no stop dot, no gap
+ * notch, no stray straight line peeking out from under the wave.
  */
 
 package com.metrolist.music.ui.component
@@ -14,27 +19,33 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.SliderColors
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.isActive
+import kotlin.math.PI
+import kotlin.math.sin
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -56,10 +67,10 @@ fun WavySlider(
     val density = LocalDensity.current
     val strokeWidthPx = with(density) { strokeWidth.toPx() }
     val thumbRadiusPx = with(density) { thumbRadius.toPx() }
-    val stroke = remember(strokeWidthPx) { 
-        Stroke(width = strokeWidthPx, cap = StrokeCap.Round) 
-    }
-    
+    val wavelengthPx = with(density) { wavelength.toPx() }.coerceAtLeast(8f)
+    val waveSpeedPxPerSec = with(density) { waveSpeed.toPx() }
+    val amplitudePx = with(density) { 5.dp.toPx() }
+
     val duration = valueRange.endInclusive - valueRange.start
     val normalizedValue = if (duration > 0f) {
         ((value - valueRange.start) / duration).coerceIn(0f, 1f)
@@ -70,26 +81,40 @@ fun WavySlider(
         bufferedValue
             ?.let { if (duration > 0f) ((it - valueRange.start) / duration).coerceIn(normalizedValue, 1f) else normalizedValue }
             ?: normalizedValue
-    
+
     var isDragging by remember { mutableStateOf(false) }
     var dragValue by remember { mutableFloatStateOf(normalizedValue) }
-    
+
     val displayValue = if (isDragging) dragValue else normalizedValue
-    
+
     val animatedAmplitude by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0f,
         animationSpec = ProgressIndicatorDefaults.ProgressAnimationSpec,
         label = "amplitude"
     )
-    
+
+    var phasePx by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(isPlaying, waveSpeedPxPerSec, wavelengthPx) {
+        if (!isPlaying && waveSpeedPxPerSec == 0f) return@LaunchedEffect
+        var lastFrameTime = withFrameMillis { it }
+        while (isActive) {
+            withFrameMillis { frameTimeMillis ->
+                val deltaTime = (frameTimeMillis - lastFrameTime) / 1000f
+                phasePx = (phasePx + deltaTime * waveSpeedPxPerSec) % wavelengthPx
+                lastFrameTime = frameTimeMillis
+            }
+            if (!isPlaying) break
+        }
+    }
+
     val activeColor = colors.activeTrackColor
     val inactiveColor = colors.inactiveTrackColor
     val bufferedColor = activeColor.copy(alpha = 0.46f)
     val thumbColor = colors.thumbColor
-    
+
     // Calculate container height to accommodate thumb
     val containerHeight = maxOf(WavyProgressIndicatorDefaults.LinearContainerHeight, thumbRadius * 2)
-    
+
     val baseModifier = modifier
         .fillMaxWidth()
         .height(containerHeight)
@@ -135,62 +160,58 @@ fun WavySlider(
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val y = size.height / 2f
-            // Only draw straight tracks ahead of the wavy playhead. The active
-            // track is wavy and oscillates around center, so any straight line
-            // drawn behind it peeks through as an ugly line under the wave.
-            val progressX = size.width * displayValue
-            val bufferedEndX = size.width * normalizedBufferedValue
-            // Start the straight tracks exactly at the playhead center. The
-            // opaque thumb covers the joint, so nothing peeks out behind it.
-            val bufferedStartX = progressX
-            val inactiveStartX = maxOf(progressX, bufferedEndX)
-            if (bufferedEndX > bufferedStartX + 0.5f) {
-                drawLine(
-                    color = bufferedColor,
-                    start = Offset(bufferedStartX, y),
-                    end = Offset(bufferedEndX, y),
-                    strokeWidth = strokeWidthPx,
-                    cap = StrokeCap.Round,
-                )
-            }
-            if (size.width > inactiveStartX + 0.5f) {
-                drawLine(
-                    color = inactiveColor,
-                    start = Offset(inactiveStartX, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = strokeWidthPx,
-                    cap = StrokeCap.Round,
-                )
-            }
-        }
+            val totalWidth = size.width
+            val centerY = size.height / 2f
+            val progressX = totalWidth * displayValue
+            val bufferedEndX = totalWidth * normalizedBufferedValue
+            val amplitude = amplitudePx * animatedAmplitude
 
-        LinearWavyProgressIndicator(
-            progress = { displayValue },
-            modifier = Modifier.fillMaxWidth(),
-            color = activeColor,
-            trackColor = Color.Transparent,
-            stroke = stroke,
-            trackStroke = stroke,
-            // No gap at the playhead: the thumb covers the wave/track joint,
-            // so a gap would only leave a transparent notch. No stop dot at
-            // the track end either.
-            gapSize = 0.dp,
-            stopSize = 0.dp,
-            amplitude = { progress -> if (progress > 0f) animatedAmplitude else 0f },
-            wavelength = wavelength,
-            waveSpeed = waveSpeed
-        )
-        
-        // Draw circular thumb - synced with progress indicator position
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val thumbX = size.width * displayValue
-            val thumbY = size.height / 2
-            
+            // One shared sine-wave path across the whole width so every
+            // segment below follows the exact same curve.
+            val path = Path()
+            val stepPx = 4f
+            var x = -wavelengthPx
+            path.moveTo(x, centerY + (sin((x + phasePx) / wavelengthPx * 2f * PI).toFloat() * amplitude))
+            x += stepPx
+            while (x <= totalWidth + wavelengthPx) {
+                val y = centerY + (sin((x + phasePx) / wavelengthPx * 2f * PI).toFloat() * amplitude)
+                path.lineTo(x, y)
+                x += stepPx
+            }
+
+            val waveStroke = Stroke(width = strokeWidthPx, cap = StrokeCap.Round)
+            val clipTop = amplitudePx + strokeWidthPx
+
+            fun drawWaveSegment(startX: Float, endX: Float, color: Color) {
+                if (endX <= startX) return
+                clipRect(
+                    left = startX,
+                    top = centerY - clipTop,
+                    right = endX,
+                    bottom = centerY + clipTop,
+                ) {
+                    drawPath(
+                        path = path,
+                        color = color,
+                        style = waveStroke,
+                    )
+                }
+            }
+
+            // Inactive first (full width), then buffered ahead of the
+            // playhead only, then played. Nothing straight is ever drawn
+            // behind the wave, so nothing peeks out from under it.
+            // The opaque thumb covers the joints.
+            drawWaveSegment(0f, totalWidth, inactiveColor)
+            if (bufferedEndX > progressX + 0.5f) {
+                drawWaveSegment(progressX, bufferedEndX, bufferedColor)
+            }
+            drawWaveSegment(0f, progressX, activeColor)
+
             drawCircle(
                 color = thumbColor,
                 radius = thumbRadiusPx,
-                center = Offset(thumbX, thumbY)
+                center = Offset(progressX, centerY),
             )
         }
     }
