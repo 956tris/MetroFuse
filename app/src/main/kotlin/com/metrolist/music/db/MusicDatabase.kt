@@ -134,7 +134,7 @@ class MusicDatabase(
         SortedSongAlbumMap::class,
         PlaylistSongMapPreview::class,
     ],
-    version = 42,
+    version = 43,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3),
@@ -176,6 +176,12 @@ class MusicDatabase(
         AutoMigration(from = 39, to = 40),
         AutoMigration(from = 40, to = 41),
         AutoMigration(from = 41, to = 42),
+        // No-op heal bump: dev builds briefly shipped version 42 with a
+        // different track_structure shape (same version, different hash),
+        // which Room cannot migrate out of - it crashes on open forever.
+        // Stepping those databases to 43 recomputes the identity hash with
+        // zero data loss. Real 41 databases chain 41->42->43 normally.
+        AutoMigration(from = 42, to = 43),
     ],
 )
 @TypeConverters(Converters::class)
