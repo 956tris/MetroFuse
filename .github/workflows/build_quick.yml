@@ -53,7 +53,7 @@ jobs:
         run: ./gradlew --console=plain assembleFossRelease --warning-mode summary -x lint -x lintFossRelease
         env:
           METROLIST_APPLICATION_ID: com.metroapple.music.test
-          METROLIST_APP_NAME: MetroFuse Testing
+          METROLIST_APP_NAME: MetroFuse Nightly
           PULL_REQUEST: "false"
           GITHUB_EVENT_NAME: ${{ github.event_name }}
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
@@ -75,12 +75,24 @@ jobs:
             else
               ABI="universal"
             fi
-            mv "$APK" "$OUTPUT_DIR/out/app-test-release-${ABI}.apk"
+            mv "$APK" "$OUTPUT_DIR/out/MetroFuse-nightly-${ABI}.apk"
           done
           ls -la "$OUTPUT_DIR/out/"
 
       - name: Upload Signed APK
         uses: actions/upload-artifact@v6
         with:
-          name: app-universal-test-release
+          name: MetroFuse-nightly
           path: app/build/outputs/apk/foss/release/out/*
+
+      - name: Publish nightly prerelease
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd app/build/outputs/apk/foss/release/out
+          NOTES="THIS MAY BE BROKEN - INSTALL AT YOUR OWN RISK.
+
+          Automated nightly build from main (${GITHUB_SHA}). Untested, may not even launch."
+          gh release delete nightly --cleanup-tag -y || true
+          gh release create nightly --prerelease --title "MetroFuse Nightly" --notes "$NOTES" ./*.apk
