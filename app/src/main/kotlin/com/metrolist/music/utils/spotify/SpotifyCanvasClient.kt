@@ -143,6 +143,7 @@ fun SpotifyCanvasVideoBackground(
     shouldPlay: Boolean,
     modifier: Modifier = Modifier,
     scrimAlpha: Float = 0.16f,
+    onReadyChange: ((Boolean) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -154,11 +155,40 @@ fun SpotifyCanvasVideoBackground(
         }
     }
 
+    // Reset readiness whenever the URL changes so callers can keep showing
+    // artwork until the new video actually produces frames.
+    LaunchedEffect(media.url) {
+        onReadyChange?.invoke(false)
+    }
+
     val player = remember(media.url) {
-        val mediaSourceFactory = DefaultMediaSourceFactory(
+        // OkHttp only speaks http/https. Embedded and offline-cached canvases
+        // are file:// (sometimes content://) URIs — those need the platform
+        // DefaultDataSource or ExoPlayer errors out and the UI is left with
+        // an empty canvas slot.
+        val isRemoteCanvas =
+            media.url.startsWith("http://", ignoreCase = true) ||
+                media.url.startsWith("https://", ignoreCase = true)
+        val dataSourceFactory = if (isRemoteCanvas) {
             OkHttpDataSource.Factory(canvasVideoHttpClient)
                 .setDefaultRequestProperties(media.headers)
-        )
+        } else {
+            androidx.media3.datasource.DefaultDataSource.Factory(context)
+        }
+        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataSourceFactory)
+
+        // Apple motion URLs are HLS playlists. Without an explicit MIME type
+        // ExoPlayer may treat them as progressive streams and fail, leaving
+        // an empty canvas slot behind.
+        val mediaItem = MediaItem.Builder()
+            .setUri(media.url)
+            .apply {
+                if (media.url.contains(".m3u8")) {
+                    setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
+                }
+            }
+            .build()
 
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
@@ -175,8 +205,27 @@ fun SpotifyCanvasVideoBackground(
                 setAudioAttributes(AudioAttributes.DEFAULT, false)
                 repeatMode = Player.REPEAT_MODE_ONE
                 volume = 0f
+                if (onReadyChange != null) {
+                    addListener(
+                        object : Player.Listener {
+                            override fun onPlaybackStateChanged(playbackState: Int) {
+                                if (playbackState == Player.STATE_READY) {
+                                    onReadyChange.invoke(true)
+                                }
+                            }
+
+                            override fun onRenderedFirstFrame() {
+                                onReadyChange.invoke(true)
+                            }
+
+                            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                                onReadyChange.invoke(false)
+                            }
+                        },
+                    )
+                }
                 setVideoTextureView(textureView)
-                setMediaItem(MediaItem.fromUri(media.url))
+                setMediaItem(mediaItem)
                 prepare()
             }
     }

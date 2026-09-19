@@ -608,15 +608,30 @@ private fun ThumbnailItem(
                     }
 
                 if (item.mediaId == currentMediaId && !currentCanvasUrl.isNullOrBlank()) {
-                    CanvasVideo(
-                        canvasUrl = currentCanvasUrl,
-                        modifier =
-                            Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
+                    // Stack the artwork underneath and only reveal the video once
+                    // it actually renders. A broken canvas URL (expired link,
+                    // unplayable embed, codec failure) previously replaced the
+                    // cover with an empty player.
+                    var canvasReady by remember(currentCanvasUrl) { mutableStateOf(false) }
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        ThumbnailImage(
+                            artworkUri = artworkUriToUse,
+                            modifier =
+                                Modifier.graphicsLayer {
                                     alpha = artworkAlpha.coerceIn(0f, 1f)
                                 },
-                    )
+                        )
+                        CanvasVideo(
+                            canvasUrl = currentCanvasUrl,
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        alpha = if (canvasReady) artworkAlpha.coerceIn(0f, 1f) else 0f
+                                    },
+                            onReadyChange = { ready -> canvasReady = ready },
+                        )
+                    }
                 } else {
                     ThumbnailImage(
                         artworkUri = artworkUriToUse,
@@ -705,9 +720,14 @@ private fun ThumbnailImage(
 fun CanvasVideo(
     canvasUrl: String,
     modifier: Modifier = Modifier,
+    onReadyChange: ((Boolean) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    LaunchedEffect(canvasUrl) {
+        onReadyChange?.invoke(false)
+    }
 
     val player = remember(canvasUrl) {
         val isRemoteCanvas =
@@ -749,6 +769,25 @@ fun CanvasVideo(
                 repeatMode = Player.REPEAT_MODE_ONE
                 volume = 0f
                 playWhenReady = true
+                if (onReadyChange != null) {
+                    addListener(
+                        object : Player.Listener {
+                            override fun onPlaybackStateChanged(playbackState: Int) {
+                                if (playbackState == Player.STATE_READY) {
+                                    onReadyChange.invoke(true)
+                                }
+                            }
+
+                            override fun onRenderedFirstFrame() {
+                                onReadyChange.invoke(true)
+                            }
+
+                            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                                onReadyChange.invoke(false)
+                            }
+                        },
+                    )
+                }
                 setMediaItem(mediaItem)
                 prepare()
             }

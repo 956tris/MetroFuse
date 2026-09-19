@@ -7084,21 +7084,54 @@ class MusicService :
         if (CanvasOfflineCache.cachedUriFor(applicationContext, mediaId) != null) return
         scope.launch(Dispatchers.IO) {
             runCatching {
+                // Apple motion canvases live behind music.apple.com hotlink
+                // protection; the same headers the player sends are needed to
+                // fetch the playlist/segments here.
+                val headers = if (provider.equals("Apple Music", ignoreCase = true)) {
+                    mapOf(
+                        "Origin" to "https://music.apple.com",
+                        "Referer" to "https://music.apple.com/",
+                    )
+                } else {
+                    emptyMap()
+                }
                 val request =
                     okhttp3.Request.Builder()
                         .url(videoUrl)
                         .header("User-Agent", "Mozilla/5.0")
+                        .apply {
+                            headers.forEach { (name, value) -> header(name, value) }
+                        }
                         .build()
-                val client = okhttp3.OkHttpClient.Builder().callTimeout(20, java.util.concurrent.TimeUnit.SECONDS).build()
+                val client = okhttp3.OkHttpClient.Builder().callTimeout(25, java.util.concurrent.TimeUnit.SECONDS).build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) return@launch
                     val isHls =
                         videoUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true) ||
                             response.header("Content-Type").orEmpty().contains("mpegurl", ignoreCase = true)
-                    // Skip HLS playlists here: they need multi-segment packaging
-                    // which already happens at download time. Caching the raw
-                    // m3u8 text would not be playable offline.
-                    if (isHls) return@launch
+                    if (isHls) {
+                        // Package the full segment set so the cached copy
+                        // plays offline. A partial package is worse than none
+                        // (it renders gaps), so failures simply skip caching.
+                        val playlist = response.body.string()
+                        val packageBytes = HlsCanvasPackager.downloadAndPackage(
+                            playlistUrl = videoUrl,
+                            playlist = playlist,
+                            headers = headers,
+                            client = client,
+                        ) ?: return@launch
+                        CanvasOfflineCache.put(
+                            applicationContext,
+                            mediaId,
+                            EmbeddedCanvas(
+                                mimeType = AudioTagWriter.METROFUSE_HLS_CANVAS_MIME,
+                                bytes = packageBytes,
+                                provider = provider,
+                            ),
+                            videoUrl,
+                        )
+                        return@launch
+                    }
                     val bytes = response.body.bytes()
                     if (bytes.isEmpty() || bytes.size > 8 * 1024 * 1024) return@launch
                     val mime =

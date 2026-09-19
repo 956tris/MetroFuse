@@ -836,7 +836,18 @@ fun BottomSheetPlayer(
             else -> null
         }
     val playerCanvasBackground = canvasBackground?.takeUnless { isAppleCanvasBackground || isTidalCanvasBackground }
-    val shouldShowCanvasBackground = playerCanvasBackground != null && state.progress > 0.1f
+    // Only hide the artwork once the canvas video is actually rendering.
+    // Previously any non-blank URL immediately replaced the artwork with a
+    // Spacer, so a broken/unplayable canvas (local file via the wrong data
+    // source, HLS without a MIME type, 403, corrupt embed) left an empty
+    // slot. The video reports readiness through onReadyChange below.
+    var playerCanvasReady by remember(playerCanvasBackground?.url) { mutableStateOf(false) }
+    // Compose (and start loading) the video as soon as a URL exists, but only
+    // treat it as shown once it actually renders. Otherwise the composition
+    // that reports readiness would never enter the composition (deadlock) or
+    // a broken URL would hide the artwork and leave an empty slot.
+    val hasPlayerCanvasVideo = playerCanvasBackground != null && state.progress > 0.1f
+    val shouldShowCanvasBackground = hasPlayerCanvasVideo && playerCanvasReady
     val shouldShowAppleMusicFadeBackground =
         experimentalAppleMusicCoverFade &&
                 appleLikeCanvasBackground != null &&
@@ -1861,18 +1872,19 @@ fun BottomSheetPlayer(
                     }
                 }
 
-                playerCanvasBackground?.takeIf { shouldShowCanvasBackground }?.let { media ->
+                playerCanvasBackground?.takeIf { hasPlayerCanvasVideo }?.let { media ->
                     Box(
                         modifier =
                             Modifier
                                 .fillMaxSize()
-                                .alpha(backgroundAlpha),
+                                .alpha(if (playerCanvasReady) backgroundAlpha else 0f),
                     ) {
                         SpotifyCanvasVideoBackground(
                             media = media,
                             shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
                             modifier = Modifier.fillMaxSize(),
                             scrimAlpha = 0.16f,
+                            onReadyChange = { ready -> playerCanvasReady = ready },
                         )
                         // Readability gradient over bright canvas videos: the
                         // controls, slider and text live in the lower half.
