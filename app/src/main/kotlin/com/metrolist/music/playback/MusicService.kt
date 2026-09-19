@@ -1227,6 +1227,7 @@ class MusicService :
                     QobuzAudioProvider.invalidate(mediaId)
                     TidalAudioProvider.invalidate(mediaId)
                     DeezerAudioProvider.invalidate(mediaId)
+                    JioSaavnAudioProvider.invalidate(mediaId)
                     SoundCloudAudioProvider.invalidate(mediaId)
                     YouTubeAudioProvider.invalidate(mediaId)
 
@@ -4275,6 +4276,12 @@ class MusicService :
                 return
             }
 
+            isDecodingError(error) -> {
+                Timber.tag(TAG).d("Decoder failed mid-stream (code=${error.errorCode}), refreshing stream")
+                handleDecodingError(mediaId)
+                return
+            }
+
             isNetworkRelatedError(error) -> {
                 Timber.tag(TAG).d("Network-related error detected, waiting for connection")
                 waitOnNetworkError()
@@ -4583,6 +4590,52 @@ class MusicService :
                 }
 
                 Timber.tag(TAG).d("Retrying playback for $mediaId after premature stream EOF")
+            }
+    }
+
+    private fun isDecodingError(error: PlaybackException): Boolean =
+        error.errorCode == PlaybackException.ERROR_CODE_DECODING_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+            error.errorCode == PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+
+    /**
+     * Recovers from a mid-stream decoder failure (e.g. a corrupt/torn
+     * byte range from the CDN tripping the software decoder) by forcing a
+     * fresh stream URL, bypassing any "fully cached" index entry for the
+     * recovery attempt, and resuming where playback stopped. The existing
+     * retry-limit guard above still caps repeated failures per song.
+     */
+    private fun handleDecodingError(mediaId: String?) {
+        if (mediaId == null) {
+            handleFinalFailure()
+            return
+        }
+
+        incrementRetryCount(mediaId)
+
+        retryJob?.cancel()
+        retryJob =
+            scope.launch {
+                val currentIndex = player.currentMediaItemIndex
+                val currentPosition = player.currentPosition.coerceAtLeast(0L)
+                val shouldResume = player.playWhenReady
+                if (currentIndex == C.INDEX_UNSET) {
+                    handleFinalFailure()
+                    return@launch
+                }
+
+                invalidateResolvedProviderStream(mediaId)
+                // Don't trust a stale "fully cached" index entry: a torn
+                // cache write decodes fine until the player reaches the gap.
+                bypassCompleteCacheForRecovery.add(mediaId)
+                delay(250L)
+                player.seekTo(currentIndex, currentPosition)
+                player.prepare()
+                if (shouldResume && castConnectionHandler?.isCasting?.value != true) {
+                    player.play()
+                }
+
+                Timber.tag(TAG).d("Retrying playback for $mediaId after decoder failure")
             }
     }
 
@@ -5793,6 +5846,7 @@ class MusicService :
         QobuzAudioProvider.invalidate(mediaId)
         TidalAudioProvider.invalidate(mediaId)
         DeezerAudioProvider.invalidate(mediaId)
+        JioSaavnAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
     }
