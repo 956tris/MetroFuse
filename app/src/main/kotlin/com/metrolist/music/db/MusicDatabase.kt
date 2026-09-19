@@ -327,29 +327,7 @@ private class BackupCallback(
     }
 
     override fun onOpen(db: SupportSQLiteDatabase) {
-        repairRoomIdentityIfSafe(db)
         delegate.onOpen(db)
-    }
-}
-
-private const val CURRENT_ROOM_IDENTITY_HASH = "f73c0121757d9c2e0f6f603be5eb223c"
-
-private fun repairRoomIdentityIfSafe(db: SupportSQLiteDatabase) {
-    try {
-        if (!hasSchema40Shape(db)) return
-        val currentHash =
-            db.query("SELECT identity_hash FROM room_master_table WHERE id = 42").use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
-            }
-        if (currentHash == CURRENT_ROOM_IDENTITY_HASH) return
-
-        db.execSQL("CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)")
-        db.execSQL(
-            "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '$CURRENT_ROOM_IDENTITY_HASH')",
-        )
-        Timber.tag("MusicDatabase").w("Repaired Room identity hash from $currentHash")
-    } catch (e: Exception) {
-        Timber.tag("MusicDatabase").w(e, "Skipped Room identity repair")
     }
 }
 

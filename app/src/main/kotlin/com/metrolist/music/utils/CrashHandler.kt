@@ -70,6 +70,7 @@ class CrashHandler private constructor(
             appendLine("Device: ${Build.MODEL}")
             appendLine("Android version: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
             appendLine("App version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
+            appendLine("Build: ${BuildConfig.GIT_SHA}")
             appendLine()
             appendLine("=".repeat(50))
             appendLine("Stacktrace:")

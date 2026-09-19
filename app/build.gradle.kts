@@ -21,6 +21,19 @@ if (localPropertiesFile.exists()) {
 val baseApplicationId = "com.metrofuse.music"
 val metroFuseVersionCode = 800
 val metroFuseVersionName = "8.0"
+// Embedded into crash reports so a report always proves which commit built
+// the APK (versionCode/Name alone can't - every local build is 8.0/800).
+val gitSha: String =
+    runCatching {
+        ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+            .directory(rootDir)
+            .redirectErrorStream(true)
+            .start()
+            .let { process ->
+                process.waitFor()
+                process.inputStream.bufferedReader().readText().trim()
+            }
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "unknown"
 val metroFuseUpdateRepository = "956tris/MetroFuse"
 val discordRpcApplicationId = "1508739806186963045"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }
@@ -191,6 +204,7 @@ android {
 
         buildConfigField("String", "LASTFM_API_KEY", "\"$lastFmKey\"")
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
+        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
         buildConfigField("String", "ARCHITECTURE", "\"universal\"")
         buildConfigField("String", "UPDATE_REPOSITORY", "\"$metroFuseUpdateRepository\"")
         buildConfigField("long", "DISCORD_RPC_APPLICATION_ID", "${discordRpcApplicationId}L")
