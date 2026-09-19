@@ -23,6 +23,7 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     private var encoding = C.ENCODING_INVALID
     private var isActive = false
     private var formatSupported = false
+    @Volatile
     private var equalizerEnabled = false
 
     private var inputBuffer: ByteBuffer = EMPTY_BUFFER
@@ -30,7 +31,11 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
     private var inputEnded = false
 
     private var filters: List<BiquadFilter> = emptyList()
+    @Volatile
     private var automixFilters: List<BiquadFilter> = emptyList()
+    // Reused across processAudioBuffer16Bit calls (audio thread only):
+    // kills the per-sample Pair allocation (~48k/s of GC churn before).
+    private val stereoScratch = DoubleArray(2)
     private var preampGain: Double = 1.0  // Linear preamp gain multiplier
     private var pendingProfile: ParametricEQ? = null
 
@@ -198,7 +203,12 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
         return inputAudioFormat
     }
 
-    override fun isActive(): Boolean = isActive
+    /**
+     * Fully bypasses (no buffer copy at all) when neither the user EQ nor an
+     * Automix blend needs filtering. ExoPlayer skips inactive processors, so
+     * idle playback stays on the zero-copy path.
+     */
+    override fun isActive(): Boolean = isActive && (equalizerEnabled || automixFilters.isNotEmpty())
 
     override fun queueInput(inputBuffer: ByteBuffer) {
         if (!formatSupported || (!equalizerEnabled && automixFilters.isEmpty())) {
@@ -296,16 +306,16 @@ class CustomEqualizerAudioProcessor : AudioProcessor {
 
                     // Apply all filters in series
                     for (filter in filters) {
-                        val (left, right) = filter.processStereo(processedLeft, processedRight)
-                        processedLeft = left
-                        processedRight = right
+                        filter.processStereoInto(processedLeft, processedRight, stereoScratch)
+                        processedLeft = stereoScratch[0]
+                        processedRight = stereoScratch[1]
                     }
 
                     // Apply Automix filters
                     for (filter in automixFilters) {
-                        val (left, right) = filter.processStereo(processedLeft, processedRight)
-                        processedLeft = left
-                        processedRight = right
+                        filter.processStereoInto(processedLeft, processedRight, stereoScratch)
+                        processedLeft = stereoScratch[0]
+                        processedRight = stereoScratch[1]
                     }
 
                     // Apply preamp gain

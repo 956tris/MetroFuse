@@ -128,10 +128,17 @@ import com.metrolist.music.constants.ExperimentalProviderPlaybackTimeoutKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.playback.CanvasWallpaperService
 import com.metrolist.music.utils.PreferenceCache
+import com.metrolist.music.utils.mix.AutomixIntroSniffer
+import com.metrolist.music.utils.mix.BeatFeatures
 import com.metrolist.music.utils.mix.KeyCompatibility
 import com.metrolist.music.utils.mix.MixMetadata
 import com.metrolist.music.utils.mix.MixMetadataResolver
+import com.metrolist.music.utils.mix.TrackStructure
+import com.metrolist.music.utils.mix.computeStructure
 import com.metrolist.music.utils.mix.harmonicMixHint
+import com.metrolist.music.utils.mix.mixInSeekMs
+import com.metrolist.music.utils.mix.mixOutTriggerMs
+import com.metrolist.music.utils.mix.voteDownbeat
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import kotlinx.coroutines.flow.collect
@@ -245,6 +252,8 @@ import com.metrolist.music.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.RelatedSongMap
 import com.metrolist.music.db.entities.Song
+import com.metrolist.music.db.entities.TrackStructureEntity
+import com.metrolist.music.playback.audio.AutomixAnalyzerAudioProcessor
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
 import com.metrolist.music.eq.EqualizerService
@@ -437,6 +446,10 @@ private data class AutomixPlan(
     // tracker is available - a fair assumption for the mainstream catalog.
     // Always clamped within a single beat so intros are never skipped.
     val phaseOffsetMs: Long,
+    // Where playback of track B actually starts: the learned first downbeat
+    // at/after its intro when structure was learned or sniffed, else the
+    // beat-phase offset above.
+    val mixInSeekMs: Long,
     val keyCompatibility: KeyCompatibility,
     val blendMode: AutomixBlendMode,
     val durationScale: Float,
@@ -499,6 +512,9 @@ class MusicService :
     private var activeAutomixBars = 8
     private var activeCrossfadeDurationMs = 5000L
     private var pendingAutomixProfile: AutomixRuntimeProfile? = null
+    // Outgoing BPM captured alongside the pending profile so the trigger-time
+    // recompute in startCrossfade doesn't refetch persisted data.
+    private var pendingAutomixOutBpm: Float? = null
     private var activeAutomixProfile: AutomixRuntimeProfile? = null
     private var activeAutomixPlan: AutomixPlan? = null
     private var automixPrefetchJob: Job? = null
@@ -511,6 +527,10 @@ class MusicService :
                 override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, MixMetadata>?): Boolean = size > 48
             },
         )
+    // Serialized intro-sniff worker: one head-download + decode at a time.
+    private var automixSniffJob: Job? = null
+    @Volatile
+    private var structurePersistCount = 0
     private var crossfadeTriggerJob: Job? = null
     private var crossfadePrepareJob: Job? = null
 
@@ -657,6 +677,7 @@ class MusicService :
         crossfadeJob?.cancel()
         crossfadeJob = null
         pendingAutomixProfile = null
+        pendingAutomixOutBpm = null
         activeAutomixProfile = null
 
         if (secondaryPlayer != null) {
@@ -735,6 +756,14 @@ class MusicService :
 
     private val playerSilenceProcessors = HashMap<Player, SilenceDetectorAudioProcessor>()
     private val playerEqProcessors = HashMap<Player, CustomEqualizerAudioProcessor>()
+    // Passive Automix learn taps, one per player. Fed the active media id on
+    // every track change; snapshots persist to track_structure (see
+    // persistLearnedStructure). Never affect audio.
+    private val playerAnalyzers = HashMap<Player, AutomixAnalyzerAudioProcessor>()
+    // Media id each tap is currently pointed at. Guards armAnalyzerFor: arming
+    // resets learned state, so repeats of the same id must not re-arm (except
+    // true restarts, which pass force=true).
+    private val analyzerArmedIds = HashMap<Player, String?>()
 
     private val instantSilenceSkipEnabled = MutableStateFlow(false)
 
@@ -1748,6 +1777,11 @@ class MusicService :
                 crossfadeGapless = prefs.crossfadeGapless
                 activeAutomixEnabled = prefs.automixEnabled
                 activeAutomixBars = prefs.automixBars.coerceIn(2, 32)
+                // Battery gate: learn taps do zero work unless Automix is on.
+                // Disabling also detaches current ids so stale audio can't be
+                // attributed when re-enabled mid-track.
+                playerAnalyzers.values.forEach { it.analysisEnabled = prefs.automixEnabled }
+                if (!prefs.automixEnabled) analyzerArmedIds.clear()
                 scheduleCrossfade()
                 maybePrefetchAutomixMetadata()
             }
@@ -1883,6 +1917,10 @@ class MusicService :
 
         val silenceProcessor = SilenceDetectorAudioProcessor { handleLongSilenceDetected() }
 
+        // Passive Automix learn tap. Zero-cost unless Automix is enabled.
+        val analyzerProcessor = AutomixAnalyzerAudioProcessor()
+        analyzerProcessor.analysisEnabled = activeAutomixEnabled
+
         // Set initial state
         runBlocking {
             val skipSilence = dataStore.get(SkipSilenceKey, false)
@@ -1894,7 +1932,7 @@ class MusicService :
             ExoPlayer
                 .Builder(this)
                 .setMediaSourceFactory(createMediaSourceFactory())
-                .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor))
+                .setRenderersFactory(createRenderersFactory(eqProcessor, silenceProcessor, analyzerProcessor))
                 .setTrackSelector(createAudioTrackSelector())
                 .setLoadControl(createLoadControl())
                 .setUseLazyPreparation(false)
@@ -1913,6 +1951,10 @@ class MusicService :
                 .build()
 
         playerSilenceProcessors[player] = silenceProcessor
+        // Wired here (previously never populated, so every Automix EQ move
+        // was a silent no-op): the tick loop drives these bands live.
+        playerEqProcessors[player] = eqProcessor
+        playerAnalyzers[player] = analyzerProcessor
 
         player.apply {
             runBlocking {
@@ -3611,6 +3653,18 @@ class MusicService :
         if (cachedPersistentQueue) {
             saveQueueToDisk()
         }
+
+        // Automix learning handoff on the main player: persist what the tap
+        // observed of the outgoing track, then point it at the new one. (The
+        // crossfade path swaps player objects instead and is handled in
+        // performCrossfadeSwap/startCrossfade.) Repeats restart the same
+        // track, so force a re-arm to restart the grid.
+        persistLearnedStructure(player)
+        armAnalyzerFor(
+            player,
+            mediaItem?.metadata,
+            force = reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT,
+        )
 
         // Warm BPM/key data for the current + next track so the Automix plan
         // can lock tempo and key instead of falling back to a plain blend.
@@ -7374,6 +7428,7 @@ class MusicService :
     private fun createRenderersFactory(
         eqProcessor: CustomEqualizerAudioProcessor,
         silenceProcessor: SilenceDetectorAudioProcessor,
+        analyzerProcessor: AutomixAnalyzerAudioProcessor,
     ) = object : DefaultRenderersFactory(this) {
         init {
             setExtensionRendererMode(EXTENSION_RENDERER_MODE_PREFER)
@@ -7393,6 +7448,8 @@ class MusicService :
                     arrayOf(
                         eqProcessor,
                         silenceProcessor,
+                        // Passive learn tap: copies audio through untouched.
+                        analyzerProcessor,
                     ),
                     SilenceSkippingAudioProcessor(2_000_000, 20_000, 256),
                     SonicAudioProcessor(),
@@ -8347,6 +8404,16 @@ class MusicService :
         player.removeListener(this)
         player.removeListener(sleepTimer)
         playerSilenceProcessors.remove(player)
+        // Drop learn taps + EQ handles with the released players (the EQ map
+        // was never cleaned before; both leaked one entry per crossfade).
+        playerEqProcessors.remove(player)
+        secondaryPlayer?.let { secondary ->
+            playerEqProcessors.remove(secondary)
+            playerAnalyzers.remove(secondary)
+            analyzerArmedIds.remove(secondary)
+        }
+        playerAnalyzers.remove(player)
+        analyzerArmedIds.remove(player)
         scrobbleManager?.destroy()
         youtubeMusicHistorySyncManager.destroy()
         youtubeMusicProgressiveHistorySyncManager.destroy()
@@ -8715,7 +8782,10 @@ class MusicService :
         crossfadeTriggerJob?.cancel()
         crossfadeTriggerJob = null
         if (isCrossfading || secondaryPlayer != null) return
-        val automixProfile = currentAutomixProfile()
+        // Single persisted-data fetch per scheduling pass (was 3-4 scattered
+        // round-trips before): BPM, key, loudness, learned structure.
+        val outData = automixTrackData(player.currentMediaItem?.metadata)
+        val automixProfile = currentAutomixProfile(outData.bpm)
         // Automix carries its own bar-derived duration; otherwise the plain
         // crossfade duration applies.
         val durationMs = automixProfile?.durationMs ?: crossfadeDuration.toLong().coerceIn(750L, 32_000L)
@@ -8723,17 +8793,23 @@ class MusicService :
         if (crossfadeGapless && isNextItemGapless()) return
         if (!player.hasNextMediaItem() && player.repeatMode != REPEAT_MODE_ONE) return
 
-        val triggerTime = player.duration - durationMs
-        // Automix always starts on a phrase boundary, like a DJ would, instead
-        // of at an arbitrary offset from the end of the file.
+        // Learned structure beats phrase math: start the blend so it lands on
+        // the true musical end (outro/fade tail). Otherwise snap back to the
+        // nearest 8-bar phrase boundary like a DJ would.
+        val learnedTrigger =
+            outData.structure?.takeIf { it.confidence >= 0.55f }?.toLearned()?.let {
+                mixOutTriggerMs(it, player.duration, durationMs)
+            }
+        val triggerTime = learnedTrigger ?: (player.duration - durationMs)
         val phraseAlignedTrigger =
-            if (automixProfile != null) {
-                alignToPhraseStart(triggerTime, player.duration)
+            if (automixProfile != null && learnedTrigger == null) {
+                alignToPhraseStart(triggerTime, player.duration, outData.bpm)
             } else {
                 triggerTime
             }
         val delayMs = phraseAlignedTrigger - player.currentPosition
         pendingAutomixProfile = automixProfile
+        pendingAutomixOutBpm = outData.bpm
         if (delayMs <= 250L) {
             startCrossfade()
             return
@@ -8761,9 +8837,10 @@ class MusicService :
     private fun alignToPhraseStart(
         naturalTriggerMs: Long,
         trackDurationMs: Long,
+        bpm: Float?,
     ): Long {
-        val bpm = resolvedAutomixBpm(player.currentMediaItem?.metadata) ?: return naturalTriggerMs
-        val barMs = 60_000f / bpm * 4f // 4/4 assumed - the overwhelming majority of streamed music
+        val beatBpm = bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM } ?: return naturalTriggerMs
+        val barMs = 60_000f / beatBpm * 4f // 4/4 assumed - the overwhelming majority of streamed music
         val phraseMs = (barMs * 8f).toLong().coerceAtLeast(1L) // 8-bar phrase, the standard pop/EDM unit
 
         // Snap to the phrase boundary at or before the natural trigger point,
@@ -8798,7 +8875,7 @@ class MusicService :
      * bar count at the outgoing track's tempo, falling back to a safe default
      * when no BPM is known yet.
      */
-    private fun currentAutomixProfile(): AutomixRuntimeProfile? {
+    private fun currentAutomixProfile(outBpm: Float?): AutomixRuntimeProfile? {
         if (!activeAutomixEnabled) return null
         val currentSongId = player.currentMediaItem?.mediaId
         val nextIndex = player.nextMediaItemIndex
@@ -8821,59 +8898,9 @@ class MusicService :
             }
         }
 
-        val bpm = resolvedAutomixBpm(player.currentMediaItem?.metadata)
-        val barDurationMs = bpm?.let { (60_000f / it * 4f * bars).toLong() }
+        val barDurationMs = outBpm?.let { (60_000f / it * 4f * bars).toLong() }
         val fallbackMs = (AUTOMIX_DEFAULT_DURATION_S * 1000f * (bars / 8f)).toLong()
         return AutomixRuntimeProfile(durationMs = (barDurationMs ?: fallbackMs).coerceIn(2_000L, 20_000L))
-    }
-
-    /**
-     * Best-effort perceived loudness (LUFS) for Automix gain staging, using
-     * the same measurement the normalization pipeline uses. Null when the
-     * track's stream loudness was never persisted - the caller then blends
-     * with no relative compensation rather than guessing.
-     */
-    private fun measuredTrackLufs(mediaId: String?): Double? {
-        if (mediaId.isNullOrBlank()) return null
-        val format =
-            runCatching {
-                runBlocking(Dispatchers.IO) { database.getFormatByIdBlocking(mediaId) }
-            }.getOrNull() ?: return null
-        return format.perceptualLoudnessDb
-            ?: format.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs }
-    }
-
-    /**
-     * Best-effort BPM lookup chain for Automix: queue tag first (cheapest),
-     * then the in-memory prefetch cache, then the persisted song row. Warms
-     * the cache on a database hit so repeat lookups within one transition
-     * stay off the IO thread.
-     */
-    private fun resolvedAutomixBpm(metadata: MediaMetadata?): Float? {
-        metadata?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }?.let { return it }
-        val id = metadata?.id?.takeIf { it.isNotBlank() } ?: return null
-        automixMetadataCache[id]?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }?.let { return it }
-        val dbBpm =
-            runCatching {
-                runBlocking(Dispatchers.IO) { database.getSongByIdBlocking(id) }?.song?.bpm
-            }.getOrNull()?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
-        if (dbBpm != null) {
-            automixMetadataCache[id] = MixMetadata(bpm = dbBpm, keySignature = automixMetadataCache[id]?.keySignature)
-        }
-        return dbBpm
-    }
-
-    private fun resolvedAutomixKey(metadata: MediaMetadata?): String? {        metadata?.keySignature?.takeIf { it.isNotBlank() }?.let { return it }
-        val id = metadata?.id?.takeIf { it.isNotBlank() } ?: return null
-        automixMetadataCache[id]?.keySignature?.takeIf { it.isNotBlank() }?.let { return it }
-        val dbKey =
-            runCatching {
-                runBlocking(Dispatchers.IO) { database.getSongByIdBlocking(id) }?.song?.keySignature
-            }.getOrNull()?.takeIf { it.isNotBlank() }
-        if (dbKey != null) {
-            automixMetadataCache[id] = MixMetadata(bpm = automixMetadataCache[id]?.bpm, keySignature = dbKey)
-        }
-        return dbKey
     }
 
     /**
@@ -8902,6 +8929,13 @@ class MusicService :
                 .distinctBy { it.id }
                 .filter { !automixMetadataCache.containsKey(it.id) }
                 .take(2)
+        // Intro sniff runs independently of metadata targets: structure is
+        // valuable even when BPM tags are already known.
+        val nextItems =
+            listOfNotNull(nextIndex.takeIf { it != C.INDEX_UNSET }?.let {
+                runCatching { player.getMediaItemAt(it) }.getOrNull()
+            })
+        maybeSniffNextIntro(nextItems)
         if (targets.isEmpty()) return
         val cookie = cachedSpotifyCookie
         val triggerMediaId = player.currentMediaItem?.mediaId
@@ -8939,6 +8973,217 @@ class MusicService :
             }
     }
 
+    /**
+     * One blocking fetch for every persisted Automix field of a track (BPM,
+     * key, loudness, learned structure). Replaces the previous pattern of
+     * 3-4 separate round-trips scattered across the transition path.
+     */
+    private data class AutomixTrackData(
+        val bpm: Float?,
+        val key: String?,
+        val lufs: Double?,
+        val structure: TrackStructureEntity?,
+    )
+
+    private fun automixTrackData(metadata: MediaMetadata?): AutomixTrackData {
+        val id = metadata?.id?.takeIf { it.isNotBlank() }
+        val tagBpm = metadata?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
+        val tagKey = metadata?.keySignature?.takeIf { it.isNotBlank() }
+        if (id == null) return AutomixTrackData(tagBpm, tagKey, null, null)
+        val mem = automixMetadataCache[id]
+        val memBpm = mem?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
+        val memKey = mem?.keySignature?.takeIf { it.isNotBlank() }
+        val persisted =
+            runCatching {
+                runBlocking(Dispatchers.IO) {
+                    Triple(
+                        database.getSongByIdBlocking(id)?.song,
+                        database.getFormatByIdBlocking(id),
+                        database.getTrackStructure(id),
+                    )
+                }
+            }.getOrNull()
+        val song = persisted?.first
+        val format = persisted?.second
+        val dbBpm = song?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
+        val dbKey = song?.keySignature?.takeIf { it.isNotBlank() }
+        if ((memBpm == null && dbBpm != null) || (memKey == null && dbKey != null)) {
+            automixMetadataCache[id] = MixMetadata(bpm = memBpm ?: dbBpm, keySignature = memKey ?: dbKey)
+        }
+        return AutomixTrackData(
+            bpm = tagBpm ?: memBpm ?: dbBpm,
+            key = tagKey ?: memKey ?: dbKey,
+            lufs = format?.perceptualLoudnessDb ?: format?.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs },
+            structure = persisted?.third,
+        )
+    }
+
+    private fun TrackStructureEntity.toLearned() =
+        TrackStructure(
+            mediaId = mediaId,
+            bpm = bpm,
+            beatPeriodMs = beatPeriodMs,
+            downbeatOffsetMs = downbeatOffsetMs,
+            introEndMs = introEndMs,
+            outroStartMs = outroStartMs,
+            isFadeOut = isFadeOut,
+            confidence = confidence,
+            learnedAt = learnedAt,
+        )
+
+    /**
+     * Points a player's learn tap at [metadata]. Must run exactly on track
+     * changes (never repeatedly): arming resets the learned state, so
+     * re-arming mid-track would erase the grid being observed.
+     */
+    private fun armAnalyzerFor(
+        targetPlayer: Player,
+        metadata: MediaMetadata?,
+        force: Boolean = false,
+    ) {
+        val analyzer = playerAnalyzers[targetPlayer] ?: return
+        val wantId =
+            if (activeAutomixEnabled && metadata != null && !metadata.isEpisode && !metadata.isVideoSong && metadata.id.isNotBlank()) {
+                metadata.id
+            } else {
+                null
+            }
+        if (!force && analyzerArmedIds[targetPlayer] == wantId) return
+        analyzerArmedIds[targetPlayer] = wantId
+        if (wantId == null) {
+            analyzer.setActiveTrack(null, null, 0L)
+            return
+        }
+        val bpmHint = metadata?.bpm ?: automixMetadataCache[wantId]?.bpm
+        analyzer.setActiveTrack(
+            wantId,
+            bpmHint,
+            metadata?.duration?.takeIf { it > 0 }?.times(1000L) ?: 0L,
+        )
+    }
+
+    /**
+     * Snapshots a player's learn tap into track_structure. Cheap enough to
+     * run on every track change: snapshot() is allocation-light and the DB
+     * write goes to a background executor.
+     */
+    private fun persistLearnedStructure(targetPlayer: Player?) {
+        if (!activeAutomixEnabled || targetPlayer == null) return
+        val snap = playerAnalyzers[targetPlayer]?.snapshot() ?: return
+        if (snap.mediaId.isBlank()) return
+        scope.launch(Dispatchers.IO) {
+            val structure = computeStructure(snap.energyPerSecond, snap.energyPerSecond.size, snap.durationObservedMs)
+            val vote =
+                if (snap.beats.size >= 16) {
+                    runCatching {
+                        voteDownbeat(snap.beats.map { BeatFeatures(it.sub01, it.flux01, it.broad01) })
+                    }.getOrNull()
+                } else {
+                    null
+                }
+            val period = snap.beatPeriodMs?.takeIf { it > 0f }
+            val downbeatOffset =
+                if (vote != null && vote.confidence >= 0.5f && period != null) {
+                    (vote.offsetBeats * period).toLong()
+                } else {
+                    null
+                }
+            val confidence = maxOf(structure.confidence, (vote?.confidence ?: 0f) * 0.9f).coerceIn(0f, 1f)
+            if (confidence < 0.3f && structure.introEndMs == null && structure.outroStartMs == null && downbeatOffset == null) {
+                return@launch
+            }
+            persistTrackStructureEntity(
+                TrackStructureEntity(
+                    mediaId = snap.mediaId,
+                    bpm = snap.bpmHint,
+                    beatPeriodMs = period,
+                    downbeatOffsetMs = downbeatOffset,
+                    introEndMs = structure.introEndMs,
+                    outroStartMs = structure.outroStartMs,
+                    isFadeOut = structure.isFadeOut,
+                    confidence = confidence,
+                    learnedAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
+
+    private fun persistTrackStructureEntity(entity: TrackStructureEntity) {
+        runCatching {
+            database.query {
+                upsertTrackStructure(entity)
+                if (structurePersistCount++ % 25 == 0) pruneTrackStructure()
+            }
+        }
+    }
+
+    /**
+     * Prefetch-window intro sniff: when the next track's structure is unknown,
+     * range-fetch its stream head and decode ~12s in the background, minutes
+     * before the blend. Serialized to one job; every failure path falls back
+     * to the heuristic engine silently.
+     */
+    private fun maybeSniffNextIntro(nextItems: List<MediaItem>) {
+        if (!activeAutomixEnabled) return
+        if (castConnectionHandler?.isCasting?.value == true) return
+        val candidates =
+            nextItems.mapNotNull { it.metadata }.filter {
+                it.id.isNotBlank() && !it.isEpisode && !it.isVideoSong
+            }.distinctBy { it.id }.take(2)
+        if (candidates.isEmpty()) return
+        automixSniffJob?.cancel()
+        val triggerMediaId = player.currentMediaItem?.mediaId
+        automixSniffJob =
+            scope.launch(Dispatchers.IO) {
+                val target =
+                    candidates.firstOrNull { meta ->
+                        if (!isActive) return@launch
+                        (runCatching { database.getTrackStructure(meta.id) }.getOrNull()?.confidence ?: 0f) < 0.5f
+                    } ?: return@launch
+                val sniffed =
+                    sniffTargetHead(target, nextItems) ?: return@launch
+                if (!isActive) return@launch
+                persistTrackStructureEntity(
+                    TrackStructureEntity(
+                        mediaId = target.id,
+                        bpm = sniffed.bpmHintUsed,
+                        beatPeriodMs = sniffed.bpmHintUsed?.takeIf { it > 0f }?.let { 60000f / it },
+                        downbeatOffsetMs = sniffed.firstDownbeatMs,
+                        introEndMs = sniffed.introEndMs,
+                        outroStartMs = null,
+                        isFadeOut = false,
+                        confidence = sniffed.confidence,
+                        learnedAt = System.currentTimeMillis(),
+                    ),
+                )
+                withContext(Dispatchers.Main) {
+                    if (player.currentMediaItem?.mediaId == triggerMediaId && !isCrossfading && secondaryPlayer == null) {
+                        scheduleCrossfade()
+                    }
+                }
+            }
+    }
+
+    private suspend fun sniffTargetHead(
+        target: MediaMetadata,
+        nextItems: List<MediaItem>,
+    ): AutomixIntroSniffer.IntroSniff? {
+        val bpmHint = target.bpm ?: automixMetadataCache[target.id]?.bpm
+        if (target.id.isLocalMediaId()) {
+            val uriString = nextItems.firstOrNull { it.metadata?.id == target.id }
+                ?.localConfiguration?.uri?.toString() ?: return null
+            return AutomixIntroSniffer.sniffLocal(this@MusicService, uriString, target.id, bpmHint)
+        }
+        val now = System.currentTimeMillis()
+        val cached =
+            songUrlCache[target.id]?.takeIf {
+                it.expiresAtMs > now + 60_000L &&
+                    (it.drmLicenseUri == null && it.kid == null)
+            } ?: return null
+        if (!cached.uri.startsWith("http")) return null
+        return AutomixIntroSniffer.sniff(cached.uri, target.id, bpmHint, cacheDir = cacheDir)
+    }
+
     private fun isNextItemGapless(): Boolean {
         val current = player.currentMediaItem?.mediaMetadata ?: return false
         val nextIndex = player.nextMediaItemIndex
@@ -8960,11 +9205,13 @@ class MusicService :
         outgoing: MediaMetadata?,
         incoming: MediaMetadata?,
         outgoingPositionMs: Long,
+        outData: AutomixTrackData,
+        inData: AutomixTrackData,
     ): AutomixPlan? {
         if (outgoing?.isEpisode == true || incoming?.isEpisode == true) return null
         if (outgoing?.isVideoSong == true || incoming?.isVideoSong == true) return null
-        val bpmA = resolvedAutomixBpm(outgoing) ?: return null
-        val bpmB = resolvedAutomixBpm(incoming) ?: return null
+        val bpmA = outData.bpm ?: return null
+        val bpmB = inData.bpm ?: return null
         // Only bend tempo when the tracks are already close: beyond ~12% the
         // pitch-preserving stretch turns audible and hurts more than it helps.
         // Octave-apart tempos get a second chance first: doubling/halving is
@@ -9006,7 +9253,7 @@ class MusicService :
         // Clamped within one incoming beat so an intro is never skipped.
         val phaseOffsetMs = ((phaseA / beatMsA) * beatMsB).toLong().coerceIn(0L, beatMsB.toLong().coerceAtLeast(1L) - 1L)
 
-        val hint = harmonicMixHint(resolvedAutomixKey(outgoing), resolvedAutomixKey(incoming))
+        val hint = harmonicMixHint(outData.key, inData.key)
         var blendMode =
             when {
                 !tempoMatched || hint.compatibility == KeyCompatibility.CLASHING -> AutomixBlendMode.TIGHT
@@ -9038,14 +9285,24 @@ class MusicService :
         // global LoudnessEnhancer normalization is enabled (it already puts
         // both sides on the same target) and clamped tight - this only trims
         // small differences, never rides large ones.
-        val lufsA = measuredTrackLufs(outgoing?.id)
-        val lufsB = measuredTrackLufs(incoming?.id)
+        val lufsA = outData.lufs
+        val lufsB = inData.lufs
         val incomingGainDb =
             if (!normalizationEnabledCached && lufsA != null && lufsB != null) {
                 (lufsA - lufsB).toFloat().coerceIn(-6f, 6f)
             } else {
                 0f
             }
+
+        // True mix-in point: the first learned downbeat at/after the intro
+        // end. Falls back to the beat-phase offset when the incoming track
+        // was never learned or sniffed.
+        val learnedMixInMs =
+            inData.structure?.takeIf { it.confidence >= 0.6f && it.downbeatOffsetMs != null }?.let { stored ->
+                val period = stored.beatPeriodMs?.takeIf { it > 0f } ?: 60000f / bpmB
+                mixInSeekMs(stored.toLearned().copy(beatPeriodMs = period), bpmB)
+            }
+        val mixInSeekMs = learnedMixInMs ?: phaseOffsetMs
 
         return AutomixPlan(
             bpmA = bpmA,
@@ -9056,6 +9313,7 @@ class MusicService :
             tempoMatched = tempoMatched,
             halfTime = halfTime,
             phaseOffsetMs = phaseOffsetMs,
+            mixInSeekMs = mixInSeekMs,
             keyCompatibility = hint.compatibility,
             blendMode = blendMode,
             durationScale = durationScale,
@@ -9070,8 +9328,9 @@ class MusicService :
         if (isCrossfading) return
         if (secondaryPlayer != null) return
         if (castConnectionHandler?.isCasting?.value == true) return
-        val automixProfile = pendingAutomixProfile ?: currentAutomixProfile()
+        val automixProfile = pendingAutomixProfile ?: currentAutomixProfile(pendingAutomixOutBpm)
         pendingAutomixProfile = null
+        pendingAutomixOutBpm = null
         activeAutomixProfile = automixProfile
         activeCrossfadeDurationMs =
             automixProfile?.durationMs ?: crossfadeDuration.toLong().coerceIn(750L, 32_000L)
@@ -9093,11 +9352,15 @@ class MusicService :
         val targetMediaItem = runCatching { player.getMediaItemAt(targetIndex) }.getOrNull()
 
         if (automixProfile != null) {
+            val outgoingMeta = player.currentMediaItem?.metadata
+            val incomingMeta = targetMediaItem?.metadata
             val plan =
                 buildAutomixPlan(
-                    outgoing = player.currentMediaItem?.metadata,
-                    incoming = targetMediaItem?.metadata,
+                    outgoing = outgoingMeta,
+                    incoming = incomingMeta,
                     outgoingPositionMs = player.currentPosition,
+                    outData = automixTrackData(outgoingMeta),
+                    inData = automixTrackData(incomingMeta),
                 )
             activeAutomixPlan = plan
             if (plan != null) {
@@ -9173,9 +9436,12 @@ class MusicService :
 
         secPlayer.setMediaItems(items)
         // Seek to target track (next track, or current track for repeat-one).
-        // Automix nudges the start position into the incoming track's beat
-        // cycle so its downbeat lines up with the outgoing track's grid.
-        secPlayer.seekTo(targetIndex, activeAutomixPlan?.phaseOffsetMs ?: 0L)
+        // Automix starts playback on the learned first downbeat past the
+        // intro when known, else nudges into the incoming beat cycle so its
+        // downbeat lines up with the outgoing grid. The secondary tap keeps
+        // learning the incoming track through prepare + blend.
+        armAnalyzerFor(secPlayer, targetMediaItem?.metadata)
+        secPlayer.seekTo(targetIndex, activeAutomixPlan?.mixInSeekMs ?: 0L)
         secPlayer.volume = 0f
 
         // Copy repeat and shuffle state to the new player
@@ -9396,6 +9662,8 @@ class MusicService :
 
                 fun range(p: Float, start: Float, end: Float) = ((p - start) / (end - start)).coerceIn(0f, 1f)
                 fun smooth(value: Float) = value.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
+                var lastSpeedA = 1f
+                var lastSpeedB = 1f
 
                 for (i in 0..steps) {
                     if (!isActive) break
@@ -9434,8 +9702,16 @@ class MusicService :
                             // pitch-preserving time-stretch when pitch is pinned to 1,
                             // otherwise the single-arg constructor ties pitch to speed
                             // and you get the chipmunk/slowdown effect instead.
-                            fadingPlayer?.playbackParameters = PlaybackParameters(speedA.coerceIn(0.9f, 1.1f), 1f)
-                            player.playbackParameters = PlaybackParameters(speedB.coerceIn(0.9f, 1.1f), 1f)
+                            // Delta-guarded: re-setting identical parameters
+                            // re-inits Sonic's stretcher every 20ms otherwise.
+                            if (abs(speedA - lastSpeedA) > 0.0005f) {
+                                fadingPlayer?.playbackParameters = PlaybackParameters(speedA.coerceIn(0.9f, 1.1f), 1f)
+                                lastSpeedA = speedA
+                            }
+                            if (abs(speedB - lastSpeedB) > 0.0005f) {
+                                player.playbackParameters = PlaybackParameters(speedB.coerceIn(0.9f, 1.1f), 1f)
+                                lastSpeedB = speedB
+                            }
                         }
 
                         // Bass swap: outgoing lows exit as incoming lows enter,
@@ -9500,6 +9776,9 @@ class MusicService :
                 player.clearMediaItems()
                 player.release()
             }
+            playerEqProcessors.remove(player)
+            playerAnalyzers.remove(player)
+            analyzerArmedIds.remove(player)
         }
         secondaryPlayer = null
         nextTrackPreloadCoordinator?.requestRefresh()
@@ -9507,6 +9786,7 @@ class MusicService :
         activeAutomixProfile = null
         activeAutomixPlan = null
         pendingAutomixProfile = null
+        pendingAutomixOutBpm = null
         if (scheduleNext) {
             scheduleCrossfade()
         }
@@ -9518,14 +9798,21 @@ class MusicService :
     ) {
         crossfadePrepareJob?.cancel()
         crossfadePrepareJob = null
+        persistLearnedStructure(fadingPlayer)
         fadingPlayer?.stop()
         fadingPlayer?.clearMediaItems()
         fadingPlayer?.release()
+        fadingPlayer?.let { released ->
+            playerEqProcessors.remove(released)
+            playerAnalyzers.remove(released)
+            analyzerArmedIds.remove(released)
+        }
         fadingPlayer = null
         isCrossfading = false
         activeAutomixProfile = null
         activeAutomixPlan = null
         pendingAutomixProfile = null
+        pendingAutomixOutBpm = null
         applyEffectiveVolume()
         sleepTimer.notifySongTransition()
 

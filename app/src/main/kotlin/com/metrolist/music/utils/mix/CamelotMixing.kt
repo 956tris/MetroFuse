@@ -39,13 +39,16 @@ data class HarmonicMixHint(
     val bassSeparation: Float,
 )
 
+private val CAMELOT_PARSE_REGEX = Regex("""^(\d{1,2})([AB])$""")
+private val CAMELOT_STRICT_REGEX = Regex("""^(?:[1-9]|1[0-2])[AB]$""")
+
 /**
  * Parses a Camelot code like "8A" / "11B" into (number 1..12, minor: Boolean).
  * Returns null for anything that isn't already a valid Camelot code - run
  * musical key strings (e.g. "F#m") through toCamelotKey() first.
  */
 private fun parseCamelot(code: String): Pair<Int, Boolean>? {
-    val match = Regex("""^(\d{1,2})([AB])$""").matchEntire(code.trim().uppercase()) ?: return null
+    val match = CAMELOT_PARSE_REGEX.matchEntire(code.trim().uppercase()) ?: return null
     val number = match.groupValues[1].toIntOrNull() ?: return null
     if (number !in 1..12) return null
     return number to (match.groupValues[2] == "A")
@@ -104,7 +107,7 @@ fun normalizeToCamelot(raw: String?): String? {
             .replace('\u266F', '#')
             .replace('\u266D', 'b')
             .uppercase()
-    if (Regex("""^(?:[1-9]|1[0-2])[AB]$""").matches(normalized)) return normalized
+    if (CAMELOT_STRICT_REGEX.matches(normalized)) return normalized
     return when (normalized) {
         "G#M", "ABM" -> "1A"
         "B" -> "1B"

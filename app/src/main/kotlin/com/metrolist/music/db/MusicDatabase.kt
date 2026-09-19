@@ -41,6 +41,7 @@ import com.metrolist.music.db.entities.SongAlbumMap
 import com.metrolist.music.db.entities.SongArtistMap
 import com.metrolist.music.db.entities.SongEntity
 import com.metrolist.music.db.entities.SongTransitionEntity
+import com.metrolist.music.db.entities.TrackStructureEntity
 import com.metrolist.music.db.entities.SortedSongAlbumMap
 import com.metrolist.music.db.entities.SortedSongArtistMap
 import com.metrolist.music.db.entities.SpeedDialItem
@@ -126,13 +127,14 @@ class MusicDatabase(
         SpeedDialItem::class,
         PodcastEntity::class,
         SongTransitionEntity::class,
+        TrackStructureEntity::class,
     ],
     views = [
         SortedSongArtistMap::class,
         SortedSongAlbumMap::class,
         PlaylistSongMapPreview::class,
     ],
-    version = 41,
+    version = 42,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3),
@@ -173,6 +175,7 @@ class MusicDatabase(
         AutoMigration(from = 37, to = 38),
         AutoMigration(from = 39, to = 40),
         AutoMigration(from = 40, to = 41),
+        AutoMigration(from = 41, to = 42),
     ],
 )
 @TypeConverters(Converters::class)

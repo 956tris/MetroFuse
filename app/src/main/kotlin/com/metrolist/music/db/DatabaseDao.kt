@@ -50,6 +50,7 @@ import com.metrolist.music.db.entities.Song
 import com.metrolist.music.db.entities.SongAlbumMap
 import com.metrolist.music.db.entities.SongArtistMap
 import com.metrolist.music.db.entities.SongTransitionEntity
+import com.metrolist.music.db.entities.TrackStructureEntity
 import com.metrolist.music.db.entities.SongEntity
 import com.metrolist.music.db.entities.SongWithStats
 import com.metrolist.music.extensions.reversed
@@ -1997,4 +1998,15 @@ interface DatabaseDao {
 
     @Query("DELETE FROM song_transition WHERE outgoingSongId = :songId OR incomingSongId = :songId")
     fun deleteTransitionsForSong(songId: String)
+
+    // Learned Automix track structure (true downbeats, intro/outro)
+
+    @Query("SELECT * FROM track_structure WHERE mediaId = :mediaId")
+    fun getTrackStructure(mediaId: String): TrackStructureEntity?
+
+    @Upsert
+    fun upsertTrackStructure(structure: TrackStructureEntity)
+
+    @Query("DELETE FROM track_structure WHERE mediaId NOT IN (SELECT mediaId FROM track_structure ORDER BY learnedAt DESC LIMIT 3000)")
+    fun pruneTrackStructure()
 }
