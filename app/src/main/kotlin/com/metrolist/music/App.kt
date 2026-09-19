@@ -68,6 +68,13 @@ class App :
         // Install crash handler first
         CrashHandler.install(this)
 
+        // The crash reporter runs in a dedicated :crash process, and this
+        // also fires for any future secondary process. Heavy init must never
+        // run there: besides wasting resources, a second WebView (PoToken)
+        // in :crash permanently owns the WebView data-directory lock and
+        // crashes the main process on its next WebView creation.
+        if (!isMainProcess()) return
+
         // preferencesDataStore uses filesDir/datastore; proactive mkdir reduces failures on odd ROM states
         try {
             val datastoreDir = File(filesDir, "datastore")
@@ -80,21 +87,6 @@ class App :
 
         // Initialize cipher deobfuscator for WEB_REMIX streaming
         CipherDeobfuscator.initialize(this)
-
-        // TEMP DIAGNOSTIC — verifying PoTokenGenerator (dead code since the
-        // yt-dlp refactor) still actually works before wiring it into the
-        // resolution path. Remove once verified via logcat filtered on
-        // "PoTokenTest" + "PoTokenGenerator".
-        applicationScope.launch(Dispatchers.IO) {
-            val sessionId = YouTube.dataSyncId ?: YouTube.visitorData
-            val result = com.metrolist.music.utils.potoken.PoTokenGenerator()
-                .getWebClientPoToken("dQw4w9WgXcQ", sessionId ?: "test-session")
-            Timber.tag("PoTokenTest").i(
-                if (result != null)
-                    "SUCCESS: player=${result.playerRequestPoToken.take(10)}... streaming=${result.streamingDataPoToken.take(10)}..."
-                else "FAILED: null result"
-            )
-        }
 
         Timber.plant(Timber.DebugTree())
 
@@ -282,6 +274,26 @@ class App :
 
     @Volatile
     private var cachedCoilCacheSize: Int? = null
+
+    /**
+     * True when running in the main app process. Used to skip service-grade
+     * init (notably anything that creates a WebView) in secondary processes
+     * like :crash. Fail-open: when the name can't be determined, assume main
+     * so the real app never loses init.
+     */
+    private fun isMainProcess(): Boolean {
+        val processName =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                Application.getProcessName()
+            } else {
+                @Suppress("DEPRECATION")
+                (getSystemService(ACTIVITY_SERVICE) as? android.app.ActivityManager)
+                    ?.runningAppProcesses
+                    ?.firstOrNull { it.pid == android.os.Process.myPid() }
+                    ?.processName
+            }
+        return processName == null || processName == packageName
+    }
 
     override fun newImageLoader(context: PlatformContext): ImageLoader {
         val cacheSize = cachedCoilCacheSize ?: DEFAULT_COIL_CACHE_SIZE_MB

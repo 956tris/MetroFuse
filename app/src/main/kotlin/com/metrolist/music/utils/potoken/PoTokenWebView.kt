@@ -353,10 +353,29 @@ class PoTokenWebView private constructor(
 
         suspend fun getNewPoTokenGenerator(context: Context): PoTokenWebView {
             return withContext(Dispatchers.Main) {
+                ensureMultiProcessWebView(context)
                 suspendCancellableCoroutine { cont ->
                     val potWv = PoTokenWebView(context, cont)
                     potWv.loadHtmlAndObtainBotguard()
                 }
+            }
+        }
+
+        /**
+         * WebView's data directory is single-process locked: a WebView created
+         * in any secondary process (e.g. :crash) permanently owns the lock and
+         * crashes WebView creation in the main process. Isolate non-main
+         * processes with their own suffix. Must run before the first WebView
+         * init in this process; no-op below API 28.
+         */
+        private fun ensureMultiProcessWebView(context: Context) {
+            if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.P) return
+            val process = android.app.Application.getProcessName()
+            if (process == context.packageName) return
+            runCatching {
+                WebView.setDataDirectorySuffix(
+                    process.substringAfterLast(':').takeIf { it.isNotBlank() } ?: "secondary",
+                )
             }
         }
     }
