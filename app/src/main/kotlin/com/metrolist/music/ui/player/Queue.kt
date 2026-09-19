@@ -1383,6 +1383,7 @@ private fun PlayerQueueButton(
                     when (playerBackground) {
                         PlayerBackgroundStyle.MOVING_BLUR,
                         PlayerBackgroundStyle.BLUR,
+                        PlayerBackgroundStyle.GALAXY,
                         PlayerBackgroundStyle.GALAXY_BLUR,
                         PlayerBackgroundStyle.GRADIENT -> {
                             // For blur/gradient backgrounds, always use light colors regardless of theme

@@ -778,6 +778,7 @@ enum class PlayerBackgroundStyle {
     DEFAULT,
     GRADIENT,
     BLUR,
+    GALAXY,
     GALAXY_BLUR,
     MOVING_BLUR,
 }
@@ -787,6 +788,7 @@ val HistoryDuration = floatPreferencesKey("historyDuration")
 
 val PlayerButtonsStyleKey = stringPreferencesKey("player_buttons_style")
 val PlayerBackgroundStyleKey = stringPreferencesKey("playerBackgroundStyle")
+val PlayerBackgroundStyleGalaxyMigratedKey = booleanPreferencesKey("playerBackgroundStyleGalaxyMigrated")
 val PlayerInlineLyricsKey = booleanPreferencesKey("playerInlineLyrics")
 val PlayerLegacyQualityLabelKey = booleanPreferencesKey("playerLegacyQualityLabel")
 val LivePlaybackBitrateKey = booleanPreferencesKey("livePlaybackBitrate")

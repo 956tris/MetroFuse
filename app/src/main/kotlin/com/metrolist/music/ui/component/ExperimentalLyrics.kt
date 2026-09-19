@@ -104,7 +104,6 @@ import com.metrolist.music.constants.OpenRouterDefaultBaseUrl
 import com.metrolist.music.constants.OpenRouterDefaultModel
 import com.metrolist.music.constants.OpenRouterModelKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
-import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.RespectAgentPositioningKey
 import com.metrolist.music.constants.ShowIntervalIndicatorKey
 import com.metrolist.music.constants.TranslateLanguageKey
@@ -121,6 +120,7 @@ import com.metrolist.music.ui.screens.settings.defaultList
 import com.metrolist.music.ui.utils.fadingEdge
 import com.metrolist.music.utils.ComposeToImage
 import com.metrolist.music.utils.rememberEnumPreference
+import com.metrolist.music.utils.rememberPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.viewmodels.LyricsViewModel
 import kotlinx.coroutines.delay
@@ -219,10 +219,7 @@ fun ExperimentalLyrics(
     val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
     val lyrics = remember(lyricsEntity) { lyricsEntity?.lyrics?.trim() }
 
-    val playerBackground by rememberEnumPreference(
-        key = PlayerBackgroundStyleKey,
-        defaultValue = PlayerBackgroundStyle.DEFAULT
-    )
+    val playerBackground by rememberPlayerBackgroundStyle()
 
     val enabledLanguages = remember(romanizeLyricsList.value) {
         if (romanizeLyricsList.value.isEmpty()) {
@@ -314,6 +311,7 @@ fun ExperimentalLyrics(
     val expressiveAccent = when (playerBackground) {
         PlayerBackgroundStyle.DEFAULT -> if (appleMusicLyrics) MaterialTheme.colorScheme.onBackground else MaterialTheme.colorScheme.primary
         PlayerBackgroundStyle.BLUR,
+        PlayerBackgroundStyle.GALAXY,
         PlayerBackgroundStyle.GALAXY_BLUR,
         PlayerBackgroundStyle.MOVING_BLUR,
         PlayerBackgroundStyle.GRADIENT -> Color.White

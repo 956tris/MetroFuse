@@ -38,6 +38,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.metrolist.music.ui.theme.PlayerSliderColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -236,7 +237,7 @@ fun SquigglySlider(
 
             val disabledAlpha = 77f / 255f
             val inactiveTrackColor = primaryColor.copy(alpha = disabledAlpha)
-            val bufferedTrackColor = primaryColor.copy(alpha = 0.46f)
+            val bufferedTrackColor = PlayerSliderColors.bufferedTrackColor(primaryColor)
             val capRadius = strokeWidth / 2f
 
             fun drawPathSegment(startX: Float, endX: Float, color: Color) {

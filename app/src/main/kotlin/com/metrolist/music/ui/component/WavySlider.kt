@@ -35,6 +35,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.metrolist.music.ui.theme.PlayerSliderColors
 
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
@@ -84,7 +85,7 @@ fun WavySlider(
 
     val activeColor = colors.activeTrackColor
     val inactiveColor = colors.inactiveTrackColor
-    val bufferedColor = activeColor.copy(alpha = 0.46f)
+    val bufferedColor = PlayerSliderColors.bufferedTrackColor(activeColor)
     val thumbColor = colors.thumbColor
 
     // Calculate container height to accommodate thumb

@@ -7,6 +7,7 @@ package com.metrolist.music.utils
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.MutableState
@@ -18,6 +19,9 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.preferencesDataStore
+import com.metrolist.music.constants.PlayerBackgroundStyle
+import com.metrolist.music.constants.PlayerBackgroundStyleGalaxyMigratedKey
+import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.extensions.toEnum
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -111,6 +115,33 @@ fun <T> rememberPreference(
             override fun component2(): (T) -> Unit = { value = it }
         }
     }
+}
+
+@Composable
+fun rememberPlayerBackgroundStyle(): MutableState<PlayerBackgroundStyle> {
+    val context = LocalContext.current
+    // One-time migration: the old GALAXY_BLUR (single-colour galaxy) was
+    // renamed to GALAXY, and GALAXY_BLUR is now the multi-colour blur.
+    // Without this, existing users would silently land on the new style.
+    LaunchedEffect(Unit) {
+        val migrated =
+            runCatching { context.dataStore.data.first()[PlayerBackgroundStyleGalaxyMigratedKey] }
+                .getOrNull() == true
+        if (!migrated) {
+            runCatching {
+                context.dataStore.edit { settings ->
+                    if (settings[PlayerBackgroundStyleKey] == PlayerBackgroundStyle.GALAXY_BLUR.name) {
+                        settings[PlayerBackgroundStyleKey] = PlayerBackgroundStyle.GALAXY.name
+                    }
+                    settings[PlayerBackgroundStyleGalaxyMigratedKey] = true
+                }
+            }
+        }
+    }
+    return rememberEnumPreference(
+        key = PlayerBackgroundStyleKey,
+        defaultValue = PlayerBackgroundStyle.DEFAULT,
+    )
 }
 
 @Composable

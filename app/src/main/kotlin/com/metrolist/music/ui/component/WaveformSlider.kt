@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
+import com.metrolist.music.ui.theme.PlayerSliderColors
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -70,7 +71,7 @@ fun WaveformSlider(
 
     val activeColor = colors.activeTrackColor
     val inactiveColor = colors.inactiveTrackColor
-    val bufferedColor = activeColor.copy(alpha = 0.46f)
+    val bufferedColor = PlayerSliderColors.bufferedTrackColor(activeColor)
 
     var isDragging by remember { mutableStateOf(false) }
     var dragPosition by remember { mutableFloatStateOf(value) }

@@ -154,7 +154,6 @@ import com.metrolist.music.constants.HideStatusBarOnFullscreenKey
 import com.metrolist.music.constants.KeepScreenOn
 import com.metrolist.music.constants.LivePlaybackBitrateKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
-import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerButtonsStyle
 import com.metrolist.music.constants.PlayerButtonsStyleKey
 import com.metrolist.music.constants.PlayerHorizontalPadding
@@ -200,6 +199,7 @@ import com.metrolist.music.ui.utils.ShowOffsetDialog
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.makeTimeString
 import com.metrolist.music.utils.rememberEnumPreference
+import com.metrolist.music.utils.rememberPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.utils.spotify.SpotifyCanvasMedia
 import com.metrolist.music.utils.spotify.SpotifyCanvasVideoBackground
@@ -515,10 +515,7 @@ fun BottomSheetPlayer(
         mutableStateOf(false)
     }
 
-    val playerBackground by rememberEnumPreference(
-        key = PlayerBackgroundStyleKey,
-        defaultValue = PlayerBackgroundStyle.DEFAULT,
-    )
+    val playerBackground by rememberPlayerBackgroundStyle()
     val playerButtonsStyle by rememberEnumPreference(
         key = PlayerButtonsStyleKey,
         defaultValue = PlayerButtonsStyle.DEFAULT,
@@ -546,6 +543,7 @@ fun BottomSheetPlayer(
         remember(playerBackground, useDarkTheme) {
             when (playerBackground) {
                 PlayerBackgroundStyle.BLUR,
+                PlayerBackgroundStyle.GALAXY,
                 PlayerBackgroundStyle.GALAXY_BLUR,
                 PlayerBackgroundStyle.GRADIENT,
                 PlayerBackgroundStyle.MOVING_BLUR -> true
@@ -571,6 +569,7 @@ fun BottomSheetPlayer(
 
             when (playerBackground) {
                 PlayerBackgroundStyle.BLUR,
+                PlayerBackgroundStyle.GALAXY,
                 PlayerBackgroundStyle.GALAXY_BLUR,
                 PlayerBackgroundStyle.GRADIENT,
                 PlayerBackgroundStyle.MOVING_BLUR -> {
@@ -842,8 +841,12 @@ fun BottomSheetPlayer(
         experimentalAppleMusicCoverFade &&
                 appleLikeCanvasBackground != null &&
                 state.progress > 0.1f
+    // Galaxy styles win over Apple motion canvas (Spotify canvas still
+    // takes over everything); otherwise the video would bury the galaxy.
+    val galaxyOverridesAppleCanvas =
+        playerBackground == PlayerBackgroundStyle.GALAXY || playerBackground == PlayerBackgroundStyle.GALAXY_BLUR
     val shouldReplaceLargeArtworkWithCanvas =
-        shouldShowCanvasBackground || shouldShowAppleMusicFadeBackground
+        shouldShowCanvasBackground || (shouldShowAppleMusicFadeBackground && !galaxyOverridesAppleCanvas)
     val effectivePlayerBackground =
         if (shouldShowCanvasBackground) {
             PlayerBackgroundStyle.BLUR
@@ -1092,12 +1095,15 @@ fun BottomSheetPlayer(
 
     LaunchedEffect(mediaMetadata?.id, playerColorArtworkUrl, playerBackground, experimentalGalaxyBlurMirroredColors) {
         if (playerBackground != PlayerBackgroundStyle.GRADIENT) gradientColors = emptyList()
-        if (playerBackground != PlayerBackgroundStyle.GALAXY_BLUR) {
+        if (playerBackground != PlayerBackgroundStyle.GALAXY &&
+            playerBackground != PlayerBackgroundStyle.GALAXY_BLUR
+        ) {
             galaxyColors = emptyList()
             galaxyArtworkAlpha = DefaultAdaptiveGalaxyArtworkAlpha
         }
         when (playerBackground) {
             PlayerBackgroundStyle.GRADIENT,
+            PlayerBackgroundStyle.GALAXY,
             PlayerBackgroundStyle.GALAXY_BLUR -> {
                 val currentMetadata = mediaMetadata
                 val colorArtworkUrl = playerColorArtworkUrl
@@ -1121,18 +1127,33 @@ fun BottomSheetPlayer(
                         return@LaunchedEffect
                     }
                     withContext(Dispatchers.IO) {
-                        val request =
-                            ImageRequest
-                                .Builder(context)
-                                .data(colorArtworkUrl)
-                                .size(100, 100)
-                                .allowHardware(false)
-                                .memoryCacheKey("player_colors_$artworkColorCacheKey")
-                                .build()
+                        suspend fun loadPaletteBitmap(refreshDiskEntry: Boolean): android.graphics.Bitmap? {
+                            val request =
+                                ImageRequest
+                                    .Builder(context)
+                                    .data(colorArtworkUrl)
+                                    .size(100, 100)
+                                    .allowHardware(false)
+                                    .memoryCacheKey("player_colors_$artworkColorCacheKey")
+                                    .apply {
+                                        if (refreshDiskEntry) {
+                                            // Skip the disk read and overwrite the entry:
+                                            // heals poisoned cache files that would otherwise
+                                            // fail every load until the user clears app cache.
+                                            diskCachePolicy(coil3.request.CachePolicy.WRITE_ONLY)
+                                            memoryCachePolicy(coil3.request.CachePolicy.DISABLED)
+                                        }
+                                    }
+                                    .build()
+                            return runCatching { context.imageLoader.execute(request) }
+                                .getOrNull()
+                                ?.image
+                                ?.let { runCatching { it.toBitmap() }.getOrNull() }
+                        }
 
-                        val result = runCatching { context.imageLoader.execute(request) }.getOrNull()
-                        if (result != null) {
-                            val bitmap = result.image?.toBitmap()
+                        val bitmap = loadPaletteBitmap(refreshDiskEntry = false)
+                            ?: loadPaletteBitmap(refreshDiskEntry = true)
+                        if (bitmap != null) {
                             if (bitmap != null) {
                                 val palette =
                                     withContext(Dispatchers.Default) {
@@ -1160,7 +1181,9 @@ fun BottomSheetPlayer(
                                         )
                                     }
                                 val extractedArtworkAlpha =
-                                    if (playerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+                                    if (playerBackground == PlayerBackgroundStyle.GALAXY ||
+                                        playerBackground == PlayerBackgroundStyle.GALAXY_BLUR
+                                    ) {
                                         palette.adaptiveGalaxyArtworkAlpha(fallbackColor)
                                     } else {
                                         DefaultAdaptiveGalaxyArtworkAlpha
@@ -1196,7 +1219,7 @@ fun BottomSheetPlayer(
 
     val adaptiveGalaxyArtworkAlpha by animateFloatAsState(
         targetValue =
-            if (experimentalGalaxyBlurAdaptiveArtwork && playerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+            if (experimentalGalaxyBlurAdaptiveArtwork && playerBackground == PlayerBackgroundStyle.GALAXY) {
                 galaxyArtworkAlpha
             } else {
                 1f
@@ -1206,7 +1229,9 @@ fun BottomSheetPlayer(
     )
     val mirroredGalaxyReadabilityScrimAlpha by animateFloatAsState(
         targetValue =
-            if (experimentalGalaxyBlurMirroredColors && playerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+            if (experimentalGalaxyBlurMirroredColors &&
+                (playerBackground == PlayerBackgroundStyle.GALAXY || playerBackground == PlayerBackgroundStyle.GALAXY_BLUR)
+            ) {
                 galaxyColors.galaxyReadabilityScrimAlpha()
             } else {
                 0f
@@ -1220,6 +1245,7 @@ fun BottomSheetPlayer(
             when (effectivePlayerBackground) {
                 PlayerBackgroundStyle.DEFAULT -> MaterialTheme.colorScheme.onBackground
                 PlayerBackgroundStyle.BLUR,
+                PlayerBackgroundStyle.GALAXY,
                 PlayerBackgroundStyle.GALAXY_BLUR,
                 PlayerBackgroundStyle.GRADIENT,
                 PlayerBackgroundStyle.MOVING_BLUR -> Color.White
@@ -1237,6 +1263,7 @@ fun BottomSheetPlayer(
 
                 PlayerBackgroundStyle.BLUR,
                 PlayerBackgroundStyle.GRADIENT,
+                PlayerBackgroundStyle.GALAXY,
                 PlayerBackgroundStyle.GALAXY_BLUR,
                 PlayerBackgroundStyle.MOVING_BLUR -> {
                     val artworkColor = gradientColors.firstOrNull() ?: galaxyColors.firstOrNull() ?: Color.Black
@@ -1250,6 +1277,7 @@ fun BottomSheetPlayer(
                 PlayerBackgroundStyle.DEFAULT -> defaultQualityBadgeContentColor.copy(alpha = 0.9f)
                 PlayerBackgroundStyle.BLUR,
                 PlayerBackgroundStyle.GRADIENT,
+                PlayerBackgroundStyle.GALAXY,
                 PlayerBackgroundStyle.GALAXY_BLUR,
                 PlayerBackgroundStyle.MOVING_BLUR -> Color.White.copy(alpha = 0.82f)
             }
@@ -1260,6 +1288,7 @@ fun BottomSheetPlayer(
             when (effectivePlayerBackground) {
                 PlayerBackgroundStyle.DEFAULT -> MaterialTheme.colorScheme.surface
                 PlayerBackgroundStyle.BLUR -> Color.Black
+                PlayerBackgroundStyle.GALAXY -> Color.Black
                 PlayerBackgroundStyle.GALAXY_BLUR -> Color.Black
                 PlayerBackgroundStyle.GRADIENT -> Color.Black
                 PlayerBackgroundStyle.MOVING_BLUR -> Color.Black
@@ -1269,22 +1298,33 @@ fun BottomSheetPlayer(
 
     val galaxyAlbumControlColor =
         remember(effectivePlayerBackground, galaxyColors) {
-            if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR) {
+            if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY ||
+                effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR
+            ) {
                 galaxyColors.galaxyPlayerControlColor()
             } else {
                 null
             }
         }
+    // Album tints also survive canvas-video tracks: the canvas forces the
+    // effective background to BLUR (white UI), which washes out on bright
+    // videos and drops the buffer tint entirely.
+    val useGalaxyControlColors =
+        effectivePlayerBackground == PlayerBackgroundStyle.GALAXY ||
+            effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
+            (shouldShowCanvasBackground &&
+                (playerBackground == PlayerBackgroundStyle.GALAXY || playerBackground == PlayerBackgroundStyle.GALAXY_BLUR))
 
     val (textButtonColor, iconButtonColor) =
         when {
             effectivePlayerBackground == PlayerBackgroundStyle.BLUR ||
+                    effectivePlayerBackground == PlayerBackgroundStyle.GALAXY ||
                     effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
                     effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT ||
                     effectivePlayerBackground == PlayerBackgroundStyle.MOVING_BLUR -> {
                 when (playerButtonsStyle) {
                     PlayerButtonsStyle.DEFAULT -> {
-                        if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR && galaxyAlbumControlColor != null) {
+                        if (useGalaxyControlColors && galaxyAlbumControlColor != null) {
                             Pair(galaxyAlbumControlColor, galaxyAlbumControlColor.playerControlContentColor())
                         } else {
                             Pair(Color.White, Color.Black)
@@ -1338,12 +1378,13 @@ fun BottomSheetPlayer(
     val (sideButtonContainerColor, sideButtonContentColor) =
         when {
             effectivePlayerBackground == PlayerBackgroundStyle.BLUR ||
+                    effectivePlayerBackground == PlayerBackgroundStyle.GALAXY ||
                     effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR ||
                     effectivePlayerBackground == PlayerBackgroundStyle.GRADIENT -> {
                 when (playerButtonsStyle) {
                     PlayerButtonsStyle.DEFAULT -> {
                         Pair(
-                            if (effectivePlayerBackground == PlayerBackgroundStyle.GALAXY_BLUR && galaxyAlbumControlColor != null) {
+                            if (useGalaxyControlColors && galaxyAlbumControlColor != null) {
                                 galaxyAlbumControlColor.copy(alpha = 0.42f)
                             } else {
                                 Color.White.copy(alpha = 0.2f)
@@ -1604,6 +1645,7 @@ fun BottomSheetPlayer(
     val bottomSheetBackgroundColor =
         when (effectivePlayerBackground) {
             PlayerBackgroundStyle.BLUR,
+            PlayerBackgroundStyle.GALAXY,
             PlayerBackgroundStyle.GALAXY_BLUR,
             PlayerBackgroundStyle.GRADIENT,
             PlayerBackgroundStyle.MOVING_BLUR -> {
@@ -1676,7 +1718,7 @@ fun BottomSheetPlayer(
                         }
                     }
 
-                    PlayerBackgroundStyle.GALAXY_BLUR -> {
+                    PlayerBackgroundStyle.GALAXY -> {
                         Box(modifier = Modifier.alpha(backgroundAlpha)) {
                             GalaxyStarOverlay(
                                 modifier = Modifier.fillMaxSize(),
@@ -1685,6 +1727,70 @@ fun BottomSheetPlayer(
                                 // No frame loop while collapsed: the layer is
                                 // translated off-screen, so ticking would burn
                                 // 30fps redrawing invisible pixels.
+                                animated = !state.isCollapsed,
+                            )
+                            if (mirroredGalaxyReadabilityScrimAlpha > 0f) {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxSize()
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    0f to Color.Black.copy(alpha = mirroredGalaxyReadabilityScrimAlpha * 0.62f),
+                                                    0.48f to Color.Black.copy(alpha = mirroredGalaxyReadabilityScrimAlpha * 0.85f),
+                                                    1f to Color.Black.copy(alpha = mirroredGalaxyReadabilityScrimAlpha),
+                                                ),
+                                            ),
+                                )
+                            }
+                        }
+                    }
+
+                    PlayerBackgroundStyle.GALAXY_BLUR -> {
+                        Box(modifier = Modifier.alpha(backgroundAlpha)) {
+                            // Real multi-colour blurred artwork as the base,
+                            // with the same starfield + scrims as Galaxy.
+                            AnimatedContent(
+                                targetState = displayArtworkUrl,
+                                transitionSpec = {
+                                    fadeIn(tween(800)).togetherWith(fadeOut(tween(800)))
+                                },
+                                label = "galaxyBlurBackground",
+                            ) { thumbnailUrl ->
+                                if (thumbnailUrl != null) {
+                                    Box(modifier = Modifier.fillMaxSize()) {
+                                        AsyncImage(
+                                            model =
+                                                ImageRequest
+                                                    .Builder(context)
+                                                    .data(thumbnailUrl)
+                                                    .size(300, 300)
+                                                    .allowHardware(false)
+                                                    .build(),
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxSize()
+                                                    .graphicsLayer {
+                                                        scaleX = 1.35f
+                                                        scaleY = 1.35f
+                                                    }
+                                                    .blur(if (useDarkTheme) 150.dp else 100.dp),
+                                        )
+                                        Box(
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxSize()
+                                                    .background(Color.Black.copy(alpha = 0.3f)),
+                                        )
+                                    }
+                                }
+                            }
+                            GalaxyStarOverlay(
+                                modifier = Modifier.fillMaxSize(),
+                                intensity = 1f,
+                                skyColors = galaxyColors,
                                 animated = !state.isCollapsed,
                             )
                             if (mirroredGalaxyReadabilityScrimAlpha > 0f) {
@@ -1754,18 +1860,36 @@ fun BottomSheetPlayer(
                 }
 
                 playerCanvasBackground?.takeIf { shouldShowCanvasBackground }?.let { media ->
-                    SpotifyCanvasVideoBackground(
-                        media = media,
-                        shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
+                    Box(
                         modifier =
                             Modifier
                                 .fillMaxSize()
                                 .alpha(backgroundAlpha),
-                        scrimAlpha = 0.16f,
-                    )
+                    ) {
+                        SpotifyCanvasVideoBackground(
+                            media = media,
+                            shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
+                            modifier = Modifier.fillMaxSize(),
+                            scrimAlpha = 0.16f,
+                        )
+                        // Readability gradient over bright canvas videos: the
+                        // controls, slider and text live in the lower half.
+                        Box(
+                            modifier =
+                                Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.verticalGradient(
+                                            0f to Color.Transparent,
+                                            0.45f to Color.Transparent,
+                                            1f to Color.Black.copy(alpha = 0.55f),
+                                        ),
+                                    ),
+                        )
+                    }
                 }
 
-                appleLikeCanvasBackground?.takeIf { shouldShowAppleMusicFadeBackground }?.let { media ->
+                appleLikeCanvasBackground?.takeIf { shouldShowAppleMusicFadeBackground && !galaxyOverridesAppleCanvas }?.let { media ->
                     AppleMusicFadedCanvasBackground(
                         media = media,
                         artworkUrl = displayArtworkUrl,

@@ -90,14 +90,13 @@ import com.metrolist.music.LocalPlayerConnection
 import com.metrolist.music.R
 import com.metrolist.music.constants.HidePlayerThumbnailKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
-import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerHorizontalPadding
 import com.metrolist.music.constants.SeekExtraSeconds
 import com.metrolist.music.constants.SwipeThumbnailKey
 import com.metrolist.music.constants.ThumbnailCornerRadius
 import com.metrolist.music.listentogether.RoomRole
 import com.metrolist.music.ui.component.CastButton
-import com.metrolist.music.utils.rememberEnumPreference
+import com.metrolist.music.utils.rememberPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
@@ -212,6 +211,7 @@ private fun getTextColor(playerBackground: PlayerBackgroundStyle): Color {
     return when (playerBackground) {
         PlayerBackgroundStyle.DEFAULT -> MaterialTheme.colorScheme.onBackground
         PlayerBackgroundStyle.BLUR -> Color.White
+        PlayerBackgroundStyle.GALAXY -> Color.White
         PlayerBackgroundStyle.GALAXY_BLUR -> Color.White
         PlayerBackgroundStyle.GRADIENT -> Color.White
         PlayerBackgroundStyle.MOVING_BLUR -> Color.White
@@ -257,10 +257,7 @@ fun Thumbnail(
     val swipeThumbnailPref by rememberPreference(SwipeThumbnailKey, true)
     val swipeThumbnail = swipeThumbnailPref && !isListenTogetherGuest
     val hidePlayerThumbnail by rememberPreference(HidePlayerThumbnailKey, false)
-    val playerBackground by rememberEnumPreference(
-        key = PlayerBackgroundStyleKey,
-        defaultValue = PlayerBackgroundStyle.DEFAULT
-    )
+    val playerBackground by rememberPlayerBackgroundStyle()
     
     // Pre-calculate text color based on background style
     val textBackgroundColor = getTextColor(playerBackground)

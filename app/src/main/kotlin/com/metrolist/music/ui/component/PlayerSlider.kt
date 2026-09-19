@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.metrolist.music.ui.theme.PlayerSliderColors
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,7 +35,7 @@ fun PlayerSliderTrack(
 ) {
     val inactiveTrackColor = colors.inactiveTrackColor
     val activeTrackColor = colors.activeTrackColor
-    val bufferedTrackColor = activeTrackColor.copy(alpha = 0.46f)
+    val bufferedTrackColor = PlayerSliderColors.bufferedTrackColor(activeTrackColor)
     val inactiveTickColor = colors.inactiveTickColor
     val activeTickColor = colors.activeTickColor
     val valueRange = sliderState.valueRange

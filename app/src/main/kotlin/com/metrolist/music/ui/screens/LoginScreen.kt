@@ -151,10 +151,17 @@ fun LoginScreen(navController: NavController) {
                     }
                 settings.apply {
                     javaScriptEnabled = true
+                    // Google auth pages require DOM storage; without it
+                    // sign-in silently never completes.
+                    domStorageEnabled = true
                     setSupportZoom(true)
                     builtInZoomControls = true
                     displayZoomControls = false
                 }
+                // Accept first- and third-party cookies so the
+                // accounts.google.com -> music.youtube.com session carries over.
+                CookieManager.getInstance().setAcceptCookie(true)
+                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 addJavascriptInterface(
                     object {
                         @JavascriptInterface

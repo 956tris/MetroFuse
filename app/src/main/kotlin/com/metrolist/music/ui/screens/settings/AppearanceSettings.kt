@@ -88,7 +88,6 @@ import com.metrolist.music.constants.LyricsTextSizeKey
 import com.metrolist.music.constants.MiniPlayerBackgroundStyle
 import com.metrolist.music.constants.MiniPlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
-import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.PlayerButtonsStyle
 import com.metrolist.music.constants.PlayerButtonsStyleKey
 import com.metrolist.music.constants.PlayerLegacyQualityLabelKey
@@ -124,6 +123,7 @@ import com.metrolist.music.ui.theme.PlayerSliderColors
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.IconUtils
 import com.metrolist.music.utils.rememberEnumPreference
+import com.metrolist.music.utils.rememberPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -239,10 +239,7 @@ fun AppearanceSettings(
             defaultValue = 1200,
         )
     val (playerBackground, onPlayerBackgroundChange) =
-        rememberEnumPreference(
-            PlayerBackgroundStyleKey,
-            defaultValue = PlayerBackgroundStyle.DEFAULT,
-        )
+        rememberPlayerBackgroundStyle()
 
     val (defaultOpenTab, onDefaultOpenTabChange) =
         rememberEnumPreference(
@@ -390,7 +387,7 @@ fun AppearanceSettings(
 
     val availableBackgroundStyles =
         PlayerBackgroundStyle.entries.filter {
-            (it != PlayerBackgroundStyle.BLUR && it != PlayerBackgroundStyle.MOVING_BLUR) ||
+            (it != PlayerBackgroundStyle.BLUR && it != PlayerBackgroundStyle.MOVING_BLUR && it != PlayerBackgroundStyle.GALAXY_BLUR) ||
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         }
 
@@ -643,6 +640,7 @@ fun AppearanceSettings(
                     PlayerBackgroundStyle.DEFAULT -> stringResource(R.string.follow_theme)
                     PlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                     PlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
+                    PlayerBackgroundStyle.GALAXY -> stringResource(R.string.player_background_galaxy)
                     PlayerBackgroundStyle.GALAXY_BLUR -> stringResource(R.string.player_background_galaxy_blur)
                     PlayerBackgroundStyle.MOVING_BLUR -> stringResource(R.string.player_background_moving_blur)
                 }
@@ -1350,6 +1348,7 @@ fun AppearanceSettings(
                                     PlayerBackgroundStyle.DEFAULT -> stringResource(R.string.follow_theme)
                                     PlayerBackgroundStyle.GRADIENT -> stringResource(R.string.gradient)
                                     PlayerBackgroundStyle.BLUR -> stringResource(R.string.player_background_blur)
+                                    PlayerBackgroundStyle.GALAXY -> stringResource(R.string.player_background_galaxy)
                                     PlayerBackgroundStyle.GALAXY_BLUR -> stringResource(R.string.player_background_galaxy_blur)
                                     PlayerBackgroundStyle.MOVING_BLUR -> stringResource(R.string.player_background_moving_blur)
                                 },

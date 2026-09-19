@@ -160,6 +160,7 @@
     <string name="live_playback_bitrate">Live playback bitrate</string>
     <string name="live_playback_bitrate_desc">Update the bitrate label live for variable bitrate audio</string>
     <string name="player_background_blur">Blur</string>
+    <string name="player_background_galaxy">Galaxy</string>
     <string name="player_background_galaxy_blur">Galaxy blur</string>
     <string name="player_background_moving_blur">Moving blur</string>
     <string name="player_buttons_style">Player button colors</string>
