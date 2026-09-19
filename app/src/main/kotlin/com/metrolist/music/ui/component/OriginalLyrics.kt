@@ -138,7 +138,6 @@ import com.metrolist.music.constants.OpenRouterApiKey
 import com.metrolist.music.constants.OpenRouterBaseUrlKey
 import com.metrolist.music.constants.OpenRouterModelKey
 import com.metrolist.music.constants.PlayerBackgroundStyle
-import com.metrolist.music.constants.PlayerBackgroundStyleKey
 import com.metrolist.music.constants.TranslateLanguageKey
 import com.metrolist.music.constants.TranslateModeKey
 import com.metrolist.music.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
@@ -172,6 +171,7 @@ import com.metrolist.music.ui.screens.settings.defaultList
 import com.metrolist.music.ui.utils.fadingEdge
 import com.metrolist.music.utils.ComposeToImage
 import com.metrolist.music.utils.rememberEnumPreference
+import com.metrolist.music.utils.rememberPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -235,10 +235,7 @@ fun OriginalLyrics(
     val currentSong by playerConnection.currentSong.collectAsStateWithLifecycle(initialValue = null)
     val lyrics = remember(lyricsEntity) { lyricsEntity?.lyrics?.trim() }
 
-    val playerBackground by rememberEnumPreference(
-        key = PlayerBackgroundStyleKey,
-        defaultValue = PlayerBackgroundStyle.DEFAULT,
-    )
+    val playerBackground by rememberPlayerBackgroundStyle()
 
     val darkTheme by rememberEnumPreference(DarkModeKey, defaultValue = DarkMode.AUTO)
     val isSystemInDarkTheme = isSystemInDarkTheme()
@@ -429,6 +426,7 @@ fun OriginalLyrics(
             }
             PlayerBackgroundStyle.MOVING_BLUR,
             PlayerBackgroundStyle.BLUR,
+            PlayerBackgroundStyle.GALAXY,
             PlayerBackgroundStyle.GALAXY_BLUR,
             PlayerBackgroundStyle.GRADIENT -> {
                 // For blur/gradient backgrounds, always use light colors regardless of theme
