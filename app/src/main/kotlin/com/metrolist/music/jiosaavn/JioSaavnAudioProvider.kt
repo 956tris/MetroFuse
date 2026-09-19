@@ -612,6 +612,20 @@ object JioSaavnAudioProvider {
         return score.takeIf { it >= threshold }
     }
 
+    /**
+     * Evicts cached stream URLs for [mediaId] so the next resolve fetches a
+     * fresh (re-signed) URL instead of replaying a stale one.
+     */
+    fun invalidate(mediaId: String) {
+        if (mediaId.isBlank()) return
+        val prefix = mediaId.normalizedSearchText() + "|"
+        runCatching {
+            streamCache.keys.removeIf { it.startsWith(prefix) }
+        }.onFailure {
+            Timber.tag(TAG).w(it, "JioSaavn cache invalidate failed for $mediaId")
+        }
+    }
+
     private fun getCachedStream(key: String): Resolved? {
         val now = System.currentTimeMillis()
         val entry = streamCache[key] ?: return null
