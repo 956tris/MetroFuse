@@ -10,7 +10,7 @@ on:
 jobs:
   check-version:
     if: "!contains(github.ref, 'refs/tags')"
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       version_changed: ${{ steps.check_version.outputs.version_changed }}
       new_version: ${{ steps.check_version.outputs.new_version }}
@@ -72,7 +72,7 @@ jobs:
   build:
     needs: check-version
     if: needs.check-version.outputs.version_changed == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     strategy:
       matrix:
         include:
@@ -166,7 +166,7 @@ jobs:
   create-release:
     needs: [check-version, build]
     if: needs.check-version.outputs.version_changed == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
         with:
