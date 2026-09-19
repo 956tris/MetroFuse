@@ -118,6 +118,10 @@ fun WavySlider(
                     },
                     onDragCancel = {
                         isDragging = false
+                        // A cancelled drag must still finish: otherwise the
+                        // pending seek value sticks forever and the
+                        // position/buffer UI freezes at the touch point.
+                        onValueChangeFinished?.invoke()
                     },
                     onHorizontalDrag = { _, dragAmount ->
                         dragValue = (dragValue + dragAmount / size.width).coerceIn(0f, 1f)

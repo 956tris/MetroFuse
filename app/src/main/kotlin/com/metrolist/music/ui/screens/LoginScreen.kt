@@ -9,6 +9,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
@@ -134,6 +135,18 @@ fun LoginScreen(navController: NavController) {
                         ) {
                             loadUrl("javascript:Android.onRetrieveVisitorData(window.yt.config_.VISITOR_DATA)")
                             loadUrl("javascript:Android.onRetrieveDataSyncId(window.yt.config_.DATASYNC_ID)")
+                        }
+
+                        // A dead renderer must not take the app down with it:
+                        // fall back to completing login with whatever cookies
+                        // survived instead of crashing.
+                        override fun onRenderProcessGone(
+                            view: WebView,
+                            detail: RenderProcessGoneDetail,
+                        ): Boolean {
+                            Timber.w("Login WebView renderer gone (crashed=${detail.didCrash()}), completing login instead")
+                            completeLogin(navController::navigateUp)
+                            return true
                         }
                     }
                 settings.apply {

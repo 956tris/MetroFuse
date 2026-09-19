@@ -925,6 +925,11 @@ fun BottomSheetPlayer(
     var sliderPosition by remember {
         mutableStateOf<Long?>(null)
     }
+    // A pending drag is meaningless once the song changes; never let a
+    // stale touch point freeze the position/buffer UI on the new track.
+    LaunchedEffect(mediaMetadata?.id) {
+        sliderPosition = null
+    }
     val sliderRangeEnd = effectiveDuration.takeIf { it > 0L } ?: 1L
     val sliderValueRange = 0f..sliderRangeEnd.toFloat()
     val displayedSliderPosition =
