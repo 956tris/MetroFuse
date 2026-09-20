@@ -58,7 +58,9 @@ import com.metrolist.music.constants.KeepScreenOn
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.constants.AutomixBarsKey
+import com.metrolist.music.constants.AutomixBlendStyle
 import com.metrolist.music.constants.AutomixEnabledKey
+import com.metrolist.music.constants.AutomixStyleKey
 import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
@@ -142,6 +144,10 @@ fun PlayerSettings(
     val (automixBars, onAutomixBarsChange) = rememberPreference(
         AutomixBarsKey,
         defaultValue = 8
+    )
+    val (automixStyle, onAutomixStyleChange) = rememberEnumPreference(
+        AutomixStyleKey,
+        defaultValue = AutomixBlendStyle.FADE,
     )
     val (persistentQueue, onPersistentQueueChange) = rememberPreference(
         PersistentQueueKey,
@@ -254,6 +260,10 @@ fun PlayerSettings(
         mutableStateOf(false)
     }
 
+    var showAutomixStyleDialog by remember {
+        mutableStateOf(false)
+    }
+
     if (showAudioQualityDialog) {
         EnumDialog(
             onDismiss = { showAudioQualityDialog = false },
@@ -286,6 +296,33 @@ fun PlayerSettings(
             current = loudnessLevel,
             values = LoudnessLevel.values().toList(),
             valueText = { getLoudnessLevelLabel(it) }
+        )
+    }
+
+    if (showAutomixStyleDialog) {
+        EnumDialog(
+            onDismiss = { showAutomixStyleDialog = false },
+            onSelect = {
+                onAutomixStyleChange(it)
+                showAutomixStyleDialog = false
+            },
+            title = stringResource(R.string.automix_style),
+            current = automixStyle,
+            values = AutomixBlendStyle.values().toList(),
+            valueText = {
+                when (it) {
+                    AutomixBlendStyle.FADE -> stringResource(R.string.automix_style_fade)
+                    AutomixBlendStyle.MIX -> stringResource(R.string.automix_style_mix)
+                    AutomixBlendStyle.SMOOTH -> stringResource(R.string.automix_style_smooth)
+                    AutomixBlendStyle.QUICK_CUT -> stringResource(R.string.automix_style_quick_cut)
+                    AutomixBlendStyle.SLOW_BLEND -> stringResource(R.string.automix_style_slow_blend)
+                    AutomixBlendStyle.BASS_SWAP -> stringResource(R.string.automix_style_bass_swap)
+                    AutomixBlendStyle.FILTER_EXIT -> stringResource(R.string.automix_style_filter_exit)
+                    AutomixBlendStyle.VOCAL -> stringResource(R.string.automix_style_vocal)
+                    AutomixBlendStyle.PUNCH -> stringResource(R.string.automix_style_punch)
+                    AutomixBlendStyle.ETHEREAL -> stringResource(R.string.automix_style_ethereal)
+                }
+            }
         )
     }
 
@@ -479,6 +516,43 @@ fun PlayerSettings(
                                 )
                             }
                         },
+                    ))
+                    add(Material3SettingsItem(
+                        icon = painterResource(R.drawable.sliders),
+                        title = { Text(stringResource(R.string.automix_style)) },
+                        description = {
+                            Text(
+                                when (automixStyle) {
+                                    AutomixBlendStyle.FADE -> stringResource(R.string.automix_style_fade_desc)
+                                    AutomixBlendStyle.MIX -> stringResource(R.string.automix_style_mix_desc)
+                                    AutomixBlendStyle.SMOOTH -> stringResource(R.string.automix_style_smooth_desc)
+                                    AutomixBlendStyle.QUICK_CUT -> stringResource(R.string.automix_style_quick_cut_desc)
+                                    AutomixBlendStyle.SLOW_BLEND -> stringResource(R.string.automix_style_slow_blend_desc)
+                                    AutomixBlendStyle.BASS_SWAP -> stringResource(R.string.automix_style_bass_swap_desc)
+                                    AutomixBlendStyle.FILTER_EXIT -> stringResource(R.string.automix_style_filter_exit_desc)
+                                    AutomixBlendStyle.VOCAL -> stringResource(R.string.automix_style_vocal_desc)
+                                    AutomixBlendStyle.PUNCH -> stringResource(R.string.automix_style_punch_desc)
+                                    AutomixBlendStyle.ETHEREAL -> stringResource(R.string.automix_style_ethereal_desc)
+                                }
+                            )
+                        },
+                        trailingContent = {
+                            Text(
+                                when (automixStyle) {
+                                    AutomixBlendStyle.FADE -> stringResource(R.string.automix_style_fade)
+                                    AutomixBlendStyle.MIX -> stringResource(R.string.automix_style_mix)
+                                    AutomixBlendStyle.SMOOTH -> stringResource(R.string.automix_style_smooth)
+                                    AutomixBlendStyle.QUICK_CUT -> stringResource(R.string.automix_style_quick_cut)
+                                    AutomixBlendStyle.SLOW_BLEND -> stringResource(R.string.automix_style_slow_blend)
+                                    AutomixBlendStyle.BASS_SWAP -> stringResource(R.string.automix_style_bass_swap)
+                                    AutomixBlendStyle.FILTER_EXIT -> stringResource(R.string.automix_style_filter_exit)
+                                    AutomixBlendStyle.VOCAL -> stringResource(R.string.automix_style_vocal)
+                                    AutomixBlendStyle.PUNCH -> stringResource(R.string.automix_style_punch)
+                                    AutomixBlendStyle.ETHEREAL -> stringResource(R.string.automix_style_ethereal)
+                                }
+                            )
+                        },
+                        onClick = { showAutomixStyleDialog = true }
                     ))
                 }
                 add(Material3SettingsItem(

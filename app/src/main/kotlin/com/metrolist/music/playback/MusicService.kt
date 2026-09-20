@@ -186,7 +186,9 @@ import com.metrolist.music.constants.HideVideoSongsKey
 import com.metrolist.music.constants.HistoryDuration
 import com.metrolist.music.constants.LastFMUseNowPlaying
 import com.metrolist.music.constants.AutomixBarsKey
+import com.metrolist.music.constants.AutomixBlendStyle
 import com.metrolist.music.constants.AutomixEnabledKey
+import com.metrolist.music.constants.AutomixStyleKey
 import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.MediaSessionConstants
 import com.metrolist.music.constants.MediaSessionConstants.CommandAddToTargetPlaylist
@@ -393,6 +395,7 @@ private data class CrossfadePreferenceState(
     val crossfadeGapless: Boolean,
     val automixEnabled: Boolean,
     val automixBars: Int,
+    val automixStyle: AutomixBlendStyle,
 )
 
 /**
@@ -417,6 +420,69 @@ private enum class AutomixBlendMode {
     /** Missing key data: safe middle-ground overlap. */
     NEUTRAL,
 }
+
+/** Volume-curve family for an Automix style. */
+private enum class AutomixCurve {
+    /** Classic equal-power crossfade handoff. */
+    SINE,
+
+    /** DJ long blend: full volume through the middle, fades only at edges. */
+    PLATEAU,
+
+    /** Fast radio swap: the whole move happens mid-blend. */
+    STEEP,
+}
+
+/**
+ * One selectable Automix character: pure parameter sets on knobs the engine
+ * already owns. FADE reproduces the pre-style behavior exactly, so it stays
+ * the default until the user opts into something else.
+ */
+private data class AutomixStyleParams(
+    val curve: AutomixCurve,
+    /** Multiplies the key/mode center dip. */
+    val dipScale: Float,
+    /** Multiplies the resolved blend width. */
+    val durationMult: Float,
+    /** Outgoing top-end wash in dB, 0.0 = off. */
+    val washDb: Double,
+    /** Reverb-tail ring-out length after the swap. */
+    val tailMs: Long,
+    /** Low-pass filter exit on every pair, not just clashing ones. */
+    val forceFilterExit: Boolean,
+    /** TIGHT-like mid carve regardless of key match. */
+    val forceMidCarve: Boolean,
+    /** Mutes the live vocal-guard/soft carves for styles that stay open. */
+    val suppressMidCarve: Boolean,
+    /** Trims highs on both sides so mids (voice) own the overlap, dB, 0 = off. */
+    val softenHighsDb: Double,
+    /** Buries highs on both sides for a mids-only isolator overlap, dB, 0 = off. */
+    val isolatorHighCutDb: Double,
+)
+
+private fun automixStyleParams(style: AutomixBlendStyle): AutomixStyleParams =
+    when (style) {
+        AutomixBlendStyle.FADE ->
+            AutomixStyleParams(AutomixCurve.SINE, 1f, 1f, -2.0, 1800L, false, false, false, 0.0, 0.0)
+        AutomixBlendStyle.MIX ->
+            AutomixStyleParams(AutomixCurve.PLATEAU, 0.35f, 1.35f, -2.0, 2000L, false, false, false, 0.0, 0.0)
+        AutomixBlendStyle.SMOOTH ->
+            AutomixStyleParams(AutomixCurve.SINE, 0.4f, 1.3f, -3.0, 2200L, false, false, false, 0.0, 0.0)
+        AutomixBlendStyle.QUICK_CUT ->
+            AutomixStyleParams(AutomixCurve.STEEP, 1.2f, 0.4f, 0.0, 900L, true, true, false, 0.0, 0.0)
+        AutomixBlendStyle.SLOW_BLEND ->
+            AutomixStyleParams(AutomixCurve.PLATEAU, 0.4f, 1.6f, -1.0, 2500L, false, false, true, 0.0, 0.0)
+        AutomixBlendStyle.BASS_SWAP ->
+            AutomixStyleParams(AutomixCurve.PLATEAU, 0.5f, 1.2f, 0.0, 1500L, false, false, true, 0.0, -10.0)
+        AutomixBlendStyle.FILTER_EXIT ->
+            AutomixStyleParams(AutomixCurve.SINE, 0.9f, 0.8f, 0.0, 1200L, true, true, false, 0.0, 0.0)
+        AutomixBlendStyle.VOCAL ->
+            AutomixStyleParams(AutomixCurve.SINE, 0.7f, 1f, 0.0, 1800L, false, false, true, -4.5, 0.0)
+        AutomixBlendStyle.PUNCH ->
+            AutomixStyleParams(AutomixCurve.STEEP, 0.5f, 0.7f, 0.0, 800L, false, false, true, 0.0, 0.0)
+        AutomixBlendStyle.ETHEREAL ->
+            AutomixStyleParams(AutomixCurve.PLATEAU, 0.4f, 1.8f, -5.0, 3500L, false, false, true, 0.0, 0.0)
+    }
 
 /**
  * Everything the Automix engine needs for one transition, computed once at
@@ -474,6 +540,9 @@ private data class AutomixPlan(
     // Weaker of the two sides' structure confidence. Scales the volume-dip
     // and wash: certain blends barely dip, blind ones stay protected.
     val confidence: Float,
+    // Blend character snapshot for this transition (global pref at plan
+    // time; per-pair overrides plug in here in the next step).
+    val style: AutomixBlendStyle,
     // Perceived loudness of each side in LUFS, best-effort from persisted
     // stream loudness rows (null when never measured).
     val lufsA: Double?,
@@ -530,6 +599,7 @@ class MusicService :
     private var crossfadeGapless = true
     private var activeAutomixEnabled = false
     private var activeAutomixBars = 8
+    private var activeAutomixStyle = AutomixBlendStyle.FADE
     private var activeCrossfadeDurationMs = 5000L
     private var pendingAutomixProfile: AutomixRuntimeProfile? = null
     // Outgoing BPM captured alongside the pending profile so the trigger-time
@@ -1785,6 +1855,7 @@ class MusicService :
                     crossfadeGapless = prefs[CrossfadeGaplessKey] ?: true,
                     automixEnabled = prefs[AutomixEnabledKey] ?: false,
                     automixBars = prefs[AutomixBarsKey] ?: 8,
+                    automixStyle = prefs[AutomixStyleKey].toEnum(AutomixBlendStyle.FADE),
                 )
             },
             listenTogetherManager.roomState,
@@ -1796,6 +1867,7 @@ class MusicService :
                 crossfadeGapless = prefs.crossfadeGapless,
                 automixEnabled = prefs.automixEnabled && roomState == null,
                 automixBars = prefs.automixBars,
+                automixStyle = prefs.automixStyle,
             )
         }.distinctUntilChanged()
             .collect(scope) { prefs ->
@@ -1804,6 +1876,7 @@ class MusicService :
                 crossfadeGapless = prefs.crossfadeGapless
                 activeAutomixEnabled = prefs.automixEnabled
                 activeAutomixBars = prefs.automixBars.coerceIn(2, 32)
+                activeAutomixStyle = prefs.automixStyle
                 // Battery gate: learn taps do zero work unless Automix is on.
                 // Disabling also detaches current ids so stale audio can't be
                 // attributed when re-enabled mid-track.
@@ -8974,7 +9047,12 @@ class MusicService :
 
         val barDurationMs = outBpm?.let { (60_000f / it * 4f * bars).toLong() }
         val fallbackMs = (AUTOMIX_DEFAULT_DURATION_S * 1000f * (bars / 8f)).toLong()
-        return AutomixRuntimeProfile(durationMs = (barDurationMs ?: fallbackMs).coerceIn(2_000L, 20_000L))
+        // The style width lives here (not in the plan) so the trigger and
+        // the blend agree: the swap timer is armed for the width that will
+        // actually play. Explicit per-pair timings above stay exact.
+        val styledMs =
+            ((barDurationMs ?: fallbackMs) * automixStyleParams(activeAutomixStyle).durationMult).toLong()
+        return AutomixRuntimeProfile(durationMs = styledMs.coerceIn(2_000L, 20_000L))
     }
 
     /**
@@ -9447,6 +9525,7 @@ class MusicService :
             bassSeparation = bassSeparation,
             cautiousOverlap = cautiousOverlap,
             confidence = minStructureConf,
+            style = activeAutomixStyle,
             lufsA = lufsA,
             lufsB = lufsB,
             incomingGainDb = incomingGainDb,
@@ -9619,12 +9698,11 @@ class MusicService :
     }
 
     /**
-     * The single Automix volume curve: an equal-power blend across the
-     * tempo-synced window. Beat/tempo alignment happens via playback speed
-     * ramping in the crossfade tick loop, so the volume curve itself stays a
-     * clean blend that never fights the tempo ramp. The center duck scales
-     * with the blend mode so overlapping low end never stacks into an audible
-     * bump on tight/clashing transitions.
+     * The Automix volume curves, dispatched by style. FADE is the classic
+     * equal-power handoff; MIX-family plateau curves hold both tracks at
+     * full volume through the middle (a mix, not a fade) with fades only
+     * at the edges; STEEP concentrates the whole move mid-blend for cuts.
+     * The center dip scales with certainty and style either way.
      */
     private fun automixVolumePair(
         progress: Float,
@@ -9635,9 +9713,10 @@ class MusicService :
         fun range(value: Float, start: Float, end: Float) = ((value - start) / (end - start)).coerceIn(0f, 1f)
         fun equalPowerIn(value: Float) = sin(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
         fun equalPowerOut(value: Float) = cos(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
+        val params = automixStyleParams(plan?.style ?: AutomixBlendStyle.FADE)
         // The dip scales with certainty: a fully-learned lock barely dips
         // (there is nothing to hide behind), a blind overlap keeps the
-        // full protective hollow.
+        // full protective hollow. Styles scale it further.
         val baseDuck =
             when (plan?.blendMode) {
                 AutomixBlendMode.WIDE -> 0.07f
@@ -9645,11 +9724,24 @@ class MusicService :
                 AutomixBlendMode.TIGHT -> 0.18f
                 AutomixBlendMode.NEUTRAL, null -> 0.10f
             }
-        val centerDuck = baseDuck * (1.1f - 0.6f * (plan?.confidence ?: 0f))
+        val centerDuck = baseDuck * (1.1f - 0.6f * (plan?.confidence ?: 0f)) * params.dipScale
         val distanceFromCenter = (2f * p - 1f).coerceIn(-1f, 1f)
         val headroom = 1f - centerDuck * (1f - distanceFromCenter * distanceFromCenter)
-        val shaped = smooth(range(p, 0.02f, 0.98f))
-        return (equalPowerIn(shaped) * headroom).coerceIn(0f, 1f) to (equalPowerOut(shaped) * headroom).coerceIn(0f, 1f)
+        return when (params.curve) {
+            AutomixCurve.SINE -> {
+                val shaped = smooth(range(p, 0.02f, 0.98f))
+                (equalPowerIn(shaped) * headroom).coerceIn(0f, 1f) to (equalPowerOut(shaped) * headroom).coerceIn(0f, 1f)
+            }
+            AutomixCurve.PLATEAU -> {
+                val fadeIn = smooth(range(p, 0f, 0.35f))
+                val fadeOut = 1f - smooth(range(p, 0.65f, 1f))
+                (fadeIn * headroom).coerceIn(0f, 1f) to (fadeOut * headroom).coerceIn(0f, 1f)
+            }
+            AutomixCurve.STEEP -> {
+                val shaped = smooth(range(p, 0.25f, 0.75f))
+                (equalPowerIn(shaped) * headroom).coerceIn(0f, 1f) to (equalPowerOut(shaped) * headroom).coerceIn(0f, 1f)
+            }
+        }
     }
 
     /**
@@ -9839,9 +9931,13 @@ class MusicService :
                 // Band layout per player: 0 = low shelf, 1 = mid peak,
                 // 2 = high shelf, plus 3 = low-pass sweep on the outgoing
                 // side for TIGHT (clashing) pairs - a DJ filter exit.
+                // Style params snapshot for this transition; FADE reproduces
+                // all pre-style behavior exactly.
+                val styleParams = automixStyleParams(automixPlan?.style ?: AutomixBlendStyle.FADE)
                 val fadingEq = playerEqProcessors[fadingPlayer as Player]
                 val currentEq = playerEqProcessors[player as Player]
-                val tightSweep = automixPlan?.blendMode == AutomixBlendMode.TIGHT
+                val tightSweep = automixPlan?.blendMode == AutomixBlendMode.TIGHT ||
+                    (automixPlan != null && styleParams.forceFilterExit)
 
                 if (automixPlan != null) {
                     fadingEq?.setAutomixBands(
@@ -9881,7 +9977,8 @@ class MusicService :
                 // vocal. Uses the persisted-shape-independent live snapshot,
                 // so it works on first-ever plays too.
                 val hotOutgoing = isOutgoingTailHot(fadingPlayer)
-                val midTrim = automixPlan?.blendMode == AutomixBlendMode.TIGHT || hotOutgoing
+                val midTrim = automixPlan?.blendMode == AutomixBlendMode.TIGHT ||
+                    ((hotOutgoing || styleParams.forceMidCarve) && !styleParams.suppressMidCarve)
                 val softMidTrim =
                     automixPlan?.blendMode == AutomixBlendMode.NEUTRAL ||
                         (automixPlan?.cautiousOverlap == true && !midTrim)
@@ -9966,14 +10063,30 @@ class MusicService :
                             // easing the filter down - hats and air dissolve
                             // instead of stacking against the incoming track.
                             // Scaled by certainty like the volume dip.
-                            if (!midTrim &&
+                            if (!midTrim && styleParams.washDb != 0.0 &&
                                 (automixPlan?.blendMode == AutomixBlendMode.WIDE ||
                                     automixPlan?.blendMode == AutomixBlendMode.FOCUSED)
                             ) {
                                 fadingEq?.updateAutomixGain(
                                     2,
-                                    AUTOMIX_WASH_DB * centerWeight * (0.5f + 0.5f * (automixPlan?.confidence ?: 0f)),
+                                    styleParams.washDb * centerWeight * (0.5f + 0.5f * (automixPlan?.confidence ?: 0f)),
                                 )
+                            }
+                            // Vocal-forward styles: trim highs on both sides
+                            // so the vocal mids own the overlap. Skipped when
+                            // a real mid carve is already running the show.
+                            if (automixPlan != null && styleParams.softenHighsDb != 0.0 && !midTrim) {
+                                val softHigh = styleParams.softenHighsDb * centerWeight
+                                fadingEq?.updateAutomixGain(2, softHigh)
+                                currentEq?.updateAutomixGain(2, softHigh * (1.0 - smooth(range(progress, 0.2f, 0.7f)).toDouble()))
+                            }
+                            // Isolator styles: highs stay buried both sides so
+                            // the overlap is mids-only while the lows swap.
+                            // Runs last so it wins over carves and washes.
+                            if (automixPlan != null && styleParams.isolatorHighCutDb != 0.0) {
+                                val isoCut = styleParams.isolatorHighCutDb * centerWeight
+                                fadingEq?.updateAutomixGain(2, isoCut)
+                                currentEq?.updateAutomixGain(2, isoCut * (1.0 - smooth(range(progress, 0.2f, 0.7f)).toDouble()))
                             }
                             if (tightSweep) {
                                 // DJ filter exit: close the low-pass exponentially
@@ -10008,8 +10121,9 @@ class MusicService :
                 } catch (e: Exception) {
                 }
 
+                val tailMs = automixStyleParams(automixPlan?.style ?: AutomixBlendStyle.FADE).tailMs
                 cleanupCrossfade(fadingPlayerSessionId = previousAudioSessionId)
-                startTailRingOut(tailCandidate, startVolume, previousAudioSessionId)
+                startTailRingOut(tailCandidate, startVolume, previousAudioSessionId, tailMs)
             }
     }
 
@@ -10096,13 +10210,14 @@ class MusicService :
     /**
      * Lets the replaced player decay naturally under the new track instead
      * of slicing its reverb tail. Starts ~18dB down with a quadratic fade
-     * to true zero over [AUTOMIX_TAIL_MS]; if the user pauses/stops mid-tail
+     * to true zero over [tailMs]; if the user pauses/stops mid-tail
      * it fast-fades instead of lingering over silence.
      */
     private fun startTailRingOut(
         oldPlayer: ExoPlayer?,
         startVolume: Float,
         audioSessionId: Int,
+        tailMs: Long = AUTOMIX_TAIL_MS,
     ) {
         releaseTailNow()
         if (oldPlayer == null) {
@@ -10117,7 +10232,7 @@ class MusicService :
         runCatching { oldPlayer.volume = tailStart }
         tailJob =
             scope.launch {
-                val steps = (AUTOMIX_TAIL_MS / AUTOMIX_TAIL_STEP_MS).toInt().coerceAtLeast(1)
+                val steps = (tailMs / AUTOMIX_TAIL_STEP_MS).toInt().coerceAtLeast(1)
                 var i = 0
                 while (i <= steps) {
                     if (!isActive) break
@@ -10261,8 +10376,6 @@ class MusicService :
         private const val AUTOMIX_DOWNBEAT_MAX_WAIT_MS = 2500.0
         private const val AUTOMIX_CONFIDENT_CONFIDENCE = 0.8f
         private const val AUTOMIX_CONFIDENT_DURATION_SCALE = 1.2f
-        // High-end wash: gentle outgoing top-end roll-off on wide blends.
-        private const val AUTOMIX_WASH_DB = -2.0
 
         // Was 4_000L — too short given the underlying OkHttpClient's own
         // 8s connect / 10s read timeouts, plus the token endpoint's cold-start

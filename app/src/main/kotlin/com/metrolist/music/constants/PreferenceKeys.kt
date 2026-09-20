@@ -365,6 +365,25 @@ val NextTrackPreloadCountKey = intPreferencesKey("nextTrackPreloadCount")
  */
 val AutomixEnabledKey = booleanPreferencesKey("metroMixEnabled")
 val AutomixBarsKey = intPreferencesKey("metroMixBars")
+val AutomixStyleKey = stringPreferencesKey("automixStyle")
+
+/**
+ * Automix blend character. FADE reproduces the classic crossfade handoff;
+ * the rest reshape the same tempo/key/phase engine into different DJ
+ * styles. Persisted by name; unknown values fall back to FADE.
+ */
+enum class AutomixBlendStyle {
+    FADE,
+    MIX,
+    SMOOTH,
+    QUICK_CUT,
+    SLOW_BLEND,
+    BASS_SWAP,
+    FILTER_EXIT,
+    VOCAL,
+    PUNCH,
+    ETHEREAL,
+}
 
 val MaxImageCacheSizeKey = intPreferencesKey("maxImageCacheSize")
 val MaxSongCacheSizeKey = intPreferencesKey("maxSongCacheSize")

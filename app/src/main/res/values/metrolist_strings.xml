@@ -441,6 +441,27 @@
     <string name="automix_desc">DJ-style transitions with tempo, key, and beat matching</string>
     <string name="automix_transition_bars">Transition length</string>
     <string name="automix_transition_bars_desc">Overlap of %1$d bars between songs</string>
+    <string name="automix_style">Blend style</string>
+    <string name="automix_style_fade">Fade</string>
+    <string name="automix_style_fade_desc">Classic crossfade handoff between songs</string>
+    <string name="automix_style_mix">Mix</string>
+    <string name="automix_style_mix_desc">DJ blend with both tracks fully present</string>
+    <string name="automix_style_smooth">Smooth</string>
+    <string name="automix_style_smooth_desc">Gentle effortless handoff</string>
+    <string name="automix_style_quick_cut">Quick cut</string>
+    <string name="automix_style_quick_cut_desc">Fast radio-style swap</string>
+    <string name="automix_style_slow_blend">Slow blend</string>
+    <string name="automix_style_slow_blend_desc">Extra-long dissolve for chill sets</string>
+    <string name="automix_style_bass_swap">Bass swap</string>
+    <string name="automix_style_bass_swap_desc">Techno-style low-end handoff</string>
+    <string name="automix_style_filter_exit">Filter exit</string>
+    <string name="automix_style_filter_exit_desc">Outgoing track dissolves through a filter</string>
+    <string name="automix_style_vocal">Vocal</string>
+    <string name="automix_style_vocal_desc">Keeps voices clear through the blend</string>
+    <string name="automix_style_punch">Punch</string>
+    <string name="automix_style_punch_desc">Short and direct with full impact</string>
+    <string name="automix_style_ethereal">Ethereal</string>
+    <string name="automix_style_ethereal_desc">Dreamy long wash that melts songs together</string>
     <string name="metromix_waveform">Waveform</string>
     <string name="done">Done</string>
 
