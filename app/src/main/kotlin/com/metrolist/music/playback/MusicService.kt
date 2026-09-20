@@ -471,6 +471,9 @@ private data class AutomixPlan(
     // be chorus-into-chorus, so the engine shortens it slightly and trims
     // the mids as vocal insurance. Cheap caution for flying blind.
     val cautiousOverlap: Boolean,
+    // Weaker of the two sides' structure confidence. Scales the volume-dip
+    // and wash: certain blends barely dip, blind ones stay protected.
+    val confidence: Float,
     // Perceived loudness of each side in LUFS, best-effort from persisted
     // stream loudness rows (null when never measured).
     val lufsA: Double?,
@@ -7488,7 +7491,12 @@ class MusicService :
         analyzerProcessor: AutomixAnalyzerAudioProcessor,
     ) = object : DefaultRenderersFactory(this) {
         init {
-            setExtensionRendererMode(EXTENSION_RENDERER_MODE_PREFER)
+            // Hardware MediaCodec first, FFmpeg software fallback only for
+            // formats no hardware decoder handles. PREFER (the old value)
+            // ran everything through software decode: higher CPU, hotter
+            // device, thermal-throttle underruns (grain/clips), and worse
+            // battery - for zero audible benefit on supported formats.
+            setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
         }
 
         override fun buildAudioSink(
@@ -9438,6 +9446,7 @@ class MusicService :
             durationScale = durationScale,
             bassSeparation = bassSeparation,
             cautiousOverlap = cautiousOverlap,
+            confidence = minStructureConf,
             lufsA = lufsA,
             lufsB = lufsB,
             incomingGainDb = incomingGainDb,
@@ -9488,16 +9497,27 @@ class MusicService :
                 // Tempo + key drive blend width: compatible pairs sustain a
                 // longer overlap, clashing or tempo-unmatched pairs get in
                 // and out fast with extra low-end separation.
-                activeCrossfadeDurationMs = (activeCrossfadeDurationMs * plan.durationScale).toLong().coerceIn(2_000L, 16_000L)
+                var blendMs = (activeCrossfadeDurationMs * plan.durationScale).toLong().coerceIn(2_000L, 16_000L)
                 // Never let the blend eat a short track: cap it at a fraction
                 // of the shorter side so skits, interludes, and short songs
                 // keep their identity instead of drowning in overlap.
                 val outgoingDurMs = player.duration.takeIf { it != C.TIME_UNSET } ?: Long.MAX_VALUE
                 val incomingDurMs = targetMediaItem?.metadata?.duration?.takeIf { it > 0 }?.times(1000L) ?: Long.MAX_VALUE
                 val shortestMs = minOf(outgoingDurMs, incomingDurMs)
-                if (shortestMs != Long.MAX_VALUE) {
-                    val capMs = (shortestMs * AUTOMIX_MAX_BLEND_FRACTION).toLong()
-                    activeCrossfadeDurationMs = minOf(activeCrossfadeDurationMs, capMs).coerceIn(750L, 32_000L)
+                val shortCapMs =
+                    if (shortestMs != Long.MAX_VALUE) (shortestMs * AUTOMIX_MAX_BLEND_FRACTION).toLong() else null
+                // Whole-bar quantization: a blend that spans an exact number
+                // of bars at the shared tempo feels like one continuous
+                // arrangement instead of an arbitrary slice. Skipped when it
+                // would break the width bounds or the short-track cap.
+                val barMs = (60_000f / plan.targetBpm * 4f).toLong().coerceAtLeast(1L)
+                val quantizedMs = (blendMs + barMs / 2) / barMs * barMs
+                if (quantizedMs in 2_000L..16_000L && (shortCapMs == null || quantizedMs <= shortCapMs)) {
+                    blendMs = quantizedMs
+                }
+                activeCrossfadeDurationMs = blendMs.coerceIn(2_000L, 16_000L)
+                if (shortCapMs != null) {
+                    activeCrossfadeDurationMs = minOf(activeCrossfadeDurationMs, shortCapMs).coerceIn(750L, 32_000L)
                 }
                 Timber.tag(TAG).d(
                     "Automix plan: %.1f->%.1f bpm (target %.1f, matched=%s, halfTime=%s), speed %.3f/%.3f, phase +%dms, key=%s mode=%s, duration=%dms",
@@ -9615,13 +9635,17 @@ class MusicService :
         fun range(value: Float, start: Float, end: Float) = ((value - start) / (end - start)).coerceIn(0f, 1f)
         fun equalPowerIn(value: Float) = sin(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
         fun equalPowerOut(value: Float) = cos(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
-        val centerDuck =
+        // The dip scales with certainty: a fully-learned lock barely dips
+        // (there is nothing to hide behind), a blind overlap keeps the
+        // full protective hollow.
+        val baseDuck =
             when (plan?.blendMode) {
                 AutomixBlendMode.WIDE -> 0.07f
                 AutomixBlendMode.FOCUSED -> 0.12f
                 AutomixBlendMode.TIGHT -> 0.18f
                 AutomixBlendMode.NEUTRAL, null -> 0.10f
             }
+        val centerDuck = baseDuck * (1.1f - 0.6f * (plan?.confidence ?: 0f))
         val distanceFromCenter = (2f * p - 1f).coerceIn(-1f, 1f)
         val headroom = 1f - centerDuck * (1f - distanceFromCenter * distanceFromCenter)
         val shaped = smooth(range(p, 0.02f, 0.98f))
@@ -9937,6 +9961,20 @@ class MusicService :
                             )
                             currentEq?.updateAutomixGain(1, if (midTrim) -4.0 * (1.0 - smooth(range(progress, 0.2f, 0.7f)).toDouble()) else 0.0)
                             fadingEq?.updateAutomixGain(2, if (midTrim) -4.0 * centerWeight else 0.0)
+                            // High-end wash: a whisper of top-end roll-off on
+                            // the outgoing side of wide blends, like a DJ
+                            // easing the filter down - hats and air dissolve
+                            // instead of stacking against the incoming track.
+                            // Scaled by certainty like the volume dip.
+                            if (!midTrim &&
+                                (automixPlan?.blendMode == AutomixBlendMode.WIDE ||
+                                    automixPlan?.blendMode == AutomixBlendMode.FOCUSED)
+                            ) {
+                                fadingEq?.updateAutomixGain(
+                                    2,
+                                    AUTOMIX_WASH_DB * centerWeight * (0.5f + 0.5f * (automixPlan?.confidence ?: 0f)),
+                                )
+                            }
                             if (tightSweep) {
                                 // DJ filter exit: close the low-pass exponentially
                                 // over the blend so the outgoing track dissolves
@@ -10164,8 +10202,14 @@ class MusicService :
         const val MAX_RETRY_COUNT = 10
 
         // Constants for audio normalization
-        private const val MAX_GAIN_MB = 1500 // Maximum gain in millibels (15 dB)
-        private const val MIN_GAIN_MB = -2400 // Minimum gain in millibels (-24 dB)
+        // Normalization is a compressor/limiter (LoudnessEnhancer), not a
+        // clean volume knob: large boosts squash dynamics and clip hot
+        // masters, which is exactly the "worse than external players"
+        // report. Cap boosts at +6dB - very quiet tracks just stay a touch
+        // quieter instead of being pumped into distortion. Cuts stay deep
+        // (-24dB) since attenuation never distorts.
+        private const val MAX_GAIN_MB = 600 // Maximum boost in millibels (6 dB)
+        private const val MIN_GAIN_MB = -2400 // Maximum cut in millibels (-24 dB)
 
         private const val TAG = "MusicService"
         private const val CACHE_TAG = "PlaybackCache"
@@ -10217,6 +10261,8 @@ class MusicService :
         private const val AUTOMIX_DOWNBEAT_MAX_WAIT_MS = 2500.0
         private const val AUTOMIX_CONFIDENT_CONFIDENCE = 0.8f
         private const val AUTOMIX_CONFIDENT_DURATION_SCALE = 1.2f
+        // High-end wash: gentle outgoing top-end roll-off on wide blends.
+        private const val AUTOMIX_WASH_DB = -2.0
 
         // Was 4_000L — too short given the underlying OkHttpClient's own
         // 8s connect / 10s read timeouts, plus the token endpoint's cold-start
