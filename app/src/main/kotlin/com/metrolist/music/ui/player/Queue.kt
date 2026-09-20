@@ -823,6 +823,9 @@ fun Queue(
 
                 itemsIndexed(
                     items = mutableQueueWindows,
+                    // Int hash: Window.uid is an opaque Object, which Lazy's
+                    // saveable state rejects (instant crash). Collisions only
+                    // risk a remount, never a crash.
                     key = { _, item -> item.uid.hashCode() },
                 ) { index, window ->
                     ReorderableItem(

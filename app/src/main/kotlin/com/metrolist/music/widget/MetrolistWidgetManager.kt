@@ -59,6 +59,15 @@ class MetrolistWidgetManager @Inject constructor(
     ) {
         val appWidgetManager = AppWidgetManager.getInstance(context)
 
+        // Bail before any bitmap work when no widget is pinned: the 1Hz
+        // service ticker calls here, and decoding/transforming artwork for
+        // zero recipients burns CPU every second of every playback.
+        val componentName = ComponentName(context, MusicWidgetReceiver::class.java)
+        val widgetIds = appWidgetManager.getAppWidgetIds(componentName)
+        val turntableComponentName = ComponentName(context, TurntableWidgetReceiver::class.java)
+        val turntableWidgetIds = appWidgetManager.getAppWidgetIds(turntableComponentName)
+        if (widgetIds.isEmpty() && turntableWidgetIds.isEmpty()) return
+
         // Use cached album art if URI hasn't changed, otherwise load new one
         val albumArt: Bitmap?
         val circularAlbumArt: Bitmap?
@@ -76,8 +85,6 @@ class MetrolistWidgetManager @Inject constructor(
         }
 
         // Update main music player widgets
-        val componentName = ComponentName(context, MusicWidgetReceiver::class.java)
-        val widgetIds = appWidgetManager.getAppWidgetIds(componentName)
         if (widgetIds.isNotEmpty()) {
             widgetIds.forEach { widgetId ->
                 val options = appWidgetManager.getAppWidgetOptions(widgetId)
@@ -96,8 +103,6 @@ class MetrolistWidgetManager @Inject constructor(
         }
 
         // Update turntable widgets
-        val turntableComponentName = ComponentName(context, TurntableWidgetReceiver::class.java)
-        val turntableWidgetIds = appWidgetManager.getAppWidgetIds(turntableComponentName)
         if (turntableWidgetIds.isNotEmpty()) {
             val turntableViews = createTurntableRemoteViews(
                 circularAlbumArt,

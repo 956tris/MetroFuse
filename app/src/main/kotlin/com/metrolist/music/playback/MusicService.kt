@@ -74,6 +74,8 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.analytics.PlaybackStats
@@ -254,6 +256,7 @@ import com.metrolist.music.db.entities.LyricsEntity.Companion.LYRICS_NOT_FOUND
 import com.metrolist.music.db.entities.PlaylistEntity
 import com.metrolist.music.db.entities.RelatedSongMap
 import com.metrolist.music.db.entities.Song
+import com.metrolist.music.db.entities.SongTransitionEntity
 import com.metrolist.music.db.entities.TrackStructureEntity
 import com.metrolist.music.playback.audio.AutomixAnalyzerAudioProcessor
 import com.metrolist.music.di.DownloadCache
@@ -381,6 +384,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.random.Random
@@ -1522,23 +1526,16 @@ class MusicService :
                                 ?.toLong()
                                 ?: 0L
                             val trackDurationMs = player.duration.takeIf { it != C.TIME_UNSET && it > 0L }
+                            // Single position sample per iteration: the old code
+                            // sampled twice and re-ran the line scan when they
+                            // disagreed, doubling IPC + scan cost at 4Hz.
                             val sampledPositionMs = player.currentPosition.coerceAtLeast(0L)
-                            var currentLine = AndroidAutoLyrics.currentLine(
+                            val currentLine = AndroidAutoLyrics.currentLine(
                                 lines = lines,
                                 positionMs = sampledPositionMs,
                                 offsetMs = lyricsOffsetMs,
                                 trackDurationMs = trackDurationMs,
                             )
-
-                            val confirmedPositionMs = player.currentPosition.coerceAtLeast(0L)
-                            if (confirmedPositionMs != sampledPositionMs) {
-                                currentLine = AndroidAutoLyrics.currentLine(
-                                    lines = lines,
-                                    positionMs = confirmedPositionMs,
-                                    offsetMs = lyricsOffsetMs,
-                                    trackDurationMs = trackDurationMs,
-                                )
-                            }
                             if (
                                 generation != automotiveLyricsGeneration ||
                                 player.currentMediaItem?.mediaId != mediaId
@@ -5876,6 +5873,9 @@ class MusicService :
                 queuedMetadataForPlaybackDatabase(mediaId, song)?.let { insert(it) }
                 upsert(resolution.format)
             }
+            if (resolution.format.contentLength <= 0L) {
+                maybeBackfillContentLength(mediaId, resolution.uri)
+            }
             songUrlCache[mediaId] = resolution.toCachedSongStream(selectionKey)
             resolution
         }
@@ -7570,6 +7570,23 @@ class MusicService :
             // device, thermal-throttle underruns (grain/clips), and worse
             // battery - for zero audible benefit on supported formats.
             setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
+            // Critical: if a hardware decoder fails mid-stream (observed:
+            // total silence on Jio 320k AAC on some devices), fall back to
+            // the software renderer instead of dying silently.
+            setEnableDecoderFallback(true)
+            // Best hardware decoder per codec: rank dedicated silicon
+            // (qcom/exynos/mtk/...) above Android's bundled software codecs
+            // (OMX.google.*/c2.android.*), which sound identical but burn
+            // CPU. Stable sort keeps ExoPlayer's internal order otherwise.
+            // The FFmpeg extension renderer stays the true last resort.
+            setMediaCodecSelector(
+                MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                    MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                        .sortedBy { info ->
+                            if (info.name.startsWith("OMX.google.") || info.name.startsWith("c2.android.")) 1 else 0
+                        }
+                },
+            )
         }
 
         override fun buildAudioSink(
@@ -7578,7 +7595,12 @@ class MusicService :
             enableAudioTrackPlaybackParams: Boolean,
         ) = DefaultAudioSink
             .Builder(this@MusicService)
-            .setEnableFloatOutput(enableFloatOutput)
+            // Always allow the 32-bit float path: decoder -> DSP -> AudioTrack
+            // stays high-precision (matters for hi-res FLAC and EQ headroom)
+            // instead of truncating to 16-bit. Processors that only speak
+            // 16-bit (EQ, learn taps) make the sink fall back automatically,
+            // so this is strictly best-available, never forced.
+            .setEnableFloatOutput(true)
             .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
             .setAudioProcessorChain(
                 DefaultAudioSink.DefaultAudioProcessorChain(
@@ -7901,6 +7923,22 @@ class MusicService :
         bitrateEstimate: Long,
     ) {
         // Network bandwidth is not audio bitrate; parser/load-window samples drive the live label.
+    }
+
+    /**
+     * Logs the winning decoder per track (e.g. OMX.qcom.audio.decoder.aac
+     * vs FfmpegAudioRenderer). Proves which path a codec takes and catches
+     * silent hardware-decoder failures in the field - if this line shows a
+     * hardware name right before audio dies, that decoder is the culprit.
+     */
+    override fun onAudioDecoderInitialized(
+        eventTime: AnalyticsListener.EventTime,
+        decoderName: String,
+        initializedTimestampMs: Long,
+        initializationDurationMs: Long,
+    ) {
+        val mediaId = currentPlaybackMediaId() ?: player.currentMediaItem?.mediaId
+        Timber.tag(TAG).d("Audio decoder initialized: $decoderName (mediaId=$mediaId, init=${initializationDurationMs}ms)")
     }
 
     private fun publishLivePlaybackTransferEstimate(
@@ -9015,6 +9053,34 @@ class MusicService :
             DIRECT_HTTP_AUDIO_ITAG,
         )
 
+    // Async per-pair override cache: the event thread never touches the
+    // DB for transitions. Stale first passes converge via re-armed schedule.
+    @Volatile
+    private var cachedPairTransition: Triple<String, String, SongTransitionEntity?>? = null
+    private var transitionCacheJob: Job? = null
+
+    private fun refreshAutomixTransitionCache(
+        currentSongId: String?,
+        nextSongId: String?,
+    ) {
+        if (currentSongId == null || nextSongId == null) {
+            cachedPairTransition = null
+            return
+        }
+        if (cachedPairTransition?.first == currentSongId && cachedPairTransition?.second == nextSongId) return
+        transitionCacheJob?.cancel()
+        transitionCacheJob =
+            scope.launch(Dispatchers.IO) {
+                val entity = runCatching { database.getTransition(currentSongId, nextSongId) }.getOrNull()
+                cachedPairTransition = Triple(currentSongId, nextSongId, entity)
+                withContext(Dispatchers.Main) {
+                    if (player.currentMediaItem?.mediaId == currentSongId && !isCrossfading && secondaryPlayer == null) {
+                        scheduleCrossfade()
+                    }
+                }
+            }
+    }
+
     /**
      * Resolves the Automix transition width. Returns null when Automix is off
      * (the plain crossfade path applies). Explicit per-pair timings saved
@@ -9030,7 +9096,13 @@ class MusicService :
 
         var bars = activeAutomixBars.coerceIn(2, 32)
         if (currentSongId != null && nextSongId != null) {
-            val transition = runBlocking(Dispatchers.IO) { database.getTransition(currentSongId, nextSongId) }
+            // Async-refresh + sync-read: never blocks the event thread on
+            // the DB. A stale first pass self-corrects when the fetch lands
+            // (it re-arms scheduling for the same pair only).
+            refreshAutomixTransitionCache(currentSongId, nextSongId)
+            val transition = cachedPairTransition
+                ?.takeIf { it.first == currentSongId && it.second == nextSongId }
+                ?.third
             if (transition != null) {
                 bars = transition.overlapBars.coerceIn(2, 32)
                 val customMs =
@@ -9157,16 +9229,22 @@ class MusicService :
             }.getOrNull()
         val song = persisted?.first
         val format = persisted?.second
+        val structure = persisted?.third
         val dbBpm = song?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
         val dbKey = song?.keySignature?.takeIf { it.isNotBlank() }
         if ((memBpm == null && dbBpm != null) || (memKey == null && dbKey != null)) {
             automixMetadataCache[id] = MixMetadata(bpm = memBpm ?: dbBpm, keySignature = memKey ?: dbKey)
         }
+        // Last-resort BPM: audio-estimated from the intro sniff, stored on
+        // the structure row when network metadata fails. Head-autocorrelation
+        // can octave-slip, but the plan's halftime retry absorbs 2x errors
+        // and a same-direction slip on both sides still ratio-locks.
+        val structBpm = structure?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
         return AutomixTrackData(
-            bpm = tagBpm ?: memBpm ?: dbBpm,
+            bpm = tagBpm ?: memBpm ?: dbBpm ?: structBpm,
             key = tagKey ?: memKey ?: dbKey,
             lufs = format?.perceptualLoudnessDb ?: format?.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs },
-            structure = persisted?.third,
+            structure = structure,
         )
     }
 
@@ -9257,6 +9335,21 @@ class MusicService :
                     learnedAt = System.currentTimeMillis(),
                 ),
             )
+            // Full-track loudness backfill: per-second buckets are RMS, so
+            // their mean maps to LUFS the same way as the sniffer head.
+            // Only fills rows with no measured data (see helper).
+            val buckets = snap.energyPerSecond
+            if (buckets.size >= 10) {
+                var sum = 0.0
+                for (value in buckets) sum += value
+                val mean = sum / buckets.size
+                if (mean > 1e-9) {
+                    backfillLoudnessEstimate(
+                        snap.mediaId,
+                        (20.0 * log10(mean) - 3.0).toDouble().coerceIn(-45.0, -5.0),
+                    )
+                }
+            }
         }
     }
 
@@ -9265,6 +9358,73 @@ class MusicService :
             database.query {
                 upsertTrackStructure(entity)
                 if (structurePersistCount++ % 25 == 0) pruneTrackStructure()
+            }
+        }
+    }
+
+    /**
+     * Writes an estimated LUFS into a format row that carries no loudness
+     * data at all (local files, loudness-less provider/YouTube responses).
+     * Measured values always win: this only fills rows where BOTH fields
+     * are null, so it can never clobber real data. Unblocks the details
+     * screen, normalization, and Automix gain staging instead of "unknown".
+     */
+    /**
+     * Real file size for rows the player response leaves blank (ciphered
+     * formats omit contentLength): every stream URL answers a 1-byte range
+     * request with a Content-Range total, so one tiny probe learns the exact
+     * size. Persisted only when the row still lacks a length; the details
+     * screen's bitrate estimate remains the final fallback.
+     */
+    private val metadataProbeClient by lazy { OkHttpClient() }
+
+    private fun maybeBackfillContentLength(
+        mediaId: String,
+        streamUri: String,
+    ) {
+        if (mediaId.isBlank() || streamUri.isBlank()) return
+        val scheme = streamUri.substringBefore("://", "").lowercase()
+        if (scheme != "http" && scheme != "https") return
+        scope.launch(Dispatchers.IO) {
+            val total =
+                runCatching {
+                    val request =
+                        okhttp3.Request.Builder()
+                            .url(streamUri)
+                            .header("Range", "bytes=0-0")
+                            .header("User-Agent", "com.google.android.youtube/20.10.36 (Linux; U; Android 14) gzip")
+                            .get()
+                            .build()
+                    metadataProbeClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@use null
+                        response.header("Content-Range")
+                            ?.substringAfterLast("/")
+                            ?.trim()
+                            ?.toLongOrNull()
+                            ?.takeIf { it > 0 }
+                            ?: response.body.contentLength().takeIf { it > 0 }
+                    }
+                }.getOrNull() ?: return@launch
+            runCatching {
+                database.query {
+                    getFormatByIdBlocking(mediaId)
+                        ?.takeIf { it.contentLength <= 0L }
+                        ?.let { upsert(it.copy(contentLength = total)) }
+                }
+            }
+        }
+    }
+
+    private fun backfillLoudnessEstimate(
+        mediaId: String,
+        estimatedLufs: Double,
+    ) {
+        if (mediaId.isBlank()) return
+        runCatching {
+            database.query {
+                getFormatByIdBlocking(mediaId)
+                    ?.takeIf { it.perceptualLoudnessDb == null && it.loudnessDb == null }
+                    ?.let { upsert(it.copy(perceptualLoudnessDb = estimatedLufs)) }
             }
         }
     }
@@ -9308,6 +9468,8 @@ class MusicService :
                         learnedAt = System.currentTimeMillis(),
                     ),
                 )
+                // Head-RMS loudness backfill for rows with no measured data.
+                sniffed.estimatedLufs?.let { backfillLoudnessEstimate(target.id, it.toDouble()) }
                 withContext(Dispatchers.Main) {
                     if (player.currentMediaItem?.mediaId == triggerMediaId && !isCrossfading && secondaryPlayer == null) {
                         scheduleCrossfade()
@@ -9615,8 +9777,12 @@ class MusicService :
             } else {
                 // No tempo/key lock (missing metadata, episode, video, or a
                 // wide tempo gap): safe equal-power blend at 1.0x, no speed
-                // bending, bounded width.
-                activeCrossfadeDurationMs = activeCrossfadeDurationMs.coerceIn(2_000L, 10_000L)
+                // bending, bounded width - but still style-paced, so fully
+                // unknown pairs keep the selected character's width and tail
+                // instead of dropping to a generic default.
+                val styledFallback =
+                    (activeCrossfadeDurationMs * automixStyleParams(activeAutomixStyle).durationMult).toLong()
+                activeCrossfadeDurationMs = styledFallback.coerceIn(2_000L, 10_000L)
             }
         }
 
@@ -9779,20 +9945,20 @@ class MusicService :
         if (plan == null || !plan.tempoMatched || plan.outPeriodMs <= 0f) return
         val outgoing = player
         if (outgoing === secPlayer || !outgoing.isPlaying) return
-        val mediaId = outgoing.currentMediaItem?.mediaId
         val period = plan.outPeriodMs.toDouble()
         val offset = plan.outDownbeatMs.toDouble()
         val pos = outgoing.currentPosition.toDouble()
         val waitMs = offset + ceil((pos - offset) / period) * period - pos
         if (waitMs < AUTOMIX_DOWNBEAT_MIN_WAIT_MS || waitMs > AUTOMIX_DOWNBEAT_MAX_WAIT_MS) return
-        val deadline = SystemClock.elapsedRealtime() + waitMs.toLong()
-        while (SystemClock.elapsedRealtime() < deadline) {
-            kotlinx.coroutines.delay(50)
-            if (!outgoing.isPlaying ||
-                outgoing.currentMediaItem?.mediaId != mediaId ||
-                outgoing.playbackState == Player.STATE_ENDED ||
-                secondaryPlayer !== secPlayer
-            ) return
+        // One sleep to the barline, not a 20Hz poll: 250ms slices so a
+        // pause still releases the hold promptly. Any other state change
+        // is re-validated once by the caller (secondary identity check).
+        var remainingMs = waitMs.toLong()
+        while (remainingMs > 0L) {
+            val sliceMs = minOf(remainingMs, 250L)
+            kotlinx.coroutines.delay(sliceMs)
+            remainingMs -= sliceMs
+            if (!outgoing.isPlaying || secondaryPlayer !== secPlayer) return
         }
     }
 
@@ -9914,7 +10080,9 @@ class MusicService :
         crossfadeJob =
             scope.launch {
                 val duration = activeCrossfadeDurationMs.coerceAtLeast(750L)
-                val steps = (duration / 20L).toInt().coerceIn(40, 250)
+                // 80ms steps, not 20ms: eased curves are inaudibly identical
+                // at 12Hz, with 4x fewer volume/EQ writes per blend.
+                val steps = (duration / 80L).toInt().coerceIn(10, 250)
                 val stepTime = (duration / steps).coerceAtLeast(10L)
                 val startVolume =
                     try {
@@ -10357,7 +10525,9 @@ class MusicService :
         // reverb, a live vocal guard that sits hot outgoing mids back, and a
         // caution scale for long blind blends (no learned boundaries).
         private const val AUTOMIX_TAIL_MS = 1800L
-        private const val AUTOMIX_TAIL_STEP_MS = 20L
+        // 100ms tail steps: the quadratic decay is inaudibly identical at
+        // 10Hz with 5x fewer wakeups per ring-out.
+        private const val AUTOMIX_TAIL_STEP_MS = 100L
         private const val AUTOMIX_TAIL_START_RATIO = 0.125f
         private const val AUTOMIX_HOT_TAIL_SECONDS = 8
         private const val AUTOMIX_HOT_TAIL_RATIO = 1.15f
@@ -10386,7 +10556,7 @@ class MusicService :
         private const val APPLE_CANVAS_FETCH_TIMEOUT_MS = 15_000L
         private const val AUDIO_FORMAT_RETRY_ATTEMPTS = 8
         private const val AUDIO_FORMAT_RETRY_DELAY_MS = 1_000L
-        private const val LIVE_PLAYBACK_BITRATE_TICK_MS = 125L
+        private const val LIVE_PLAYBACK_BITRATE_TICK_MS = 500L
         private const val LIVE_PLAYBACK_BITRATE_MIN_UPDATE_MS = 90L
         private const val LIVE_PLAYBACK_BITRATE_MIN_DELTA_BPS = 250
         private const val LIVE_PLAYBACK_BITRATE_MIN_BPS = 32_000

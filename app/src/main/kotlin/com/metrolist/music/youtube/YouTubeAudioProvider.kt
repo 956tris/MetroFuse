@@ -427,7 +427,7 @@ object YouTubeAudioProvider {
             val sessionId = YouTube.dataSyncId ?: YouTube.visitorData
             if (sessionId != null) {
                 runCatching {
-                    poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                    poTokenGenerator.getWebClientPoTokenSuspended(videoId, sessionId)
                 }.onFailure {
                     Timber.tag(TAG).e(it, "PoToken generation failed for $videoId")
                 }.getOrNull()

@@ -75,6 +75,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.MutableLongState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -134,6 +135,7 @@ import androidx.palette.graphics.Palette
 import com.metrolist.music.R
 import coil3.compose.AsyncImage
 import coil3.imageLoader
+import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.allowHardware
 import coil3.toBitmap
@@ -916,25 +918,12 @@ fun BottomSheetPlayer(
     var duration by durationState
     var bufferedPosition by bufferedPositionState
 
-    val effectivePosition =
-        if (isCasting) {
-            castPosition
-        } else {
-            position
-        }
     val metadataDurationMs =
         (mediaMetadata?.duration?.takeIf { it > 0 }
             ?: currentSong?.song?.duration?.takeIf { it > 0 })
             ?.toLong()
             ?.times(1000L)
             ?: C.TIME_UNSET
-    val effectiveDuration =
-        when {
-            isCasting && castDuration > 0L -> castDuration
-            duration != C.TIME_UNSET && duration > 0L -> duration
-            metadataDurationMs != C.TIME_UNSET -> metadataDurationMs
-            else -> 0L
-        }
 
     var sliderPosition by remember {
         mutableStateOf<Long?>(null)
@@ -944,22 +933,13 @@ fun BottomSheetPlayer(
     LaunchedEffect(mediaMetadata?.id) {
         sliderPosition = null
     }
-    val sliderRangeEnd = effectiveDuration.takeIf { it > 0L } ?: 1L
-    val sliderValueRange = 0f..sliderRangeEnd.toFloat()
-    val displayedSliderPosition =
-        (sliderPosition ?: effectivePosition).coerceIn(0L, sliderRangeEnd)
-    val displayedBufferedPosition =
-        if (isCasting) {
-            displayedSliderPosition
-        } else {
-            max(displayedSliderPosition, bufferedPosition).coerceIn(0L, sliderRangeEnd)
-        }
-    val canSeekPlayer = effectiveDuration > 0L && !isListenTogetherGuest
     // Track when we last manually set position to avoid Cast overwriting it
     var lastManualSeekTime by remember { mutableLongStateOf(0L) }
-    fun seekToPlayerPosition(positionMs: Long) {
-        val target = if (effectiveDuration > 0L) {
-            positionMs.coerceIn(0L, effectiveDuration)
+    // Duration is passed in by the ticker-scoped progress leaf so this
+    // stays a deferred callback that never subscribes the parent to ticks.
+    fun seekToPlayerPosition(positionMs: Long, durationMs: Long) {
+        val target = if (durationMs > 0L) {
+            positionMs.coerceIn(0L, durationMs)
         } else {
             positionMs.coerceAtLeast(0L)
         }
@@ -1694,15 +1674,22 @@ fun BottomSheetPlayer(
                             label = "blurBackground",
                         ) { thumbnailUrl ->
                             if (thumbnailUrl != null) {
+                                // Remember the request per artwork: rebuilding it every
+                                // recomposition retriggers the GPU blur chain.
+                                val blurRequest = remember(thumbnailUrl) {
+                                    ImageRequest
+                                        .Builder(context)
+                                        .data(thumbnailUrl)
+                                        .size(300, 300)
+                                        .allowHardware(false)
+                                        .memoryCachePolicy(CachePolicy.ENABLED)
+                                        .diskCachePolicy(CachePolicy.ENABLED)
+                                        .networkCachePolicy(CachePolicy.ENABLED)
+                                        .build()
+                                }
                                 Box(modifier = Modifier.alpha(backgroundAlpha)) {
                                     AsyncImage(
-                                        model =
-                                            ImageRequest
-                                                .Builder(context)
-                                                .data(thumbnailUrl)
-                                                .size(300, 300)
-                                                .allowHardware(false)
-                                                .build(),
+                                        model = blurRequest,
                                         contentDescription = null,
                                         contentScale = ContentScale.Crop,
                                         modifier =
@@ -1946,19 +1933,12 @@ fun BottomSheetPlayer(
             )
 
             if (playerInlineLyricsEnabled && !showInlineLyrics) {
-                PlayerInlineLyrics(
+                PositionedInlineLyrics(
                     lyricsEntity = currentLyrics,
-                    positionMs = sliderPosition ?: effectivePosition,
+                    sliderPosition = sliderPosition,
+                    positionState = positionState,
                     textColor = TextBackgroundColor,
                     smoothSlidingLine = smoothInlineLyricsEnabled,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(
-                                start = PlayerHorizontalPadding,
-                                end = PlayerHorizontalPadding,
-                                bottom = 8.dp,
-                            ),
                 )
             }
 
@@ -1995,8 +1975,21 @@ fun BottomSheetPlayer(
                                     )
                                 }
                             } else {
+                                // Sized decode: a 56dp row never needs full-res artwork.
+                                val compactArtwork = remember(displayArtworkUrl) {
+                                    displayArtworkUrl?.let { url ->
+                                        ImageRequest
+                                            .Builder(context)
+                                            .data(url)
+                                            .size(168)
+                                            .memoryCachePolicy(CachePolicy.ENABLED)
+                                            .diskCachePolicy(CachePolicy.ENABLED)
+                                            .networkCachePolicy(CachePolicy.ENABLED)
+                                            .build()
+                                    }
+                                }
                                 AsyncImage(
-                                    model = displayArtworkUrl,
+                                    model = compactArtwork ?: displayArtworkUrl,
                                     contentDescription = null,
                                     contentScale = ContentScale.Crop,
                                     modifier =
@@ -2410,176 +2403,29 @@ fun BottomSheetPlayer(
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
-
-            when (sliderStyle) {
-                SliderStyle.DEFAULT -> {
-                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
-                    Slider(
-                        value = displayedSliderPosition.toFloat(),
-                        valueRange = sliderValueRange,
-                        onValueChange = {
-                            if (canSeekPlayer) {
-                                sliderPosition = it.toLong()
-                            }
-                        },
-                        onValueChangeFinished = {
-                            if (canSeekPlayer) {
-                                sliderPosition?.let {
-                                    seekToPlayerPosition(it)
-                                }
-                                sliderPosition = null
-                            }
-                        },
-                        enabled = canSeekPlayer,
-                        colors = colors,
-                        track = { sliderState ->
-                            PlayerSliderTrack(
-                                sliderState = sliderState,
-                                colors = colors,
-                                trackHeight = 8.dp,
-                                bufferedValue = displayedBufferedPosition.toFloat(),
-                            )
-                        },
-                        modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                    )
-                }
-
-                SliderStyle.WAVY -> {
-                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
-                    if (squigglySlider) {
-                        SquigglySlider(
-                            value = displayedSliderPosition.toFloat(),
-                            valueRange = sliderValueRange,
-                            onValueChange = {
-                                if (canSeekPlayer) {
-                                    sliderPosition = it.toLong()
-                                }
-                            },
-                            onValueChangeFinished = {
-                                if (canSeekPlayer) {
-                                    sliderPosition?.let {
-                                        seekToPlayerPosition(it)
-                                    }
-                                    sliderPosition = null
-                                }
-                            },
-                            modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                            colors = colors,
-                            isPlaying = effectiveIsPlaying,
-                            bufferedValue = displayedBufferedPosition.toFloat(),
-                        )
-                    } else {
-                        WavySlider(
-                            value = displayedSliderPosition.toFloat(),
-                            valueRange = sliderValueRange,
-                            onValueChange = {
-                                if (canSeekPlayer) {
-                                    sliderPosition = it.toLong()
-                                }
-                            },
-                            onValueChangeFinished = {
-                                if (canSeekPlayer) {
-                                    sliderPosition?.let {
-                                        seekToPlayerPosition(it)
-                                    }
-                                    sliderPosition = null
-                                }
-                            },
-                            colors = colors,
-                            modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                            isPlaying = effectiveIsPlaying,
-                            bufferedValue = displayedBufferedPosition.toFloat(),
-                        )
-                    }
-                }
-
-                SliderStyle.SLIM -> {
-                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
-                    Slider(
-                        value = displayedSliderPosition.toFloat(),
-                        valueRange = sliderValueRange,
-                        onValueChange = {
-                            if (canSeekPlayer) {
-                                sliderPosition = it.toLong()
-                            }
-                        },
-                        onValueChangeFinished = {
-                            if (canSeekPlayer) {
-                                sliderPosition?.let {
-                                    seekToPlayerPosition(it)
-                                }
-                                sliderPosition = null
-                            }
-                        },
-                        enabled = canSeekPlayer,
-                        thumb = { Spacer(modifier = Modifier.size(0.dp)) },
-                        track = { sliderState ->
-                            PlayerSliderTrack(
-                                sliderState = sliderState,
-                                colors = colors,
-                                bufferedValue = displayedBufferedPosition.toFloat(),
-                            )
-                        },
-                        modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                    )
-                }
-
-                SliderStyle.WAVEFORM -> {
-                    val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
-                    WaveformSlider(
-                        value = displayedSliderPosition.toFloat(),
-                        onValueChange = {
-                            if (canSeekPlayer) {
-                                sliderPosition = it.toLong()
-                            }
-                        },
-                        onValueChangeFinished = {
-                            if (canSeekPlayer) {
-                                sliderPosition?.let {
-                                    seekToPlayerPosition(it)
-                                }
-                                sliderPosition = null
-                            }
-                        },
-                        samples = waveformSamples,
-                        valueRange = sliderValueRange,
-                        enabled = canSeekPlayer,
-                        colors = colors,
-                        bufferedValue = displayedBufferedPosition.toFloat(),
-                        modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = PlayerHorizontalPadding + 4.dp),
-            ) {
-                Text(
-                    text = makeTimeString(sliderPosition ?: effectivePosition),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextBackgroundColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-
-                Text(
-                    text = if (effectiveDuration > 0L) makeTimeString(effectiveDuration) else "",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextBackgroundColor,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            Spacer(Modifier.height(14.dp))
+            // Ticker-scoped leaf: reads position states internally so the
+            // Player tree stops recomposing 10x/s on every tick.
+            PlayerProgressSection(
+                positionState = positionState,
+                durationState = durationState,
+                bufferedPositionState = bufferedPositionState,
+                sliderPosition = sliderPosition,
+                onSliderDrag = { sliderPosition = it },
+                onSeekTo = { pos, dur -> seekToPlayerPosition(pos, dur); sliderPosition = null },
+                isCasting = isCasting,
+                castPosition = castPosition,
+                castDuration = castDuration,
+                metadataDurationMs = metadataDurationMs,
+                isListenTogetherGuest = isListenTogetherGuest,
+                sliderStyle = sliderStyle,
+                squigglySlider = squigglySlider,
+                waveformSamples = waveformSamples,
+                effectiveIsPlaying = effectiveIsPlaying,
+                textButtonColor = textButtonColor,
+                effectivePlayerBackground = effectivePlayerBackground,
+                useDarkTheme = useDarkTheme,
+                textBackgroundColor = TextBackgroundColor,
+            )
 
             AnimatedVisibility(
                 visible = !isFullScreen,
@@ -3025,7 +2871,7 @@ fun BottomSheetPlayer(
                                     mediaMetadata = mediaMetadata,
                                     showLyrics = showLyrics,
                                     positionProvider = {
-                                        sliderPosition ?: if (isCasting) effectivePosition else null
+                                        sliderPosition ?: if (isCasting) positionState.longValue else null
                                     },
                                 )
                             } else if (shouldReplaceLargeArtworkWithCanvas) {
@@ -3092,7 +2938,7 @@ fun BottomSheetPlayer(
                                     mediaMetadata = mediaMetadata,
                                     showLyrics = showLyrics,
                                     positionProvider = {
-                                        sliderPosition ?: if (isCasting) effectivePosition else null
+                                        sliderPosition ?: if (isCasting) positionState.longValue else null
                                     },
                                 )
                             } else if (shouldReplaceLargeArtworkWithCanvas) {
@@ -3559,4 +3405,256 @@ fun AppleMusicFadedCanvasBackground(
                 )
         )
     }
+}
+
+/**
+ * Ticker-scoped progress section: slider + time labels. Reads the 10Hz
+ * position states internally so the 3500-line Player tree above stops
+ * recomposing on every tick - only this leaf (plus MiniPlayer, already
+ * isolated) resubscribes. All drag state and seeking stay outside.
+ */
+@Composable
+private fun PlayerProgressSection(
+    positionState: MutableLongState,
+    durationState: MutableLongState,
+    bufferedPositionState: MutableLongState,
+    sliderPosition: Long?,
+    onSliderDrag: (Long?) -> Unit,
+    onSeekTo: (Long, Long) -> Unit,
+    isCasting: Boolean,
+    castPosition: Long,
+    castDuration: Long,
+    metadataDurationMs: Long,
+    isListenTogetherGuest: Boolean,
+    sliderStyle: SliderStyle,
+    squigglySlider: Boolean,
+    waveformSamples: List<Float>?,
+    effectiveIsPlaying: Boolean,
+    textButtonColor: Color,
+    effectivePlayerBackground: PlayerBackgroundStyle,
+    useDarkTheme: Boolean,
+    textBackgroundColor: Color,
+) {
+    val effectivePosition =
+        if (isCasting) {
+            castPosition
+        } else {
+            positionState.longValue
+        }
+    val effectiveDuration =
+        when {
+            isCasting && castDuration > 0L -> castDuration
+            durationState.longValue != C.TIME_UNSET && durationState.longValue > 0L -> durationState.longValue
+            metadataDurationMs != C.TIME_UNSET -> metadataDurationMs
+            else -> 0L
+        }
+    val sliderRangeEnd = effectiveDuration.takeIf { it > 0L } ?: 1L
+    val sliderValueRange = 0f..sliderRangeEnd.toFloat()
+    val displayedSliderPosition =
+        (sliderPosition ?: effectivePosition).coerceIn(0L, sliderRangeEnd)
+    val displayedBufferedPosition =
+        if (isCasting) {
+            displayedSliderPosition
+        } else {
+            max(displayedSliderPosition, bufferedPositionState.longValue).coerceIn(0L, sliderRangeEnd)
+        }
+    val canSeekPlayer = effectiveDuration > 0L && !isListenTogetherGuest
+
+    Spacer(Modifier.height(24.dp))
+
+    when (sliderStyle) {
+        SliderStyle.DEFAULT -> {
+            val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
+            Slider(
+                value = displayedSliderPosition.toFloat(),
+                valueRange = sliderValueRange,
+                onValueChange = {
+                    if (canSeekPlayer) {
+                        onSliderDrag(it.toLong())
+                    }
+                },
+                onValueChangeFinished = {
+                    if (canSeekPlayer) {
+                        sliderPosition?.let {
+                            onSeekTo(it, effectiveDuration)
+                        }
+                        onSliderDrag(null)
+                    }
+                },
+                enabled = canSeekPlayer,
+                colors = colors,
+                track = { sliderState ->
+                    PlayerSliderTrack(
+                        sliderState = sliderState,
+                        colors = colors,
+                        trackHeight = 8.dp,
+                        bufferedValue = displayedBufferedPosition.toFloat(),
+                    )
+                },
+                modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
+            )
+        }
+
+        SliderStyle.WAVY -> {
+            val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
+            if (squigglySlider) {
+                SquigglySlider(
+                    value = displayedSliderPosition.toFloat(),
+                    valueRange = sliderValueRange,
+                    onValueChange = {
+                        if (canSeekPlayer) {
+                            onSliderDrag(it.toLong())
+                        }
+                    },
+                    onValueChangeFinished = {
+                        if (canSeekPlayer) {
+                            sliderPosition?.let {
+                                onSeekTo(it, effectiveDuration)
+                            }
+                            onSliderDrag(null)
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
+                    colors = colors,
+                    isPlaying = effectiveIsPlaying,
+                )
+            } else {
+                WavySlider(
+                    value = displayedSliderPosition.toFloat(),
+                    valueRange = sliderValueRange,
+                    onValueChange = {
+                        if (canSeekPlayer) {
+                            onSliderDrag(it.toLong())
+                        }
+                    },
+                    onValueChangeFinished = {
+                        if (canSeekPlayer) {
+                            sliderPosition?.let {
+                                onSeekTo(it, effectiveDuration)
+                            }
+                            onSliderDrag(null)
+                        }
+                    },
+                    colors = colors,
+                    modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
+                    isPlaying = effectiveIsPlaying,
+                    bufferedValue = displayedBufferedPosition.toFloat(),
+                )
+            }
+        }
+
+        SliderStyle.SLIM -> {
+            val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
+            Slider(
+                value = displayedSliderPosition.toFloat(),
+                valueRange = sliderValueRange,
+                onValueChange = {
+                    if (canSeekPlayer) {
+                        onSliderDrag(it.toLong())
+                    }
+                },
+                onValueChangeFinished = {
+                    if (canSeekPlayer) {
+                        sliderPosition?.let {
+                            onSeekTo(it, effectiveDuration)
+                        }
+                        onSliderDrag(null)
+                    }
+                },
+                enabled = canSeekPlayer,
+                thumb = { Spacer(modifier = Modifier.size(0.dp)) },
+                track = { sliderState ->
+                    PlayerSliderTrack(
+                        sliderState = sliderState,
+                        colors = colors,
+                        bufferedValue = displayedBufferedPosition.toFloat(),
+                    )
+                },
+                modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
+            )
+        }
+
+        SliderStyle.WAVEFORM -> {
+            val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
+            WaveformSlider(
+                value = displayedSliderPosition.toFloat(),
+                onValueChange = {
+                    if (canSeekPlayer) {
+                        onSliderDrag(it.toLong())
+                    }
+                },
+                onValueChangeFinished = {
+                    if (canSeekPlayer) {
+                        sliderPosition?.let {
+                            onSeekTo(it, effectiveDuration)
+                        }
+                        onSliderDrag(null)
+                    }
+                },
+                samples = waveformSamples,
+                valueRange = sliderValueRange,
+                enabled = canSeekPlayer,
+                colors = colors,
+                bufferedValue = displayedBufferedPosition.toFloat(),
+                modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
+            )
+        }
+    }
+
+    Spacer(Modifier.height(4.dp))
+
+    Row(
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PlayerHorizontalPadding + 4.dp),
+    ) {
+        Text(
+            text = makeTimeString(sliderPosition ?: effectivePosition),
+            style = MaterialTheme.typography.labelMedium,
+            color = textBackgroundColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+
+        Text(
+            text = if (effectiveDuration > 0L) makeTimeString(effectiveDuration) else "",
+            style = MaterialTheme.typography.labelMedium,
+            color = textBackgroundColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+
+    Spacer(Modifier.height(14.dp))
+}
+
+/**
+ * Ticker-scoped inline-lyrics host: reads position state inside this leaf
+ * so the parent stops recomposing 10x/s when lyrics are showing.
+ */
+@Composable
+private fun PositionedInlineLyrics(
+    lyricsEntity: LyricsEntity?,
+    sliderPosition: Long?,
+    positionState: MutableLongState,
+    textColor: Color,
+    smoothSlidingLine: Boolean,
+) {
+    PlayerInlineLyrics(
+        lyricsEntity = lyricsEntity,
+        positionMs = sliderPosition ?: positionState.longValue,
+        textColor = textColor,
+        smoothSlidingLine = smoothSlidingLine,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(
+                    start = PlayerHorizontalPadding,
+                    end = PlayerHorizontalPadding,
+                    bottom = 8.dp,
+                ),
+    )
 }

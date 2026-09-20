@@ -6,7 +6,7 @@
 package com.metrolist.music.ui.utils
 
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -18,70 +18,57 @@ fun Modifier.fadingEdge(
     top: Dp? = null,
     right: Dp? = null,
     bottom: Dp? = null,
-) = graphicsLayer(alpha = 0.99f)
-    .drawWithContent {
-        drawContent()
-        if (top != null) {
-            drawRect(
-                brush =
-                Brush.verticalGradient(
-                    colors =
-                    listOf(
-                        Color.Transparent,
-                        Color.Black,
-                    ),
-                    startY = 0f,
-                    endY = top.toPx(),
-                ),
-                blendMode = BlendMode.DstIn,
-            )
-        }
-        if (bottom != null) {
-            drawRect(
-                brush =
-                Brush.verticalGradient(
-                    colors =
-                    listOf(
-                        Color.Black,
-                        Color.Transparent,
-                    ),
-                    startY = size.height - bottom.toPx(),
-                    endY = size.height,
-                ),
-                blendMode = BlendMode.DstIn,
-            )
-        }
-        if (left != null) {
-            drawRect(
-                brush =
-                Brush.horizontalGradient(
-                    colors =
-                    listOf(
-                        Color.Black,
-                        Color.Transparent,
-                    ),
-                    startX = 0f,
-                    endX = left.toPx(),
-                ),
-                blendMode = BlendMode.DstIn,
-            )
-        }
-        if (right != null) {
-            drawRect(
-                brush =
-                Brush.horizontalGradient(
-                    colors =
-                    listOf(
-                        Color.Transparent,
-                        Color.Black,
-                    ),
-                    startX = size.width - right.toPx(),
-                    endX = size.width,
-                ),
-                blendMode = BlendMode.DstIn,
-            )
-        }
+) = then(
+    if (left != null || top != null || right != null || bottom != null) {
+        // Offscreen layer is only required for the DstIn blend; skip it when
+        // no edge is active instead of paying for a layer that blends nothing.
+        Modifier.graphicsLayer(alpha = 0.99f)
+    } else {
+        Modifier
     }
+).drawWithCache {
+    // Brushes cached per size: allocating gradients on every draw burns
+    // scroll frames for identical pixels.
+    val topBrush =
+        top?.let {
+            Brush.verticalGradient(
+                colors = listOf(Color.Transparent, Color.Black),
+                startY = 0f,
+                endY = it.toPx(),
+            )
+        }
+    val bottomBrush =
+        bottom?.let {
+            Brush.verticalGradient(
+                colors = listOf(Color.Black, Color.Transparent),
+                startY = size.height - it.toPx(),
+                endY = size.height,
+            )
+        }
+    val leftBrush =
+        left?.let {
+            Brush.horizontalGradient(
+                colors = listOf(Color.Black, Color.Transparent),
+                startX = 0f,
+                endX = it.toPx(),
+            )
+        }
+    val rightBrush =
+        right?.let {
+            Brush.horizontalGradient(
+                colors = listOf(Color.Transparent, Color.Black),
+                startX = size.width - it.toPx(),
+                endX = size.width,
+            )
+        }
+    onDrawWithContent {
+        drawContent()
+        topBrush?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
+        bottomBrush?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
+        leftBrush?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
+        rightBrush?.let { drawRect(brush = it, blendMode = BlendMode.DstIn) }
+    }
+}
 
 fun Modifier.fadingEdge(
     horizontal: Dp? = null,

@@ -19,6 +19,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.log10
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -49,6 +50,8 @@ object AutomixIntroSniffer {
         val introEndMs: Long?,
         val introEnergy: Float,
         val confidence: Float,
+        /** Rough LUFS from head RMS. Backfill-grade, not mastering-grade. */
+        val estimatedLufs: Float?,
     )
 
     private val httpClient = OkHttpClient()
@@ -652,7 +655,29 @@ object AutomixIntroSniffer {
             introEndMs = introEndMs,
             introEnergy = introEnergy.coerceIn(0f, 1f),
             confidence = confidence,
+            estimatedLufs = estimateLufs(decoded.rmsPerHop, decoded.decodedSeconds),
         )
+    }
+
+    /**
+     * Rough integrated-loudness guess from mean head RMS, for backfilling
+     * format rows that carry no loudness data at all (local files, providers
+     * without loudness, bare YouTube responses). Mapping is 20*log10(RMS)
+     * with a fixed K-weighting allowance: within a few dB on real music,
+     * which beats "unknown" for display and keeps normalization/automix
+     * gain staging working instead of disabled. Never overwrites measured
+     * data - callers only persist this when both loudness fields are null.
+     */
+    private fun estimateLufs(
+        rms: List<Float>,
+        decodedSeconds: Float,
+    ): Float? {
+        if (decodedSeconds < 3f || rms.isEmpty()) return null
+        var sum = 0.0
+        for (value in rms) sum += value
+        val mean = sum / rms.size
+        if (mean <= 1e-9) return null
+        return (20.0 * log10(mean) - 3.0).toFloat().coerceIn(-45f, -5f)
     }
 
     private fun estimateBpm(

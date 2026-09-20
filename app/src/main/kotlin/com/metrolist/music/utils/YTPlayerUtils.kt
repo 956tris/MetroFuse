@@ -118,7 +118,7 @@ object YTPlayerUtils {
         if (sessionId != null) {
             Timber.tag(logTag).d("Generating PoToken with sessionId")
             try {
-                poToken = poTokenGenerator.getWebClientPoToken(videoId, sessionId)
+                poToken = poTokenGenerator.getWebClientPoTokenSuspended(videoId, sessionId)
             } catch (e: Exception) {
                 Timber.tag(logTag).e(e, "PoToken generation failed")
             }

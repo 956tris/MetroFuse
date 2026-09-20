@@ -459,21 +459,27 @@ private fun WordLevelLyrics(
         if (isActiveLine) {
             var lastPlayerPos = playerConnection.player.currentPosition
             var lastUpdateTime = System.currentTimeMillis()
+            var lastWriteMs = 0L
             while (isActive) {
-                withFrameMillis {
+                withFrameMillis { frameTimeMillis ->
                     val now = System.currentTimeMillis()
                     val playerPos = playerConnection.player.currentPosition
                     if (playerPos != lastPlayerPos) {
                         lastPlayerPos = playerPos
                         lastUpdateTime = now
                     }
-                    val elapsed = now - lastUpdateTime
-                    smoothPosition = lastPlayerPos + lyricsOffset + (if (playerConnection.player.isPlaying) elapsed else 0)
+                    // ~15fps state writes: the sweep stays smooth while
+                    // per-frame recomposition cost drops 4x.
+                    if (frameTimeMillis - lastWriteMs >= 64L) {
+                        lastWriteMs = frameTimeMillis
+                        val elapsed = now - lastUpdateTime
+                        smoothPosition = lastPlayerPos + lyricsOffset + (if (playerConnection.player.isPlaying) elapsed else 0)
+                    }
                 }
             }
         }
     }
-    
+
     LaunchedEffect(isActiveLine, currentPositionState) {
         if (!isActiveLine) {
             smoothPosition = currentPositionState + lyricsOffset
@@ -1498,16 +1504,22 @@ private fun SpicyWordLevelLyrics(
         if (isActiveLine) {
             var lastPlayerPos = playerConnection.player.currentPosition
             var lastUpdateTime = System.currentTimeMillis()
+            var lastWriteMs = 0L
             while (isActive) {
-                withFrameMillis {
+                withFrameMillis { frameTimeMillis ->
                     val now = System.currentTimeMillis()
                     val playerPos = playerConnection.player.currentPosition
                     if (playerPos != lastPlayerPos) {
                         lastPlayerPos = playerPos
                         lastUpdateTime = now
                     }
-                    val elapsed = now - lastUpdateTime
-                    smoothPosition = lastPlayerPos + lyricsOffset + (if (playerConnection.player.isPlaying) elapsed else 0)
+                    // ~15fps state writes: the sweep stays smooth while
+                    // per-frame recomposition cost drops 4x.
+                    if (frameTimeMillis - lastWriteMs >= 64L) {
+                        lastWriteMs = frameTimeMillis
+                        val elapsed = now - lastUpdateTime
+                        smoothPosition = lastPlayerPos + lyricsOffset + (if (playerConnection.player.isPlaying) elapsed else 0)
+                    }
                 }
             }
         }

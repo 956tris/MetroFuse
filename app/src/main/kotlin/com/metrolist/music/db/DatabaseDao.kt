@@ -61,7 +61,6 @@ import com.metrolist.music.ui.utils.resize
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.runBlocking
 import java.text.Collator
 import java.time.LocalDateTime
 import java.time.ZoneOffset
@@ -1529,23 +1528,21 @@ interface DatabaseDao {
     fun incrementTotalPlayTime(songId: String, playTime: Long)
 
     @Query("UPDATE playCount SET count = count + 1 WHERE song = :songId AND year = :year AND month = :month")
-    fun incrementPlayCount(songId: String, year: Int, month: Int)
+    suspend fun incrementPlayCountRow(songId: String, year: Int, month: Int): Int
 
     /**
-     * Increment by one the play count with today's year and month.
+     * Increment by one the play count with today's year and month. Atomic
+     * update-or-insert with loser-retries semantics: no read-then-write
+     * race, no blocking the caller. (Room has no UPSERT query syntax, so
+     * the affected-row count drives the insert fallback instead.)
      */
-    fun incrementPlayCount(songId: String) {
+    suspend fun incrementPlayCount(songId: String) {
         val time = LocalDateTime.now().atOffset(ZoneOffset.UTC)
-        var oldCount: Int
-        runBlocking {
-            oldCount = getPlayCountByMonth(songId, time.year, time.monthValue).first()
+        if (incrementPlayCountRow(songId, time.year, time.monthValue) == 0 &&
+            insert(PlayCountEntity(songId, time.year, time.monthValue, 1)) == -1L
+        ) {
+            incrementPlayCountRow(songId, time.year, time.monthValue)
         }
-
-        // add new
-        if (oldCount <= 0) {
-            insert(PlayCountEntity(songId, time.year, time.monthValue, 0))
-        }
-        incrementPlayCount(songId, time.year, time.monthValue)
     }
 
     @Transaction

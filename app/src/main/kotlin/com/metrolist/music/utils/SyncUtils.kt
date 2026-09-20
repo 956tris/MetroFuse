@@ -34,7 +34,7 @@ import com.metrolist.music.db.entities.SetVideoIdEntity
 import com.metrolist.music.db.entities.SongEntity
 import com.metrolist.music.extensions.collectLatest
 import com.metrolist.music.extensions.isInternetConnected
-import com.metrolist.music.extensions.isSyncEnabled
+import com.metrolist.music.extensions.isSyncEnabledSuspend
 import com.metrolist.music.models.toMediaMetadata
 import com.metrolist.music.providers.DeezerHomeFeedProvider
 import com.metrolist.music.providers.ExternalHomeItemIds
@@ -271,7 +271,7 @@ class SyncUtils @Inject constructor(
                 return@launch
             }
 
-            if (!context.isSyncEnabled() || !context.isInternetConnected()) {
+            if (!context.isSyncEnabledSuspend() || !context.isInternetConnected()) {
                 return@launch
             }
 

@@ -173,12 +173,14 @@ fun LyricsImageCard(
     val mainTextColor = textColor ?: if (darkBackground) Color.White else Color.Black
     val secondaryColor = secondaryTextColor ?: if (darkBackground) Color.White.copy(alpha = 0.7f) else Color.Black.copy(alpha = 0.7f)
 
-    val painter = rememberAsyncImagePainter(
+    val cardArtworkRequest = remember(mediaMetadata.thumbnailUrl) {
         ImageRequest.Builder(context)
             .data(mediaMetadata.thumbnailUrl)
+            .size(128)
             .crossfade(false)
             .build()
-    )
+    }
+    val painter = rememberAsyncImagePainter(cardArtworkRequest)
     
     // Calculate gradient colors if needed
     var gradientBrush by remember { mutableStateOf<Brush?>(null) }
@@ -187,7 +189,8 @@ fun LyricsImageCard(
         LaunchedEffect(mediaMetadata.thumbnailUrl) {
             withContext(Dispatchers.IO) {
                 try {
-                    val req = ImageRequest.Builder(context).data(mediaMetadata.thumbnailUrl).allowHardware(false).build()
+                    // Sized decode: Palette needs hues, not megapixels.
+                    val req = ImageRequest.Builder(context).data(mediaMetadata.thumbnailUrl).size(128).allowHardware(false).build()
                     val result = context.imageLoader.execute(req)
                     val bmp = result.image?.toBitmap()
                     if (bmp != null) {

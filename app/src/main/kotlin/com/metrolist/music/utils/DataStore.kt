@@ -18,6 +18,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.metrolist.music.constants.MiniPlayerBackgroundStyle
 import com.metrolist.music.constants.MiniPlayerBackgroundStyleGalaxyMigratedKey
@@ -46,24 +47,28 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
  */
 object PreferenceCache {
     private var _state: StateFlow<Preferences>? = null
-    
+
     fun initialize(context: Context, scope: CoroutineScope) {
         if (_state == null) {
+            // Empty initial, never a blocking first(): every reader already
+            // falls back to its defaultValue, so pre-load reads behave
+            // exactly like absent prefs until the disk value lands.
             _state = context.dataStore.data.stateIn(
                 scope = scope,
                 started = SharingStarted.Eagerly,
-                initialValue = runBlocking { context.dataStore.data.first() }
+                initialValue = emptyPreferences()
             )
         }
     }
 
-    val state: Preferences
-        get() = _state?.value ?: runBlocking { throw IllegalStateException("PreferenceCache not initialized") }
+    val state: Preferences?
+        get() = _state?.value
 }
 
 operator fun <T> DataStore<Preferences>.get(key: Preferences.Key<T>): T? {
     return try {
-        PreferenceCache.state[key]
+        PreferenceCache.state?.get(key)
+            ?: runBlocking(Dispatchers.IO) { data.first()[key] }
     } catch (e: Exception) {
         runBlocking(Dispatchers.IO) { data.first()[key] }
     }

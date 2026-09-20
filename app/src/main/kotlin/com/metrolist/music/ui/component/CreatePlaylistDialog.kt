@@ -32,7 +32,7 @@ import com.metrolist.music.LocalDatabase
 import com.metrolist.music.R
 import com.metrolist.music.constants.InnerTubeCookieKey
 import com.metrolist.music.db.entities.PlaylistEntity
-import com.metrolist.music.extensions.isSyncEnabled
+import com.metrolist.music.extensions.isSyncEnabledSuspend
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -118,7 +118,7 @@ fun CreatePlaylistDialog(
                             checked = syncedPlaylist,
                             onCheckedChange = {
                                 coroutineScope.launch {
-                                    val isYtmSyncEnabled = withContext(Dispatchers.IO) { context.isSyncEnabled() }
+                                    val isYtmSyncEnabled = context.isSyncEnabledSuspend()
                                     if (!isSignedIn && !syncedPlaylist) {
                                         Toast
                                             .makeText(

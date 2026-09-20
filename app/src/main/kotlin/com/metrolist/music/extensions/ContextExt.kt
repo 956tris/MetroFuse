@@ -13,6 +13,7 @@ import com.metrolist.music.constants.InnerTubeCookieKey
 import com.metrolist.music.constants.YtmSyncKey
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
 fun Context.isSyncEnabled(): Boolean {
@@ -21,11 +22,20 @@ fun Context.isSyncEnabled(): Boolean {
     }
 }
 
+suspend fun Context.isSyncEnabledSuspend(): Boolean {
+    return dataStore.data.first()[YtmSyncKey] != false && isUserLoggedInSuspend()
+}
+
 fun Context.isUserLoggedIn(): Boolean {
     return runBlocking {
         val cookie = dataStore[InnerTubeCookieKey] ?: ""
         "SAPISID" in parseCookieString(cookie) && isInternetConnected()
     }
+}
+
+suspend fun Context.isUserLoggedInSuspend(): Boolean {
+    val cookie = dataStore.data.first()[InnerTubeCookieKey] ?: ""
+    return "SAPISID" in parseCookieString(cookie) && isInternetConnected()
 }
 
 fun Context.isInternetConnected(): Boolean {

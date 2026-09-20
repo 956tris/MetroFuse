@@ -234,7 +234,23 @@ fun ShowMediaInfo(videoId: String) {
                             ?: displayFormatEntity?.loudnessDb?.let { it + LoudnessLevel.AGGRESSIVE.targetLufs }
                     val displayFormat = displayFormatEntity?.takeIf { it.hasUsefulPlaybackDetails() }
 
-                    val extendedList = if (displayFormatEntity != null || info != null || playerConnection != null) {
+                    // Streams rarely report a length (ciphered/throttled
+                    // URLs), so estimate from bitrate x duration and mark it
+                    // approximate instead of "unknown".
+                    val estimatedSizeText: String? =
+                        run {
+                            val bitrateBps = displayFormatEntity?.bitrate?.takeIf { it > 0 }
+                            val durationSec =
+                                song?.song?.duration?.takeIf { it > 0 }
+                                    ?: playbackMetadata?.duration?.takeIf { it > 0 }
+                            if (bitrateBps != null && durationSec != null) {
+                                "~" + Formatter.formatShortFileSize(context, bitrateBps / 8L * durationSec).toString()
+                            } else {
+                                null
+                            }
+                        }
+
+                    val extendedList: List<Pair<String, String?>> = if (displayFormatEntity != null || info != null || playerConnection != null) {
                         listOf(
                             stringResource(R.string.ai_provider) to displayFormat?.audioSourceLabel(),
                             stringResource(R.string.views) to info?.viewCount?.let(::numberFormatter).orEmpty(),
@@ -250,13 +266,14 @@ fun ShowMediaInfo(videoId: String) {
                             },
                             stringResource(R.string.loudness_level) to getLoudnessLevelLabel(loudnessLevel),
                             stringResource(R.string.volume) to if (playerConnection != null) "${(playerConnection.player.volume * 100).toInt()}%" else null,
-                            stringResource(R.string.file_size) to
-                                displayFormatEntity?.contentLength?.let {
+                            stringResource(R.string.file_size) to (
+                                displayFormatEntity?.contentLength?.takeIf { it > 0 }?.let {
                                     Formatter.formatShortFileSize(
                                         context,
                                         it,
                                     )
-                                },
+                                } ?: estimatedSizeText
+                            ),
                         )
                     } else {
                         emptyList()
