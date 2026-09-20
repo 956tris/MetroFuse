@@ -377,6 +377,7 @@ import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.sin
@@ -450,10 +451,26 @@ private data class AutomixPlan(
     // at/after its intro when structure was learned or sniffed, else the
     // beat-phase offset above.
     val mixInSeekMs: Long,
+    // The outgoing track's true musical end (outro/fade-aware, file
+    // duration when unlearned, MAX when unknown). The swap anchors blend
+    // completion to this so a late swap shrinks the blend instead of
+    // letting the old file die mid-fade with a hard cut.
+    val musicalEndMs: Long,
+    // Outgoing beat grid for the downbeat-synced swap: the swap holds for
+    // the next barline instead of firing on a buffering accident, so both
+    // grids start the blend aligned. Period at 1.0x; offset from track
+    // start (0 when the downbeat was never learned).
+    val outPeriodMs: Float,
+    val outDownbeatMs: Long,
     val keyCompatibility: KeyCompatibility,
     val blendMode: AutomixBlendMode,
     val durationScale: Float,
     val bassSeparation: Float,
+    // True when a long (WIDE/FOCUSED) blend was earned by key/tempo but
+    // neither side has learned musical boundaries yet: the overlap might
+    // be chorus-into-chorus, so the engine shortens it slightly and trims
+    // the mids as vocal insurance. Cheap caution for flying blind.
+    val cautiousOverlap: Boolean,
     // Perceived loudness of each side in LUFS, best-effort from persisted
     // stream loudness rows (null when never measured).
     val lufsA: Double?,
@@ -688,6 +705,7 @@ class MusicService :
             cleanupCrossfade(
                 fadingPlayerSessionId = fadingPlayer?.audioSessionId ?: C.AUDIO_SESSION_ID_UNSET,
                 scheduleNext = false,
+                handToTail = false,
             )
         }
 
@@ -712,6 +730,12 @@ class MusicService :
     private var fadingPlayer: ExoPlayer? = null
     private var isCrossfading = false
     private var crossfadeJob: Job? = null
+    // Previous track ringing out its reverb tail under the new track after
+    // a swap. Killed immediately on the next transition, pause/stop
+    // (fast-faded), abort, or service destroy - never left to leak.
+    private var tailJob: Job? = null
+    private var tailPlayer: ExoPlayer? = null
+    private var tailAudioSessionId: Int = C.AUDIO_SESSION_ID_UNSET
 
     private lateinit var mediaSession: MediaLibrarySession
 
@@ -8445,6 +8469,15 @@ class MusicService :
             playerAnalyzers.remove(secondary)
             analyzerArmedIds.remove(secondary)
         }
+        // Never leak a mid-fade or ringing player on destroy (the old code
+        // released neither here); the global session close below covers audio
+        // effects, so this is stop/release only.
+        tailJob?.cancel()
+        tailJob = null
+        tailPlayer?.let { runCatching { it.stop(); it.clearMediaItems(); it.release() } }
+        tailPlayer = null
+        fadingPlayer?.let { runCatching { it.stop(); it.clearMediaItems(); it.release() } }
+        fadingPlayer = null
         playerAnalyzers.remove(player)
         analyzerArmedIds.remove(player)
         scrobbleManager?.destroy()
@@ -9238,6 +9271,7 @@ class MusicService :
         outgoing: MediaMetadata?,
         incoming: MediaMetadata?,
         outgoingPositionMs: Long,
+        outgoingDurationMs: Long,
         outData: AutomixTrackData,
         inData: AutomixTrackData,
     ): AutomixPlan? {
@@ -9299,13 +9333,21 @@ class MusicService :
         if (halfTime && blendMode == AutomixBlendMode.WIDE) blendMode = AutomixBlendMode.FOCUSED
         // Clashing or tempo-unmatched pairs get in and out quickly with extra
         // low-end separation; compatible pairs earn the full wide blend.
-        val durationScale =
+        // Unless neither side was ever learned: a long blind overlap risks
+        // chorus-into-chorus, so earn only a cautious version of it.
+        val minStructureConf =
+            minOf(outData.structure?.confidence ?: 0f, inData.structure?.confidence ?: 0f)
+        val cautiousOverlap =
+            (blendMode == AutomixBlendMode.WIDE || blendMode == AutomixBlendMode.FOCUSED) &&
+                minStructureConf < AUTOMIX_CAUTIOUS_CONFIDENCE
+        var durationScale =
             when (blendMode) {
                 AutomixBlendMode.WIDE -> hint.durationScale
                 AutomixBlendMode.FOCUSED -> 0.95f
                 AutomixBlendMode.NEUTRAL -> 1f
                 AutomixBlendMode.TIGHT -> minOf(hint.durationScale, 0.7f)
             }
+        if (cautiousOverlap) durationScale *= AUTOMIX_CAUTIOUS_DURATION_SCALE
         val bassSeparation =
             when (blendMode) {
                 AutomixBlendMode.TIGHT -> maxOf(hint.bassSeparation, 0.2f)
@@ -9328,14 +9370,55 @@ class MusicService :
             }
 
         // True mix-in point: the first learned downbeat at/after the intro
-        // end. Falls back to the beat-phase offset when the incoming track
-        // was never learned or sniffed.
+        // end. Confident intro without a downbeat still beats a cold start:
+        // drop straight where the energy begins so the incoming track is
+        // already grooving when the old one leaves. Otherwise the
+        // beat-phase offset (never skips an intro).
+        val inStructure = inData.structure?.takeIf { it.confidence >= 0.6f }
         val learnedMixInMs =
-            inData.structure?.takeIf { it.confidence >= 0.6f && it.downbeatOffsetMs != null }?.let { stored ->
-                val period = stored.beatPeriodMs?.takeIf { it > 0f } ?: 60000f / bpmB
-                mixInSeekMs(stored.toLearned().copy(beatPeriodMs = period), bpmB)
-            }
+            inStructure?.downbeatOffsetMs?.let { _ ->
+                val period = inStructure.beatPeriodMs?.takeIf { it > 0f } ?: 60000f / bpmB
+                mixInSeekMs(inStructure.toLearned().copy(beatPeriodMs = period), bpmB)
+            } ?: inStructure?.introEndMs?.takeIf { inStructure.confidence >= 0.7f && it > 0L }
         val mixInSeekMs = learnedMixInMs ?: phaseOffsetMs
+
+        // True musical end of the outgoing side: outro/fade-aware when
+        // learned, file duration otherwise. Unknown duration (streams)
+        // means no anchor - the swap-time guard below stands down.
+        val outLearned = outData.structure?.takeIf { it.confidence >= 0.55f }?.toLearned()
+        val musicalEndMs =
+            if (outgoingDurationMs <= 0L) {
+                Long.MAX_VALUE
+            } else if (outLearned != null) {
+                var end = outLearned.outroStartMs ?: outgoingDurationMs
+                if (outLearned.isFadeOut) end = minOf(outgoingDurationMs, end + 1500L)
+                end
+            } else {
+                outgoingDurationMs
+            }
+
+        // Hot ending: the track dies loud with no outro/fade to hide in,
+        // so a full wide blend would step on its climax. Cap the width -
+        // the live vocal guard still sits the mids back through it.
+        if (outLearned?.outroStartMs == null && outLearned?.isFadeOut != true &&
+            musicalEndMs != Long.MAX_VALUE && isOutgoingTailHot(player)
+        ) {
+            durationScale *= AUTOMIX_HOT_ENDING_DURATION_SCALE
+        }
+        // Confident lock: both sides learned, tempo matched, keys agree -
+        // this is the closest pair to a real DJ set, so stretch out and let
+        // the full wide blend breathe instead of rushing it.
+        if (!cautiousOverlap && blendMode == AutomixBlendMode.WIDE && tempoMatched &&
+            minStructureConf >= AUTOMIX_CONFIDENT_CONFIDENCE
+        ) {
+            durationScale *= AUTOMIX_CONFIDENT_DURATION_SCALE
+        }
+
+        // Outgoing grid for the downbeat-synced swap, learned when possible.
+        val outPeriodMs =
+            outLearned?.beatPeriodMs?.takeIf { it > 0f }
+                ?: effA.takeIf { it > 0f }?.let { 60000f / it } ?: 0f
+        val outDownbeatMs = outLearned?.downbeatOffsetMs ?: 0L
 
         return AutomixPlan(
             bpmA = bpmA,
@@ -9347,10 +9430,14 @@ class MusicService :
             halfTime = halfTime,
             phaseOffsetMs = phaseOffsetMs,
             mixInSeekMs = mixInSeekMs,
+            musicalEndMs = musicalEndMs,
+            outPeriodMs = outPeriodMs,
+            outDownbeatMs = outDownbeatMs,
             keyCompatibility = hint.compatibility,
             blendMode = blendMode,
             durationScale = durationScale,
             bassSeparation = bassSeparation,
+            cautiousOverlap = cautiousOverlap,
             lufsA = lufsA,
             lufsB = lufsB,
             incomingGainDb = incomingGainDb,
@@ -9392,6 +9479,7 @@ class MusicService :
                     outgoing = outgoingMeta,
                     incoming = incomingMeta,
                     outgoingPositionMs = player.currentPosition,
+                    outgoingDurationMs = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L,
                     outData = automixTrackData(outgoingMeta),
                     inData = automixTrackData(incomingMeta),
                 )
@@ -9445,7 +9533,18 @@ class MusicService :
                     secPlayer.removeListener(this)
                     crossfadePrepareJob?.cancel()
                     crossfadePrepareJob = null
-                    performCrossfadeSwap(targetIndex, targetMediaItem)
+                    // Downbeat-synced swap: hold the paused secondary until
+                    // the outgoing track hits its next barline, so the blend
+                    // starts grids-aligned instead of on a buffering
+                    // accident. Stands down instantly for plain crossfades,
+                    // unmatched tempos, pauses, seeks, and track changes -
+                    // completion anchoring absorbs any hold time.
+                    scope.launch {
+                        awaitOutgoingDownbeat(secPlayer, activeAutomixPlan)
+                        if (secondaryPlayer === secPlayer) {
+                            performCrossfadeSwap(targetIndex, targetMediaItem)
+                        }
+                    }
                     if (savedShuffleEnabled) {
                         val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
                         applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
@@ -9482,7 +9581,10 @@ class MusicService :
         secPlayer.shuffleModeEnabled = savedShuffleEnabled
 
         secPlayer.prepare()
-        secPlayer.playWhenReady = true
+        // Held paused at the mix-in point: the downbeat-synced swap presses
+        // play exactly on the outgoing barline, so the incoming position
+        // never drifts past its aligned start while waiting.
+        secPlayer.playWhenReady = false
         nextTrackPreloadCoordinator?.requestRefresh()
 
         crossfadePrepareJob =
@@ -9546,12 +9648,46 @@ class MusicService :
         return minOf(19000.0, nyquist * 0.85).coerceAtLeast(4000.0)
     }
 
+    /**
+     * Holds the ready-but-paused secondary until the outgoing track reaches
+     * its next barline, so the swap (and therefore the whole blend) starts
+     * grids-aligned. Returns immediately for plain crossfades, unmatched
+     * tempos, missing grids, pauses, seeks, track changes, and ended
+     * playback - a held transition is never worth a stuck one, and the
+     * end-anchoring shrink absorbs any hold time anyway.
+     */
+    private suspend fun awaitOutgoingDownbeat(
+        secPlayer: ExoPlayer,
+        plan: AutomixPlan?,
+    ) {
+        if (plan == null || !plan.tempoMatched || plan.outPeriodMs <= 0f) return
+        val outgoing = player
+        if (outgoing === secPlayer || !outgoing.isPlaying) return
+        val mediaId = outgoing.currentMediaItem?.mediaId
+        val period = plan.outPeriodMs.toDouble()
+        val offset = plan.outDownbeatMs.toDouble()
+        val pos = outgoing.currentPosition.toDouble()
+        val waitMs = offset + ceil((pos - offset) / period) * period - pos
+        if (waitMs < AUTOMIX_DOWNBEAT_MIN_WAIT_MS || waitMs > AUTOMIX_DOWNBEAT_MAX_WAIT_MS) return
+        val deadline = SystemClock.elapsedRealtime() + waitMs.toLong()
+        while (SystemClock.elapsedRealtime() < deadline) {
+            kotlinx.coroutines.delay(50)
+            if (!outgoing.isPlaying ||
+                outgoing.currentMediaItem?.mediaId != mediaId ||
+                outgoing.playbackState == Player.STATE_ENDED ||
+                secondaryPlayer !== secPlayer
+            ) return
+        }
+    }
+
     private fun performCrossfadeSwap(
         targetIndex: Int,
         targetMediaItem: MediaItem?,
     ) {
         val nextPlayer = secondaryPlayer ?: return
         isCrossfading = true
+        // A previous tail must never bleed into a new blend: drop it now.
+        releaseTailNow()
         val currentPlayer = player
         // Snapshot of the Automix decision for this transition; null means a
         // plain crossfade (Automix off or unlocked pair).
@@ -9560,6 +9696,12 @@ class MusicService :
         fadingPlayer = currentPlayer
         player = nextPlayer
         secondaryPlayer = null
+        // The secondary was held paused at its aligned start; release it
+        // exactly on the swap so the blend and the beat grid begin together.
+        runCatching {
+            nextPlayer.playWhenReady = true
+            nextPlayer.play()
+        }
         nextTrackPreloadCoordinator?.updatePlayer(player)
         nextTrackPreloadCoordinator?.requestRefresh()
 
@@ -9634,6 +9776,25 @@ class MusicService :
             refreshCurrentPlaybackFormatFromDatabase(mediaId)
         }
 
+        // End-anchoring: the swap can fire late (secondary buffering on
+        // slow networks), and a full-duration blend started late would
+        // outlive the old file - which then dies mid-fade with a hard cut.
+        // Shrink the blend so it still completes exactly on the musical
+        // end; if the end already passed, snap to a quick fade-in.
+        activeAutomixPlan?.let { plan ->
+            if (plan.musicalEndMs != Long.MAX_VALUE) {
+                val remainingMs = plan.musicalEndMs - (fadingPlayer?.currentPosition ?: 0L)
+                activeCrossfadeDurationMs =
+                    when {
+                        remainingMs < AUTOMIX_ANCHOR_FLOOR_MS -> AUTOMIX_ANCHOR_MIN_MS
+                        remainingMs < activeCrossfadeDurationMs ->
+                            remainingMs.coerceAtLeast(AUTOMIX_ANCHOR_MIN_MS)
+
+                        else -> activeCrossfadeDurationMs
+                    }
+            }
+        }
+
         crossfadeJob =
             scope.launch {
                 val duration = activeCrossfadeDurationMs.coerceAtLeast(750L)
@@ -9690,8 +9851,16 @@ class MusicService :
                 // Gain staging: relative loudness correction for the incoming
                 // track, eased in as it fades up so no step is ever audible.
                 val incomingGainDb = automixPlan?.incomingGainDb ?: 0f
-                val midTrim = automixPlan?.blendMode == AutomixBlendMode.TIGHT
-                val softMidTrim = automixPlan?.blendMode == AutomixBlendMode.NEUTRAL
+                // Live vocal guard: if the outgoing track's own learn tap
+                // says its tail is still at full energy (chorus, not outro),
+                // sit its mids back so the incoming track never fights a
+                // vocal. Uses the persisted-shape-independent live snapshot,
+                // so it works on first-ever plays too.
+                val hotOutgoing = isOutgoingTailHot(fadingPlayer)
+                val midTrim = automixPlan?.blendMode == AutomixBlendMode.TIGHT || hotOutgoing
+                val softMidTrim =
+                    automixPlan?.blendMode == AutomixBlendMode.NEUTRAL ||
+                        (automixPlan?.cautiousOverlap == true && !midTrim)
 
                 fun range(p: Float, start: Float, end: Float) = ((p - start) / (end - start)).coerceIn(0f, 1f)
                 fun smooth(value: Float) = value.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
@@ -9760,7 +9929,8 @@ class MusicService :
                             fadingEq?.updateAutomixGain(
                                 1,
                                 when {
-                                    midTrim -> -6.0 * centerWeight
+                                    automixPlan?.blendMode == AutomixBlendMode.TIGHT -> -6.0 * centerWeight
+                                    hotOutgoing -> AUTOMIX_HOT_MID_CUT_DB * centerWeight
                                     softMidTrim -> -2.5 * centerWeight
                                     else -> 0.0
                                 },
@@ -9782,8 +9952,13 @@ class MusicService :
                     delay(stepTime)
                 }
 
+                // Hand the old player to the tail ring-out instead of
+                // cutting it dead: its reverb/cymbal decay keeps breathing
+                // quietly under the new track for ~2s, which is what makes
+                // the swap feel continuous rather than spliced. Bands are
+                // cleared so the tail rings full-spectrum, not EQ-carved.
+                val tailCandidate = fadingPlayer
                 try {
-                    fadingPlayer?.volume = 0f
                     player.volume = startVolume
                     fadingEq?.setAutomixBands(emptyList())
                     currentEq?.setAutomixBands(emptyList())
@@ -9796,12 +9971,14 @@ class MusicService :
                 }
 
                 cleanupCrossfade(fadingPlayerSessionId = previousAudioSessionId)
+                startTailRingOut(tailCandidate, startVolume, previousAudioSessionId)
             }
     }
 
     private fun cleanupSecondaryCrossfadePlayer(scheduleNext: Boolean = true) {
         crossfadePrepareJob?.cancel()
         crossfadePrepareJob = null
+        releaseTailNow()
         secondaryPlayer?.let { player ->
             runCatching {
                 player.removeListener(secondaryPlayerListener)
@@ -9828,19 +10005,43 @@ class MusicService :
     private fun cleanupCrossfade(
         fadingPlayerSessionId: Int = C.AUDIO_SESSION_ID_UNSET,
         scheduleNext: Boolean = true,
+        handToTail: Boolean = true,
     ) {
         crossfadePrepareJob?.cancel()
         crossfadePrepareJob = null
         persistLearnedStructure(fadingPlayer)
-        fadingPlayer?.stop()
-        fadingPlayer?.clearMediaItems()
-        fadingPlayer?.release()
-        fadingPlayer?.let { released ->
-            playerEqProcessors.remove(released)
-            playerAnalyzers.remove(released)
-            analyzerArmedIds.remove(released)
+        // Manual-skip path: no tail, the old player dies now (previous
+        // behavior). Normal path hands it to startTailRingOut instead.
+        if (!handToTail) {
+            releaseTailNow()
+            fadingPlayer?.let { old ->
+                runCatching {
+                    old.stop()
+                    old.clearMediaItems()
+                    old.release()
+                }
+                playerEqProcessors.remove(old)
+                playerAnalyzers.remove(old)
+                analyzerArmedIds.remove(old)
+            }
+            fadingPlayer = null
+            if (fadingPlayerSessionId != C.AUDIO_SESSION_ID_UNSET && fadingPlayerSessionId > 0) {
+                runCatching {
+                    closeAudioEffectSession(sessionIdOverride = fadingPlayerSessionId, clearNormalizationCache = true)
+                }
+            }
+        } else {
+            // The old player is NOT stopped here: ownership passes to
+            // the tail ring-out (startTailRingOut), which releases it after
+            // the decay and closes its audio session then. Analyzer/EQ
+            // handles are done, so they drop now.
+            fadingPlayer?.let { old ->
+                playerEqProcessors.remove(old)
+                playerAnalyzers.remove(old)
+                analyzerArmedIds.remove(old)
+            }
+            fadingPlayer = null
         }
-        fadingPlayer = null
         isCrossfading = false
         activeAutomixProfile = null
         activeAutomixPlan = null
@@ -9849,12 +10050,92 @@ class MusicService :
         applyEffectiveVolume()
         sleepTimer.notifySongTransition()
 
-        if (fadingPlayerSessionId != C.AUDIO_SESSION_ID_UNSET && fadingPlayerSessionId > 0) {
-            closeAudioEffectSession(sessionIdOverride = fadingPlayerSessionId, clearNormalizationCache = true)
-        }
         if (scheduleNext) {
             scheduleCrossfade()
         }
+    }
+
+    /**
+     * Lets the replaced player decay naturally under the new track instead
+     * of slicing its reverb tail. Starts ~18dB down with a quadratic fade
+     * to true zero over [AUTOMIX_TAIL_MS]; if the user pauses/stops mid-tail
+     * it fast-fades instead of lingering over silence.
+     */
+    private fun startTailRingOut(
+        oldPlayer: ExoPlayer?,
+        startVolume: Float,
+        audioSessionId: Int,
+    ) {
+        releaseTailNow()
+        if (oldPlayer == null) {
+            if (audioSessionId != C.AUDIO_SESSION_ID_UNSET && audioSessionId > 0) {
+                closeAudioEffectSession(sessionIdOverride = audioSessionId, clearNormalizationCache = true)
+            }
+            return
+        }
+        tailPlayer = oldPlayer
+        tailAudioSessionId = audioSessionId
+        val tailStart = (startVolume * AUTOMIX_TAIL_START_RATIO).coerceIn(0f, 1f)
+        runCatching { oldPlayer.volume = tailStart }
+        tailJob =
+            scope.launch {
+                val steps = (AUTOMIX_TAIL_MS / AUTOMIX_TAIL_STEP_MS).toInt().coerceAtLeast(1)
+                var i = 0
+                while (i <= steps) {
+                    if (!isActive) break
+                    // Pause/stop/user gone: don't croon over silence, get out fast.
+                    val paused = runCatching { !player.isPlaying }.getOrDefault(false)
+                    if (paused) i += (steps / 10).coerceAtLeast(1)
+                    val progress = (i / steps.toFloat()).coerceIn(0f, 1f)
+                    runCatching { oldPlayer.volume = tailStart * (1f - progress) * (1f - progress) }
+                    i++
+                    delay(AUTOMIX_TAIL_STEP_MS)
+                }
+                releaseTailNow()
+            }
+    }
+
+    /** Stops and releases a ringing tail immediately. Safe to call anytime. */
+    private fun releaseTailNow() {
+        tailJob?.cancel()
+        tailJob = null
+        tailPlayer?.let { tail ->
+            runCatching {
+                tail.stop()
+                tail.clearMediaItems()
+                tail.release()
+            }
+            playerEqProcessors.remove(tail)
+            playerAnalyzers.remove(tail)
+            analyzerArmedIds.remove(tail)
+        }
+        tailPlayer = null
+        if (tailAudioSessionId != C.AUDIO_SESSION_ID_UNSET && tailAudioSessionId > 0) {
+            runCatching {
+                closeAudioEffectSession(sessionIdOverride = tailAudioSessionId, clearNormalizationCache = true)
+            }
+            tailAudioSessionId = C.AUDIO_SESSION_ID_UNSET
+        }
+    }
+
+    /**
+     * Live vocal guard: true when the outgoing track's own learn tap shows
+     * its recent seconds still running hotter than the track overall, i.e.
+     * the blend starts mid-chorus rather than on an outro. Null-safe and
+     * allocation-light (one small sorted copy per transition).
+     */
+    private fun isOutgoingTailHot(targetPlayer: ExoPlayer?): Boolean {
+        if (targetPlayer == null) return false
+        val snap = runCatching { playerAnalyzers[targetPlayer]?.snapshot() }.getOrNull() ?: return false
+        val energy = snap.energyPerSecond
+        if (energy.size < 10) return false
+        val sorted = energy.copyOf().also { it.sort() }
+        val median = sorted[sorted.size / 2]
+        if (median <= 0f) return false
+        val tailSecs = minOf(AUTOMIX_HOT_TAIL_SECONDS, energy.size)
+        var tailSum = 0f
+        for (k in energy.size - tailSecs until energy.size) tailSum += energy[k]
+        return tailSum / tailSecs > median * AUTOMIX_HOT_TAIL_RATIO
     }
 
     companion object {
@@ -9913,6 +10194,29 @@ class MusicService :
         private const val AUTOMIX_EQ_HIGH_HZ = 9000.0
         private const val AUTOMIX_EQ_KILL_DB = -24.0
         private const val AUTOMIX_SWEEP_END_HZ = 700.0
+        // Seamless-blend additions: a tail ring-out so swaps never splice
+        // reverb, a live vocal guard that sits hot outgoing mids back, and a
+        // caution scale for long blind blends (no learned boundaries).
+        private const val AUTOMIX_TAIL_MS = 1800L
+        private const val AUTOMIX_TAIL_STEP_MS = 20L
+        private const val AUTOMIX_TAIL_START_RATIO = 0.125f
+        private const val AUTOMIX_HOT_TAIL_SECONDS = 8
+        private const val AUTOMIX_HOT_TAIL_RATIO = 1.15f
+        private const val AUTOMIX_HOT_MID_CUT_DB = -5.0
+        private const val AUTOMIX_CAUTIOUS_CONFIDENCE = 0.5f
+        private const val AUTOMIX_CAUTIOUS_DURATION_SCALE = 0.8f
+        // End-anchoring: shrink late blends so completion lands on the
+        // musical end; hot endings (no outro/fade to hide in) get a short
+        // radio-style overlap instead of a full blend over their climax.
+        private const val AUTOMIX_ANCHOR_MIN_MS = 1500L
+        private const val AUTOMIX_ANCHOR_FLOOR_MS = 750L
+        private const val AUTOMIX_HOT_ENDING_DURATION_SCALE = 0.5f
+        // Downbeat-synced swap: hold window for the next barline plus the
+        // confidence bar for earning the full stretched-out wide blend.
+        private const val AUTOMIX_DOWNBEAT_MIN_WAIT_MS = 120.0
+        private const val AUTOMIX_DOWNBEAT_MAX_WAIT_MS = 2500.0
+        private const val AUTOMIX_CONFIDENT_CONFIDENCE = 0.8f
+        private const val AUTOMIX_CONFIDENT_DURATION_SCALE = 1.2f
 
         // Was 4_000L — too short given the underlying OkHttpClient's own
         // 8s connect / 10s read timeouts, plus the token endpoint's cold-start
