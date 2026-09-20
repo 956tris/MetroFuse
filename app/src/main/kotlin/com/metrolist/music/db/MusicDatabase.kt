@@ -134,7 +134,7 @@ class MusicDatabase(
         SortedSongAlbumMap::class,
         PlaylistSongMapPreview::class,
     ],
-    version = 43,
+    version = 44,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3),
@@ -182,6 +182,11 @@ class MusicDatabase(
         // Stepping those databases to 43 recomputes the identity hash with
         // zero data loss. Real 41 databases chain 41->42->43 normally.
         AutoMigration(from = 42, to = 43),
+        // Heal bump: a removed debug helper rewrote the v41 identity hash
+        // (f73c0121) into v42/v43 databases in the field. Same version +
+        // wrong hash crashes on open with no migration path, so step
+        // everything to 44 to force the hash recompute. Zero data loss.
+        AutoMigration(from = 43, to = 44),
     ],
 )
 @TypeConverters(Converters::class)
