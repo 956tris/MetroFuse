@@ -38,8 +38,7 @@ internal object CanvasOfflineCache {
     fun cachedUriFor(
         context: Context,
         songId: String,
-    ): String? {
-        if (songId.isBlank()) return null
+    ): String? {        if (songId.isBlank()) return null
         val digest = stableDigest(songId)
         val dir = offlineDir(context)
 
@@ -58,6 +57,28 @@ internal object CanvasOfflineCache {
             return extractHlsPackage(dir, digest, zip.readBytes()) ?: zip.toUri().toString()
         }
         return null
+    }
+
+    /**
+     * Provider recorded in the `.meta` sidecar at put() time ("Spotify",
+     * "Apple Music", ...). Lets playback route an offline-cached video to
+     * the same treatment as its remote original instead of the generic
+     * embedded slot.
+     */
+    fun cachedProviderFor(
+        context: Context,
+        songId: String,
+    ): String? {
+        if (songId.isBlank()) return null
+        val digest = stableDigest(songId)
+        return runCatching {
+            offlineDir(context).resolve("$digest.meta")
+                .takeIf { it.exists() }
+                ?.readLines(Charsets.UTF_8)
+                ?.firstOrNull()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+        }.getOrNull()
     }
 
     fun put(

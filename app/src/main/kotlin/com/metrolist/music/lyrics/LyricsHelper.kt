@@ -18,6 +18,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -71,22 +72,40 @@ constructor(
             val cleanedTitle = LyricsUtils.cleanTitleForSearch(mediaMetadata.title)
             val enabledProviders = orderedProviders.filter { it.isEnabled(context) }
 
-            Timber.tag("LyricsHelper").d("Starting sequential fetch for: $cleanedTitle by ${mediaMetadata.artists.joinToString { it.name }}")
+            Timber.tag("LyricsHelper").d("Starting parallel fetch for: $cleanedTitle by ${mediaMetadata.artists.joinToString { it.name }}")
             Timber.tag("LyricsHelper").d("Enabled providers in order: ${enabledProviders.joinToString { it.name }}")
 
-            for (provider in enabledProviders) {
-                Timber.tag("LyricsHelper").d("Trying provider: ${provider.name}")
-                val providerResult = try {
-                    withTimeoutOrNull(PER_PROVIDER_TIMEOUT_MS) {
-                        provider.getLyrics(
-                            context,
-                            mediaMetadata.id,
-                            cleanedTitle,
-                            mediaMetadata.artists.joinToString { it.name },
-                            mediaMetadata.duration,
-                            mediaMetadata.album?.title,
-                        )
+            // Start every provider's search up-front (in parallel, incl. QQ)
+            // so a slow one never blocks the others; the first valid result
+            // in preference order still wins. Bound to this block's scope, so
+            // an early return cancels the providers still running.
+            val deferred =
+                enabledProviders.associateWith { provider ->
+                    async {
+                        Timber.tag("LyricsHelper").d("Trying provider: ${provider.name}")
+                        try {
+                            withTimeoutOrNull(PER_PROVIDER_TIMEOUT_MS) {
+                                provider.getLyrics(
+                                    context,
+                                    mediaMetadata.id,
+                                    cleanedTitle,
+                                    mediaMetadata.artists.joinToString { it.name },
+                                    mediaMetadata.duration,
+                                    mediaMetadata.album?.title,
+                                )
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Timber.tag("LyricsHelper").w("${provider.name} threw: ${e.message}")
+                            null
+                        }
                     }
+                }
+
+            for (provider in enabledProviders) {
+                val providerResult = try {
+                    deferred[provider]!!.await()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

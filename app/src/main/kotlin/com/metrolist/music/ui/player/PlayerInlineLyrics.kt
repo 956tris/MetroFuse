@@ -5,14 +5,7 @@
 
 package com.metrolist.music.ui.player
 
-import android.os.SystemClock
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,7 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -51,6 +44,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.metrolist.music.LocalPlayerConnection
+import com.metrolist.music.constants.Motion
 import com.metrolist.music.db.entities.LyricsEntity
 import com.metrolist.music.lyrics.LyricsEntry
 import com.metrolist.music.lyrics.LyricsUtils
@@ -69,14 +63,11 @@ internal fun PlayerInlineLyrics(
         ?.isEffectivelyPlaying
         ?.collectAsStateWithLifecycle()
         ?: remember { mutableStateOf(false) }
-    var smoothPositionMs by remember { mutableLongStateOf(positionMs) }
-    var positionAnchorMs by remember { mutableLongStateOf(positionMs) }
-    var timeAnchorMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    var framePositionMs by remember { mutableLongStateOf(positionMs) }
 
     LaunchedEffect(positionMs) {
-        positionAnchorMs = positionMs
-        timeAnchorMs = SystemClock.elapsedRealtime()
-        smoothPositionMs = positionMs
+        // Seek / track change: snap immediately so lyrics never drift.
+        framePositionMs = positionMs
     }
 
     val lyricsEntries =
@@ -89,40 +80,32 @@ internal fun PlayerInlineLyrics(
                 .orEmpty()
         }
 
-    // Throttled position used for expensive work (full-list active-line scans and
-    // per-word shadow/AnnotatedString rebuilding). Updating this at ~15fps instead of
-    // 60fps is visually indistinguishable for word-highlight sweep, but cuts the
-    // recomposition/text-shadow cost on low-end devices by roughly 4x.
-    var throttledPositionMs by remember { mutableLongStateOf(positionMs) }
-
+    // Per-frame position: read the player position on every vsync (60 fps
+    // default, higher when the "120 fps lyrics" toggle unlocks the display's
+    // top refresh rate) so word-highlight sweep and scrolling stay smooth.
+    // Computed from the player each frame, never from an accumulated timer,
+    // so lyrics can't drift.
     LaunchedEffect(isPlaying, lyricsEntries.isNotEmpty()) {
         if (!isPlaying || lyricsEntries.isEmpty()) {
-            smoothPositionMs = positionAnchorMs
-            throttledPositionMs = positionAnchorMs
             return@LaunchedEffect
         }
-
-        var lastThrottledUpdateMs = 0L
+        val player = playerConnection?.player ?: return@LaunchedEffect
         while (isActive) {
-            withFrameMillis { frameTimeMillis ->
-                smoothPositionMs = positionAnchorMs + (SystemClock.elapsedRealtime() - timeAnchorMs)
-                if (frameTimeMillis - lastThrottledUpdateMs >= ThrottledLyricsUpdateIntervalMs) {
-                    lastThrottledUpdateMs = frameTimeMillis
-                    throttledPositionMs = smoothPositionMs
-                }
+            withFrameNanos {
+                framePositionMs = player.currentPosition
             }
         }
     }
 
-    val lyricLines = remember(lyricsEntries, throttledPositionMs) {
-        lyricsEntries.currentInlineLines(throttledPositionMs)
+    val lyricLines = remember(lyricsEntries, framePositionMs) {
+        lyricsEntries.currentInlineLines(framePositionMs)
     }
     val hasWordTimings = remember(lyricsEntries) {
         lyricsEntries.any { !it.words.isNullOrEmpty() }
     }
-    val smoothLine = remember(lyricsEntries, throttledPositionMs, smoothSlidingLine, hasWordTimings) {
+    val smoothLine = remember(lyricsEntries, framePositionMs, smoothSlidingLine, hasWordTimings) {
         if (smoothSlidingLine && hasWordTimings) {
-            lyricsEntries.currentSmoothInlineLine(throttledPositionMs)
+            lyricsEntries.currentSmoothInlineLine(framePositionMs)
         } else {
             null
         }
@@ -139,24 +122,12 @@ internal fun PlayerInlineLyrics(
         if (useSmoothSlidingLine) {
             AnimatedContent(
                 targetState = smoothLine,
-                transitionSpec = {
-                    (
-                        slideInVertically(
-                            animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-                            initialOffsetY = { it / 2 },
-                        ) + fadeIn(animationSpec = tween(durationMillis = 220, delayMillis = 90))
-                    ).togetherWith(
-                        slideOutVertically(
-                            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-                            targetOffsetY = { -it / 2 },
-                        ) + fadeOut(animationSpec = tween(durationMillis = 180)),
-                    )
-                },
+                transitionSpec = { (Motion.LyricLineEnter).togetherWith(Motion.LyricLineExit) },
                 label = "PlayerInlineLyricsSmoothLine",
             ) { line ->
                 SmoothWrappedLyricLine(
                     line = line,
-                    positionMs = smoothPositionMs,
+                    positionMs = framePositionMs,
                     textColor = textColor,
                     style =
                         MaterialTheme.typography.titleLarge.copy(
@@ -172,19 +143,7 @@ internal fun PlayerInlineLyrics(
         } else {
             AnimatedContent(
                 targetState = lyricLines,
-                transitionSpec = {
-                    (
-                        slideInVertically(
-                            animationSpec = tween(durationMillis = 420, easing = FastOutSlowInEasing),
-                            initialOffsetY = { it / 2 },
-                        ) + fadeIn(animationSpec = tween(durationMillis = 220, delayMillis = 90))
-                    ).togetherWith(
-                        slideOutVertically(
-                            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing),
-                            targetOffsetY = { -it / 2 },
-                        ) + fadeOut(animationSpec = tween(durationMillis = 180)),
-                    )
-                },
+                transitionSpec = { (Motion.LyricLineEnter).togetherWith(Motion.LyricLineExit) },
                 label = "PlayerInlineLyricsLine",
             ) { lines ->
                 Column(
@@ -193,8 +152,8 @@ internal fun PlayerInlineLyrics(
                 ) {
                     lines.forEach { line ->
                         Text(
-                            text = remember(line, throttledPositionMs, textColor) {
-                                line.inlineLyricsText(throttledPositionMs, textColor)
+                            text = remember(line, framePositionMs, textColor) {
+                                line.inlineLyricsText(framePositionMs, textColor)
                             },
                             style =
                                 MaterialTheme.typography.titleLarge.copy(
@@ -242,10 +201,8 @@ private fun List<LyricsEntry>.currentInlineLines(positionMs: Long): List<LyricsE
 private const val MaxInlineLyricLines = 3
 private const val MaxInlineTextLines = 3
 
-// ~15fps for the throttled recompute path (line scans + per-word shadow text).
-// The smooth sweep line still updates every frame separately since that path is
-// cheap (rect clipping only, no text relayout or shadow rebuilding).
-private const val ThrottledLyricsUpdateIntervalMs = 66L
+// Per-frame (vsync) recompute path: line scans + per-word sweep update every
+// frame for smooth highlighting/scrolling.
 private val InlineLyricsSlotHeight = 68.dp
 private val SmoothInlineLyricsSlotHeight = 76.dp
 

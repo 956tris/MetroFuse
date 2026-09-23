@@ -32,6 +32,7 @@ object PaxsenixQQMusicLyricsProvider : LyricsProvider {
 
         return try {
             Paxsenix.init(context)
+            Paxsenix.initQQCacheDir(context.cacheDir)
             val result = Paxsenix.getQQMusicLyrics(title, artist, duration, album)
 
             result.onSuccess { lyrics ->

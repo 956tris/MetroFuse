@@ -355,33 +355,24 @@ fun ExperimentalLyrics(
             return@LaunchedEffect
         }
         
-        var lastPlayerPos = playerConnection.player.currentPosition
-        var lastUpdateTime = System.currentTimeMillis()
-        
         while (isActive) {
-            // Throttled, not per-vsync: line state flips on second-scale
-            // boundaries and the active row interpolates smoothly on its own
-            // frame loop. 10Hz while playing (500ms paused) cuts full-tree
-            // recomposition from 60-120Hz without visible scroll lag.
-            delay(if (playerConnection.player.isPlaying) 100 else 500)
-            val now = System.currentTimeMillis()
             val sliderPosition = sliderPositionProvider()
             isSeeking = sliderPosition != null
-            
-            val position = if (isSeeking) {
-                sliderPosition!!
-            } else {
-                val playerPos = playerConnection.player.currentPosition
-                if (playerPos != lastPlayerPos) {
-                    lastPlayerPos = playerPos
-                    lastUpdateTime = now
+
+            // Per-frame (vsync) position: read the player every frame instead
+            // of polling on a delay with an accumulated timer, so the active
+            // line and auto-scroll never drift. The active row interpolates
+            // smoothly on its own frame loop.
+            val position = withFrameNanos {
+                if (isSeeking) {
+                    sliderPosition!!
+                } else {
+                    playerConnection.player.currentPosition
                 }
-                val elapsed = now - lastUpdateTime
-                lastPlayerPos + (if (playerConnection.player.isPlaying) elapsed else 0)
             }
-            
+
             currentPositionState = position
-            
+
             val lyricsOffset = currentSong?.song?.lyricsOffset ?: 0
             val effectivePosition = position + lyricsOffset
             

@@ -788,6 +788,14 @@ fun BottomSheetPlayer(
                 SpotifyCanvasMedia(url = url, headers = emptyMap())
             }
         }
+    // Provider of the embedded/offline video: an offline-cached Apple (or
+    // Tidal) canvas is a bare local URI, so URL comparison alone can never
+    // match it to its remote original (see MusicService routing).
+    val embeddedCanvasProvider by playerConnection.service.currentEmbeddedCanvasProvider.collectAsStateWithLifecycle()
+    val isEmbeddedAppleCanvas =
+        embeddedCanvasBackground != null && embeddedCanvasProvider.equals("Apple Music", ignoreCase = true)
+    val isEmbeddedTidalCanvas =
+        embeddedCanvasBackground != null && embeddedCanvasProvider.equals("Tidal", ignoreCase = true)
     val appleCanvasBackground =
         remember(appleTallCanvasUrl) {
             appleTallCanvasUrl?.takeIf { it.isNotBlank() }?.let { url ->
@@ -835,9 +843,17 @@ fun BottomSheetPlayer(
         when {
             isAppleCanvasBackground -> appleCanvasBackground
             isTidalCanvasBackground -> tidalCanvasBackground
+            isEmbeddedAppleCanvas || isEmbeddedTidalCanvas -> embeddedCanvasBackground
             else -> null
         }
-    val playerCanvasBackground = canvasBackground?.takeUnless { isAppleCanvasBackground || isTidalCanvasBackground }
+    // Anything Apple/Tidal-like (remote or offline-cached) takes the fade
+    // treatment; only true embedded/Spotify videos own the full slot.
+    // Compared by resolved identity, not URL: a cached Apple video's local
+    // URI never equals its remote original, which is exactly how Apple
+    // content used to leak into the Spotify-style slot.
+    val playerCanvasBackground = canvasBackground?.takeUnless { candidate ->
+        candidate.url == appleLikeCanvasBackground?.url
+    }
     // Only hide the artwork once the canvas video is actually rendering.
     // Previously any non-blank URL immediately replaced the artwork with a
     // Spacer, so a broken/unplayable canvas (local file via the wrong data

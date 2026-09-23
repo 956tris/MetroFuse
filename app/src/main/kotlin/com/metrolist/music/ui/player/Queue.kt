@@ -823,14 +823,16 @@ fun Queue(
 
                 itemsIndexed(
                     items = mutableQueueWindows,
-                    // Int hash: Window.uid is an opaque Object, which Lazy's
-                    // saveable state rejects (instant crash). Collisions only
-                    // risk a remount, never a crash.
-                    key = { _, item -> item.uid.hashCode() },
+                    // Window.uid is an opaque Object, which Lazy's saveable state
+                    // rejects (instant crash), so the key stays a String. The
+                    // identityHashCode suffix disambiguates distinct uids sharing
+                    // a hashCode — without it collisions remount rows, breaking
+                    // animateItem and stuttering queue scroll/reorder.
+                    key = { _, item -> "${item.uid.hashCode()}_${System.identityHashCode(item.uid)}" },
                 ) { index, window ->
                     ReorderableItem(
                         state = reorderableState,
-                        key = window.uid.hashCode(),
+                        key = "${window.uid.hashCode()}_${System.identityHashCode(window.uid)}",
                     ) {
                         val currentItem by rememberUpdatedState(window)
                         val isActive = window.uid == currentPlayingUid

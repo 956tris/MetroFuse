@@ -681,6 +681,11 @@ class MusicService :
     val currentAppleCanvasUrl = MutableStateFlow<String?>(null)
     val currentAppleTallCanvasUrl = MutableStateFlow<String?>(null)
     val currentEmbeddedCanvasUrl = MutableStateFlow<String?>(null)
+    // Provider of the embedded/offline canvas ("Spotify", "Apple Music",
+    // "Tidal", ...): without it an offline-cached Apple video is a bare
+    // local URI and the player routes it to the full video slot instead of
+    // the Apple fade treatment. Cleared/published with the URL above.
+    val currentEmbeddedCanvasProvider = MutableStateFlow<String?>(null)
     val currentPreferredArtworkUrl = MutableStateFlow<String?>(null)
     val currentTidalArtworkUrl = currentPreferredArtworkUrl
 
@@ -701,6 +706,7 @@ class MusicService :
             currentAppleCanvasUrl.value = null
             currentAppleTallCanvasUrl.value = null
             currentEmbeddedCanvasUrl.value = null
+            currentEmbeddedCanvasProvider.value = null
         }
         currentMediaMetadata.value = metadata
     }
@@ -1247,6 +1253,7 @@ class MusicService :
                     if (metadata != null && !metadata.isEpisode && !metadata.isVideoSong) {
                         launch(Dispatchers.Main + SilentHandler) {
                             currentEmbeddedCanvasUrl.value = null
+                            currentEmbeddedCanvasProvider.value = null
                             if (isLocalMedia(metadata)) {
                                 loadEmbeddedCanvasInBackground(metadata.id)
                             } else {
@@ -1257,6 +1264,7 @@ class MusicService :
                         }
                     } else {
                         currentEmbeddedCanvasUrl.value = null
+                        currentEmbeddedCanvasProvider.value = null
                     }
                 }
             }
@@ -3669,6 +3677,11 @@ class MusicService :
         previousMediaItemIndex = player.currentMediaItemIndex
 
         lastPlaybackSpeed = -1.0f
+        // Automix safety: each new item must start at 1.0x. A direct queue
+        // advance (no crossfade) never hits the crossfade reset below, so a
+        // bent speed from the previous transition would otherwise leak into
+        // the next song and sound pitched up at its start.
+        resetAutomixSpeed(reason = "media-item-transition")
         discordUpdateJob?.cancel()
         setupLoudnessEnhancer()
 
@@ -7149,14 +7162,20 @@ class MusicService :
         scope.launch(Dispatchers.IO) {
             val embeddedCanvas =
                 AudioTagWriter.extractEmbeddedCanvasToCache(applicationContext, mediaId)
-                    ?: CanvasOfflineCache.cachedUriFor(applicationContext, mediaId)?.let {
+                    ?: CanvasOfflineCache.cachedUriFor(applicationContext, mediaId)?.let { uri ->
                         // Reuse the offline disk cache for local files that were
-                        // cached as streams before being downloaded.
-                        com.metrolist.music.playback.CachedEmbeddedCanvas(uri = it, provider = "OfflineCache")
+                        // cached as streams before being downloaded. Provider
+                        // comes from the cache sidecar, not a fixed label, or
+                        // an Apple video would route to the generic slot.
+                        val provider =
+                            CanvasOfflineCache.cachedProviderFor(applicationContext, mediaId)
+                                ?: "OfflineCache"
+                        com.metrolist.music.playback.CachedEmbeddedCanvas(uri = uri, provider = provider)
                     }
             withContext(Dispatchers.Main) {
                 if (currentMediaMetadata.value?.id == mediaId) {
                     currentEmbeddedCanvasUrl.value = embeddedCanvas?.uri
+                    currentEmbeddedCanvasProvider.value = embeddedCanvas?.provider
                 }
             }
         }
@@ -7168,9 +7187,14 @@ class MusicService :
                 runCatching {
                     CanvasOfflineCache.cachedUriFor(applicationContext, mediaId)
                 }.getOrNull()
+            val cachedProvider =
+                runCatching {
+                    CanvasOfflineCache.cachedProviderFor(applicationContext, mediaId)
+                }.getOrNull()
             withContext(Dispatchers.Main) {
                 if (currentMediaMetadata.value?.id == mediaId && cachedUri != null) {
                     currentEmbeddedCanvasUrl.value = cachedUri
+                    currentEmbeddedCanvasProvider.value = cachedProvider
                 }
             }
         }
@@ -9931,6 +9955,69 @@ class MusicService :
     }
 
     /**
+     * Automix speed helpers. Every tempo correction keeps pitch pinned at 1f
+     * (pitch-preserving time-stretch); only speed is bent, and only inside
+     * AUTOMIX_MIN/MAX_SPEED. All changes are logged under tag "Automix" with
+     * value, reason and media id so pitched starts are diagnosable in logcat.
+     */
+    private fun currentAutomixMediaId(): String =
+        runCatching { player.currentMediaItem?.mediaId }.getOrNull() ?: "unknown"
+
+    private fun applyAutomixSpeed(
+        target: androidx.media3.common.Player?,
+        speed: Float,
+        reason: String,
+    ) {
+        val p = target ?: return
+        val clamped = speed.coerceIn(AUTOMIX_MIN_SPEED, AUTOMIX_MAX_SPEED)
+        val current = runCatching { p.playbackParameters.speed }.getOrDefault(1f)
+        if (abs(current - clamped) < 0.0005f && runCatching { p.playbackParameters.pitch }.getOrDefault(1f) == 1f) return
+        p.playbackParameters = PlaybackParameters(clamped, 1f)
+        Timber.tag(AUTOMIX_TAG).d("speed=%.4f pitch=1.0 reason=%s mediaId=%s", clamped, reason, currentAutomixMediaId())
+    }
+
+    private fun rampAutomixSpeedToNormal(reason: String) {
+        val startSpeed = runCatching { player.playbackParameters.speed }.getOrDefault(1f)
+        if (abs(startSpeed - 1f) < 0.0005f) {
+            if (runCatching { player.playbackParameters.pitch }.getOrDefault(1f) != 1f) {
+                player.playbackParameters = PlaybackParameters(1f, 1f)
+                Timber.tag(AUTOMIX_TAG).d("speed=1.0000 pitch=1.0 reason=%s mediaId=%s", reason, currentAutomixMediaId())
+            }
+            return
+        }
+        // Smooth ~120ms ramp back to 1f instead of an audible jump.
+        scope.launch {
+            val steps = 6
+            for (i in 1..steps) {
+                val t = i / steps.toFloat()
+                val eased = t * t * (3f - 2f * t)
+                val speed = (startSpeed + (1f - startSpeed) * eased).coerceIn(AUTOMIX_MIN_SPEED, AUTOMIX_MAX_SPEED)
+                runCatching { player.playbackParameters = PlaybackParameters(speed, 1f) }
+                Timber.tag(AUTOMIX_TAG).d("speed=%.4f pitch=1.0 reason=%s mediaId=%s", speed, reason, currentAutomixMediaId())
+                kotlinx.coroutines.delay(20)
+            }
+            runCatching { player.playbackParameters = PlaybackParameters(1f, 1f) }
+            Timber.tag(AUTOMIX_TAG).d("speed=1.0000 pitch=1.0 reason=%s mediaId=%s", reason, currentAutomixMediaId())
+        }
+    }
+
+    private fun resetAutomixSpeed(reason: String) {
+        val speed = runCatching { player.playbackParameters.speed }.getOrDefault(1f)
+        val pitch = runCatching { player.playbackParameters.pitch }.getOrDefault(1f)
+        if (abs(speed - 1f) < 0.0005f && pitch == 1f) return
+        // New items must start clean: jump straight to 1f here (no ramp —
+        // the new track hasn't started audibly yet) and log it.
+        runCatching { player.playbackParameters = PlaybackParameters(1f, 1f) }
+        Timber.tag(AUTOMIX_TAG).d(
+            "speed=1.0000 pitch=1.0 reason=%s mediaId=%s (was speed=%.4f pitch=%.2f)",
+            reason,
+            currentAutomixMediaId(),
+            speed,
+            pitch,
+        )
+    }
+
+    /**
      * Holds the ready-but-paused secondary until the outgoing track reaches
      * its next barline, so the swap (and therefore the whole blend) starts
      * grids-aligned. Returns immediately for plain crossfades, unmatched
@@ -10196,11 +10283,19 @@ class MusicService :
                             // Delta-guarded: re-setting identical parameters
                             // re-inits Sonic's stretcher every 20ms otherwise.
                             if (abs(speedA - lastSpeedA) > 0.0005f) {
-                                fadingPlayer?.playbackParameters = PlaybackParameters(speedA.coerceIn(0.9f, 1.1f), 1f)
+                                applyAutomixSpeed(
+                                    target = fadingPlayer,
+                                    speed = speedA,
+                                    reason = "transition-ramp-outgoing",
+                                )
                                 lastSpeedA = speedA
                             }
                             if (abs(speedB - lastSpeedB) > 0.0005f) {
-                                player.playbackParameters = PlaybackParameters(speedB.coerceIn(0.9f, 1.1f), 1f)
+                                applyAutomixSpeed(
+                                    target = player,
+                                    speed = speedB,
+                                    reason = "transition-ramp-incoming",
+                                )
                                 lastSpeedB = speedB
                             }
                         }
@@ -10284,7 +10379,8 @@ class MusicService :
                     if (automixSpeedA != null && automixSpeedB != null) {
                         // The fading player is about to be released; the surviving player
                         // must land back on normal speed or it'll keep playing pitched.
-                        player.playbackParameters = PlaybackParameters(1f, 1f)
+                        // Ramp instead of jumping so the tail of the transition isn't audible.
+                        rampAutomixSpeedToNormal(reason = "crossfade-complete")
                     }
                 } catch (e: Exception) {
                 }
@@ -10313,6 +10409,9 @@ class MusicService :
         secondaryPlayer = null
         nextTrackPreloadCoordinator?.requestRefresh()
         isCrossfading = false
+        // Cancelled/skipped crossfades never reach the post-blend ramp, so
+        // force the surviving player back to 1f here as well.
+        resetAutomixSpeed(reason = "crossfade-cancelled")
         activeAutomixProfile = null
         activeAutomixPlan = null
         pendingAutomixProfile = null
@@ -10504,6 +10603,7 @@ class MusicService :
         // pitch-preserving stretch stays inaudible; tempo is only locked when
         // both tracks sit within ~12% / 12 BPM of each other. Wider gaps blend
         // straight at 1.0x instead of forcing an audible stretch.
+        private const val AUTOMIX_TAG = "Automix"
         private const val AUTOMIX_DEFAULT_DURATION_S = 8f
         private const val AUTOMIX_MIN_BPM = 40f
         private const val AUTOMIX_MAX_BPM = 240f

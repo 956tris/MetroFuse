@@ -81,6 +81,7 @@ import com.metrolist.music.constants.LyricsAnimationStyle
 import com.metrolist.music.constants.LyricsAnimationStyleKey
 import com.metrolist.music.constants.LyricsClickKey
 import com.metrolist.music.constants.LyricsGlowEffectKey
+import com.metrolist.music.constants.LyricsHighRefreshKey
 import com.metrolist.music.constants.LyricsLineSpacingKey
 import com.metrolist.music.constants.LyricsScrollKey
 import com.metrolist.music.constants.LyricsTextPositionKey
@@ -276,6 +277,18 @@ fun AppearanceSettings(
         )
     val (lyricsTextSize, onLyricsTextSizeChange) = rememberPreference(LyricsTextSizeKey, defaultValue = 24f)
     val (lyricsLineSpacing, onLyricsLineSpacingChange) = rememberPreference(LyricsLineSpacingKey, defaultValue = 1.2f)
+    val (lyricsHighRefresh, onLyricsHighRefreshChange) = rememberPreference(LyricsHighRefreshKey, defaultValue = false)
+    // Guarded: on devices whose display only supports 60 Hz the toggle has no
+    // effect and is shown disabled.
+    val supportsLyricsHighRefresh = remember(activity) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val displayManager = activity.getSystemService(android.hardware.display.DisplayManager::class.java)
+            displayManager?.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                ?.supportedModes?.any { it.refreshRate > 61f } == true
+        } else {
+            false
+        }
+    }
 
     var showExperimentalLyricsBetaDialog by remember { mutableStateOf(false) }
     var showLyricsAnimationStyleDialog by remember { mutableStateOf(false) }
@@ -1785,6 +1798,31 @@ fun AppearanceSettings(
                                 )
                             },
                             onClick = { onLyricsScrollChange(!lyricsScroll) },
+                        ),
+                    )
+                    add(
+                        Material3SettingsItem(
+                            icon = painterResource(R.drawable.speed),
+                            title = { Text(stringResource(R.string.lyrics_high_refresh)) },
+                            description = { Text(stringResource(R.string.lyrics_high_refresh_desc)) },
+                            trailingContent = {
+                                Switch(
+                                    checked = lyricsHighRefresh,
+                                    enabled = supportsLyricsHighRefresh,
+                                    onCheckedChange = onLyricsHighRefreshChange,
+                                    thumbContent = {
+                                        Icon(
+                                            painter =
+                                                painterResource(
+                                                    id = if (lyricsHighRefresh) R.drawable.check else R.drawable.close,
+                                                ),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(SwitchDefaults.IconSize),
+                                        )
+                                    },
+                                )
+                            },
+                            onClick = { if (supportsLyricsHighRefresh) onLyricsHighRefreshChange(!lyricsHighRefresh) },
                         ),
                     )
                     add(

@@ -33,7 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameMillis
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -457,24 +457,11 @@ private fun WordLevelLyrics(
     
     LaunchedEffect(isActiveLine) {
         if (isActiveLine) {
-            var lastPlayerPos = playerConnection.player.currentPosition
-            var lastUpdateTime = System.currentTimeMillis()
-            var lastWriteMs = 0L
             while (isActive) {
-                withFrameMillis { frameTimeMillis ->
-                    val now = System.currentTimeMillis()
-                    val playerPos = playerConnection.player.currentPosition
-                    if (playerPos != lastPlayerPos) {
-                        lastPlayerPos = playerPos
-                        lastUpdateTime = now
-                    }
-                    // ~15fps state writes: the sweep stays smooth while
-                    // per-frame recomposition cost drops 4x.
-                    if (frameTimeMillis - lastWriteMs >= 64L) {
-                        lastWriteMs = frameTimeMillis
-                        val elapsed = now - lastUpdateTime
-                        smoothPosition = lastPlayerPos + lyricsOffset + (if (playerConnection.player.isPlaying) elapsed else 0)
-                    }
+                withFrameNanos {
+                    // Per-frame read straight from the player — no accumulated
+                    // timer, so the sweep never drifts.
+                    smoothPosition = playerConnection.player.currentPosition + lyricsOffset
                 }
             }
         }
@@ -1502,24 +1489,11 @@ private fun SpicyWordLevelLyrics(
 
     LaunchedEffect(isActiveLine) {
         if (isActiveLine) {
-            var lastPlayerPos = playerConnection.player.currentPosition
-            var lastUpdateTime = System.currentTimeMillis()
-            var lastWriteMs = 0L
             while (isActive) {
-                withFrameMillis { frameTimeMillis ->
-                    val now = System.currentTimeMillis()
-                    val playerPos = playerConnection.player.currentPosition
-                    if (playerPos != lastPlayerPos) {
-                        lastPlayerPos = playerPos
-                        lastUpdateTime = now
-                    }
-                    // ~15fps state writes: the sweep stays smooth while
-                    // per-frame recomposition cost drops 4x.
-                    if (frameTimeMillis - lastWriteMs >= 64L) {
-                        lastWriteMs = frameTimeMillis
-                        val elapsed = now - lastUpdateTime
-                        smoothPosition = lastPlayerPos + lyricsOffset + (if (playerConnection.player.isPlaying) elapsed else 0)
-                    }
+                withFrameNanos {
+                    // Per-frame read straight from the player — no accumulated
+                    // timer, so the sweep never drifts.
+                    smoothPosition = playerConnection.player.currentPosition + lyricsOffset
                 }
             }
         }

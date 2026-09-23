@@ -180,6 +180,8 @@
     <string name="lyrics_under_album_cover">Lyrics under album cover</string>
     <string name="lyrics_under_album_cover_desc">Show synced lyrics in the expanded player</string>
     <string name="lyrics_auto_scroll">Auto-scroll lyrics</string>
+    <string name="lyrics_high_refresh">120 fps lyrics</string>
+    <string name="lyrics_high_refresh_desc">Use the display\'s highest refresh rate for lyrics. No effect on 60 Hz-only devices</string>
     <string name="hide_status_bar_fullscreen">Hide status bar on fullscreen</string>
     <string name="hide_status_bar_fullscreen_desc">Hide the status bar when lyrics fullscreen mode is active</string>
     <string name="show_interval_indicator">Show interval indicator</string>

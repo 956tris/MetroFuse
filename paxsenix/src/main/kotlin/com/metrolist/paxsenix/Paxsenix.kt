@@ -3,7 +3,7 @@ package com.metrolist.paxsenix
 import android.content.Context
 import com.metrolist.paxsenix.models.SearchResult
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.cio.CIO
+import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
@@ -33,7 +33,9 @@ object Paxsenix {
 
             Timber.d("Initializing Paxsenix with version: $appVersion")
 
-            val newClient = HttpClient(CIO) {
+            // One shared OkHttp engine for Apple + QQ: connection pooling and
+            // keep-alive are on by default, so lyric lookups reuse connections.
+            val newClient = HttpClient(OkHttp) {
                 install(HttpTimeout) {
                     requestTimeoutMillis = 15000
                     connectTimeoutMillis = 10000
@@ -137,6 +139,11 @@ object Paxsenix {
         throw IllegalStateException("No Apple Music lyrics content found for '$title'")
     }
 
+    /** Disk-cache dir for QQ mid/lyrics/miss entries (see QQMusicLyrics). */
+    fun initQQCacheDir(dir: java.io.File) {
+        QQMusicLyrics.initCacheDir(dir)
+    }
+
     /** Standalone QQ Music-only lookup, for use as an independent lyrics provider. */
     suspend fun getQQMusicLyrics(
         title: String,
@@ -144,9 +151,9 @@ object Paxsenix {
         duration: Int,
         album: String? = null,
     ): Result<String> {
-        val cleanedTitle = cleanTitle(title)
-        val cleanedArtist = cleanArtist(artist)
-        return QQMusicLyrics.fetchLyrics(cleanedTitle, cleanedArtist, album, duration)
+        // Pass raw strings: QQ does its own tag-aware normalisation
+        // (it keeps "(Live)"/"feat." as a signal when the track has them).
+        return QQMusicLyrics.fetchLyrics(title, artist, album, duration)
     }
 
 }
