@@ -8983,11 +8983,11 @@ class MusicService :
                 metadata = newPosition.mediaItem?.metadata ?: player.currentMetadata,
                 duration = currentPlaybackDurationIfReady(),
             )
-            scheduleCrossfade()
+            scheduleCrossfade(fromSeek = true)
         }
     }
 
-    private fun scheduleCrossfade() {
+    private fun scheduleCrossfade(fromSeek: Boolean = false) {
         crossfadeTriggerJob?.cancel()
         crossfadeTriggerJob = null
         if (isCrossfading || secondaryPlayer != null) return
@@ -9020,6 +9020,10 @@ class MusicService :
         pendingAutomixProfile = automixProfile
         pendingAutomixOutBpm = outData.bpm
         if (delayMs <= 250L) {
+            // A user seek landing inside the blend window must never yank
+            // straight into the next track — the seek is the user's explicit
+            // intent. Play out to the natural end and advance normally.
+            if (fromSeek) return
             startCrossfade()
             return
         }

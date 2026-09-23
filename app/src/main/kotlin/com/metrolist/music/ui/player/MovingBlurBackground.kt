@@ -54,7 +54,9 @@ import kotlin.math.sin
 fun MovingBlurBackground(
     artworkUrl: String?,
     useDarkTheme: Boolean,
-    backgroundAlpha: Float,
+    // Lambda so the per-frame sheet progress is read in the draw phase
+    // (graphicsLayer below), not in composition.
+    backgroundAlpha: () -> Float,
     modifier: Modifier = Modifier,
     // False while the sheet is collapsed: the infinite drift sleeps and a
     // static frame shows instead of burning vsync on off-screen pixels.
@@ -121,7 +123,7 @@ fun MovingBlurBackground(
                 scaleY = scale
                 translationX = (panRangeDp * cos(phaseX.toDouble()).toFloat()).toPx()
                 translationY = (panRangeDp * sin(phaseY.toDouble()).toFloat()).toPx()
-                alpha = backgroundAlpha
+                alpha = backgroundAlpha()
             }
     ) {
         androidx.compose.animation.AnimatedContent(

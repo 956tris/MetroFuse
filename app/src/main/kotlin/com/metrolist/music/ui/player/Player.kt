@@ -1668,8 +1668,6 @@ fun BottomSheetPlayer(
             }
         }
 
-    val backgroundAlpha = state.progress.coerceIn(0f, 1f)
-
     BottomSheet(
         state = state,
         modifier = modifier,
@@ -1703,7 +1701,10 @@ fun BottomSheetPlayer(
                                         .networkCachePolicy(CachePolicy.ENABLED)
                                         .build()
                                 }
-                                Box(modifier = Modifier.alpha(backgroundAlpha)) {
+                                // Draw-phase read: progress ticks every drag frame,
+                                // and reading it here avoids recomposing this
+                                // whole background subtree per frame.
+                                Box(modifier = Modifier.graphicsLayer { alpha = state.progress.coerceIn(0f, 1f) }) {
                                     AsyncImage(
                                         model = blurRequest,
                                         contentDescription = null,
@@ -1733,15 +1734,16 @@ fun BottomSheetPlayer(
                     }
 
                     PlayerBackgroundStyle.GALAXY -> {
-                        Box(modifier = Modifier.alpha(backgroundAlpha)) {
+                        // Draw-phase read (see above): no recomposition per drag frame.
+                        Box(modifier = Modifier.graphicsLayer { alpha = state.progress.coerceIn(0f, 1f) }) {
                             GalaxyStarOverlay(
                                 modifier = Modifier.fillMaxSize(),
                                 intensity = 1f,
                                 skyColors = galaxyColors,
-                                // No frame loop while collapsed: the layer is
-                                // translated off-screen, so ticking would burn
-                                // 30fps redrawing invisible pixels.
-                                animated = !state.isCollapsed,
+                                // No frame loop unless fully expanded: during the
+                                // open/close gesture a static frame shows instead
+                                // of burning 30fps redrawing a moving target.
+                                animated = state.isExpanded,
                             )
                             if (mirroredGalaxyReadabilityScrimAlpha > 0f) {
                                 Box(
@@ -1761,7 +1763,8 @@ fun BottomSheetPlayer(
                     }
 
                     PlayerBackgroundStyle.GALAXY_BLUR -> {
-                        Box(modifier = Modifier.alpha(backgroundAlpha)) {
+                        // Draw-phase read (see above): no recomposition per drag frame.
+                        Box(modifier = Modifier.graphicsLayer { alpha = state.progress.coerceIn(0f, 1f) }) {
                             // Real multi-colour blurred artwork as the base,
                             // with the same starfield + scrims as Galaxy.
                             AnimatedContent(
@@ -1805,7 +1808,7 @@ fun BottomSheetPlayer(
                                 modifier = Modifier.fillMaxSize(),
                                 intensity = 1f,
                                 skyColors = galaxyColors,
-                                animated = !state.isCollapsed,
+                                animated = state.isExpanded,
                                 // Let the multi-colour blur glow through.
                                 skyAlpha = 0.7f,
                             )
@@ -1852,7 +1855,7 @@ fun BottomSheetPlayer(
                                 Box(
                                     Modifier
                                         .fillMaxSize()
-                                        .alpha(backgroundAlpha)
+                                        .graphicsLayer { alpha = state.progress.coerceIn(0f, 1f) }
                                         .background(Brush.verticalGradient(colorStops = gradientColorStops))
                                         .background(Color.Black.copy(alpha = 0.2f)),
                                 )
@@ -1864,9 +1867,9 @@ fun BottomSheetPlayer(
                         MovingBlurBackground(
                             artworkUrl = displayArtworkUrl,
                             useDarkTheme = useDarkTheme,
-                            backgroundAlpha = backgroundAlpha,
+                            backgroundAlpha = { state.progress.coerceIn(0f, 1f) },
                             modifier = Modifier.fillMaxSize(),
-                            animate = !state.isCollapsed,
+                            animate = state.isExpanded,
                         )
                     }
 
@@ -1880,11 +1883,11 @@ fun BottomSheetPlayer(
                         modifier =
                             Modifier
                                 .fillMaxSize()
-                                .alpha(if (playerCanvasReady) backgroundAlpha else 0f),
+                                .graphicsLayer { alpha = if (playerCanvasReady) state.progress.coerceIn(0f, 1f) else 0f },
                     ) {
                         SpotifyCanvasVideoBackground(
                             media = media,
-                            shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
+                            shouldPlay = state.isExpanded && effectiveIsPlaying,
                             modifier = Modifier.fillMaxSize(),
                             scrimAlpha = 0.16f,
                             onReadyChange = { ready -> playerCanvasReady = ready },
@@ -1910,7 +1913,7 @@ fun BottomSheetPlayer(
                     AppleMusicFadedCanvasBackground(
                         media = media,
                         artworkUrl = displayArtworkUrl,
-                        shouldPlay = state.isExpanded && backgroundAlpha > 0.1f && effectiveIsPlaying,
+                        shouldPlay = state.isExpanded && effectiveIsPlaying,
                         surfaceColor = appleFadeColor ?: appleFadeFallbackColor,
                         fadeColor = appleFadeColor ?: appleFadeFallbackColor,
                         splitRatio = appleFadeSplitRatio,
@@ -1918,7 +1921,7 @@ fun BottomSheetPlayer(
                         modifier =
                             Modifier
                                 .fillMaxSize()
-                                .alpha(backgroundAlpha * adaptiveGalaxyArtworkAlpha),
+                                .graphicsLayer { alpha = state.progress.coerceIn(0f, 1f) * adaptiveGalaxyArtworkAlpha },
                     )
                 }
             }
