@@ -16,6 +16,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -1177,13 +1179,16 @@ private fun SpicyLyricsLine(
         }
     }
 
+    // am-lyrics motion language: inactive lines sit at 0.8 alpha / 0.98
+    // scale, the active line at full alpha / scale 1.0, all easing over
+    // 0.7s. Background vocals stay smaller (0.9 scale).
     val targetAlpha = when {
         item.isBackground && !bgVisible -> 0f
         item.isBackground -> 0.6f
         isActiveLine -> 1f
-        !isAutoScrollEnabled || displayedCurrentLineIndex < 0 -> 0.51f
-        isPastLine -> 0.497f
-        else -> 0.51f
+        !isAutoScrollEnabled || displayedCurrentLineIndex < 0 -> 0.8f
+        isPastLine -> 0.8f
+        else -> 0.8f
     } * when {
         item.isBackground || isActiveLine -> 1f
         distanceFromCurrent <= 4 -> 1f
@@ -1193,7 +1198,7 @@ private fun SpicyLyricsLine(
 
     val lineAlpha by animateFloatAsState(
         targetValue = targetAlpha,
-        animationSpec = tween(durationMillis = 200, easing = SpicyOpacityEasing),
+        animationSpec = tween(durationMillis = 700, easing = SpicyOpacityEasing),
         label = "spicyLyricsAlpha",
     )
 
@@ -1231,15 +1236,27 @@ private fun SpicyLyricsLine(
     val effectiveWords = item.words?.takeIf { it.isNotEmpty() }
     val isWordSyncedLine = isSynced && effectiveWords != null
     val isLineSyncedLine = isSynced && effectiveWords == null && !mainText.isNullOrBlank()
+    val pressInteractionSource = remember { MutableInteractionSource() }
+    val isPressed by pressInteractionSource.collectIsPressedAsState()
+    // am-lyrics: active 1.0, inactive 0.98, pressed 0.96, background
+    // vocals 0.9 — all over 0.7s.
     val lineScale by animateFloatAsState(
         targetValue =
-            if (isLineSyncedLine && isActiveLine && !item.isBackground) {
-                1.05f
-            } else {
-                1f
+            when {
+                isPressed -> 0.96f
+                item.isBackground -> 0.9f
+                isActiveLine -> 1f
+                else -> 0.98f
             },
-        animationSpec = tween(durationMillis = 200, easing = SpicyLineEasing),
+        animationSpec = tween(durationMillis = 700, easing = SpicyLineEasing),
         label = "spicyLyricsScale",
+    )
+    // Highlight pill behind the active line: white 8%, 16dp radius,
+    // fading in/out over 180ms like the reference.
+    val pillAlpha by animateFloatAsState(
+        targetValue = if (isActiveLine && !item.isBackground) 1f else 0f,
+        animationSpec = tween(durationMillis = 180),
+        label = "spicyLyricsPill",
     )
 
     val itemModifier = modifier
@@ -1247,6 +1264,8 @@ private fun SpicyLyricsLine(
         .onSizeChanged { onSizeChanged(it.height) }
         .clip(RoundedCornerShape(8.dp))
         .combinedClickable(
+            interactionSource = pressInteractionSource,
+            indication = null,
             onClick = onClick,
             onLongClick = onLongClick,
         )
@@ -1281,7 +1300,11 @@ private fun SpicyLyricsLine(
                         TextAlign.Right -> TransformOrigin(1f, 0.5f)
                         else -> TransformOrigin(0.5f, 0.5f)
                     }
-                },
+                }
+                .background(
+                    Color.White.copy(alpha = 0.08f * pillAlpha),
+                    RoundedCornerShape(16.dp),
+                ),
             horizontalAlignment = agentAlignment,
         ) {
             if (isWordSyncedLine && effectiveWords != null && mainText != null) {
@@ -1293,7 +1316,7 @@ private fun SpicyLyricsLine(
                     lyricsOffset = lyricsOffset,
                     playerConnection = playerConnection,
                     lyricStyle = lyricStyle,
-                    inactiveColor = Color.White.copy(alpha = if (isPastLine) 0.497f else 0.51f),
+                    inactiveColor = Color.White.copy(alpha = 0.8f),
                     activeColor = Color.White,
                     isBackground = item.isBackground,
                     alignment = agentTextAlign,
@@ -1308,7 +1331,7 @@ private fun SpicyLyricsLine(
                     lineStartTime = item.time,
                     lineEndTime = lineEndTime,
                     lyricStyle = lyricStyle,
-                    inactiveColor = Color.White.copy(alpha = if (isPastLine) 0.497f else 0.51f),
+                    inactiveColor = Color.White.copy(alpha = 0.8f),
                     activeColor = Color.White,
                     lineBlurRadiusPx = with(LocalDensity.current) { blurAmount.dp.toPx() },
                 )
@@ -1316,7 +1339,7 @@ private fun SpicyLyricsLine(
                 Text(
                     text = mainText ?: "",
                     style = lyricStyle.copy(
-                        color = Color.White.copy(alpha = if (isActiveLine) 1f else if (isPastLine) 0.497f else 0.51f),
+                        color = Color.White.copy(alpha = if (isActiveLine) 1f else 0.8f),
                         shadow =
                             if (!isActiveLine && blurAmount > 0f) {
                                 Shadow(
@@ -1688,8 +1711,39 @@ private fun SpicyWordLevelLyrics(
                     tileMode = androidx.compose.ui.graphics.TileMode.Clamp,
                 )
 
-                clipRect(left = bounds.left, top = bounds.top, right = bounds.right, bottom = bounds.bottom) {
-                    drawText(layoutResult, brush = wipeBrush)
+                // am-lyrics character rise: each glyph lifts to a -1.25px peak
+                // (em-scaled, so it matches at any text size) and settles as
+                // the wipe passes it — a sine bump sequenced across the word,
+                // so the cycle stretches with the word's own audio duration.
+                // Same layout object + horizontal-only gradient means the
+                // vertical translate can't ghost or skew the wipe.
+                val (riseWordIdxMap, riseCharPosMap, riseWordLenMap) = charToWordData
+                val risePeakPx = lyricStyle.fontSize.toPx() * (1.25f / 34f)
+                var drewRiseCluster = false
+                for (ci in 0 until clusterCount) {
+                    if (riseWordIdxMap[ci] != wordIdx) continue
+                    val charPos = riseCharPosMap[ci]
+                    val wordLen = riseWordLenMap[ci].coerceAtLeast(1)
+                    val localT = ((progress * wordLen) - charPos).coerceIn(0f, 1f)
+                    if (localT <= 0f) continue
+                    drewRiseCluster = true
+                    val risePx = -risePeakPx * sin(PI.toFloat() * localT)
+                    val box = layoutResult.getBoundingBox(clusterCharOffsets[ci])
+                    withTransform({ translate(top = risePx) }) {
+                        clipRect(
+                            left = box.left,
+                            top = box.top - risePeakPx,
+                            right = box.right,
+                            bottom = box.bottom + risePeakPx,
+                        ) {
+                            drawText(layoutResult, brush = wipeBrush)
+                        }
+                    }
+                }
+                if (!drewRiseCluster) {
+                    clipRect(left = bounds.left, top = bounds.top, right = bounds.right, bottom = bounds.bottom) {
+                        drawText(layoutResult, brush = wipeBrush)
+                    }
                 }
             }
         }

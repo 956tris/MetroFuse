@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationState
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDecay
 import androidx.compose.animation.core.animateFloatAsState
@@ -132,7 +133,9 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private const val LYRICS_ANCHOR_RATIO = 0.35f
-private const val SPICY_LYRICS_ANCHOR_RATIO = 0.47f
+// am-lyrics anchors the active line ~20% from the top so upcoming lines
+// stay visible below it.
+private const val SPICY_LYRICS_ANCHOR_RATIO = 0.20f
 private val LYRICS_ITEM_FALLBACK_HEIGHT_DP = 68.dp
 private val LYRICS_ITEM_GAP_DP = 16.dp
 private val SPICY_LYRICS_ITEM_GAP_DP = 4.dp
@@ -142,7 +145,9 @@ private val SPICY_LYRICS_FADE_TOP_DP = 72.dp
 private val SPICY_LYRICS_FADE_BOTTOM_DP = 72.dp
 private const val LYRICS_STAGGER_DELAY_PER_DISTANCE = 20
 private const val LYRICS_STAGGER_DELAY_MAX_MS = 200
-private const val APPLE_LYRICS_SCROLL_DURATION_MS = 360
+private const val APPLE_LYRICS_SCROLL_DURATION_MS = 400
+// am-lyrics scroll easing for line settles.
+private val AppleLyricsScrollEasing = CubicBezierEasing(0.41f, 0f, 0.12f, 0.99f)
 private const val APPLE_LYRICS_STAGGER_DELAY_PER_DISTANCE = 8
 private const val APPLE_LYRICS_STAGGER_DELAY_MAX_MS = 64
 private const val LYRICS_PREVIEW_TIME = 8000L
@@ -733,7 +738,7 @@ fun ExperimentalLyrics(
                         else {
                             tween(
                                 durationMillis = if (appleMusicLyrics) APPLE_LYRICS_SCROLL_DURATION_MS else 750,
-                                easing = FastOutSlowInEasing,
+                                easing = if (appleMusicLyrics) AppleLyricsScrollEasing else FastOutSlowInEasing,
                             )
                         },
                         label = "lyricsProviderOffset"
@@ -765,7 +770,7 @@ fun ExperimentalLyrics(
                                                         } else {
                                                             (distance * LYRICS_STAGGER_DELAY_PER_DISTANCE).coerceAtMost(LYRICS_STAGGER_DELAY_MAX_MS)
                                                         },
-                                                    easing = FastOutSlowInEasing,
+                                                    easing = if (appleMusicLyrics) AppleLyricsScrollEasing else FastOutSlowInEasing,
                                                 )
                                             },
                             label = "lyricStaggeredOffset_$listIndex"

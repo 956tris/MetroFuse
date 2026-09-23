@@ -8983,6 +8983,20 @@ class MusicService :
                 metadata = newPosition.mediaItem?.metadata ?: player.currentMetadata,
                 duration = currentPlaybackDurationIfReady(),
             )
+            // A user seek takes control: tear down any pending/in-flight
+            // blend (scheduled trigger, downbeat wait, held secondary,
+            // active ramp) so it can't yank the track out from under the
+            // landing position seconds later. Same takeover the widget
+            // skip buttons already perform via
+            // prepareManualPlaybackTransition().
+            if (crossfadeTriggerJob != null || crossfadePrepareJob != null ||
+                crossfadeJob?.isActive == true || secondaryPlayer != null || isCrossfading
+            ) {
+                prepareManualPlaybackTransition()
+                // An aborted mid-ramp speed bend would otherwise persist on
+                // this same track (no item transition will clean it up).
+                rampAutomixSpeedToNormal(reason = "seek-abort-blend")
+            }
             scheduleCrossfade(fromSeek = true)
         }
     }
@@ -8991,9 +9005,62 @@ class MusicService :
         crossfadeTriggerJob?.cancel()
         crossfadeTriggerJob = null
         if (isCrossfading || secondaryPlayer != null) return
+        // Fast pass with memory/tag data only: this runs on the ExoPlayer
+        // event thread on EVERY seek (slider drags fire seeks continuously),
+        // so it must never touch disk. Disk-backed fields (loudness,
+        // learned structure) refresh async below and re-arm once.
+        scheduleCrossfadeWith(
+            outData = automixTrackDataCached(player.currentMediaItem?.metadata),
+            fromSeek = fromSeek,
+        )
+        val mediaId = player.currentMediaItem?.mediaId
+        scope.launch(Dispatchers.IO) {
+            automixTrackData(player.currentMediaItem?.metadata)
+            withContext(Dispatchers.Main) {
+                if (player.currentMediaItem?.mediaId == mediaId &&
+                    !isCrossfading && secondaryPlayer == null
+                ) {
+                    // Propagate fromSeek: if the user's seek landed inside
+                    // the window, the fast pass deliberately declined — the
+                    // refresh must decline too, or it would yank seconds
+                    // after the seek. (fromSeek only suppresses the
+                    // immediate-start branch; legitimate in-window starts
+                    // come from the armed trigger job.)
+                    scheduleCrossfadeWith(
+                        outData = automixTrackDataCached(player.currentMediaItem?.metadata),
+                        fromSeek = fromSeek,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Memory/tag-only Automix data: tag BPM/key, else the in-memory cache.
+     * Never hits the DB — safe on the event thread. The async refresh in
+     * [scheduleCrossfade] warms [automixMetadataCache], so refined values
+     * converge on the re-arm without ever blocking playback callbacks.
+     */
+    private fun automixTrackDataCached(metadata: MediaMetadata?): AutomixTrackData {
+        val tagBpm = metadata?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM }
+        val tagKey = metadata?.keySignature?.takeIf { it.isNotBlank() }
+        val mem = metadata?.id?.takeIf { it.isNotBlank() }?.let { automixMetadataCache[it] }
+        return AutomixTrackData(
+            bpm = tagBpm ?: mem?.bpm?.takeIf { it in AUTOMIX_MIN_BPM..AUTOMIX_MAX_BPM },
+            key = tagKey ?: mem?.keySignature?.takeIf { it.isNotBlank() },
+            lufs = null,
+            structure = null,
+        )
+    }
+
+    private fun scheduleCrossfadeWith(outData: AutomixTrackData, fromSeek: Boolean) {
+        crossfadeTriggerJob?.cancel()
+        crossfadeTriggerJob = null
+        if (isCrossfading || secondaryPlayer != null) return
         // Single persisted-data fetch per scheduling pass (was 3-4 scattered
         // round-trips before): BPM, key, loudness, learned structure.
-        val outData = automixTrackData(player.currentMediaItem?.metadata)
+        // NOTE: [outData] is cache-only here; disk-backed fields arrive via
+        // the async refresh in [scheduleCrossfade].
         val automixProfile = currentAutomixProfile(outData.bpm)
         // Automix carries its own bar-derived duration; otherwise the plain
         // crossfade duration applies.

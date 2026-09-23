@@ -860,28 +860,40 @@ fun BottomSheetPlayer(
     // source, HLS without a MIME type, 403, corrupt embed) left an empty
     // slot. The video reports readiness through onReadyChange below.
     var playerCanvasReady by remember(playerCanvasBackground?.url) { mutableStateOf(false) }
+    // Apple motion canvas readiness: same pattern — the video must be
+    // composed to report, but the artwork must not hide until it renders.
+    var appleCanvasReady by remember(appleLikeCanvasBackground?.url) { mutableStateOf(false) }
     // Compose (and start loading) the video as soon as a URL exists, but only
     // treat it as shown once it actually renders. Otherwise the composition
     // that reports readiness would never enter the composition (deadlock) or
     // a broken URL would hide the artwork and leave an empty slot.
-    val hasPlayerCanvasVideo = playerCanvasBackground != null && state.progress > 0.1f
+    // Thresholds are derivedStateOf: progress ticks every drag frame, but
+    // these booleans only flip once per gesture, so the player tree stops
+    // recomposing for the whole open/close animation.
+    val hasPlayerCanvasVideo by remember(playerCanvasBackground) {
+        derivedStateOf { playerCanvasBackground != null && state.progress > 0.1f }
+    }
     val shouldShowCanvasBackground = hasPlayerCanvasVideo && playerCanvasReady
-    val shouldShowAppleMusicFadeBackground =
-        experimentalAppleMusicCoverFade &&
+    val shouldShowAppleMusicFadeBackground by remember(appleLikeCanvasBackground, experimentalAppleMusicCoverFade) {
+        derivedStateOf {
+            experimentalAppleMusicCoverFade &&
                 appleLikeCanvasBackground != null &&
                 state.progress > 0.1f
+        }
+    }
     // Galaxy styles win over Apple motion canvas (Spotify canvas still
     // takes over everything); otherwise the video would bury the galaxy.
     val galaxyOverridesAppleCanvas =
         playerBackground == PlayerBackgroundStyle.GALAXY || playerBackground == PlayerBackgroundStyle.GALAXY_BLUR
     val shouldReplaceLargeArtworkWithCanvas =
-        shouldShowCanvasBackground || (shouldShowAppleMusicFadeBackground && !galaxyOverridesAppleCanvas)
+        shouldShowCanvasBackground || (shouldShowAppleMusicFadeBackground && appleCanvasReady && !galaxyOverridesAppleCanvas)
     val effectivePlayerBackground =
         if (shouldShowCanvasBackground) {
             PlayerBackgroundStyle.BLUR
-        } else if (shouldShowAppleMusicFadeBackground && playerBackground == PlayerBackgroundStyle.DEFAULT) {
-            PlayerBackgroundStyle.BLUR
         } else {
+            // No BLUR override for the Apple fade: the Apple treatment
+            // carries its own blurred base, and flipping the whole
+            // background branch mid-gesture pops instead of fading.
             playerBackground
         }
     val database = LocalDatabase.current
@@ -1918,6 +1930,7 @@ fun BottomSheetPlayer(
                         fadeColor = appleFadeColor ?: appleFadeFallbackColor,
                         splitRatio = appleFadeSplitRatio,
                         preservePlayerBackdrop = playerBackground != PlayerBackgroundStyle.DEFAULT,
+                        onReadyChange = { ready -> appleCanvasReady = ready },
                         modifier =
                             Modifier
                                 .fillMaxSize()
@@ -3358,6 +3371,7 @@ fun AppleMusicFadedCanvasBackground(
     splitRatio: Float,
     preservePlayerBackdrop: Boolean,
     modifier: Modifier = Modifier,
+    onReadyChange: ((Boolean) -> Unit)? = null,
 ) {
     // Where the video's own content starts fading out. Feathering begins a bit before the
     // 60% crop line so the video never just "stops" at a hard edge.
@@ -3402,7 +3416,8 @@ fun AppleMusicFadedCanvasBackground(
                 media = media,
                 shouldPlay = shouldPlay,
                 modifier = Modifier.fillMaxSize(),
-                scrimAlpha = 0.4f
+                scrimAlpha = 0.4f,
+                onReadyChange = onReadyChange,
             )
         }
 

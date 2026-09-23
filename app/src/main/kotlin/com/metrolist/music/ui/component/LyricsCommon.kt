@@ -115,11 +115,13 @@ internal fun SpicyIntervalDots(
 
     LaunchedEffect(visible) {
         if (visible) {
-            rowHeightPx.animateTo(1f, tween(180))
-            alpha.animateTo(1f, tween(180))
+            // am-lyrics instrumental enter: 400ms rise.
+            rowHeightPx.animateTo(1f, tween(400))
+            alpha.animateTo(1f, tween(400))
         } else {
-            alpha.animateTo(0f, tween(180))
-            rowHeightPx.animateTo(0f, tween(180))
+            // am-lyrics instrumental exit: 350ms collapse to scale 0.
+            alpha.animateTo(0f, tween(350))
+            rowHeightPx.animateTo(0f, tween(350))
         }
     }
 
