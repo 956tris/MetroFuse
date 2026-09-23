@@ -150,12 +150,14 @@ object ProviderHealthChecker {
                 detail = "Fallback Deezer audio resolver",
                 body = """{"formats":["MP3_128"],"ids":[$DEEZER_HEALTH_TRACK_ID],"fast":true}""",
             ),
-            getTarget(
+            Target(
                 id = "apple_token",
                 group = "Apple Music",
                 name = "Apple Music Token API",
-                endpoint = "https://yesitworkssomehow-funny-deeza-api-and-yeah.hf.space/apple/token",
-                detail = "Authorization token for Apple Music API",
+                endpoint = "https://amp-api.music.apple.com/v1/catalog/us/songs",
+                detail = "Hardcoded JWT validated against the Apple Music API",
+                requestFactory = { null },
+                customCheck = { target, startedAt -> checkAppleToken(target, startedAt) },
             ),
             appleStreamTarget(),
             *tidalResolverTargets.toTypedArray(),
@@ -174,11 +176,38 @@ object ProviderHealthChecker {
             customCheck = { target, startedAt -> checkAppleStream(target, startedAt) },
         )
 
-    private fun checkAppleStream(
+    private fun checkAppleToken(
         target: Target,
         startedAt: Long,
     ): Result {
-        // We need a token first
+        // Token is hardcoded — validate it directly against the AMP API.
+        val token = runBlocking {
+            com.metrolist.music.apple.AppleMusicCanvasProvider.getToken()
+        } ?: return Result(target, Status.OFFLINE, elapsedMs(startedAt), "No Apple Music token")
+
+        val ampUrl = com.metrolist.music.apple.AppleMusicCanvasProvider.buildAmpUrl(
+            "https://amp-api.music.apple.com/v1/catalog/us/songs",
+            mapOf("filter[isrc]" to APPLE_HEALTH_ISRC)
+        )
+        val ampRequest = com.metrolist.music.apple.AppleMusicCanvasProvider.ampRequest(ampUrl, token)
+
+        return runCatching {
+            client.newCall(ampRequest).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Result(target, Status.OFFLINE, elapsedMs(startedAt), "AMP API HTTP ${response.code} — token rejected")
+                } else {
+                    Result(target, Status.ONLINE, elapsedMs(startedAt), "Token accepted by AMP API")
+                }
+            }
+        }.getOrElse {
+            Result(target, Status.OFFLINE, elapsedMs(startedAt), "AMP check failed: ${it.message}")
+        }
+    }
+
+    private fun checkAppleStream(
+        target: Target,
+        startedAt: Long,
+    ): Result {        // We need a token first
         val token = runBlocking {
             com.metrolist.music.apple.AppleMusicCanvasProvider.getToken()
         } ?: return Result(target, Status.OFFLINE, elapsedMs(startedAt), "Could not fetch Apple Music token")

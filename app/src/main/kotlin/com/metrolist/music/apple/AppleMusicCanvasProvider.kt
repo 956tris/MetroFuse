@@ -11,8 +11,6 @@ import com.metrolist.music.utils.CanvasQueryCleaner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
@@ -28,7 +26,7 @@ import java.util.concurrent.TimeUnit
  * amp-api.music.apple.com AMP API.
  *
  *
- * Token is obtained from the self hosted JWT endpoint so it never expires.
+ * Auth uses a hardcoded Apple Music JWT (see [HARDCODED_JWT]).
  * Results are cached in-memory by ISRC (or song+artist if no ISRC available).
  *
  * NOTE: The [AppleMusicCanvas.animated] URL is an HLS m3u8 stream — if
@@ -39,18 +37,15 @@ object AppleMusicCanvasProvider {
 
     private const val TAG = "AppleMusicCanvasProvider"
 
-    // Your own JWT server — token never expires
-    private const val TOKEN_URL =
-        "https://yesitworkssomehow-funny-deeza-api-and-yeah.hf.space/apple/token"
+    // Hardcoded Apple Music JWT for AMP API search + animated covers.
+    private const val HARDCODED_JWT =
+        "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6IldlYlBsYXlLaWQifQ.eyJpc3MiOiJBTVBXZWJQbGF5IiwiaWF0IjoxNzg5Njg4NzA5LCJleHAiOjE3OTU3MzY3MDksInJvb3RfaHR0cHNfb3JpZ2luIjpbImFwcGxlLmNvbSJdfQ.y0gd6YWyrUrZx-YZNZS0xVHkDHGr-kGZ9RrsWRfApGc2-_NNC968VsD36hRU33s5BBs4KdB7LIZTmYqPra097Q"
 
     private const val AMP_BASE = "https://amp-api.music.apple.com"
     private const val STOREFRONT = "us"
 
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-
-    // How long (ms) to reuse a fetched token before refreshing
-    private const val TOKEN_TTL_MS = 30 * 60 * 1_000L
 
     private val VIDEO_URL_REGEX = Regex("""\.(m3u8|mp4)(\?|$)""", RegexOption.IGNORE_CASE)
 
@@ -72,22 +67,12 @@ object AppleMusicCanvasProvider {
     private val negativeCache = ConcurrentHashMap<String, Long>()
     private const val NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1_000L
 
-    // Token + its fetch timestamp
-    @Volatile private var cachedToken: String? = null
-    @Volatile private var tokenFetchedAt: Long = 0L
-
     // ---------- HTTP client ----------
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(6, TimeUnit.SECONDS)
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
-
-    // Serializes token fetches so two concurrent requests (e.g. the SQUARE and
-    // TALL lookups fired together from MusicService) don't both race to hit
-    // the token endpoint at once on a cache-miss/cold-start — the second
-    // caller just waits and reuses whatever the first one fetched.
-    private val tokenMutex = Mutex()
 
     // ---------- Matching debug ----------
 
@@ -371,58 +356,15 @@ object AppleMusicCanvasProvider {
         ((isrc?.takeIf { it.isNotBlank() } ?: "$song\u001F$artist") + "\u001F$aspect").lowercase()
 
     /**
-     * Borrow the current Apple Music JWT (fetching one if needed) so other
-     * components can reuse the project's token endpoint instead of duplicating
-     * the auth flow. Used by [com.metrolist.music.providers.IsrcResolver] to
+     * Returns the hardcoded Apple Music JWT so other components can reuse it
+     * instead of duplicating the auth flow. Used by [com.metrolist.music.providers.IsrcResolver] to
      * validate ISRCs against the Apple Music catalog.
      */
     internal suspend fun borrowToken(forceRefresh: Boolean = false): String? =
         getToken(forceRefresh)
 
-    /** Fetch (or return cached) Bearer token from the project JWT endpoint. */
-    internal suspend fun getToken(forceRefresh: Boolean = false): String? {
-        // Fast path: don't even take the lock if we already have a fresh token.
-        if (!forceRefresh) {
-            val fresh = cachedToken
-            if (fresh != null && (System.currentTimeMillis() - tokenFetchedAt) < TOKEN_TTL_MS) return fresh
-        }
-
-        return tokenMutex.withLock {
-            val now = System.currentTimeMillis()
-            if (!forceRefresh) {
-                val cached = cachedToken
-                if (cached != null && (now - tokenFetchedAt) < TOKEN_TTL_MS) return@withLock cached
-            }
-
-            runCatching {
-                val req = Request.Builder().url(TOKEN_URL).header("User-Agent", USER_AGENT).get().build()
-                val body = http.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        Timber.tag(TAG).w("Token endpoint returned ${resp.code}")
-                        return@runCatching null
-                    }
-                    resp.body?.string()?.trim()
-                } ?: return@runCatching null
-
-                // Handle both a raw JWT string and a JSON wrapper
-                val token = when {
-                    body.startsWith("eyJ") -> body
-                    else -> {
-                        val json = JSONObject(body)
-                        json.optString("token").takeIf { it.startsWith("eyJ") }
-                            ?: json.optString("jwt").takeIf { it.startsWith("eyJ") }
-                            ?: json.optString("access_token").takeIf { it.startsWith("eyJ") }
-                    }
-                }
-                if (token != null) {
-                    cachedToken = token
-                    tokenFetchedAt = now
-                }
-                token
-            }.onFailure { Timber.tag(TAG).e(it, "Failed to fetch Apple Music token") }
-                .getOrNull()
-        }
-    }
+    /** Returns the hardcoded Apple Music Bearer token for the AMP API. */
+    internal suspend fun getToken(forceRefresh: Boolean = false): String? = HARDCODED_JWT
 
     /**
      * Builds an AMP catalog URL with the exact query-param shape confirmed to

@@ -2,7 +2,6 @@ package com.metrolist.paxsenix
 
 import com.metrolist.music.betterlyrics.TTMLParser
 import com.metrolist.paxsenix.models.AppleMusicSearchResponse
-import com.metrolist.paxsenix.models.AppleTokenResponse
 import com.metrolist.paxsenix.models.LyricsResponse
 import com.metrolist.paxsenix.models.SearchResult
 import io.ktor.client.HttpClient
@@ -12,8 +11,6 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.bodyAsText
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import timber.log.Timber
 import java.net.URLEncoder
@@ -253,38 +250,16 @@ internal object AppleMusicLyrics {
     }
 
     private class AppleTokenManager(private val httpClient: HttpClient) {
-        private var cachedToken: String? = null
-        private val mutex = Mutex()
-
         companion object {
-            private const val TOKEN_ENDPOINT = "https://yesitworkssomehow-funny-deeza-api-and-yeah.hf.space/apple/token"
-            private val tokenJson = Json { ignoreUnknownKeys = true }
+            // Hardcoded Apple Music JWT for AMP API search.
+            private const val HARDCODED_JWT =
+                "eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiIsImtpZCI6IldlYlBsYXlLaWQifQ.eyJpc3MiOiJBTVBXZWJQbGF5IiwiaWF0IjoxNzg5Njg4NzA5LCJleHAiOjE3OTU3MzY3MDksInJvb3RfaHR0cHNfb3JpZ2luIjpbImFwcGxlLmNvbSJdfQ.y0gd6YWyrUrZx-YZNZS0xVHkDHGr-kGZ9RrsWRfApGc2-_NNC968VsD36hRU33s5BBs4KdB7LIZTmYqPra097Q"
         }
 
-        suspend fun getToken(): String = mutex.withLock {
-            cachedToken?.let { return it }
-
-            try {
-                // Instant JWT from a hosted token endpoint instead of scraping
-                // beta.music.apple.com's HTML + JS bundle (slow, and brittle
-                // whenever Apple reshuffles their asset paths).
-                val response = httpClient.get(TOKEN_ENDPOINT)
-                val body = tokenJson.decodeFromString<AppleTokenResponse>(response.bodyAsText())
-                val token = body.token.takeIf { it.isNotBlank() }
-                    ?: throw Exception("Token endpoint returned an empty token")
-
-                cachedToken = token
-                Timber.d("Fetched new Apple Music token from $TOKEN_ENDPOINT")
-                return token
-            } catch (e: Exception) {
-                Timber.e(e, "Error fetching Apple Music token")
-                throw Exception("Error fetching Apple Music token: ${e.message}", e)
-            }
-        }
+        suspend fun getToken(): String = HARDCODED_JWT
 
         fun clearToken() {
-            cachedToken = null
-            Timber.d("Cleared cached Apple Music token")
+            // No-op: the token is hardcoded, nothing to clear.
         }
     }
 }
