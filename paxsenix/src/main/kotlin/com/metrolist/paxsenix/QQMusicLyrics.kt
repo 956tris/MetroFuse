@@ -9,6 +9,8 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -24,6 +26,7 @@ import kotlinx.serialization.json.putJsonObject
 import timber.log.Timber
 import java.io.File
 import java.security.MessageDigest
+import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.Inflater
 import kotlin.math.abs
@@ -36,10 +39,14 @@ import kotlin.math.abs
  *      (DoSearchForQQMusicDesktop -> req.data.body.song.list[] with
  *      mid/songmid, id/songid, name/title, singer[].name, album.name,
  *      interval, time_public).
- *   2. QRC first: c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg using the
- *      numeric songid, triple-DES + inflate (see QQMusicDes.kt), converted to
- *      the app's rich-sync format so word-by-word highlighting works.
- *   3. LRC fallback only when QRC is unavailable:
+ *   2. QRC first (word-timed): c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg
+ *      using the numeric songid, triple-DES cascade + inflate (see
+ *      QQMusicDes.kt), converted to the app's rich-sync format.
+ *   3. Word-by-word fallback (also word-timed, different endpoint — the
+ *      musichallSong.PlayLyricInfo "qrc" payload, same verified DES cascade):
+ *      POST u.y.qq.com/cgi-bin/musicu.fcg GetPlayLyricInfo.
+ *      QRC and word-by-word are raced in parallel; QRC wins.
+ *   4. LRC last resort:
  *      GET c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg
  *      ?songmid=<mid>&format=json&nobase64=1 ("lyric" field).
  *
@@ -51,8 +58,13 @@ import kotlin.math.abs
 internal object QQMusicLyrics {
     private const val TAG = "QQLyrics"
 
-    /** Hard timeout so a slow QQ call never delays lyrics. */
-    private const val QQ_TIMEOUT_MS = 1800L
+    /**
+     * Total internal budget: search (~350ms) + QRC/word-by-word race (~350ms
+     * each, in parallel) + LRC fallback. Must stay under LyricsHelper's
+     * 8s per-provider cap. (A previous 1.8s budget timed out on real
+     * mobile networks before any lyric call finished — total breakage.)
+     */
+    private const val QQ_TIMEOUT_MS = 7500L
 
     /** Minimum score for a candidate to be accepted (see scoring below). */
     private const val MIN_SCORE = 150
@@ -120,7 +132,7 @@ internal object QQMusicLyrics {
                 cachedSongid?.let { songidMem[cachedMid] = it }
                 Timber.tag(TAG).d("query='%s' cache=hit mid=%s", query, cachedMid)
                 lyricsMem[cachedMid] ?: readLyricsDisk(cachedMid)?.also { lyricsMem[cachedMid] = it }
-                    ?: fetchLyricContent(cachedMid, query, songidHint = cachedSongid)
+                    ?: fetchLyricContent(cachedMid, query, title, artist, album, duration, songidHint = cachedSongid)
             } else {
                 val candidates = search(query)
                 Timber.tag(TAG).d("query='%s' candidates=%d", query, candidates.size)
@@ -136,7 +148,7 @@ internal object QQMusicLyrics {
                 best.songid?.let { songidMem[mid] = it }
                 writeMidDisk(cacheKey, mid, best.songid)
                 lyricsMem[mid] ?: readLyricsDisk(mid)?.also { lyricsMem[mid] = it }
-                    ?: fetchLyricContent(mid, query, songidHint = best.songid)
+                    ?: fetchLyricContent(mid, query, title, artist, album, duration, songidHint = best.songid)
             }
         }
 
@@ -160,23 +172,140 @@ internal object QQMusicLyrics {
         return "${normalizeForMatch(title, keep)}\n${normalizeForMatch(artist, keep)}\n${(duration / 5) * 5}"
     }
 
-    /** QRC first (word-timed, by numeric songid), LRC fallback (by songmid). Only LRC when QRC is unavailable. */
-    private suspend fun fetchLyricContent(mid: String, query: String, songidHint: Long? = null): String {
-        // QRC attempt when we have a numeric songid.
-        if (songidHint != null) {
-            val qrc = downloadAndDecrypt(songidHint).getOrNull()?.let(::toAppLyricsFormat)
-            if (!qrc.isNullOrBlank() && qrc.contains('[')) {
-                lyricsMem[mid] = qrc
-                writeLyricsDisk(mid, qrc)
-                return qrc
+    /**
+     * Lyric chain: QRC first, word-by-word fallback, LRC last resort.
+     * QRC and word-by-word are both word-timed and race in parallel
+     * (each ~350ms); QRC wins, so a missing QRC costs zero extra wait.
+     */
+    private suspend fun fetchLyricContent(
+        mid: String,
+        query: String,
+        title: String,
+        artist: String,
+        album: String?,
+        duration: Int,
+        songidHint: Long? = null,
+    ): String = coroutineScope {
+        val qrcDeferred = async {
+            runCatching {
+                val songid = songidHint ?: throw IllegalStateException("no songid for QRC")
+                val decoded = downloadAndDecrypt(songid).getOrThrow()
+                toAppLyricsFormat(decoded).takeIf { it.isNotBlank() && hasWordTimings(it) }
+                    ?: throw IllegalStateException("QRC has no word timings (songid=$songid)")
             }
         }
-        // LRC fallback.
+        val wbwDeferred = async {
+            runCatching {
+                val songid = songidHint ?: throw IllegalStateException("no songid for word-by-word")
+                val decoded = fetchWordByWord(title, artist, album, duration, songid).getOrThrow()
+                toAppLyricsFormat(decoded).takeIf { it.isNotBlank() && hasWordTimings(it) }
+                    ?: throw IllegalStateException("word-by-word has no timings (mid=$mid)")
+            }
+        }
+        qrcDeferred.await().onSuccess { qrc ->
+            Timber.tag(TAG).d("query='%s' stage=QRC chars=%d", query, qrc.length)
+            lyricsMem[mid] = qrc
+            writeLyricsDisk(mid, qrc)
+            return@coroutineScope qrc
+        }.onFailure {
+            Timber.tag(TAG).d("query='%s' QRC miss: %s", query, it.message)
+        }
+        wbwDeferred.await().onSuccess { wbw ->
+            Timber.tag(TAG).d("query='%s' stage=word-by-word chars=%d", query, wbw.length)
+            lyricsMem[mid] = wbw
+            writeLyricsDisk(mid, wbw)
+            return@coroutineScope wbw
+        }.onFailure {
+            Timber.tag(TAG).d("query='%s' word-by-word miss: %s", query, it.message)
+        }
+        // LRC last resort.
         val lrc = fetchLrc(mid).getOrThrow()
+        Timber.tag(TAG).d("query='%s' stage=LRC chars=%d", query, lrc.length)
         lyricsMem[mid] = lrc
         writeLyricsDisk(mid, lrc)
-        return lrc
+        lrc
     }
+
+    private fun hasWordTimings(text: String): Boolean =
+        text.contains(Regex("""\(\d+,\d+\)"""))
+
+    // ---- Word-by-word via musichallSong.PlayLyricInfo (different endpoint,
+    // same verified DES cascade — confirmed against QQMusicDecoder,
+    // qqmusic_api and folia-major, which all use this one cipher) ----
+
+    private suspend fun fetchWordByWord(
+        title: String,
+        artist: String,
+        album: String?,
+        duration: Int,
+        songid: Long,
+    ): Result<String> = runCatching {
+        val body = buildJsonObject {
+            putJsonObject("comm") {
+                put("ct", 11)
+                put("cv", "1003006")
+                put("v", "1003006")
+                put("os_ver", "15")
+                put("tmeAppID", "qqmusiclight")
+                put("nettype", "NETWORK_WIFI")
+                put("udid", "0")
+                put("uid", "0")
+            }
+            putJsonObject("request") {
+                put("module", "music.musichallSong.PlayLyricInfo")
+                put("method", "GetPlayLyricInfo")
+                putJsonObject("param") {
+                    put("albumName", b64(album.orEmpty()))
+                    put("crypt", 1)
+                    put("ct", 19)
+                    put("cv", 2111)
+                    put("interval", duration)
+                    put("lrc_t", 0)
+                    put("qrc", 1)
+                    put("qrc_t", 0)
+                    put("roma", 1)
+                    put("roma_t", 0)
+                    put("singerName", b64(artist))
+                    put("songID", songid)
+                    put("songName", b64(title))
+                    put("trans", 1)
+                    put("trans_t", 0)
+                    put("type", 0)
+                }
+            }
+        }
+        val response = httpClient.post("https://u.y.qq.com/cgi-bin/musicu.fcg") {
+            header("Referer", "https://y.qq.com/")
+            header("Cookie", "tmeLoginType=-1")
+            header("User-Agent", "okhttp/3.14.9")
+            contentType(ContentType.Application.Json)
+            setBody(body.toString())
+        }
+        val root = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
+            ?: throw IllegalStateException("Bad PlayLyricInfo response")
+        // The envelope key echoes the request ("request", leniently also "req").
+        val reqObj = root["request"] as? JsonObject ?: root["req"] as? JsonObject
+        val data = reqObj?.get("data") as? JsonObject
+            ?: throw IllegalStateException("No PlayLyricInfo data (codes root=${root["code"]})")
+        val hex = data["lyric"]?.jsonPrimitive?.contentOrNull?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("No word-by-word lyric payload")
+        // crypt=1 means DES-cascade hex; if the payload already carries
+        // timestamps (crypt=0 style), use it directly.
+        if (!hex.contains(Regex("""\(\d+,\d+\)""")) && !hex.contains('[')) {
+            return@runCatching decryptQrcPayload(hex)
+        }
+        hex
+    }.onFailure { e ->
+        Timber.tag(TAG).d("word-by-word fetch failed: %s", e.message)
+    }
+
+    private fun b64(s: String): String =
+        Base64.getEncoder().encodeToString(s.toByteArray(Charsets.UTF_8))
+
+    /** Shared QRC cipher: hex -> triple-DES cascade -> inflate -> UTF-8. */
+    private fun decryptQrcPayload(hex: String): String =
+        String(inflate(decryptQrcPayloadBytes(hexToBytes(hex))), Charsets.UTF_8)
 
     // ---- New musicu.fcg search ----
 
@@ -199,10 +328,14 @@ internal object QQMusicLyrics {
                 put("inCharset", "utf-8")
                 put("outCharset", "utf-8")
             }
-            putJsonObject("req") {
+            // Envelope key MUST be req_1 (bare "req" is ignored by QQ and
+            // yields an empty body — every working client uses req_1).
+            // The response echoes the same key.
+            putJsonObject("req_1") {
                 put("module", "music.search.SearchCgiService")
                 put("method", "DoSearchForQQMusicDesktop")
                 putJsonObject("param") {
+                    put("remoteplace", "txt.yqq.center")
                     put("query", query)
                     put("num_per_page", 10)
                     put("page_num", 1)
@@ -212,16 +345,38 @@ internal object QQMusicLyrics {
         }
         val response = httpClient.post("https://u.y.qq.com/cgi-bin/musicu.fcg") {
             header("Referer", "https://y.qq.com/")
+            header(
+                "User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36",
+            )
             contentType(ContentType.Application.Json)
             setBody(body.toString())
         }
         val root = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
             ?: return@runCatching emptyList()
-        val list = root["req"]?.jsonObject
-            ?.get("data")?.jsonObject
+        // Envelope key echoes the request (req_1); lenient fallbacks for
+        // older/newer shapes so a key drift never means zero candidates.
+        val reqObj = root["req_1"] as? JsonObject
+            ?: root["req"] as? JsonObject
+            ?: root["request"] as? JsonObject
+            ?: root["music.search.SearchCgiService"] as? JsonObject
+        if (reqObj == null) {
+            Timber.tag(TAG).d(
+                "search '%s': no envelope (code=%s keys=%s)",
+                query,
+                root["code"]?.toString(),
+                root.keys.joinToString(","),
+            )
+            return@runCatching emptyList()
+        }
+        val songObj = reqObj["data"]?.jsonObject
             ?.get("body")?.jsonObject
             ?.get("song")?.jsonObject
-            ?.get("list")?.jsonArray
+        val list = songObj?.get("list")?.jsonArray
+            ?: reqObj["data"]?.jsonObject
+                ?.get("body")?.jsonObject
+                ?.get("songlist")?.jsonObject
+                ?.get("list")?.jsonArray
             ?: return@runCatching emptyList()
         list.mapNotNull { (it as? JsonObject)?.toCandidate() }
     }.onFailure { e ->
@@ -230,15 +385,17 @@ internal object QQMusicLyrics {
 
     private fun JsonObject.toCandidate(): Candidate? {
         val singers = (this["singer"] as? JsonArray)
-            ?.mapNotNull { (it as? JsonObject)?.qqField("name") }
+            ?.mapNotNull { (it as? JsonObject)?.qqField("name", "title") }
             .orEmpty()
-        val albumName = (this["album"] as? JsonObject)?.qqField("name")
+        // album is an object {name,title,mid,id} in musicu.fcg responses
+        // (flat "albumname" only in the legacy client_search_cp shape).
+        val albumName = (this["album"] as? JsonObject)?.qqField("name", "title")
             ?: qqField("albumname", "album")
         return Candidate(
             raw = this,
             mid = qqField("mid", "songmid"),
             songid = qqLong("id", "songid"),
-            title = qqField("name", "title", "songname"),
+            title = qqField("title", "name", "songname"),
             singers = singers,
             album = albumName,
             interval = qqLong("interval", "duration"),
@@ -341,7 +498,7 @@ internal object QQMusicLyrics {
     }
 
     private fun splitArtists(artist: String): List<String> =
-        artist.split(Regex("""\s*(?:&|/|,|、|x|\bfeat\.?|\bft\.?|\bwith\b|\band\b)\s*""", RegexOption.IGNORE_CASE))
+        artist.split(Regex("""\s*(?:&|/|,|、|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\band\b)\s*""", RegexOption.IGNORE_CASE))
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .ifEmpty { listOf(artist.trim()) }
@@ -357,10 +514,18 @@ internal object QQMusicLyrics {
         }
         val root = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
             ?: throw IllegalStateException("Bad LRC response for mid=$mid")
-        val lyric = root["lyric"]?.jsonPrimitive?.contentOrNull
+        val raw = root["lyric"]?.jsonPrimitive?.contentOrNull
             ?.let(::unescapeEntities)?.trim()
-            ?.takeIf { it.isNotBlank() && it.contains('[') }
-            ?: throw IllegalStateException("No LRC lyric for mid=$mid")
+            ?.takeIf { it.isNotBlank() }
+        // Plain text with timestamps wins; otherwise the payload may still
+        // be base64 despite nobase64=1 — decode and re-check.
+        val lyric = when {
+            raw != null && raw.contains('[') -> raw
+            raw != null -> runCatching {
+                String(Base64.getDecoder().decode(raw), Charsets.UTF_8).trim()
+            }.getOrNull()?.takeIf { it.contains('[') }
+            else -> null
+        } ?: throw IllegalStateException("No LRC lyric for mid=$mid")
         lyric
     }.onFailure { e ->
         Timber.tag(TAG).w("LRC fetch failed for mid=%s: %s", mid, e.message)
@@ -400,13 +565,16 @@ internal object QQMusicLyrics {
             ?: contentBlock
 
         val encrypted = hexToBytes(hex)
-        val step1 = QQMusicDes.crypt(encrypted, KEY1, decrypt = true)
-        val step2 = QQMusicDes.crypt(step1, KEY2, decrypt = false)
-        val step3 = QQMusicDes.crypt(step2, KEY3, decrypt = true)
-        val inflated = inflate(step3)
-        String(inflated, Charsets.UTF_8)
+        String(inflate(decryptQrcPayloadBytes(encrypted)), Charsets.UTF_8)
     }.onFailure { e ->
         Timber.tag(TAG).w("QRC download/decrypt failed for songid=%d: %s", songid, e.message)
+    }
+
+    /** Triple-DES cascade over raw bytes (shared by both word-timed stages). */
+    private fun decryptQrcPayloadBytes(encrypted: ByteArray): ByteArray {
+        val step1 = QQMusicDes.crypt(encrypted, KEY1, decrypt = true)
+        val step2 = QQMusicDes.crypt(step1, KEY2, decrypt = false)
+        return QQMusicDes.crypt(step2, KEY3, decrypt = true)
     }
 
     /** Converts either QRC XML (word-timed) or plain LRC into the app's LyricsUtils rich-sync format. */
