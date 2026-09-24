@@ -2455,44 +2455,50 @@ class MusicService :
                         .filterExplicit(dataStore.get(HideExplicitKey, false))
                         .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
                 }
-            if (queue.preloadItem != null && player.playbackState == STATE_IDLE) return@launch
-            if (initialStatus.title != null) {
-                queueTitle = initialStatus.title
-            }
-            if (initialStatus.items.isEmpty()) return@launch
-            // Track original queue size for shuffle playlist first feature
-            originalQueueSize = initialStatus.items.size
-            if (queue.preloadItem != null) {
-                player.addMediaItems(
-                    0,
-                    initialStatus.items.subList(0, initialStatus.mediaItemIndex),
-                )
-                player.addMediaItems(
-                    initialStatus.items.subList(
-                        initialStatus.mediaItemIndex + 1,
-                        initialStatus.items.size,
-                    ),
-                )
-            } else {
-                player.setMediaItems(
-                    initialStatus.items,
-                    if (initialStatus.mediaItemIndex >
-                        0
-                    ) {
-                        initialStatus.mediaItemIndex
-                    } else {
-                        0
-                    },
-                    initialStatus.position,
-                )
-                player.prepare()
-                player.playWhenReady = playWhenReady
-            }
+            // Media3 enforces application-thread affinity: everything below
+            // touches the player, so pin it to Main. (A worker-thread resume
+            // here insta-crashes with "Player is accessed on the wrong
+            // thread".)
+            withContext(Dispatchers.Main) {
+                if (queue.preloadItem != null && player.playbackState == STATE_IDLE) return@withContext
+                if (initialStatus.title != null) {
+                    queueTitle = initialStatus.title
+                }
+                if (initialStatus.items.isEmpty()) return@withContext
+                // Track original queue size for shuffle playlist first feature
+                originalQueueSize = initialStatus.items.size
+                if (queue.preloadItem != null) {
+                    player.addMediaItems(
+                        0,
+                        initialStatus.items.subList(0, initialStatus.mediaItemIndex),
+                    )
+                    player.addMediaItems(
+                        initialStatus.items.subList(
+                            initialStatus.mediaItemIndex + 1,
+                            initialStatus.items.size,
+                        ),
+                    )
+                } else {
+                    player.setMediaItems(
+                        initialStatus.items,
+                        if (initialStatus.mediaItemIndex >
+                            0
+                        ) {
+                            initialStatus.mediaItemIndex
+                        } else {
+                            0
+                        },
+                        initialStatus.position,
+                    )
+                    player.prepare()
+                    player.playWhenReady = playWhenReady
+                }
 
-            // Rebuild shuffle order if shuffle is enabled
-            if (player.shuffleModeEnabled) {
-                val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
+                // Rebuild shuffle order if shuffle is enabled
+                if (player.shuffleModeEnabled) {
+                    val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
+                    applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
+                }
             }
         }
     }
