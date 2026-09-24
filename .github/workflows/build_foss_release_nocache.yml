@@ -1,0 +1,87 @@
+name: Build FOSS Release (No Cache)
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build_foss_release_nocache:
+    name: Build FOSS Release (No Cache)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      - name: Set Up Gradle (caching disabled)
+        uses: gradle/actions/setup-gradle@v5
+        with:
+          cache-disabled: true
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Restore release keystore
+        run: |
+          mkdir -p app/keystore
+          echo "${{ secrets.KEYSTORE }}" | base64 -d > app/keystore/release.keystore
+
+      - name: Clean + Build FOSS Release APK (no build cache)
+        run: ./gradlew --console=plain clean assembleFossRelease --no-build-cache --warning-mode summary
+        env:
+          METROLIST_APPLICATION_ID: com.metroapple.music
+          METROLIST_APP_NAME: MetroFuse
+          PULL_REQUEST: "false"
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Move and rename signed APKs
+        run: |
+          OUTPUT_DIR="app/build/outputs/apk/foss/release"
+          mkdir -p "$OUTPUT_DIR/out"
+
+          shopt -s nullglob
+          COUNT=0
+          for SIGNED_APK in "$OUTPUT_DIR"/*.apk; do
+            if [[ "$SIGNED_APK" == *"arm64-v8a"* ]]; then
+              ABI="arm64-v8a"
+            elif [[ "$SIGNED_APK" == *"armeabi-v7a"* ]]; then
+              ABI="armeabi-v7a"
+            else
+              ABI="universal"
+            fi
+            mv "$SIGNED_APK" "$OUTPUT_DIR/out/MetroFuse-${ABI}.apk"
+            COUNT=$((COUNT + 1))
+          done
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No signed APK found for foss"
+            ls -la "$OUTPUT_DIR"
+            exit 1
+          fi
+
+          echo "APKs renamed ($COUNT):"
+          ls -la "$OUTPUT_DIR/out/"
+
+      - name: Upload Signed APKs
+        uses: actions/upload-artifact@v6
+        with:
+          name: MetroFuse-foss-release-nocache
+          path: app/build/outputs/apk/foss/release/out/*.apk

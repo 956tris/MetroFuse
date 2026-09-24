@@ -23,6 +23,8 @@ val metroFuseVersionCode = 800
 val metroFuseVersionName = "8.0"
 // Embedded into crash reports so a report always proves which commit built
 // the APK (versionCode/Name alone can't - every local build is 8.0/800).
+// A "-dirty" suffix means the tree had uncommitted changes at build time,
+// so the APK may not match the reported commit.
 val gitSha: String =
     runCatching {
         ProcessBuilder("git", "rev-parse", "--short", "HEAD")
@@ -33,7 +35,19 @@ val gitSha: String =
                 process.waitFor()
                 process.inputStream.bufferedReader().readText().trim()
             }
-    }.getOrNull()?.takeIf { it.isNotBlank() } ?: "unknown"
+    }.getOrNull()?.takeIf { it.isNotBlank() }?.let { sha ->
+        val dirty = runCatching {
+            ProcessBuilder("git", "status", "--porcelain")
+                .directory(rootDir)
+                .redirectErrorStream(true)
+                .start()
+                .let { process ->
+                    process.waitFor()
+                    process.inputStream.bufferedReader().readText().trim().isNotEmpty()
+                }
+        }.getOrDefault(false)
+        if (dirty) "$sha-dirty" else sha
+    } ?: "unknown"
 val metroFuseUpdateRepository = "956tris/MetroFuse"
 val discordRpcApplicationId = "1508739806186963045"
 val applicationIdOverride = System.getenv("METROLIST_APPLICATION_ID")?.takeIf { it.isNotBlank() }

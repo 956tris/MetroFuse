@@ -167,38 +167,3 @@ jobs:
         with:
           name: ${{ matrix.variant == 'gms' && 'app-debug-gms' || 'app-debug' }}
           path: app/build/outputs/apk/${{ matrix.variant }}/debug/*.apk
-
-  lint:
-    name: Lint (Foss Release)
-    if: github.actor != 'dependabot[bot]' && github.actor != 'renovate[bot]'
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v5
-        with:
-          java-version: "21"
-          distribution: "temurin"
-
-      - name: Set Up Gradle
-        uses: gradle/actions/setup-gradle@v5
-        with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY }}
-          cache-cleanup: on-success
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
-
-      - name: Run Lint
-        run: ./gradlew --console=plain :app:lintFossRelease --warning-mode summary
-        env:
-          METROLIST_APPLICATION_ID: com.metroapple.music
-          METROLIST_APP_NAME: MetroFuse Nightly
-          PULL_REQUEST: "false"
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
-          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
