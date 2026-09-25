@@ -1631,7 +1631,7 @@ fun BottomSheetPlayer(
 
     // Also update position when playback state changes (e.g., song change, seek)
     LaunchedEffect(playbackState, mediaMetadata?.id) {
-        if (!isCasting) {
+        if (!isCasting && sliderPosition == null) {
             position = playerConnection.player.currentPosition
             duration = playerConnection.player.duration
             bufferedPosition = playerConnection.player.bufferedPosition

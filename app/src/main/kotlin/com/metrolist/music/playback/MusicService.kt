@@ -5412,9 +5412,15 @@ class MusicService :
         isSilenceSkipping = true
         try {
             var hops = 0
+            var lastHopTarget = -1L
             val silenceProcessor = playerSilenceProcessors[player] ?: return
             while (coroutineContext.isActive && instantSilenceSkipEnabled.value && silenceProcessor.isCurrentlySilent()) {
                 val current = player.currentPosition
+                // The user takes control: if the playhead moved somewhere we
+                // didn't put it (a manual seek landed mid-loop), stop hopping
+                // instead of yanking it +15s and making the seek snap back.
+                // Natural playback advance between hops is far below this.
+                if (lastHopTarget >= 0L && abs(current - lastHopTarget) > 2_000L) break
                 val target = (current + INSTANT_SILENCE_SKIP_STEP_MS).coerceAtMost(duration - 500)
 
                 if (target <= current) break
@@ -5422,6 +5428,7 @@ class MusicService :
                 // Reset silence tracking before seeking to prevent immediate re-trigger
                 silenceProcessor.resetTracking()
                 player.seekTo(target)
+                lastHopTarget = target
                 hops++
 
                 if (hops >= 80 || target >= duration - 500) break
@@ -9042,6 +9049,11 @@ class MusicService :
             // buttons). Otherwise its delayed re-seek lands after this seek
             // and snaps the playhead back.
             cancelPendingPlaybackRecovery()
+            // Same takeover for the instant-silence hopper: an in-flight hop
+            // loop would otherwise yank the playhead +15s right after this
+            // seek and make it look like the seek snapped back. Fresh silence
+            // after the seek re-arms naturally via the detector callback.
+            silenceSkipJob?.cancel()
             val seekPosition =
                 newPosition.positionMs
                     .takeUnless { it == C.TIME_UNSET }
