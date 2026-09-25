@@ -134,10 +134,17 @@ constructor(
             MediaSessionConstants.ACTION_TOGGLE_LIKE -> toggleLike()
             MediaSessionConstants.ACTION_TOGGLE_START_RADIO -> toggleStartRadio()
             MediaSessionConstants.ACTION_TOGGLE_LIBRARY -> toggleLibrary()
-            MediaSessionConstants.ACTION_TOGGLE_SHUFFLE -> session.player.shuffleModeEnabled =
-                !session.player.shuffleModeEnabled
+            MediaSessionConstants.ACTION_TOGGLE_SHUFFLE -> scope.launch {
+                // Callbacks run on a binder thread, never Main: hop before
+                // touching the player (thread affinity).
+                runCatching {
+                    session.player.shuffleModeEnabled = !session.player.shuffleModeEnabled
+                }
+            }
 
-            MediaSessionConstants.ACTION_TOGGLE_REPEAT_MODE -> session.player.toggleRepeatMode()
+            MediaSessionConstants.ACTION_TOGGLE_REPEAT_MODE -> scope.launch {
+                runCatching { session.player.toggleRepeatMode() }
+            }
             MediaSessionConstants.ACTION_ADD_TO_TARGET_PLAYLIST -> addToTargetPlaylist()
         }
         return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))

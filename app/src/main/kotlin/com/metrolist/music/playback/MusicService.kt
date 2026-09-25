@@ -2420,11 +2420,6 @@ class MusicService :
         queue: Queue,
         playWhenReady: Boolean = true,
     ) {
-        // TEMP-DEBUG CRUMB (H2/H3): remove after thread-crash diagnosis.
-        Timber.tag(TAG).d(
-            "CRUMB playQueue entry thread=${Thread.currentThread().name} queue=${queue.javaClass.simpleName}\n" +
-                Thread.currentThread().stackTrace.take(15).joinToString("\n"),
-        )
         // Safety Check : Ensuring player is initilized
         if (!playerInitialized.value) {
             Timber.tag(TAG).w("playQueue called before player initialization, queuing request")
@@ -2466,8 +2461,6 @@ class MusicService :
             player.playWhenReady = playWhenReady
         }
         scope.launch(SilentHandler) {
-            // TEMP-DEBUG CRUMB (H2): remove after thread-crash diagnosis.
-            Timber.tag(TAG).d("CRUMB playQueue fetch-start thread=${Thread.currentThread().name}")
             val initialStatus =
                 withContext(Dispatchers.IO) {
                     queue
@@ -2475,15 +2468,11 @@ class MusicService :
                         .filterExplicit(dataStore.get(HideExplicitKey, false))
                         .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
                 }
-            // TEMP-DEBUG CRUMB (H2): remove after thread-crash diagnosis.
-            Timber.tag(TAG).d("CRUMB playQueue fetch-end thread=${Thread.currentThread().name}")
             // Media3 enforces application-thread affinity: everything below
             // touches the player, so pin it to Main. (A worker-thread resume
             // here insta-crashes with "Player is accessed on the wrong
             // thread".)
             withContext(Dispatchers.Main) {
-                // TEMP-DEBUG CRUMB (H2): remove after thread-crash diagnosis.
-                Timber.tag(TAG).d("CRUMB playQueue main-resume thread=${Thread.currentThread().name}")
                 if (queue.preloadItem != null && player.playbackState == STATE_IDLE) return@withContext
                 if (initialStatus.title != null) {
                     queueTitle = initialStatus.title
@@ -2528,8 +2517,6 @@ class MusicService :
     }
 
     fun startRadioSeamlessly() {
-        // TEMP-DEBUG CRUMB (H2/H3): remove after thread-crash diagnosis.
-        Timber.tag(TAG).d("CRUMB startRadioSeamlessly entry thread=${Thread.currentThread().name}")
         // Safety Check: Ensure Player is initilized
         if (!playerInitialized.value) {
             Timber.tag(TAG).w("startRadioSeamlessly called before player initialization")
@@ -8621,9 +8608,12 @@ class MusicService :
 
         // Save episode position before destroying
         val currentMetadata = player.currentMediaItem?.metadata
-        if (currentMetadata?.isEpisode == true && player.currentPosition > 0) {
+        // Capture position on Main: the IO block below must not touch the
+        // player (thread affinity).
+        val currentPosition = player.currentPosition
+        if (currentMetadata?.isEpisode == true && currentPosition > 0) {
             runBlocking(Dispatchers.IO) {
-                database.updatePlaybackPosition(currentMetadata.id, player.currentPosition)
+                database.updatePlaybackPosition(currentMetadata.id, currentPosition)
             }
         }
 
@@ -9048,6 +9038,14 @@ class MusicService :
     }
 
     private fun scheduleCrossfade(fromSeek: Boolean = false) {
+        // Player has Main-thread affinity: every read below (currentMediaItem,
+        // duration, ...) insta-crashes off-main. Re-dispatch like playQueue.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            scope.launch {
+                scheduleCrossfade(fromSeek)
+            }
+            return
+        }
         crossfadeTriggerJob?.cancel()
         crossfadeTriggerJob = null
         if (isCrossfading || secondaryPlayer != null) return
@@ -9060,8 +9058,11 @@ class MusicService :
             fromSeek = fromSeek,
         )
         val mediaId = player.currentMediaItem?.mediaId
+        // Capture on Main: the IO worker below must never touch the player
+        // (thread affinity) — this argument was the "wrong thread" insta-crash.
+        val trackMetadata = player.currentMediaItem?.metadata
         scope.launch(Dispatchers.IO) {
-            automixTrackData(player.currentMediaItem?.metadata)
+            automixTrackData(trackMetadata)
             withContext(Dispatchers.Main) {
                 if (player.currentMediaItem?.mediaId == mediaId &&
                     !isCrossfading && secondaryPlayer == null
