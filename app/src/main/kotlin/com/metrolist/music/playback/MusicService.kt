@@ -2250,6 +2250,19 @@ class MusicService :
         }
     }
 
+    /**
+     * A manual seek takes control: drop any pending error-recovery whose
+     * delayed re-seek would otherwise land after the user's seek and yank
+     * the playhead away (416 restarts from 0, URL recoveries re-seek a stale
+     * position). Retry counters are left intact, so a genuinely failing
+     * stream still recovers or fails through the normal path on its next
+     * error event.
+     */
+    fun cancelPendingPlaybackRecovery() {
+        retryJob?.cancel()
+        retryJob = null
+    }
+
     private fun skipOnError() {
         /**
          * Auto skip to the next media item on error.
@@ -4680,6 +4693,11 @@ class MusicService :
 
                 // Force re-prepare from position 0 to avoid range issues
                 val currentIndex = player.currentMediaItemIndex
+                if (currentIndex == C.INDEX_UNSET) {
+                    Timber.tag(TAG).w("Invalid media item index during 416 recovery")
+                    handleFinalFailure()
+                    return@launch
+                }
                 player.seekTo(currentIndex, 0)
                 player.prepare()
 
@@ -4712,6 +4730,11 @@ class MusicService :
                 // Re-prepare the player
                 val currentPosition = player.currentPosition
                 val currentIndex = player.currentMediaItemIndex
+                if (currentIndex == C.INDEX_UNSET) {
+                    Timber.tag(TAG).w("Invalid media item index during page-reload recovery")
+                    handleFinalFailure()
+                    return@launch
+                }
                 player.seekTo(currentIndex, currentPosition)
                 player.prepare()
 
@@ -4741,6 +4764,11 @@ class MusicService :
                 // Seek to current position to force URL re-resolution
                 val currentPosition = player.currentPosition
                 val currentIndex = player.currentMediaItemIndex
+                if (currentIndex == C.INDEX_UNSET) {
+                    Timber.tag(TAG).w("Invalid media item index during expired-URL recovery")
+                    handleFinalFailure()
+                    return@launch
+                }
                 player.seekTo(currentIndex, currentPosition)
                 player.prepare()
 
@@ -9009,6 +9037,11 @@ class MusicService :
             scheduleAudioFormatRefresh(mediaId)
         }
         if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+            // A manual seek takes control: drop any pending error-recovery
+            // first (covers seeks issued straight on the player, e.g. skip
+            // buttons). Otherwise its delayed re-seek lands after this seek
+            // and snaps the playhead back.
+            cancelPendingPlaybackRecovery()
             val seekPosition =
                 newPosition.positionMs
                     .takeUnless { it == C.TIME_UNSET }

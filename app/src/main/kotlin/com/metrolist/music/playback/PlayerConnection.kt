@@ -36,6 +36,7 @@ import com.metrolist.music.utils.get
 import com.metrolist.music.utils.reportException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -46,6 +47,7 @@ import timber.log.Timber
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -387,23 +389,53 @@ class PlayerConnection(
     }
 
     /**
-     * Seek to position - handles Cast when active
+     * Seek to position - handles Cast when active.
+     *
+     * A manual seek takes control: pending error-recovery is cancelled first
+     * so its delayed re-seek can't land afterwards and snap the playhead
+     * back. A delayed verification re-issues a dropped seek once (same
+     * player instance, window and media only) and logs loudly if the
+     * playhead still won't move.
      */
+    private var seekGeneration = 0L
+
     fun seekTo(position: Long) {
         try {
             val castHandler = service.castConnectionHandler
             if (castHandler?.isCasting?.value == true) {
                 castHandler.seekTo(position)
             } else {
+                service.cancelPendingPlaybackRecovery()
                 val currentPlayer = player
                 val currentIndex = currentPlayer.currentMediaItemIndex
+                val target = position.coerceAtLeast(0L)
+                val targetMediaId = currentPlayer.currentMediaItem?.mediaId
                 if (currentIndex >= 0) {
-                    currentPlayer.seekTo(currentIndex, position.coerceAtLeast(0L))
+                    currentPlayer.seekTo(currentIndex, target)
                 } else {
-                    currentPlayer.seekTo(position.coerceAtLeast(0L))
+                    currentPlayer.seekTo(target)
                 }
                 if (currentPlayer.playbackState == Player.STATE_IDLE || currentPlayer.playbackState == Player.STATE_ENDED) {
                     currentPlayer.prepare()
+                }
+                val generation = ++seekGeneration
+                scope.launch {
+                    delay(350)
+                    if (generation != seekGeneration) return@launch
+                    val freshPlayer = runCatching { player }.getOrNull() ?: return@launch
+                    if (freshPlayer !== currentPlayer) return@launch
+                    if (freshPlayer.currentMediaItem?.mediaId != targetMediaId) return@launch
+                    if (freshPlayer.currentMediaItemIndex != currentIndex) return@launch
+                    val state = freshPlayer.playbackState
+                    if (state != Player.STATE_READY && state != Player.STATE_BUFFERING) return@launch
+                    if (abs(freshPlayer.currentPosition - target) > 2500L) {
+                        Timber.tag(TAG).e(
+                            "Seek to %dms did not land (at %dms); re-issuing once",
+                            target,
+                            freshPlayer.currentPosition,
+                        )
+                        runCatching { freshPlayer.seekTo(freshPlayer.currentMediaItemIndex, target) }
+                    }
                 }
             }
         } catch (e: Exception) {
