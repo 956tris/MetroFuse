@@ -2420,11 +2420,29 @@ class MusicService :
         queue: Queue,
         playWhenReady: Boolean = true,
     ) {
+        // TEMP-DEBUG CRUMB (H2/H3): remove after thread-crash diagnosis.
+        Timber.tag(TAG).d(
+            "CRUMB playQueue entry thread=${Thread.currentThread().name} queue=${queue.javaClass.simpleName}\n" +
+                Thread.currentThread().stackTrace.take(15).joinToString("\n"),
+        )
         // Safety Check : Ensuring player is initilized
         if (!playerInitialized.value) {
             Timber.tag(TAG).w("playQueue called before player initialization, queuing request")
             scope.launch {
                 playerInitialized.first { it }
+                playQueue(queue, playWhenReady)
+            }
+            return
+        }
+        // Media3 enforces application-thread affinity on EVERY player call
+        // below (including the coroutine launched further down, which
+        // inherits this thread's context): a background-thread caller
+        // insta-crashes with "Player is accessed on the wrong thread".
+        // Re-dispatch to Main instead — same fire-and-forget shape as the
+        // wait path above, zero behaviour change for main-thread callers.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Timber.tag(TAG).w("playQueue called off-main, re-dispatching")
+            scope.launch {
                 playQueue(queue, playWhenReady)
             }
             return
@@ -2448,6 +2466,8 @@ class MusicService :
             player.playWhenReady = playWhenReady
         }
         scope.launch(SilentHandler) {
+            // TEMP-DEBUG CRUMB (H2): remove after thread-crash diagnosis.
+            Timber.tag(TAG).d("CRUMB playQueue fetch-start thread=${Thread.currentThread().name}")
             val initialStatus =
                 withContext(Dispatchers.IO) {
                     queue
@@ -2455,11 +2475,15 @@ class MusicService :
                         .filterExplicit(dataStore.get(HideExplicitKey, false))
                         .filterVideoSongs(dataStore.get(HideVideoSongsKey, false))
                 }
+            // TEMP-DEBUG CRUMB (H2): remove after thread-crash diagnosis.
+            Timber.tag(TAG).d("CRUMB playQueue fetch-end thread=${Thread.currentThread().name}")
             // Media3 enforces application-thread affinity: everything below
             // touches the player, so pin it to Main. (A worker-thread resume
             // here insta-crashes with "Player is accessed on the wrong
             // thread".)
             withContext(Dispatchers.Main) {
+                // TEMP-DEBUG CRUMB (H2): remove after thread-crash diagnosis.
+                Timber.tag(TAG).d("CRUMB playQueue main-resume thread=${Thread.currentThread().name}")
                 if (queue.preloadItem != null && player.playbackState == STATE_IDLE) return@withContext
                 if (initialStatus.title != null) {
                     queueTitle = initialStatus.title
@@ -2504,9 +2528,21 @@ class MusicService :
     }
 
     fun startRadioSeamlessly() {
+        // TEMP-DEBUG CRUMB (H2/H3): remove after thread-crash diagnosis.
+        Timber.tag(TAG).d("CRUMB startRadioSeamlessly entry thread=${Thread.currentThread().name}")
         // Safety Check: Ensure Player is initilized
         if (!playerInitialized.value) {
             Timber.tag(TAG).w("startRadioSeamlessly called before player initialization")
+            return
+        }
+        // Same thread-affinity rule as playQueue: the reads below touch the
+        // player, so an off-main caller (e.g. a MediaSession binder thread via
+        // toggleStartRadio) must re-dispatch instead of insta-crashing.
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            Timber.tag(TAG).w("startRadioSeamlessly called off-main, re-dispatching")
+            scope.launch {
+                startRadioSeamlessly()
+            }
             return
         }
 
@@ -2544,21 +2580,25 @@ class MusicService :
                         item.mediaId != currentMediaId
                     }
 
-                if (radioItems.isNotEmpty()) {
-                    val itemCount = player.mediaItemCount
+                // Same thread-affinity rule as playQueue: the IO hop above
+                // must not leak into player calls.
+                withContext(Dispatchers.Main) {
+                    if (radioItems.isNotEmpty()) {
+                        val itemCount = player.mediaItemCount
 
-                    if (itemCount > currentIndex + 1) {
-                        player.removeMediaItems(currentIndex + 1, itemCount)
+                        if (itemCount > currentIndex + 1) {
+                            player.removeMediaItems(currentIndex + 1, itemCount)
+                        }
+
+                        player.addMediaItems(currentIndex + 1, radioItems)
+                        if (player.shuffleModeEnabled) {
+                            val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
+                            applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
+                        }
                     }
 
-                    player.addMediaItems(currentIndex + 1, radioItems)
-                    if (player.shuffleModeEnabled) {
-                        val shufflePlaylistFirst = dataStore.get(ShufflePlaylistFirstKey, false)
-                        applyShuffleOrder(player.currentMediaItemIndex, player.mediaItemCount, shufflePlaylistFirst)
-                    }
+                    currentQueue = radioQueue
                 }
-
-                currentQueue = radioQueue
             } catch (e: Exception) {
                 // Fallback: try with related endpoint
                 try {
