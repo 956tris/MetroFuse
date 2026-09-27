@@ -1309,6 +1309,12 @@
     <string name="apple_music_quality_aac_he_web">AAC-HE (Web)</string>
     <string name="apple_music_quality_aac_he_binaural">AAC-HE (Binaural)</string>
     <string name="apple_music_quality_aac_he_downmix">AAC-HE (Downmix)</string>
+    <string name="apple_music_resolver_endpoints">Apple Music API endpoints</string>
+    <string name="apple_music_resolver_endpoints_desc_default">No custom API endpoints configured.</string>
+    <string name="apple_music_resolver_endpoints_desc_custom">Using %1$d custom API endpoint(s)</string>
+    <string name="apple_music_resolver_endpoints_placeholder">https://geeked-api.onrender.com/stream</string>
+    <string name="apple_music_resolver_endpoints_helper">Add Apple stream API base URLs (one per line). Each API is called as {base}/stream?url={appleMusicUrl}&amp;codec={codec}, where codec is the selected quality (e.g. aac). These are tried in order.</string>
+    <string name="apple_music_reset_resolver">Reset Apple Music APIs</string>
 
     <!-- Accessibility -->
     <string name="back">Back</string>

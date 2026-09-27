@@ -128,6 +128,7 @@ val UpdateNotificationsEnabledKey = booleanPreferencesKey("updateNotifications")
 val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
 val AppleAudioQualityKey = stringPreferencesKey("appleAudioQuality")
+val AppleResolverEndpointsKey = stringPreferencesKey("appleResolverEndpoints")
 val StopOnProviderErrorKey = booleanPreferencesKey("stopOnProviderError")
 val AudioProviderOrderKey = stringPreferencesKey("audioProviderOrder")
 val AudioProviderDisabledKey = stringPreferencesKey("audioProviderDisabled")

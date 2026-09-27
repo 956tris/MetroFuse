@@ -42,6 +42,7 @@ import com.metrolist.music.deezer.DeezerAudioDataSource
 import com.metrolist.music.apple.AppleAudioProvider
 import com.metrolist.music.constants.AppleAudioQuality
 import com.metrolist.music.constants.AppleAudioQualityKey
+import com.metrolist.music.constants.AppleResolverEndpointsKey
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
@@ -383,6 +384,7 @@ constructor(
                                 isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
                                 durationMs = song?.song?.duration?.toLong()?.times(1000L),
                                 quality = context.dataStore.get(AppleAudioQualityKey).toEnum(AppleAudioQuality.AAC),
+                                resolverEndpoints = context.dataStore.get(AppleResolverEndpointsKey, ""),
                             )
                         )
                     }

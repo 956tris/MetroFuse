@@ -209,6 +209,7 @@ import com.metrolist.music.constants.TidalAudioQuality
 import com.metrolist.music.constants.TidalAudioQualityKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.constants.TidalResolverEndpointsKey
+import com.metrolist.music.constants.AppleResolverEndpointsKey
 import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.constants.PlayerVolumeKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
@@ -5496,6 +5497,7 @@ class MusicService :
         return listOf(
             "tidalQuality=${tidalQuality.name}",
             "tidalResolvers=${TidalAudioProvider.resolverEndpointBases(tidalResolverEndpoints).joinToString(",").hashCode()}",
+            "appleResolvers=${AppleAudioProvider.resolverEndpointBases(dataStore.get(AppleResolverEndpointsKey, "")).joinToString(",").hashCode()}",
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
             "deezerProxy=${DeezerAudioProvider.normalizeProxyUrl(deezerProxyUrl).hashCode()}",
@@ -6507,6 +6509,7 @@ class MusicService :
                                 isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
                                 durationMs = (song?.song?.duration ?: (queuedMetadata?.duration))?.toLong()?.times(1000L),
                                 quality = dataStore.get<String>(AppleAudioQualityKey).toEnum(AppleAudioQuality.AAC),
+                                resolverEndpoints = dataStore.get(AppleResolverEndpointsKey, ""),
                             )
                         )
                     }

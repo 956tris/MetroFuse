@@ -7,8 +7,8 @@ package com.metrolist.music.ui.component
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -96,40 +96,55 @@ fun WavySlider(
         .height(containerHeight)
 
     val interactiveModifier = if (enabled) {
+        // A single pointerInput block handles both tap-to-seek and
+        // drag-to-seek. Two separate pointerInput blocks (one with
+        // detectTapGestures, one with detectHorizontalDragGestures) race:
+        // the tap detector consumes the initial pointer-down first, which
+        // makes the drag detector's touch-slop check see an
+        // already-consumed down event and bail out immediately. The result
+        // was that dragging never visually registered (isDragging never
+        // became true) and, on release, the tap handler fired instead using
+        // the ORIGINAL down position - i.e. the seek instantly "snapped
+        // back" to near where the gesture started instead of landing where
+        // the user dragged to.
         baseModifier
             .pointerInput(valueRange) {
-                detectTapGestures { offset ->
-                    val newValue = (offset.x / size.width).coerceIn(0f, 1f)
-                    val mappedValue = valueRange.start + newValue * (valueRange.endInclusive - valueRange.start)
-                    onValueChange(mappedValue)
-                    onValueChangeFinished?.invoke()
-                }
-            }
-            .pointerInput(valueRange) {
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        isDragging = true
-                        dragValue = (offset.x / size.width).coerceIn(0f, 1f)
-                        val mappedValue = valueRange.start + dragValue * (valueRange.endInclusive - valueRange.start)
-                        onValueChange(mappedValue)
-                    },
-                    onDragEnd = {
-                        isDragging = false
-                        onValueChangeFinished?.invoke()
-                    },
-                    onDragCancel = {
-                        isDragging = false
-                        // A cancelled drag must still finish: otherwise the
-                        // pending seek value sticks forever and the
-                        // position/buffer UI freezes at the touch point.
-                        onValueChangeFinished?.invoke()
-                    },
-                    onHorizontalDrag = { _, dragAmount ->
-                        dragValue = (dragValue + dragAmount / size.width).coerceIn(0f, 1f)
-                        val mappedValue = valueRange.start + dragValue * (valueRange.endInclusive - valueRange.start)
-                        onValueChange(mappedValue)
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+
+                    isDragging = true
+                    dragValue = (down.position.x / size.width).coerceIn(0f, 1f)
+                    onValueChange(
+                        valueRange.start + dragValue * (valueRange.endInclusive - valueRange.start)
+                    )
+
+                    var pointerId = down.id
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == pointerId }
+                            ?: event.changes.firstOrNull()
+                            ?: break
+                        pointerId = change.id
+
+                        if (!change.pressed) {
+                            // Pointer released or gesture cancelled. A
+                            // cancelled drag must still finish: otherwise
+                            // the pending seek value sticks forever and the
+                            // position/buffer UI freezes at the touch point.
+                            change.consume()
+                            isDragging = false
+                            onValueChangeFinished?.invoke()
+                            break
+                        }
+
+                        change.consume()
+                        dragValue = (change.position.x / size.width).coerceIn(0f, 1f)
+                        onValueChange(
+                            valueRange.start + dragValue * (valueRange.endInclusive - valueRange.start)
+                        )
                     }
-                )
+                }
             }
     } else {
         baseModifier

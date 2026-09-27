@@ -21,24 +21,29 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import com.metrolist.music.utils.rememberEnumPreference
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
 import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
+import com.metrolist.music.apple.AppleAudioProvider
 import com.metrolist.music.constants.AppleAudioQuality
 import com.metrolist.music.constants.AppleAudioQualityKey
 import com.metrolist.music.constants.AppleAudioQualityOptions
+import com.metrolist.music.constants.AppleResolverEndpointsKey
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
 import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
+import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
 import com.metrolist.music.utils.rememberPreference
 
@@ -48,7 +53,35 @@ fun AppleMusicSettings(
     navController: NavController,
 ) {
     var appleAudioQuality by rememberEnumPreference(AppleAudioQualityKey, AppleAudioQuality.AAC)
+    var resolverEndpoints by rememberPreference(AppleResolverEndpointsKey, "")
+    val customResolverEndpointCount =
+        remember(resolverEndpoints) {
+            if (resolverEndpoints.isBlank()) 0
+            else AppleAudioProvider.resolverEndpointBases(resolverEndpoints).size
+        }
     var showQualityDialog by rememberSaveable { mutableStateOf(false) }
+    var showResolverEndpointsDialog by rememberSaveable { mutableStateOf(false) }
+
+    if (showResolverEndpointsDialog) {
+        TextFieldDialog(
+            onDismiss = { showResolverEndpointsDialog = false },
+            icon = { Icon(painterResource(R.drawable.link), contentDescription = null) },
+            title = { Text(stringResource(R.string.apple_music_resolver_endpoints)) },
+            initialTextFieldValue = TextFieldValue(resolverEndpoints),
+            placeholder = { Text(stringResource(R.string.apple_music_resolver_endpoints_placeholder)) },
+            singleLine = false,
+            isInputValid = { value ->
+                AppleAudioProvider.isResolverEndpointsInputValid(value)
+            },
+            onDone = { value ->
+                resolverEndpoints = AppleAudioProvider.normalizeResolverEndpointsInput(value)
+                showResolverEndpointsDialog = false
+            },
+            extraContent = {
+                InfoLabel(text = stringResource(R.string.apple_music_resolver_endpoints_helper))
+            },
+        )
+    }
 
     if (showQualityDialog) {
         EnumDialog(
@@ -132,6 +165,34 @@ fun AppleMusicSettings(
                         },
                         icon = painterResource(R.drawable.settings),
                         onClick = { showQualityDialog = true },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.apple_music_resolver_endpoints)) },
+                        description = {
+                            Text(
+                                if (customResolverEndpointCount > 0) {
+                                    stringResource(
+                                        R.string.apple_music_resolver_endpoints_desc_custom,
+                                        customResolverEndpointCount,
+                                    )
+                                } else {
+                                    stringResource(R.string.apple_music_resolver_endpoints_desc_default)
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.link),
+                        onClick = {
+                            showResolverEndpointsDialog = true
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.apple_music_reset_resolver)) },
+                        description = { Text(stringResource(R.string.apple_music_resolver_endpoints_placeholder)) },
+                        icon = painterResource(R.drawable.delete),
+                        enabled = resolverEndpoints.isNotBlank(),
+                        onClick = {
+                            resolverEndpoints = ""
+                        },
                     ),
                 ),
         )

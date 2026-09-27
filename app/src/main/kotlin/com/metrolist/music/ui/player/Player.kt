@@ -971,9 +971,9 @@ fun BottomSheetPlayer(
         } else {
             positionMs.coerceAtLeast(0L)
         }
+        lastManualSeekTime = System.currentTimeMillis()
         if (isCasting) {
             castHandler?.seekTo(target)
-            lastManualSeekTime = System.currentTimeMillis()
         } else {
             playerConnection.seekTo(target)
         }

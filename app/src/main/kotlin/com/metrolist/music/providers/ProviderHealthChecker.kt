@@ -69,6 +69,7 @@ object ProviderHealthChecker {
         deezerResolverUrl: String,
         tidalResolverEndpoints: String = "",
         qobuzCustomInstances: String = "",
+        appleResolverEndpoints: String = "",
     ): List<Target> {
         val deezerResolver = normalizeDeezerResolverUrl(deezerResolverUrl)
         var customTidalIndex = 0
@@ -159,22 +160,25 @@ object ProviderHealthChecker {
                 requestFactory = { null },
                 customCheck = { target, startedAt -> checkAppleToken(target, startedAt) },
             ),
-            appleStreamTarget(),
+            *appleStreamTargets(appleResolverEndpoints).toTypedArray(),
             *tidalResolverTargets.toTypedArray(),
             *qobuzTargets.toTypedArray(),
         )
     }
 
-    private fun appleStreamTarget(): Target =
-        Target(
-            id = "apple_stream_api",
-            group = "Apple Music",
-            name = "Apple Music Stream Resolver",
-            endpoint = "https://yesitworkssomehow-funi-lyric-api.hf.space/stream",
-            detail = "Direct stream resolution service",
-            requestFactory = { null },
-            customCheck = { target, startedAt -> checkAppleStream(target, startedAt) },
-        )
+    private fun appleStreamTargets(customResolverEndpoints: String = ""): List<Target> =
+        com.metrolist.music.apple.AppleAudioProvider.resolverEndpointBases(customResolverEndpoints)
+            .mapIndexed { index, baseUrl ->
+                Target(
+                    id = "apple_stream_api_$index",
+                    group = "Apple Music",
+                    name = if (index == 0) "Apple Music Stream Resolver" else "Apple Music Stream Resolver ${index + 1}",
+                    endpoint = baseUrl,
+                    detail = "Direct stream resolution service (?url=&codec=)",
+                    requestFactory = { null },
+                    customCheck = { target, startedAt -> checkAppleStream(target, startedAt) },
+                )
+            }
 
     private fun checkAppleToken(
         target: Target,
@@ -233,11 +237,10 @@ object ProviderHealthChecker {
             root.optJSONArray("data")?.optJSONObject(0)?.optJSONObject("attributes")?.optString("url")
         } ?: return Result(target, Status.REACHABLE, elapsedMs(startedAt), "Could not find test track URL")
 
-        // Now check the actual stream resolver
-        val streamUrl = target.endpoint.toHttpUrlOrNull()?.newBuilder()
-            ?.addQueryParameter("url", appleUrl)
-            ?.addQueryParameter("codec", "aac-web")
-            ?.build()
+        // Now check the actual stream resolver: {base}/stream?url={appleUrl}&codec={codec}
+        val streamUrl = runCatching {
+            com.metrolist.music.apple.AppleAudioProvider.buildStreamUrl(target.endpoint, appleUrl, "aac")
+        }.getOrNull()
             ?: return Result(target, Status.OFFLINE, elapsedMs(startedAt), "Invalid stream URL")
 
         val streamRequest = Request.Builder().url(streamUrl).get().header("User-Agent", USER_AGENT).build()

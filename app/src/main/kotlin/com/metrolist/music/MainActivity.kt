@@ -104,6 +104,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastAny
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -1116,7 +1117,11 @@ class MainActivity : ComponentActivity() {
                         containerColor = chromeBg,
                         snackbarHost = { SnackbarHost(snackbarHostState) },
                         topBar = {
-                            Column {
+                            // BottomSheetPlayer stays composed full-screen at all times (it uses a
+                            // graphicsLayer translation to fake the collapsed offset instead of
+                            // relaying out), so its invisible expanded-player buttons otherwise sit
+                            // on top of this bar in z-order and silently eat taps meant for it.
+                            Column(modifier = Modifier.zIndex(1f)) {
                                 AnimatedVisibility(
                                     visible = shouldShowTopBar,
                                     enter = fadeIn(animationSpec = tween(durationMillis = 300)),

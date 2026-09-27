@@ -12,19 +12,22 @@ import com.metrolist.music.providers.ProviderIsrc
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import timber.log.Timber
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 object AppleAudioProvider {
     private const val TAG = "AppleAudioProvider"
-    private const val STREAM_API_BASE = "https://yesitworkssomehow-funi-lyric-api.hf.space/stream"
-    
+    const val DEFAULT_STREAM_API_BASE = "https://geeked-api.onrender.com/stream"
+    const val LEGACY_STREAM_API_BASE = "https://yesitworkssomehow-funi-lyric-api.hf.space/stream"
+
     private val appleUrlCache = ConcurrentHashMap<String, String>()
 
     data class Query(
@@ -34,7 +37,68 @@ object AppleAudioProvider {
         val isrc: String?,
         val durationMs: Long?,
         val quality: AppleAudioQuality = AppleAudioQuality.AAC_WEB,
+        val resolverEndpoints: String? = null,
     )
+
+    /**
+     * Parses user-configured custom Apple stream APIs (one per line, comma-,
+     * semicolon-, space- or tab-separated). Each entry may be a full
+     * `/stream` endpoint URL (e.g. `https://geeked-api.onrender.com/stream`)
+     * or a bare base URL (e.g. `https://my-api.example.com`), in which case
+     * `/stream` is appended. Returns the custom list, or the defaults when
+     * nothing valid is configured.
+     */
+    fun resolverEndpointBases(customResolverEndpoints: String? = null): List<String> {
+        val custom = customResolverEndpoints.normalizedResolverEndpoints()
+        if (custom.isNotEmpty()) return custom
+        return listOf(DEFAULT_STREAM_API_BASE, LEGACY_STREAM_API_BASE)
+    }
+
+    fun normalizeResolverEndpointsInput(value: String): String =
+        value.normalizedResolverEndpoints().joinToString("\n")
+
+    fun isResolverEndpointsInputValid(value: String): Boolean {
+        val entries = value.resolverEndpointTokens()
+        return entries.all { token -> token.normalizedResolverEndpointOrNull() != null }
+    }
+
+    private fun String?.normalizedResolverEndpoints(): List<String> =
+        orEmpty()
+            .resolverEndpointTokens()
+            .mapNotNull { token -> token.normalizedResolverEndpointOrNull() }
+            .distinctBy { it.lowercase(Locale.US) }
+
+    private fun String.resolverEndpointTokens(): List<String> =
+        split('\n', '\r', ',', ';', '\t', ' ')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
+    private fun String.normalizedResolverEndpointOrNull(): String? {
+        val candidate = trim()
+            .trimEnd('/')
+            .let { value ->
+                if (value.contains("://")) value else "https://$value"
+            }
+        val normalized = candidate.toHttpUrlOrNull()?.toString()?.trimEnd('/') ?: return null
+        // Accept either a bare host base or a full /stream endpoint.
+        return if (normalized.endsWith("/stream", ignoreCase = true)) normalized else "$normalized/stream"
+    }
+
+    /**
+     * Builds the exact request URL sent to a stream API:
+     * `{base}/stream?url={appleMusicUrl}&codec={codec}`
+     * where `codec` is the selected quality's codec string (e.g. `aac`).
+     */
+    fun buildStreamUrl(base: String, appleUrl: String, codec: String): String {
+        val streamBase = base.trim().trimEnd('/').let { value ->
+            if (value.endsWith("/stream", ignoreCase = true)) value else "$value/stream"
+        }
+        return streamBase.toHttpUrl().newBuilder()
+            .addQueryParameter("url", appleUrl)
+            .addQueryParameter("codec", codec)
+            .build()
+            .toString()
+    }
 
     data class Resolved(
         val mediaUri: String,
@@ -94,7 +158,8 @@ object AppleAudioProvider {
 
         var currentQuality = query.quality
         var directUrl: String? = null
-        
+        val apiBases = resolverEndpointBases(query.resolverEndpoints)
+
         // If current quality is in fallback chain, start from it and go down.
         // If not (e.g. AAC_HE), just try it once.
         val fallbackChain = if (currentQuality in codecsToTry) {
@@ -103,15 +168,18 @@ object AppleAudioProvider {
             listOf(currentQuality)
         }
 
-        for (quality in fallbackChain) {
+        outer@ for (quality in fallbackChain) {
             Timber.tag(TAG).d("[APPLE STREAM]\nCodec:\n${quality.toCodec()}")
-            try {
-                directUrl = getStreamUrl(appleUrl, quality)
-                break
-            } catch (e: Exception) {
-                Timber.tag(TAG).w("[APPLE STREAM]\nFallback:\n${currentQuality.toCodec()} -> ${quality.toCodec()}")
-                currentQuality = quality
+            for (base in apiBases) {
+                try {
+                    directUrl = getStreamUrl(base, appleUrl, quality)
+                    currentQuality = quality
+                    break@outer
+                } catch (e: Exception) {
+                    Timber.tag(TAG).w(e, "[APPLE STREAM] API failed: $base codec=${quality.toCodec()}")
+                }
             }
+            Timber.tag(TAG).w("[APPLE STREAM]\nFallback:\n${currentQuality.toCodec()} -> ${quality.toCodec()}")
         }
 
         if (directUrl == null) {
@@ -139,11 +207,8 @@ object AppleAudioProvider {
         )
     }
 
-    private fun getStreamUrl(appleUrl: String, quality: AppleAudioQuality): String {
-        val url = STREAM_API_BASE.toHttpUrl().newBuilder()
-            .addQueryParameter("url", appleUrl)
-            .addQueryParameter("codec", quality.toCodec())
-            .build()
+    private fun getStreamUrl(base: String, appleUrl: String, quality: AppleAudioQuality): String {
+        val url = buildStreamUrl(base, appleUrl, quality.toCodec())
 
         val request = Request.Builder()
             .url(url)
@@ -152,11 +217,10 @@ object AppleAudioProvider {
 
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw AppleResolutionException("STREAM_API_FAILED", "Non-200 response: ${response.code}")
+                throw AppleResolutionException("STREAM_API_FAILED", "Non-200 response: ${response.code} from $base")
             }
             // The API returns the stream directly, so the "directUrl" is actually the API URL itself
-            // Wait, if it returns the stream directly, then the mediaUri is the API URL.
-            return url.toString()
+            return url
         }
     }
 }

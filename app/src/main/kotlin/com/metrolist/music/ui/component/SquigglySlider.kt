@@ -12,8 +12,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -124,41 +124,57 @@ fun SquigglySlider(
             .height(48.dp)
             .then(
                 if (enabled) {
+                    // A single pointerInput block handles both tap-to-seek
+                    // and drag-to-seek. Two separate pointerInput blocks
+                    // (one with detectTapGestures, one with
+                    // detectDragGestures) race: the tap detector consumes
+                    // the initial pointer-down first, which makes the drag
+                    // detector's touch-slop check see an already-consumed
+                    // down event and bail out immediately. The result was
+                    // that dragging never visually registered (isDragging
+                    // never became true) and, on release, the tap handler
+                    // fired instead using the ORIGINAL down position - i.e.
+                    // the seek instantly "snapped back" to near where the
+                    // gesture started instead of landing where the user
+                    // dragged to.
                     Modifier
                         .pointerInput(valueRange) {
-                            detectTapGestures { offset ->
-                                val newPosition = (offset.x / size.width) * duration
-                                val mappedValue = valueRange.start + newPosition.coerceIn(0f, duration)
-                                onValueChange(mappedValue)
-                                onValueChangeFinished?.invoke()
-                            }
-                        }
-                        .pointerInput(valueRange) {
-                            detectDragGestures(
-                                onDragStart = { offset ->
-                                    isDragging = true
-                                    val newPosition = (offset.x / size.width) * duration
-                                    dragPosition = valueRange.start + newPosition.coerceIn(0f, duration)
-                                    onValueChange(dragPosition)
-                                },
-                                onDragEnd = {
-                                    isDragging = false
-                                    onValueChangeFinished?.invoke()
-                                },
-                                onDragCancel = {
-                                    isDragging = false
-                                    // A cancelled drag must still finish: otherwise the
-                                    // pending seek value sticks forever and the
-                                    // position/buffer UI freezes at the touch point.
-                                    onValueChangeFinished?.invoke()
-                                },
-                                onDrag = { change, _ ->
+                            awaitEachGesture {
+                                val down = awaitFirstDown()
+                                down.consume()
+
+                                isDragging = true
+                                val downPosition = (down.position.x / size.width) * duration
+                                dragPosition = valueRange.start + downPosition.coerceIn(0f, duration)
+                                onValueChange(dragPosition)
+
+                                var pointerId = down.id
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == pointerId }
+                                        ?: event.changes.firstOrNull()
+                                        ?: break
+                                    pointerId = change.id
+
+                                    if (!change.pressed) {
+                                        // Pointer released or gesture
+                                        // cancelled. A cancelled drag must
+                                        // still finish: otherwise the
+                                        // pending seek value sticks forever
+                                        // and the position/buffer UI
+                                        // freezes at the touch point.
+                                        change.consume()
+                                        isDragging = false
+                                        onValueChangeFinished?.invoke()
+                                        break
+                                    }
+
                                     change.consume()
                                     val newPosition = (change.position.x / size.width) * duration
                                     dragPosition = valueRange.start + newPosition.coerceIn(0f, duration)
                                     onValueChange(dragPosition)
                                 }
-                            )
+                            }
                         }
                 } else {
                     Modifier
