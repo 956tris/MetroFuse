@@ -50,11 +50,11 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 object DeezerAudioProvider {
-    const val DEFAULT_RESOLVER_URL = "https://yesitworkssomehow-funny-deeza-api-and-yeah.hf.space/get_url"
+    const val DEFAULT_RESOLVER_URL = "https://qobuz-urls.amax69420lol.workers.dev/get_url"
     const val DEFAULT_RESOLVER_URL_128 = "https://api-number-2-poopo.onrender.com/get_url"
     const val DEFAULT_PROXY_URL = ""
-    const val RENDER_RESOLVER_URL = "https://dzmedia-metrofuse.onrender.com/get_url"
-    const val RENDER_PROXY_BASE_URL = "https://dzmedia-metrofuse.onrender.com"
+    /** Dead endpoint kept only to migrate installs that still have it stored. */
+    const val LEGACY_RESOLVER_URL = "https://yesitworkssomehow-funny-deeza-api-and-yeah.hf.space/get_url"
 
     private const val BROWSER_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
@@ -317,8 +317,13 @@ object DeezerAudioProvider {
     fun isDeezerTrackId(value: String): Boolean =
         value.toDeezerTrackIdOrNull(allowPlainNumeric = false) != null
 
+    fun isLegacyResolverUrl(value: String): Boolean =
+        value.trim().trimEnd('/').equals(LEGACY_RESOLVER_URL.trimEnd('/'), ignoreCase = true)
+
     fun normalizeResolverUrl(value: String): HttpUrl {
-        val raw = value.trim().ifBlank { DEFAULT_RESOLVER_URL }
+        val raw =
+            value.trim().ifBlank { DEFAULT_RESOLVER_URL }
+                .let { if (isLegacyResolverUrl(it)) DEFAULT_RESOLVER_URL else it }
         val parsed = raw.toHttpUrlOrNull()
             ?: throw DeezerResolutionException("Invalid Deezer resolver URL")
         val cleanPath = parsed.encodedPath.trimEnd('/')
@@ -358,13 +363,22 @@ object DeezerAudioProvider {
         val inferredMode =
             when {
                 normalizedProxyUrl.isBlank() -> DeezerProxyMode.DIRECT
-                normalizedProxyUrl == normalizeProxyUrl(RENDER_PROXY_BASE_URL) -> DeezerProxyMode.RENDER
+                isFreeProxyUrl(normalizedProxyUrl) -> DeezerProxyMode.FREE
                 else -> DeezerProxyMode.CUSTOM
             }
+        // "RENDER" is a legacy stored value from before the Render server option was
+        // removed: fall through to the inferred mode so old installs keep working.
+        if (configuredProxyModeValue == "RENDER") return inferredMode
         return runCatching {
             DeezerProxyMode.valueOf(configuredProxyModeValue.orEmpty())
         }.getOrDefault(inferredMode)
     }
+
+    fun isFreeProxyUrl(normalizedProxyUrl: String): Boolean =
+        DeezerFreeProxies.findByHostPort(normalizedProxyUrl) != null
+
+    fun freePresetForProxyUrl(proxyUrl: String): DeezerFreeProxies.Preset? =
+        DeezerFreeProxies.findByHostPort(normalizeProxyUrl(proxyUrl))
 
     fun effectiveProxyUrl(
         configuredProxyMode: DeezerProxyMode,
@@ -373,12 +387,18 @@ object DeezerAudioProvider {
     ): String {
         return when (configuredProxyMode) {
             DeezerProxyMode.DIRECT -> DEFAULT_PROXY_URL
-            DeezerProxyMode.RENDER -> normalizeProxyUrl(RENDER_PROXY_BASE_URL)
-            DeezerProxyMode.CUSTOM -> {
+            DeezerProxyMode.FREE -> {
                 val normalized = normalizeProxyUrl(configuredProxyUrl)
-                normalized.ifBlank {
-                    if (globalProxyEnabled) normalizeProxyUrl(RENDER_PROXY_BASE_URL) else DEFAULT_PROXY_URL
+                when {
+                    normalized.isBlank() -> DEFAULT_PROXY_URL
+                    isFreeProxyUrl(normalized) -> normalized
+                    // Gracefully keep a user-pasted host:port while in FREE mode.
+                    proxyConfig(configuredProxyUrl) != null -> normalized
+                    else -> DEFAULT_PROXY_URL
                 }
+            }
+            DeezerProxyMode.CUSTOM -> {
+                normalizeProxyUrl(configuredProxyUrl)
             }
         }
     }
@@ -760,16 +780,24 @@ object DeezerAudioProvider {
      * an `api_token` + `license_token` via `deezer.getUserData`, backed by a cookie jar that
      * accumulates any `sid`/session cookies Deezer sets along the way so they get replayed to
      * both gw-light and the media CDN — mirroring the per-ARL cookie jar dzmedia uses server-side.
+     *
+     * When [proxyUrl] is a `host:port` HTTP proxy (free regional preset or custom), the
+     * signup/session bootstrap itself is routed through it, so login and streaming share
+     * the same egress region.
      */
-    private fun accountSession(cookie: String): AccountSession? {
+    private fun accountSession(
+        cookie: String,
+        proxyUrl: String = DEFAULT_PROXY_URL,
+    ): AccountSession? {
         val trimmedCookie = cookie.trim()
         if (trimmedCookie.isBlank()) return null
-        val cacheKey = trimmedCookie.hashCode().toString()
+        val normalizedProxy = normalizeProxyUrl(proxyUrl)
+        val cacheKey = "${trimmedCookie.hashCode()}::${normalizedProxy.hashCode()}"
         val now = System.currentTimeMillis()
         accountSessions[cacheKey]?.takeIf { it.expiresAtMs > now }?.let { return it }
 
         val jar = DeezerAccountCookieJar(trimmedCookie)
-        val sessionClient = client.newBuilder().cookieJar(jar).build()
+        val sessionClient = clientForProxy(client.newBuilder().cookieJar(jar).build(), normalizedProxy)
         val userDataUrl = GW_LIGHT_URL.toHttpUrl().newBuilder()
             .addQueryParameter("method", "deezer.getUserData")
             .addQueryParameter("input", "3")
@@ -874,7 +902,7 @@ object DeezerAudioProvider {
     ): StreamAttempt {
         val session = run {
             val startMs = System.currentTimeMillis()
-            val result = accountSession(cookie)
+            val result = accountSession(cookie, proxyUrl)
             Timber.tag("DeezerLatency").d(
                 "  accountSession() for $trackId: ${System.currentTimeMillis() - startMs}ms (${if (result != null) "cached/ok" else "failed"})",
             )

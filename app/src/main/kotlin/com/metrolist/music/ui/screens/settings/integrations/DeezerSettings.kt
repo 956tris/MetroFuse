@@ -22,6 +22,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -44,6 +45,7 @@ import com.metrolist.music.constants.DeezerProxyModeKey
 import com.metrolist.music.constants.DeezerProxyUrlKey
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.deezer.DeezerAudioProvider
+import com.metrolist.music.deezer.DeezerFreeProxies
 import com.metrolist.music.ui.component.EnumDialog
 import com.metrolist.music.ui.component.IconButton
 import com.metrolist.music.ui.component.InfoLabel
@@ -68,13 +70,21 @@ fun DeezerSettings(
     val (useAccount, onUseAccountChange) = rememberPreference(DeezerUseAccountKey, true)
     var deezerCookie by rememberPreference(DeezerCookieKey, "")
     val cookieConfigured = isDeezerCookieConfigured(deezerCookie)
-    val renderProxyUrl = DeezerAudioProvider.normalizeProxyUrl(DeezerAudioProvider.RENDER_PROXY_BASE_URL)
     val proxyMode = DeezerAudioProvider.proxyModeFromPreference(proxyModeValue, proxyUrl)
+    val freePreset = DeezerAudioProvider.freePresetForProxyUrl(proxyUrl)
     var showResolverDialog by rememberSaveable { mutableStateOf(false) }
     var showProxyModeDialog by rememberSaveable { mutableStateOf(false) }
+    var showFreeProxyDialog by rememberSaveable { mutableStateOf(false) }
     var showProxyDialog by rememberSaveable { mutableStateOf(false) }
     var showQualityDialog by rememberSaveable { mutableStateOf(false) }
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
+
+    // One-time migration off the dead resolver for installs that stored it.
+    LaunchedEffect(resolverUrl) {
+        if (DeezerAudioProvider.isLegacyResolverUrl(resolverUrl)) {
+            resolverUrl = DeezerAudioProvider.DEFAULT_RESOLVER_URL
+        }
+    }
 
     if (showCookieDialog) {
         TextFieldDialog(
@@ -158,10 +168,13 @@ fun DeezerSettings(
                         showProxyModeDialog = false
                     }
 
-                    DeezerProxyMode.RENDER -> {
-                        proxyModeValue = DeezerProxyMode.RENDER.name
-                        proxyUrl = renderProxyUrl
+                    DeezerProxyMode.FREE -> {
+                        proxyModeValue = DeezerProxyMode.FREE.name
+                        if (freePreset == null) {
+                            proxyUrl = DeezerFreeProxies.presets.first().hostPort
+                        }
                         showProxyModeDialog = false
+                        showFreeProxyDialog = true
                     }
 
                     DeezerProxyMode.CUSTOM -> {
@@ -174,6 +187,22 @@ fun DeezerSettings(
             current = proxyMode,
             values = DeezerProxyMode.values().toList(),
             valueText = { it.labelText() },
+        )
+    }
+
+    if (showFreeProxyDialog) {
+        EnumDialog(
+            onDismiss = { showFreeProxyDialog = false },
+            onSelect = { preset ->
+                proxyUrl = DeezerAudioProvider.normalizeProxyUrl(preset.hostPort)
+                proxyModeValue = DeezerProxyMode.FREE.name
+                showFreeProxyDialog = false
+            },
+            title = stringResource(R.string.deezer_proxy_free_region),
+            current = freePreset ?: DeezerFreeProxies.presets.first(),
+            values = DeezerFreeProxies.presets,
+            valueText = { it.label },
+            valueDescription = { it.pingHint },
         )
     }
 
@@ -248,11 +277,24 @@ fun DeezerSettings(
                     Material3SettingsItem(
                         title = { Text(stringResource(R.string.deezer_proxy_mode)) },
                         description = {
-                            Text(proxyMode.descriptionText(proxyUrl, renderProxyUrl))
+                            Text(proxyMode.descriptionText(proxyUrl))
                         },
                         icon = painterResource(R.drawable.wifi_proxy),
                         onClick = {
                             showProxyModeDialog = true
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.deezer_proxy_free_region)) },
+                        description = {
+                            Text(
+                                freePreset?.label
+                                    ?: stringResource(R.string.deezer_proxy_free_region_desc),
+                            )
+                        },
+                        icon = painterResource(R.drawable.language),
+                        onClick = {
+                            showFreeProxyDialog = true
                         },
                     ),
                     Material3SettingsItem(
@@ -326,6 +368,8 @@ fun DeezerSettings(
         Spacer(Modifier.height(8.dp))
         InfoLabel(text = stringResource(R.string.deezer_web_login_desc))
         Spacer(Modifier.height(8.dp))
+        InfoLabel(text = stringResource(R.string.deezer_proxy_free_warning))
+        Spacer(Modifier.height(8.dp))
         InfoLabel(text = stringResource(R.string.deezer_integration_info))
     }
 
@@ -349,20 +393,23 @@ fun DeezerSettings(
 private fun DeezerProxyMode.labelText(): String =
     when (this) {
         DeezerProxyMode.DIRECT -> stringResource(R.string.deezer_proxy_direct)
-        DeezerProxyMode.RENDER -> stringResource(R.string.deezer_proxy_render)
+        DeezerProxyMode.FREE -> stringResource(R.string.deezer_proxy_free)
         DeezerProxyMode.CUSTOM -> stringResource(R.string.deezer_proxy_custom)
     }
 
 @Composable
-private fun DeezerProxyMode.descriptionText(
-    proxyUrl: String,
-    renderProxyUrl: String,
-): String =
-    when (this) {
+private fun DeezerProxyMode.descriptionText(proxyUrl: String): String {
+    val freePreset = DeezerAudioProvider.freePresetForProxyUrl(proxyUrl)
+    return when (this) {
         DeezerProxyMode.DIRECT -> stringResource(R.string.deezer_proxy_direct_desc)
-        DeezerProxyMode.RENDER -> stringResource(R.string.deezer_proxy_render_desc, renderProxyUrl)
+        DeezerProxyMode.FREE ->
+            stringResource(
+                R.string.deezer_proxy_free_desc,
+                freePreset?.label ?: proxyUrl.ifBlank { stringResource(R.string.deezer_proxy_disabled) },
+            )
         DeezerProxyMode.CUSTOM -> stringResource(R.string.deezer_proxy_url_desc, proxyUrl)
     }
+}
 
 @Composable
 private fun DeezerAudioQuality.labelText(): String =

@@ -152,13 +152,13 @@ object AudioProviderOrder {
     val Default: List<AudioProviderOrderItem> =
         listOf(
             AudioProviderOrderItem.OFFLINE,
-            AudioProviderOrderItem.SOUNDCLOUD,
-            AudioProviderOrderItem.TIDAL,
             AudioProviderOrderItem.DEEZER,
-            AudioProviderOrderItem.APPLE_MUSIC,
             AudioProviderOrderItem.JIOSAAVN,
             AudioProviderOrderItem.YOUTUBE_MUSIC,
             AudioProviderOrderItem.QOBUZ,
+            AudioProviderOrderItem.TIDAL,
+            AudioProviderOrderItem.SOUNDCLOUD,
+            AudioProviderOrderItem.APPLE_MUSIC,
         )
 
     fun serialize(providers: List<AudioProviderOrderItem>): String =
@@ -305,7 +305,7 @@ val JioSaavnAudioQualityOptions =
 
 enum class DeezerProxyMode {
     DIRECT,
-    RENDER,
+    FREE,
     CUSTOM,
 }
 
