@@ -108,7 +108,11 @@ fun WavySlider(
         // back" to near where the gesture started instead of landing where
         // the user dragged to.
         baseModifier
-            .pointerInput(valueRange) {
+            // Stable Float keys, NOT the range object: Kotlin ranges have no
+            // structural equality, so passing valueRange itself restarts this
+            // detector on every recomposition (the player ticks 10x/sec) and
+            // swallows all gestures mid-touch. Primitives compare by value.
+            .pointerInput(valueRange.start, valueRange.endInclusive) {
                 awaitEachGesture {
                     // requireUnconsumed = false: start tracking even when an
                     // ancestor already consumed the down event (e.g.
