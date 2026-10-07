@@ -2863,6 +2863,11 @@ fun BottomSheetPlayer(
                         val currentSliderPosition by rememberUpdatedState(sliderPosition)
                         val sliderPositionProvider = remember { { currentSliderPosition } }
                         val isExpandedProvider = remember(state) { { state.isExpanded } }
+                        // Open during the open/close gesture too (same 0.1
+                        // threshold as the background canvas layers) so the
+                        // thumbnail video doesn't pause on every drag frame —
+                        // only once the sheet actually settles closed.
+                        val isPlayerOpenProvider = remember(state) { { state.isExpanded || state.progress > 0.1f } }
                         AnimatedContent(
                             targetState = showInlineLyrics,
                             label = "Lyrics",
@@ -2882,6 +2887,7 @@ fun BottomSheetPlayer(
                                 Thumbnail(
                                     modifier = Modifier.animateContentSize(),
                                     isPlayerExpanded = isExpandedProvider,
+                                    isPlayerOpen = isPlayerOpenProvider,
                                     isLandscape = true,
                                     isListenTogetherGuest = isListenTogetherGuest,
                                     artworkAlpha = adaptiveGalaxyArtworkAlpha,
@@ -2930,6 +2936,11 @@ fun BottomSheetPlayer(
                         val currentSliderPosition by rememberUpdatedState(sliderPosition)
                         val sliderPositionProvider = remember { { currentSliderPosition } }
                         val isExpandedProvider = remember(state) { { state.isExpanded } }
+                        // Open during the open/close gesture too (same 0.1
+                        // threshold as the background canvas layers) so the
+                        // thumbnail video doesn't pause on every drag frame —
+                        // only once the sheet actually settles closed.
+                        val isPlayerOpenProvider = remember(state) { { state.isExpanded || state.progress > 0.1f } }
                         AnimatedContent(
                             targetState = showInlineLyrics,
                             label = "Lyrics",
@@ -2949,6 +2960,7 @@ fun BottomSheetPlayer(
                                 Thumbnail(
                                     modifier = Modifier.nestedScroll(state.preUpPostDownNestedScrollConnection),
                                     isPlayerExpanded = isExpandedProvider,
+                                    isPlayerOpen = isPlayerOpenProvider,
                                     isListenTogetherGuest = isListenTogetherGuest,
                                     artworkAlpha = adaptiveGalaxyArtworkAlpha,
                                 )

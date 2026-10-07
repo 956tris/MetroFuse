@@ -226,6 +226,14 @@ fun Thumbnail(
     isListenTogetherGuest: Boolean = false,
     artworkAlpha: Float = 1f,
     isPlayerExpanded: () -> Boolean = { true },
+    // True while the player sheet is open enough for the thumbnail to be
+    // visible (expanded or mid-drag). Unlike [isPlayerExpanded] this stays
+    // true during the open/close gesture so the canvas video doesn't wink
+    // out on every drag. The thumbnail video + tap gestures are gated on
+    // this: a canvas left playing while the sheet is collapsed would keep a
+    // native video view over the top of the screen that swallows taps meant
+    // for the app bar (profile, frontend switcher, ...).
+    isPlayerOpen: () -> Boolean = isPlayerExpanded,
 ) {
     val playerConnection = LocalPlayerConnection.current ?: return
     val layoutDirection = LocalLayoutDirection.current
@@ -262,6 +270,14 @@ fun Thumbnail(
     // Pre-calculate text color based on background style
     val textBackgroundColor = getTextColor(playerBackground)
     
+    // Whether the player sheet is open enough for the thumbnail to be
+    // visible. derivedStateOf so progress ticks during the open/close
+    // gesture don't recompose this tree every frame — it only flips on the
+    // open/closed transition.
+    val isPlayerOpenState by remember(isPlayerOpen) {
+        derivedStateOf { isPlayerOpen() }
+    }
+
     // Grid state
     val thumbnailLazyGridState = rememberLazyGridState()
     
@@ -440,6 +456,7 @@ fun Thumbnail(
                                 currentCanvasUrl = bestCanvasUrl,
                                 currentPreferredArtworkUrl = preferredArtworkUrl,
                                 artworkAlpha = artworkAlpha,
+                                isPlayerOpen = isPlayerOpenState,
                             )
                         }
                     }
@@ -538,6 +555,10 @@ private fun ThumbnailItem(
     currentCanvasUrl: String? = null,
     currentPreferredArtworkUrl: String? = null,
     artworkAlpha: Float = 1f,
+    // False while the player sheet is collapsed. The double-tap seek
+    // handler and the canvas video are disabled then so a hidden thumbnail
+    // can never swallow taps meant for the UI underneath it.
+    isPlayerOpen: Boolean = true,
 ) {
     val incrementalSeekSkipEnabled by rememberPreference(SeekExtraSeconds, defaultValue = false)
     var skipMultiplier by remember { mutableIntStateOf(1) }
@@ -559,37 +580,43 @@ private fun ThumbnailItem(
                 // Render entire thumbnail item on separate hardware layer for smooth animations
                 compositingStrategy = CompositingStrategy.Offscreen
             }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onDoubleTap = { offset ->
-                        if (isListenTogetherGuest) return@detectTapGestures
+            .then(
+                if (isPlayerOpen) {
+                    Modifier.pointerInput(Unit) {
+                        detectTapGestures(
+                            onDoubleTap = { offset ->
+                                if (isListenTogetherGuest) return@detectTapGestures
 
-                        val currentPosition = playerConnection.player.currentPosition
-                        val duration = playerConnection.player.duration
+                                val currentPosition = playerConnection.player.currentPosition
+                                val duration = playerConnection.player.duration
 
-                        val now = System.currentTimeMillis()
-                        if (incrementalSeekSkipEnabled && now - lastTapTime < 1000) {
-                            skipMultiplier++
-                        } else {
-                            skipMultiplier = 1
-                        }
-                        lastTapTime = now
+                                val now = System.currentTimeMillis()
+                                if (incrementalSeekSkipEnabled && now - lastTapTime < 1000) {
+                                    skipMultiplier++
+                                } else {
+                                    skipMultiplier = 1
+                                }
+                                lastTapTime = now
 
-                        val skipAmount = 5000 * skipMultiplier
+                                val skipAmount = 5000 * skipMultiplier
 
-                        val isLeftSide = (layoutDirection == LayoutDirection.Ltr && offset.x < size.width / 2) ||
-                                (layoutDirection == LayoutDirection.Rtl && offset.x > size.width / 2)
+                                val isLeftSide = (layoutDirection == LayoutDirection.Ltr && offset.x < size.width / 2) ||
+                                        (layoutDirection == LayoutDirection.Rtl && offset.x > size.width / 2)
 
-                        if (isLeftSide) {
-                            playerConnection.player.seekTo((currentPosition - skipAmount).coerceAtLeast(0))
-                            onSeek("-${skipAmount / 1000} seconds backward", true)
-                        } else {
-                            playerConnection.player.seekTo((currentPosition + skipAmount).coerceAtMost(duration))
-                            onSeek("+${skipAmount / 1000} seconds forward", true)
-                        }
+                                if (isLeftSide) {
+                                    playerConnection.player.seekTo((currentPosition - skipAmount).coerceAtLeast(0))
+                                    onSeek("-${skipAmount / 1000} seconds backward", true)
+                                } else {
+                                    playerConnection.player.seekTo((currentPosition + skipAmount).coerceAtMost(duration))
+                                    onSeek("+${skipAmount / 1000} seconds forward", true)
+                                }
+                            }
+                        )
                     }
-                )
-            },
+                } else {
+                    Modifier
+                }
+            ),
         contentAlignment = Alignment.Center
     ) {
         Box(
@@ -623,6 +650,7 @@ private fun ThumbnailItem(
                         )
                         CanvasVideo(
                             canvasUrl = currentCanvasUrl,
+                            shouldPlay = isPlayerOpen,
                             modifier =
                                 Modifier
                                     .fillMaxSize()
@@ -717,6 +745,12 @@ fun CanvasVideo(
     canvasUrl: String,
     modifier: Modifier = Modifier,
     onReadyChange: ((Boolean) -> Unit)? = null,
+    // False while the player sheet is collapsed. The decoder is paused and
+    // the underlying view is hidden so a canvas for the current track can
+    // never sit (invisibly) over the app top bar swallowing taps, nor burn
+    // battery decoding frames nobody can see. Defaults to true so existing
+    // always-visible callers (album/immersive headers) are unaffected.
+    shouldPlay: Boolean = true,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -789,10 +823,10 @@ fun CanvasVideo(
             }
     }
 
-    DisposableEffect(player, lifecycleOwner) {
+    DisposableEffect(player, lifecycleOwner, shouldPlay) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_RESUME -> player.play()
+                Lifecycle.Event.ON_RESUME -> if (shouldPlay) player.play()
                 Lifecycle.Event.ON_PAUSE -> player.pause()
                 else -> Unit
             }
@@ -802,6 +836,13 @@ fun CanvasVideo(
             lifecycleOwner.lifecycle.removeObserver(observer)
             player.release()
         }
+    }
+
+    // Pause a hidden canvas (and resume it when the sheet reopens). Keyed
+    // on the URL too: a fresh player starts with playWhenReady=true, so a
+    // track change while collapsed must re-apply the paused state.
+    LaunchedEffect(canvasUrl, shouldPlay) {
+        if (shouldPlay) player.play() else player.pause()
     }
 
     AndroidView(
@@ -856,6 +897,10 @@ fun CanvasVideo(
         },
         update = { textureView ->
             player.setVideoTextureView(textureView)
+            // INVISIBLE (not GONE): skipped by touch dispatch and by draw,
+            // but keeps its layout bounds and surface so reopening the sheet
+            // resumes instantly with no relayout flash.
+            textureView.visibility = if (shouldPlay) View.VISIBLE else View.INVISIBLE
         },
         onRelease = { textureView ->
             player.clearVideoTextureView(textureView)
