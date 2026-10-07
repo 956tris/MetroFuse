@@ -12,18 +12,17 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderColors
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -36,7 +35,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.metrolist.music.ui.theme.PlayerSliderColors
 import kotlinx.coroutines.delay
@@ -58,10 +56,11 @@ fun SquigglySlider(
     val primaryColor = colors.activeTrackColor
     val inactiveColor = colors.inactiveTrackColor
 
-    var isDragging by remember { mutableStateOf(false) }
-    var dragPosition by remember { mutableFloatStateOf(value) }
-    
-    val currentValue = if (isDragging) dragPosition else value
+    // Interaction is delegated to a real M3 Slider rendered invisibly on top:
+    // same tap-to-seek and drag-to-seek engine as the working Default/Slim
+    // styles, with the squiggly visuals purely presentational underneath. The
+    // previous hand-rolled pointerInput detector silently dropped gestures.
+    val currentValue = value
     val duration = valueRange.endInclusive - valueRange.start
     val position = currentValue - valueRange.start
 
@@ -80,10 +79,10 @@ fun SquigglySlider(
     val matchedWaveEndpoint = 1f
     val transitionEnabled = true
 
-    // Animate height fraction based on playing state and dragging state
-    LaunchedEffect(isPlaying, isDragging) {
+    // Animate height fraction based on playing state.
+    LaunchedEffect(isPlaying) {
         scope.launch {
-            val shouldFlatten = !isPlaying || isDragging
+            val shouldFlatten = !isPlaying
             val targetHeight = if (shouldFlatten) 0f else 1f
             val animDuration = if (shouldFlatten) 150 else 200 // Faster appear/disappear
             val startDelay = if (shouldFlatten) 0L else 30L
@@ -121,86 +120,7 @@ fun SquigglySlider(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(48.dp)
-            .then(
-                if (enabled) {
-                    // A single pointerInput block handles both tap-to-seek
-                    // and drag-to-seek. Two separate pointerInput blocks
-                    // (one with detectTapGestures, one with
-                    // detectDragGestures) race: the tap detector consumes
-                    // the initial pointer-down first, which makes the drag
-                    // detector's touch-slop check see an already-consumed
-                    // down event and bail out immediately. The result was
-                    // that dragging never visually registered (isDragging
-                    // never became true) and, on release, the tap handler
-                    // fired instead using the ORIGINAL down position - i.e.
-                    // the seek instantly "snapped back" to near where the
-                    // gesture started instead of landing where the user
-                    // dragged to.
-                    Modifier
-                        // Stable Float keys, NOT the range object: Kotlin ranges have no
-                        // structural equality, so passing valueRange itself restarts this
-                        // detector on every recomposition (the player ticks 10x/sec) and
-                        // swallows all gestures mid-touch. Primitives compare by value.
-                        .pointerInput(valueRange.start, valueRange.endInclusive) {
-                            awaitEachGesture {
-                                // requireUnconsumed = false: start tracking even when an
-                                // ancestor already consumed the down event (e.g.
-                                // bottom-sheet press handling). A seekbar must respond to
-                                // touches on itself — otherwise the whole gesture is
-                                // silently dropped and seeking breaks with no feedback.
-                                val down = awaitFirstDown(requireUnconsumed = false)
-                                down.consume()
-
-                                isDragging = true
-                                var finished = false
-                                try {
-                                    val downPosition = (down.position.x / size.width) * duration
-                                    dragPosition = valueRange.start + downPosition.coerceIn(0f, duration)
-                                    onValueChange(dragPosition)
-
-                                    var pointerId = down.id
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == pointerId }
-                                            ?: event.changes.firstOrNull()
-                                            ?: break
-                                        pointerId = change.id
-
-                                        if (!change.pressed) {
-                                            // Pointer released or gesture
-                                            // cancelled. A cancelled drag must
-                                            // still finish: otherwise the
-                                            // pending seek value sticks forever
-                                            // and the position/buffer UI
-                                            // freezes at the touch point.
-                                            change.consume()
-                                            finished = true
-                                            onValueChangeFinished?.invoke()
-                                            break
-                                        }
-
-                                        change.consume()
-                                        val newPosition = (change.position.x / size.width) * duration
-                                        dragPosition = valueRange.start + newPosition.coerceIn(0f, duration)
-                                        onValueChange(dragPosition)
-                                    }
-                                } finally {
-                                    // The detector is cooperatively cancelled when its key
-                                    // changes (e.g. duration loads mid-gesture) or the
-                                    // composable leaves: without this the thumb freezes
-                                    // and the pending seek is never committed.
-                                    isDragging = false
-                                    if (!finished) {
-                                        onValueChangeFinished?.invoke()
-                                    }
-                                }
-                            }
-                        }
-                } else {
-                    Modifier
-                }
-            ),
+            .height(48.dp),
         contentAlignment = Alignment.Center
     ) {
         Canvas(
@@ -350,5 +270,19 @@ fun SquigglySlider(
                 )
             }
         }
+
+        // Invisible M3 Slider owns all interaction (same engine as Default).
+        // Empty track/thumb: all visuals come from the canvas above, driven
+        // by the value prop which the parent updates on every onValueChange.
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
+            valueRange = valueRange,
+            enabled = enabled,
+            track = {},
+            thumb = {},
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }

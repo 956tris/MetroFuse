@@ -7,8 +7,6 @@ package com.metrolist.music.ui.component
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,22 +14,19 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ProgressIndicatorDefaults
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderColors
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -72,10 +67,12 @@ fun WavySlider(
             ?.let { if (duration > 0f) ((it - valueRange.start) / duration).coerceIn(normalizedValue, 1f) else normalizedValue }
             ?: normalizedValue
 
-    var isDragging by remember { mutableStateOf(false) }
-    var dragValue by remember { mutableFloatStateOf(normalizedValue) }
-
-    val displayValue = if (isDragging) dragValue else normalizedValue
+    // Interaction is delegated to a real M3 Slider rendered invisibly on top:
+    // same tap-to-seek and drag-to-seek engine (nested-scroll aware, slop
+    // handling, press indication) as the working Default/Slim styles, with
+    // the wavy visuals purely presentational underneath. The previous
+    // hand-rolled pointerInput detector silently dropped every gesture here.
+    val displayValue = normalizedValue
 
     val animatedAmplitude by animateFloatAsState(
         targetValue = if (isPlaying) 1f else 0f,
@@ -91,88 +88,10 @@ fun WavySlider(
     // Calculate container height to accommodate thumb
     val containerHeight = maxOf(WavyProgressIndicatorDefaults.LinearContainerHeight, thumbRadius * 2)
 
-    val baseModifier = modifier
-        .fillMaxWidth()
-        .height(containerHeight)
-
-    val interactiveModifier = if (enabled) {
-        // A single pointerInput block handles both tap-to-seek and
-        // drag-to-seek. Two separate pointerInput blocks (one with
-        // detectTapGestures, one with detectHorizontalDragGestures) race:
-        // the tap detector consumes the initial pointer-down first, which
-        // makes the drag detector's touch-slop check see an
-        // already-consumed down event and bail out immediately. The result
-        // was that dragging never visually registered (isDragging never
-        // became true) and, on release, the tap handler fired instead using
-        // the ORIGINAL down position - i.e. the seek instantly "snapped
-        // back" to near where the gesture started instead of landing where
-        // the user dragged to.
-        baseModifier
-            // Stable Float keys, NOT the range object: Kotlin ranges have no
-            // structural equality, so passing valueRange itself restarts this
-            // detector on every recomposition (the player ticks 10x/sec) and
-            // swallows all gestures mid-touch. Primitives compare by value.
-            .pointerInput(valueRange.start, valueRange.endInclusive) {
-                awaitEachGesture {
-                    // requireUnconsumed = false: start tracking even when an
-                    // ancestor already consumed the down event (e.g.
-                    // bottom-sheet press handling). A seekbar must respond to
-                    // touches on itself — otherwise the whole gesture is
-                    // silently dropped and seeking breaks with no feedback.
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-
-                    isDragging = true
-                    var finished = false
-                    try {
-                        dragValue = (down.position.x / size.width).coerceIn(0f, 1f)
-                        onValueChange(
-                            valueRange.start + dragValue * (valueRange.endInclusive - valueRange.start)
-                        )
-
-                        var pointerId = down.id
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == pointerId }
-                                ?: event.changes.firstOrNull()
-                                ?: break
-                            pointerId = change.id
-
-                            if (!change.pressed) {
-                                // Pointer released or gesture cancelled. A
-                                // cancelled drag must still finish: otherwise
-                                // the pending seek value sticks forever and the
-                                // position/buffer UI freezes at the touch point.
-                                change.consume()
-                                finished = true
-                                onValueChangeFinished?.invoke()
-                                break
-                            }
-
-                            change.consume()
-                            dragValue = (change.position.x / size.width).coerceIn(0f, 1f)
-                            onValueChange(
-                                valueRange.start + dragValue * (valueRange.endInclusive - valueRange.start)
-                            )
-                        }
-                    } finally {
-                        // The detector is cooperatively cancelled when its key
-                        // changes (e.g. duration loads mid-gesture) or the
-                        // composable leaves: without this the thumb freezes
-                        // and the pending seek is never committed.
-                        isDragging = false
-                        if (!finished) {
-                            onValueChangeFinished?.invoke()
-                        }
-                    }
-                }
-            }
-    } else {
-        baseModifier
-    }
-
     Box(
-        modifier = interactiveModifier,
+        modifier = modifier
+            .fillMaxWidth()
+            .height(containerHeight),
         contentAlignment = Alignment.Center
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -229,5 +148,19 @@ fun WavySlider(
                 center = Offset(thumbX, thumbY)
             )
         }
+
+        // Invisible M3 Slider owns all interaction (same engine as Default).
+        // Empty track/thumb: all visuals come from the canvases above, driven
+        // by the value prop which the parent updates on every onValueChange.
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            onValueChangeFinished = onValueChangeFinished,
+            valueRange = valueRange,
+            enabled = enabled,
+            track = {},
+            thumb = {},
+            modifier = Modifier.fillMaxSize(),
+        )
     }
 }
