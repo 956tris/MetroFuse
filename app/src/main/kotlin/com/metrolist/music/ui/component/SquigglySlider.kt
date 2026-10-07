@@ -15,7 +15,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderColors
 import androidx.compose.material3.SliderDefaults
@@ -280,8 +282,12 @@ fun SquigglySlider(
             onValueChangeFinished = onValueChangeFinished,
             valueRange = valueRange,
             enabled = enabled,
-            track = {},
-            thumb = {},
+            // Thumb MUST be an exact 0dp Spacer, not `{}`: an empty slot Box
+            // is measured with the slider's min constraints (fillMaxSize), so
+            // it expands to full width, SliderState.thumbWidth becomes the
+            // whole track, and every touch maps to a single value.
+            track = { Spacer(Modifier.fillMaxWidth()) },
+            thumb = { Spacer(Modifier.size(0.dp)) },
             modifier = Modifier.fillMaxSize(),
         )
     }

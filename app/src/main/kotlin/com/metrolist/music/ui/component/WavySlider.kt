@@ -10,7 +10,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ProgressIndicatorDefaults
@@ -21,6 +23,7 @@ import androidx.compose.material3.WavyProgressIndicatorDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -85,8 +88,14 @@ fun WavySlider(
     val bufferedColor = PlayerSliderColors.bufferedTrackColor(activeColor)
     val thumbColor = colors.thumbColor
 
-    // Calculate container height to accommodate thumb
-    val containerHeight = maxOf(WavyProgressIndicatorDefaults.LinearContainerHeight, thumbRadius * 2)
+    // Container must fit the thumb AND give the overlaid M3 Slider a proper
+    // 48dp touch target (same as the Default style); the bare wavy indicator
+    // height is only ~16dp, which is far too thin to hit reliably.
+    val containerHeight = maxOf(
+        WavyProgressIndicatorDefaults.LinearContainerHeight,
+        thumbRadius * 2,
+        48.dp,
+    )
 
     Box(
         modifier = modifier
@@ -158,8 +167,12 @@ fun WavySlider(
             onValueChangeFinished = onValueChangeFinished,
             valueRange = valueRange,
             enabled = enabled,
-            track = {},
-            thumb = {},
+            // Thumb MUST be an exact 0dp Spacer, not `{}`: an empty slot Box
+            // is measured with the slider's min constraints (fillMaxSize), so
+            // it expands to full width, SliderState.thumbWidth becomes the
+            // whole track, and every touch maps to a single value.
+            track = { Spacer(Modifier.fillMaxWidth()) },
+            thumb = { Spacer(Modifier.size(0.dp)) },
             modifier = Modifier.fillMaxSize(),
         )
     }
