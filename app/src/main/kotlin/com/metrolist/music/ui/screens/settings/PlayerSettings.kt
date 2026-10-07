@@ -40,6 +40,7 @@ import com.metrolist.music.LocalPlayerAwareWindowInsets
 import com.metrolist.music.R
 import com.metrolist.music.constants.AudioNormalizationKey
 import com.metrolist.music.constants.AudioOffload
+import com.metrolist.music.constants.FlacSoftwareDecoderKey
 import com.metrolist.music.constants.AudioQuality
 import com.metrolist.music.constants.AudioQualityKey
 import com.metrolist.music.constants.AutoDownloadOnLikeKey
@@ -173,6 +174,11 @@ fun PlayerSettings(
 
     val (audioOffload, onAudioOffloadChange) = rememberPreference(
         key = AudioOffload,
+        defaultValue = false
+    )
+
+    val (flacSoftwareDecoder, onFlacSoftwareDecoderChange) = rememberPreference(
+        key = FlacSoftwareDecoderKey,
         defaultValue = false
     )
 
@@ -740,6 +746,31 @@ fun PlayerSettings(
                         )
                     },
                     onClick = { if (!crossfadeEnabled && !automixEnabled) onAudioOffloadChange(!audioOffload) }
+                ))
+                add(Material3SettingsItem(
+                    icon = painterResource(R.drawable.graphic_eq),
+                    title = { Text(stringResource(R.string.flac_software_decoder)) },
+                    description = {
+                        Text(
+                            stringResource(R.string.flac_software_decoder_desc)
+                        )
+                    },
+                    trailingContent = {
+                        Switch(
+                            checked = flacSoftwareDecoder,
+                            onCheckedChange = onFlacSoftwareDecoderChange,
+                            thumbContent = {
+                                Icon(
+                                    painter = painterResource(
+                                        id = if (flacSoftwareDecoder) R.drawable.check else R.drawable.close
+                                    ),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(SwitchDefaults.IconSize)
+                                )
+                            }
+                        )
+                    },
+                    onClick = { onFlacSoftwareDecoderChange(!flacSoftwareDecoder) }
                 ))
                 add(Material3SettingsItem(
                     icon = painterResource(R.drawable.graphic_eq),

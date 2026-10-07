@@ -76,11 +76,6 @@ object SoundCloudAudioProvider {
         val durationMs: Long?,
     )
 
-    /** Amplitude envelope for the "waveform" player slider style. */
-    data class Waveform(
-        val samples: List<Float>,
-    )
-
     class SoundCloudResolutionException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
     private data class MatchedTrack(
@@ -113,9 +108,6 @@ object SoundCloudAudioProvider {
 
     private val streamCache = ConcurrentHashMap<String, Resolved>()
     private val trackCache = ConcurrentHashMap<String, MatchedTrack>()
-    // Waveforms never change for a given upload, so cache indefinitely (process lifetime) rather
-    // than on the short streamCache TTL — this is one cheap HTTP fetch, ever, per track.
-    private val waveformCache = ConcurrentHashMap<String, Waveform>()
 
     @Volatile
     private var cachedClientId: String? = null
@@ -230,62 +222,6 @@ object SoundCloudAudioProvider {
 
     fun invalidateClientId() {
         metadataExpiresAt = 0L
-    }
-
-    /**
-     * Fetches the SoundCloud amplitude envelope for [query]'s best-matched track, for the
-     * "waveform" player slider style. Reuses the same ISRC/title-artist matching pipeline as
-     * [resolve] (and its trackCache), so this costs nothing extra if [resolve] was already
-     * called for the same track. Returns null if no SoundCloud match exists or it has no
-     * waveform data — callers should fall back to the default slider in that case.
-     */
-    suspend fun getWaveform(query: Query): Waveform? = withContext(Dispatchers.IO) {
-        val cacheKey = query.mediaId.ifBlank { "${query.title}|${query.artists.joinToString()}" }
-        waveformCache[cacheKey]?.let { return@withContext it }
-
-        val clientId = getClientId()
-        if (clientId.isBlank()) return@withContext null
-
-        val directTrackUrl = query.mediaId.toSoundCloudUrlOrNull()
-        val track = trackCache[query.mediaId]
-            ?: run {
-                val resolveTask = async {
-                    directTrackUrl?.let { resolveApiV2Track(it, clientId) }
-                }
-                val findTask = async {
-                    if (directTrackUrl == null) findBestTrack(query, clientId, forWaveform = true) else null
-                }
-                (resolveTask.await() ?: findTask.await())?.also {
-                    trackCache[query.mediaId] = it
-                }
-            } ?: return@withContext null
-
-        val waveformUrl = track.waveformUrl
-            ?: fetchFullTrack(track.trackId, clientId)?.waveformUrl
-            ?: return@withContext null
-
-        val samples = runCatching {
-            val request = Request.Builder()
-                .url(waveformUrl)
-                .get()
-                .header("Accept", "application/json")
-                .header("User-Agent", BROWSER_USER_AGENT)
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
-                val json = JSONObject(payload)
-                val samplesArray = json.optJSONArray("samples") ?: return@use null
-                val maxSample = (0 until samplesArray.length())
-                    .map { samplesArray.optInt(it, 0) }
-                    .maxOrNull()
-                    ?.takeIf { it > 0 }
-                    ?: return@use null
-                (0 until samplesArray.length()).map { samplesArray.optInt(it, 0) / maxSample.toFloat() }
-            }
-        }.getOrNull() ?: return@withContext null
-
-        Waveform(samples).also { waveformCache[cacheKey] = it }
     }
 
     fun isSoundCloudUrl(value: String): Boolean =

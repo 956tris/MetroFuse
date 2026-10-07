@@ -464,7 +464,6 @@
     <string name="automix_style_punch_desc">Short and direct with full impact</string>
     <string name="automix_style_ethereal">Ethereal</string>
     <string name="automix_style_ethereal_desc">Dreamy long wash that melts songs together</string>
-    <string name="metromix_waveform">Waveform</string>
     <string name="done">Done</string>
 
     <!-- Romanization Settings -->
@@ -523,6 +522,8 @@
     <string name="audio_offload_description">Uses the hardware audio offload path for playback. Disabling this may increase battery usage, but can help if you experience issues with playback or audio post-processing</string>
     <string name="audio_offload_disabled_by_crossfade">Disabled because crossfade is active</string>
     <string name="audio_offload_disabled_by_transitions">Disabled because transitions are active</string>
+    <string name="flac_software_decoder">Software FLAC decoding</string>
+    <string name="flac_software_decoder_desc">Decode FLAC with the platform software decoder instead of hardware. Off by default; only turn on if FLAC sounds distorted or plays at the wrong speed on your device.</string>
 
     <!-- Varispeed -->
     <string name="speed">Playback Speed</string>
@@ -559,7 +560,6 @@
     <string name="audio_provider_deezer">Deezer</string>
     <string name="audio_provider_jiosaavn">JioSaavn</string>
     <string name="audio_provider_youtube_music">YouTube Music</string>
-    <string name="audio_provider_apple_music">Apple Music</string>
     <string name="audio_provider_qobuz">Qobuz</string>
     <string name="provider_qobuz">Qobuz</string>
     <string name="qobuz_integration">Qobuz</string>
@@ -1286,39 +1286,7 @@
     </plurals>
     <string name="autoplay">Autoplay</string>
     <string name="autoplay_desc">Automatically play the next song when the current one ends</string>
-    <string name="apple_music_fallback">Apple Music fallback</string>
-    <string name="apple_music_fallback_desc">Try Apple Music when other providers cannot resolve a playable stream</string>
-    <string name="apple_music_audio_provider">Apple Music audio provider</string>
-    <string name="apple_music_audio_provider_desc">Use Apple Music as an audio source for playback when enabled</string>
-    <string name="apple_music_integration">Apple Music</string>
-    <string name="apple_music_integration_desc">Wrapper metadata and animated artwork options</string>
-    <string name="apple_music_integration_info">Apple Music integration provides high-quality metadata, synchronized lyrics, and animated artwork for supported tracks.</string>
-    <string name="apple_music_subscription_dead">Maintainer\'s subscription has run out — the Apple Music API is dead until one is donated or a way is found to get one.</string>
-    <string name="apple_music_wrapper_host">Apple Music wrapper host</string>
-    <string name="apple_music_wrapper_host_desc">Current wrapper-manager: %1$s</string>
-    <string name="apple_music_wrapper_host_placeholder">wm.wol.moe or 192.168.1.20:8080</string>
-    <string name="apple_music_wrapper_host_helper">Use the same wrapper-manager host:port that works in Echo. Do not include http:// or https://.</string>
-    <string name="apple_music_wrapper_https">Use HTTPS for Apple wrapper</string>
-    <string name="apple_music_wrapper_https_desc">Turn off for a local h2c wrapper-manager such as 192.168.x.x:8080</string>
     <string name="tidal_lossless_downgraded_to_aac">TIDAL FLAC was unavailable. Playing %1$d kbps AAC instead.</string>
-
-    <string name="apple_music_audio_quality">Apple Music quality</string>
-    <string name="apple_music_quality_atmos">Dolby Atmos</string>
-    <string name="apple_music_quality_ac3">AC3</string>
-    <string name="apple_music_quality_aac">AAC</string>
-    <string name="apple_music_quality_aac_web">AAC (Web)</string>
-    <string name="apple_music_quality_aac_binaural">AAC (Binaural)</string>
-    <string name="apple_music_quality_aac_downmix">AAC (Downmix)</string>
-    <string name="apple_music_quality_aac_he">AAC-HE</string>
-    <string name="apple_music_quality_aac_he_web">AAC-HE (Web)</string>
-    <string name="apple_music_quality_aac_he_binaural">AAC-HE (Binaural)</string>
-    <string name="apple_music_quality_aac_he_downmix">AAC-HE (Downmix)</string>
-    <string name="apple_music_resolver_endpoints">Apple Music API endpoints</string>
-    <string name="apple_music_resolver_endpoints_desc_default">No custom API endpoints configured.</string>
-    <string name="apple_music_resolver_endpoints_desc_custom">Using %1$d custom API endpoint(s)</string>
-    <string name="apple_music_resolver_endpoints_placeholder">https://geeked-api.onrender.com/stream</string>
-    <string name="apple_music_resolver_endpoints_helper">Add Apple stream API base URLs (one per line). Each API is called as {base}/stream?url={appleMusicUrl}&amp;codec={codec}, where codec is the selected quality (e.g. aac). These are tried in order.</string>
-    <string name="apple_music_reset_resolver">Reset Apple Music APIs</string>
 
     <!-- Accessibility -->
     <string name="back">Back</string>
@@ -1342,6 +1310,4 @@
     <string name="loudness_level_quiet">Quiet (-19 dB)</string>
     <string name="discord_show_playback_details">Show playback details</string>
     <string name="discord_show_playback_details_description">Shows bitrate and sample rate in Rich Presence</string>
-
-    <!-- Waveform slider style -->
 </resources>

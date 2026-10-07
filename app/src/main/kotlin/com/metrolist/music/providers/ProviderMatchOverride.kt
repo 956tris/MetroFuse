@@ -23,7 +23,6 @@ data class ProviderMatchOverride(
             AudioProviderOrderItem.YOUTUBE_MUSIC -> providerTrackId
             AudioProviderOrderItem.JIOSAAVN -> providerTrackId
             AudioProviderOrderItem.OFFLINE -> providerTrackId
-            AudioProviderOrderItem.APPLE_MUSIC -> "apple:track:$providerTrackId"
         }
 }
 
@@ -95,5 +94,4 @@ fun AudioProviderOrderItem.displayName(): String =
         AudioProviderOrderItem.YOUTUBE_MUSIC -> "YouTube Music"
         AudioProviderOrderItem.QOBUZ -> "Qobuz"
         AudioProviderOrderItem.OFFLINE -> "Offline"
-        AudioProviderOrderItem.APPLE_MUSIC -> "Apple Music"
     }

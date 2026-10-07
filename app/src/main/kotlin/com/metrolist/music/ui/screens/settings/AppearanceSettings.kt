@@ -48,7 +48,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.toArgb
-import com.metrolist.music.ui.component.WaveformSlider
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -1036,56 +1035,6 @@ fun AppearanceSettings(
                         )
                     }
                 }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier =
-                            Modifier
-                                .aspectRatio(1f)
-                                .weight(1f)
-                                .clip(RoundedCornerShape(16.dp))
-                                .border(
-                                    1.dp,
-                                    if (sliderStyle == SliderStyle.WAVEFORM) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.outlineVariant
-                                    },
-                                    RoundedCornerShape(16.dp),
-                                ).clickable {
-                                    onSliderStyleChange(SliderStyle.WAVEFORM)
-                                    onSquigglySliderChange(false)
-                                    showSliderOptionDialog = false
-                                }.padding(12.dp),
-                    ) {
-                        val sliderValue = 0.5f
-                        val previewSamples = remember {
-                            listOf(
-                                0.2f, 0.4f, 0.6f, 0.8f, 0.7f, 0.5f, 0.3f, 0.4f, 0.6f, 0.9f,
-                                0.8f, 0.6f, 0.4f, 0.5f, 0.7f, 0.6f, 0.4f, 0.3f, 0.2f, 0.4f,
-                            )
-                        }
-                        WaveformSlider(
-                            value = sliderValue,
-                            valueRange = 0f..1f,
-                            onValueChange = { /* preview only */ },
-                            samples = previewSamples,
-                            colors = sliderPreviewColors,
-                            enabled = false,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            text = stringResource(R.string.metromix_waveform),
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                }
             }
         }
     }
@@ -1488,10 +1437,6 @@ fun AppearanceSettings(
 
                                     SliderStyle.SLIM -> {
                                         stringResource(R.string.slim)
-                                    }
-
-                                    SliderStyle.WAVEFORM -> {
-                                        stringResource(R.string.metromix_waveform)
                                     }
                                 },
                             )

@@ -21,7 +21,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 
 object ProviderHealthChecker {
@@ -30,7 +29,6 @@ object ProviderHealthChecker {
     private const val TIDAL_HEALTH_TRACK_ID = "4875683"
     private const val QOBUZ_HEALTH_QUERY = "yes and ariana grande"
     private const val QOBUZ_HEALTH_TRACK_ID = "256170850"
-    private const val APPLE_HEALTH_ISRC = "USUM71703861"
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
     private val client =
@@ -68,7 +66,6 @@ object ProviderHealthChecker {
         deezerResolverUrl: String,
         tidalResolverEndpoints: String = "",
         qobuzCustomInstances: String = "",
-        appleResolverEndpoints: String = "",
     ): List<Target> {
         val deezerResolver = normalizeDeezerResolverUrl(deezerResolverUrl)
         var customTidalIndex = 0
@@ -142,109 +139,9 @@ object ProviderHealthChecker {
                 detail = "Configured Deezer audio resolver",
                 body = """{"formats":["MP3_128"],"ids":[]}""",
             ),
-            Target(
-                id = "apple_token",
-                group = "Apple Music",
-                name = "Apple Music Token API",
-                endpoint = "https://amp-api.music.apple.com/v1/catalog/us/songs",
-                detail = "Hardcoded JWT validated against the Apple Music API",
-                requestFactory = { null },
-                customCheck = { target, startedAt -> checkAppleToken(target, startedAt) },
-            ),
-            *appleStreamTargets(appleResolverEndpoints).toTypedArray(),
             *tidalResolverTargets.toTypedArray(),
             *qobuzTargets.toTypedArray(),
         )
-    }
-
-    private fun appleStreamTargets(customResolverEndpoints: String = ""): List<Target> =
-        com.metrolist.music.apple.AppleAudioProvider.resolverEndpointBases(customResolverEndpoints)
-            .mapIndexed { index, baseUrl ->
-                Target(
-                    id = "apple_stream_api_$index",
-                    group = "Apple Music",
-                    name = if (index == 0) "Apple Music Stream Resolver" else "Apple Music Stream Resolver ${index + 1}",
-                    endpoint = baseUrl,
-                    detail = "Direct stream resolution service (?url=&codec=)",
-                    requestFactory = { null },
-                    customCheck = { target, startedAt -> checkAppleStream(target, startedAt) },
-                )
-            }
-
-    private fun checkAppleToken(
-        target: Target,
-        startedAt: Long,
-    ): Result {
-        // Token is hardcoded — validate it directly against the AMP API.
-        val token = runBlocking {
-            com.metrolist.music.apple.AppleMusicCanvasProvider.getToken()
-        } ?: return Result(target, Status.OFFLINE, elapsedMs(startedAt), "No Apple Music token")
-
-        val ampUrl = com.metrolist.music.apple.AppleMusicCanvasProvider.buildAmpUrl(
-            "https://amp-api.music.apple.com/v1/catalog/us/songs",
-            mapOf("filter[isrc]" to APPLE_HEALTH_ISRC)
-        )
-        val ampRequest = com.metrolist.music.apple.AppleMusicCanvasProvider.ampRequest(ampUrl, token)
-
-        return runCatching {
-            client.newCall(ampRequest).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Result(target, Status.OFFLINE, elapsedMs(startedAt), "AMP API HTTP ${response.code} — token rejected")
-                } else {
-                    Result(target, Status.ONLINE, elapsedMs(startedAt), "Token accepted by AMP API")
-                }
-            }
-        }.getOrElse {
-            Result(target, Status.OFFLINE, elapsedMs(startedAt), "AMP check failed: ${it.message}")
-        }
-    }
-
-    private fun checkAppleStream(
-        target: Target,
-        startedAt: Long,
-    ): Result {        // We need a token first
-        val token = runBlocking {
-            com.metrolist.music.apple.AppleMusicCanvasProvider.getToken()
-        } ?: return Result(target, Status.OFFLINE, elapsedMs(startedAt), "Could not fetch Apple Music token")
-
-        // Try to resolve the test ISRC to a song URL via AMP API
-        val ampUrl = com.metrolist.music.apple.AppleMusicCanvasProvider.buildAmpUrl(
-            "https://amp-api.music.apple.com/v1/catalog/us/songs",
-            mapOf("filter[isrc]" to APPLE_HEALTH_ISRC)
-        )
-        val ampRequest = com.metrolist.music.apple.AppleMusicCanvasProvider.ampRequest(ampUrl, token)
-        
-        val appleUrl = client.newCall(ampRequest).execute().use { response ->
-            if (!response.isSuccessful) {
-                return Result(
-                    target = target,
-                    status = Status.REACHABLE,
-                    latencyMs = elapsedMs(startedAt),
-                    message = "AMP API HTTP ${response.code}"
-                )
-            }
-            val payload = response.body.string()
-            val root = JSONObject(payload)
-            root.optJSONArray("data")?.optJSONObject(0)?.optJSONObject("attributes")?.optString("url")
-        } ?: return Result(target, Status.REACHABLE, elapsedMs(startedAt), "Could not find test track URL")
-
-        // Now check the actual stream resolver: {base}/stream?url={appleUrl}&codec={codec}
-        val streamUrl = runCatching {
-            com.metrolist.music.apple.AppleAudioProvider.buildStreamUrl(target.endpoint, appleUrl, "aac")
-        }.getOrNull()
-            ?: return Result(target, Status.OFFLINE, elapsedMs(startedAt), "Invalid stream URL")
-
-        val streamRequest = Request.Builder().url(streamUrl).get().header("User-Agent", USER_AGENT).build()
-        
-        return client.newCall(streamRequest).execute().use { response ->
-            val status = if (response.isSuccessful) Status.ONLINE else Status.REACHABLE
-            Result(
-                target = target,
-                status = status,
-                latencyMs = elapsedMs(startedAt),
-                message = if (response.isSuccessful) "Stream API OK" else "Stream API HTTP ${response.code}"
-            )
-        }
     }
 
     suspend fun checkAll(targets: List<Target>): List<Result> =

@@ -189,7 +189,6 @@ import com.metrolist.music.ui.component.PlayerSliderTrack
 import com.metrolist.music.ui.component.ResizableIconButton
 import com.metrolist.music.ui.component.SquigglySlider
 import com.metrolist.music.ui.component.WavySlider
-import com.metrolist.music.ui.component.WaveformSlider
 import com.metrolist.music.ui.component.rememberBottomSheetState
 import com.metrolist.music.ui.menu.PlayerMenu
 import com.metrolist.music.ui.menu.ShareSongLinkDialog
@@ -206,7 +205,6 @@ import com.metrolist.music.utils.rememberPreference
 import com.metrolist.music.utils.spotify.SpotifyCanvasMedia
 import com.metrolist.music.utils.spotify.SpotifyCanvasVideoBackground
 import com.metrolist.music.utils.spotify.rememberSpotifyCanvasMedia
-import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import dagger.hilt.android.EntryPointAccessors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -715,33 +713,6 @@ fun BottomSheetPlayer(
 
     val sliderStyle by rememberEnumPreference(SliderStyleKey, SliderStyle.DEFAULT)
     val squigglySlider by rememberPreference(SquigglySliderKey, defaultValue = false)
-
-    var waveformSamples by remember { mutableStateOf<List<Float>?>(null) }
-
-    LaunchedEffect(mediaMetadata?.id, sliderStyle) {
-        if (sliderStyle != SliderStyle.WAVEFORM) {
-            waveformSamples = null
-            return@LaunchedEffect
-        }
-
-        val metadata = mediaMetadata
-        if (metadata == null) {
-            waveformSamples = null
-            return@LaunchedEffect
-        }
-
-        // Reset samples on song change to avoid showing previous track's waveform
-        waveformSamples = null
-
-        val query = SoundCloudAudioProvider.Query(
-            mediaId = metadata.id,
-            title = metadata.title,
-            artists = metadata.artists.map { it.name },
-            album = metadata.album?.title,
-            durationMs = metadata.duration.toLong() * 1000L
-        )
-        waveformSamples = SoundCloudAudioProvider.getWaveform(query)?.samples
-    }
 
     // Listen Together state (reactive)
     val listenTogetherManager = LocalListenTogetherManager.current
@@ -2451,7 +2422,6 @@ fun BottomSheetPlayer(
                 isListenTogetherGuest = isListenTogetherGuest,
                 sliderStyle = sliderStyle,
                 squigglySlider = squigglySlider,
-                waveformSamples = waveformSamples,
                 effectiveIsPlaying = effectiveIsPlaying,
                 textButtonColor = textButtonColor,
                 effectivePlayerBackground = effectivePlayerBackground,
@@ -3462,7 +3432,6 @@ private fun PlayerProgressSection(
     isListenTogetherGuest: Boolean,
     sliderStyle: SliderStyle,
     squigglySlider: Boolean,
-    waveformSamples: List<Float>?,
     effectiveIsPlaying: Boolean,
     textButtonColor: Color,
     effectivePlayerBackground: PlayerBackgroundStyle,
@@ -3548,6 +3517,7 @@ private fun PlayerProgressSection(
                             onSliderDrag(null)
                         }
                     },
+                    enabled = canSeekPlayer,
                     modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
                     colors = colors,
                     isPlaying = effectiveIsPlaying,
@@ -3569,6 +3539,7 @@ private fun PlayerProgressSection(
                             onSliderDrag(null)
                         }
                     },
+                    enabled = canSeekPlayer,
                     colors = colors,
                     modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
                     isPlaying = effectiveIsPlaying,
@@ -3604,32 +3575,6 @@ private fun PlayerProgressSection(
                         bufferedValue = displayedBufferedPosition.toFloat(),
                     )
                 },
-                modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
-            )
-        }
-
-        SliderStyle.WAVEFORM -> {
-            val colors = PlayerSliderColors.getSliderColors(textButtonColor, effectivePlayerBackground, useDarkTheme)
-            WaveformSlider(
-                value = displayedSliderPosition.toFloat(),
-                onValueChange = {
-                    if (canSeekPlayer) {
-                        onSliderDrag(it.toLong())
-                    }
-                },
-                onValueChangeFinished = {
-                    if (canSeekPlayer) {
-                        sliderPosition?.let {
-                            onSeekTo(it, effectiveDuration)
-                        }
-                        onSliderDrag(null)
-                    }
-                },
-                samples = waveformSamples,
-                valueRange = sliderValueRange,
-                enabled = canSeekPlayer,
-                colors = colors,
-                bufferedValue = displayedBufferedPosition.toFloat(),
                 modifier = Modifier.padding(horizontal = PlayerHorizontalPadding),
             )
         }

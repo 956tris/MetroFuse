@@ -45,7 +45,6 @@ import com.metrolist.music.R
 import com.metrolist.music.constants.DeezerResolverUrlKey
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.constants.TidalResolverEndpointsKey
-import com.metrolist.music.constants.AppleResolverEndpointsKey
 import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.providers.ProviderHealthChecker
 import com.metrolist.music.ui.component.IconButton
@@ -70,13 +69,11 @@ fun ProviderHealthScreen(
     )
     val tidalResolverEndpoints by rememberPreference(TidalResolverEndpointsKey, "")
     val qobuzCustomInstances by rememberPreference(QobuzCustomInstancesKey, "")
-    val appleResolverEndpoints by rememberPreference(AppleResolverEndpointsKey, "")
-    val targets = remember(deezerResolverUrl, tidalResolverEndpoints, qobuzCustomInstances, appleResolverEndpoints) {
+    val targets = remember(deezerResolverUrl, tidalResolverEndpoints, qobuzCustomInstances) {
         ProviderHealthChecker.targets(
             deezerResolverUrl = deezerResolverUrl,
             tidalResolverEndpoints = tidalResolverEndpoints,
             qobuzCustomInstances = qobuzCustomInstances,
-            appleResolverEndpoints = appleResolverEndpoints,
         )
     }
     var refreshCounter by remember { mutableIntStateOf(0) }

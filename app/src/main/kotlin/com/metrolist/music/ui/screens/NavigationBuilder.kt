@@ -74,7 +74,6 @@ import com.metrolist.music.ui.screens.settings.integrations.SpotifyCanvasSetting
 import com.metrolist.music.ui.screens.settings.integrations.TidalLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.TidalSettings
 
-import com.metrolist.music.ui.screens.settings.integrations.apple.AppleMusicSettings
 import com.metrolist.music.ui.screens.wrapped.WrappedScreen
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
@@ -454,10 +453,6 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/deezer/login") {
         DeezerLoginScreen(navController)
-    }
-
-    composable("settings/integrations/apple") {
-        AppleMusicSettings(navController)
     }
 
     composable("settings/integrations/soundcloud") {

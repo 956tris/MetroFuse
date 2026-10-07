@@ -85,13 +85,6 @@ fun IntegrationScreen(
                     }
                 ),
                 IntegrationCardItem(
-                    icon = painterResource(R.drawable.music_note),
-                    title = { Text(stringResource(R.string.apple_music_integration)) },
-                    onClick = {
-                        navController.navigate("settings/integrations/apple")
-                    }
-                ),
-                IntegrationCardItem(
                     icon = painterResource(R.drawable.cloud),
                     title = { Text(stringResource(R.string.soundcloud_integration)) },
                     description = { Text(stringResource(R.string.soundcloud_web_login_desc)) },

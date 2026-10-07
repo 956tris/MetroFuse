@@ -39,10 +39,6 @@ import com.metrolist.music.db.entities.FormatEntity
 import com.metrolist.music.db.entities.Song
 import com.metrolist.music.deezer.DeezerAudioAwareDataSourceFactory
 import com.metrolist.music.deezer.DeezerAudioDataSource
-import com.metrolist.music.apple.AppleAudioProvider
-import com.metrolist.music.constants.AppleAudioQuality
-import com.metrolist.music.constants.AppleAudioQualityKey
-import com.metrolist.music.constants.AppleResolverEndpointsKey
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.di.DownloadCache
 import com.metrolist.music.di.PlayerCache
@@ -300,14 +296,6 @@ constructor(
                 format = soundCloudFallbackFormat(mediaId, this),
             )
 
-        fun AppleAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
-            DownloadStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = appleMusicFallbackCacheKey(mediaId),
-                format = appleMusicFallbackFormat(mediaId, this),
-            )
-
         fun JioSaavnAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
             DownloadStreamResolution(
                 uri = mediaUri,
@@ -322,8 +310,6 @@ constructor(
             Result.failure(IllegalStateException("SoundCloud not attempted yet"))
         var deezerAttempt: Result<DeezerAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Deezer audio not enabled"))
-        var appleAttempt: Result<AppleAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Apple Music not enabled"))
         var youtubeAttempt: Result<DownloadStreamResolution> =
             Result.failure(IllegalStateException("YouTube Music not attempted yet"))
         var jiosaavnAttempt: Result<JioSaavnAudioProvider.Resolved> =
@@ -370,26 +356,6 @@ constructor(
                     }
                     deezerAttempt.getOrNull()?.let { resolved ->
                         Timber.tag(TAG).i("Using Deezer stream for download $mediaId: ${resolved.label}")
-                        return resolved.toDownloadResolution()
-                    }
-                }
-                AudioProviderOrderItem.APPLE_MUSIC -> {
-                    attemptedProviders += provider
-                    appleAttempt = runCatching {
-                        AppleAudioProvider.resolve(
-                            AppleAudioProvider.Query(
-                                song = song?.song?.title ?: mediaId,
-                                artist = song?.orderedArtists?.firstOrNull()?.name ?: "",
-                                album = song?.song?.albumName ?: song?.album?.title,
-                                isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
-                                durationMs = song?.song?.duration?.toLong()?.times(1000L),
-                                quality = context.dataStore.get(AppleAudioQualityKey).toEnum(AppleAudioQuality.AAC),
-                                resolverEndpoints = context.dataStore.get(AppleResolverEndpointsKey, ""),
-                            )
-                        )
-                    }
-                    appleAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag(TAG).i("Using Apple Music stream for download $mediaId: ${resolved.title}")
                         return resolved.toDownloadResolution()
                     }
                 }
@@ -489,13 +455,6 @@ constructor(
         } else {
             ""
         }
-        val appleDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
-            appleAttempt.exceptionOrNull()?.message
-                ?.let { "Apple Music failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
         val jiosaavnDetail = if (attemptedProviders.contains(AudioProviderOrderItem.JIOSAAVN)) {
             jiosaavnAttempt.exceptionOrNull()?.message
                 ?.let { "JioSaavn failed: $it; " }
@@ -505,7 +464,7 @@ constructor(
         }
         val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${appleDetail}${jiosaavnDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${jiosaavnDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
             qobuzError,
         )
     }
@@ -783,22 +742,6 @@ constructor(
             bitrate = resolved.bitrate,
             sampleRate = resolved.sampleRate,
             contentLength = resolved.contentLength ?: 0L,
-            loudnessDb = null,
-            perceptualLoudnessDb = null,
-            playbackUrl = null,
-        )
-
-        private fun appleMusicFallbackFormat(
-            mediaId: String,
-            resolved: AppleAudioProvider.Resolved,
-        ) = FormatEntity(
-            id = mediaId,
-            itag = APPLE_MUSIC_FALLBACK_ITAG,
-            mimeType = resolved.mimeType,
-            codecs = resolved.codecs,
-            bitrate = resolved.bitrate,
-            sampleRate = 44100,
-            contentLength = 0L,
             loudnessDb = null,
             perceptualLoudnessDb = null,
             playbackUrl = null,

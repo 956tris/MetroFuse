@@ -92,7 +92,6 @@ enum class SliderStyle {
     DEFAULT,
     WAVY,
     SLIM,
-    WAVEFORM,
 }
 
 const val SYSTEM_DEFAULT = "SYSTEM_DEFAULT"
@@ -127,8 +126,6 @@ val CheckForUpdatesKey = booleanPreferencesKey("checkForUpdates")
 val UpdateNotificationsEnabledKey = booleanPreferencesKey("updateNotifications")
 val LastUpdateCheckTimeKey = longPreferencesKey("lastUpdateCheckTime")
 
-val AppleAudioQualityKey = stringPreferencesKey("appleAudioQuality")
-val AppleResolverEndpointsKey = stringPreferencesKey("appleResolverEndpoints")
 val StopOnProviderErrorKey = booleanPreferencesKey("stopOnProviderError")
 val AudioProviderOrderKey = stringPreferencesKey("audioProviderOrder")
 val AudioProviderDisabledKey = stringPreferencesKey("audioProviderDisabled")
@@ -139,7 +136,6 @@ enum class AudioProviderOrderItem {
     SOUNDCLOUD,
     TIDAL,
     DEEZER,
-    APPLE_MUSIC,
     JIOSAAVN,
     YOUTUBE_MUSIC,
     QOBUZ,
@@ -158,7 +154,6 @@ object AudioProviderOrder {
             AudioProviderOrderItem.QOBUZ,
             AudioProviderOrderItem.TIDAL,
             AudioProviderOrderItem.SOUNDCLOUD,
-            AudioProviderOrderItem.APPLE_MUSIC,
         )
 
     fun serialize(providers: List<AudioProviderOrderItem>): String =
@@ -216,47 +211,6 @@ enum class QobuzBackend {
     KENNY,
 }
 val SoundCloudAudioQualityKey = stringPreferencesKey("soundCloudAudioQuality")
-
-enum class AppleAudioQuality {
-    ATMOS,
-    AC3,
-    AAC,
-    AAC_WEB,
-    AAC_BINAURAL,
-    AAC_DOWNMIX,
-    AAC_HE,
-    AAC_HE_WEB,
-    AAC_HE_BINAURAL,
-    AAC_HE_DOWNMIX,
-}
-
-val AppleAudioQualityOptions =
-    listOf(
-        AppleAudioQuality.ATMOS,
-        AppleAudioQuality.AC3,
-        AppleAudioQuality.AAC,
-        AppleAudioQuality.AAC_WEB,
-        AppleAudioQuality.AAC_BINAURAL,
-        AppleAudioQuality.AAC_DOWNMIX,
-        AppleAudioQuality.AAC_HE,
-        AppleAudioQuality.AAC_HE_WEB,
-        AppleAudioQuality.AAC_HE_BINAURAL,
-        AppleAudioQuality.AAC_HE_DOWNMIX,
-    )
-
-fun AppleAudioQuality.toCodec(): String =
-    when (this) {
-        AppleAudioQuality.ATMOS -> "atmos"
-        AppleAudioQuality.AC3 -> "ac3"
-        AppleAudioQuality.AAC -> "aac"
-        AppleAudioQuality.AAC_WEB -> "aac-web"
-        AppleAudioQuality.AAC_BINAURAL -> "aac-binaural"
-        AppleAudioQuality.AAC_DOWNMIX -> "aac-downmix"
-        AppleAudioQuality.AAC_HE -> "aac-he"
-        AppleAudioQuality.AAC_HE_WEB -> "aac-he-web"
-        AppleAudioQuality.AAC_HE_BINAURAL -> "aac-he-binaural"
-        AppleAudioQuality.AAC_HE_DOWNMIX -> "aac-he-downmix"
-    }
 
 enum class TidalAudioQuality {
     AAC_320,
@@ -324,6 +278,7 @@ val SoundCloudAudioQualityOptions =
     )
 
 val AudioOffload = booleanPreferencesKey("enableOffload")
+val FlacSoftwareDecoderKey = booleanPreferencesKey("flacSoftwareDecoder")
 
 val VarispeedKey = booleanPreferencesKey("varispeed")
 

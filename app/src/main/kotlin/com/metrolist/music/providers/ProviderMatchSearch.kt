@@ -253,7 +253,6 @@ object ProviderMatchSearch {
                 }
             }
 
-            AudioProviderOrderItem.APPLE_MUSIC -> emptyList()
             // Offline matches need the local database, which isn't available
             // from this context; matching happens in the playback path instead.
             AudioProviderOrderItem.OFFLINE -> emptyList()

@@ -209,7 +209,6 @@ import com.metrolist.music.constants.TidalAudioQuality
 import com.metrolist.music.constants.TidalAudioQualityKey
 import com.metrolist.music.constants.TidalCookieKey
 import com.metrolist.music.constants.TidalResolverEndpointsKey
-import com.metrolist.music.constants.AppleResolverEndpointsKey
 import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.constants.PlayerVolumeKey
 import com.metrolist.music.constants.PreventDuplicateTracksInQueueKey
@@ -235,9 +234,10 @@ import com.metrolist.music.constants.SkipSilenceKey
 import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
 import com.metrolist.music.constants.ArtworkFetchQualityKey
 import com.metrolist.music.constants.ContentLanguageKey
+import com.metrolist.music.constants.ExperimentalAppleMusicCoverFadeKey
+import com.metrolist.music.constants.FlacSoftwareDecoderKey
 import com.metrolist.music.constants.JioSaavnAudioQuality
 import com.metrolist.music.constants.JioSaavnAudioQualityKey
-import com.metrolist.music.constants.AppleMusicArtistMotionBackgroundKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.SpotifyCanvasEnabledKey
 import com.metrolist.music.constants.SpotifyListeningHistoryEnabledKey
@@ -309,9 +309,6 @@ import com.metrolist.music.providers.ExperimentalPlaybackPolicy
 import com.metrolist.music.providers.TidalHomeFeedProvider
 import com.metrolist.music.qobuz.QobuzAudioProvider
 import com.metrolist.music.soundcloud.SoundCloudAudioProvider
-import com.metrolist.music.apple.AppleAudioProvider
-import com.metrolist.music.constants.AppleAudioQuality
-import com.metrolist.music.constants.AppleAudioQualityKey
 import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.constants.LoudnessLevel
@@ -1333,7 +1330,6 @@ class MusicService :
                             prefs[DeezerProxyUrlKey],
                             prefs[SoundCloudAudioQualityKey],
                             prefs[SoundCloudAuthTokenKey],
-                            prefs[AppleAudioQualityKey],
                             prefs[QobuzBackendKey],
                             prefs[QobuzCountryKey],
                             prefs[AudioProviderOrderKey],
@@ -5497,7 +5493,6 @@ class MusicService :
         return listOf(
             "tidalQuality=${tidalQuality.name}",
             "tidalResolvers=${TidalAudioProvider.resolverEndpointBases(tidalResolverEndpoints).joinToString(",").hashCode()}",
-            "appleResolvers=${AppleAudioProvider.resolverEndpointBases(dataStore.get(AppleResolverEndpointsKey, "")).joinToString(",").hashCode()}",
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
             "deezerProxy=${DeezerAudioProvider.normalizeProxyUrl(deezerProxyUrl).hashCode()}",
@@ -6157,7 +6152,6 @@ class MusicService :
             AudioProviderOrderItem.DEEZER -> deezerFallbackCacheKey(mediaId)
             AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeFallbackCacheKey(mediaId)
             AudioProviderOrderItem.QOBUZ -> qobuzFallbackCacheKey(mediaId)
-            AudioProviderOrderItem.APPLE_MUSIC -> appleMusicFallbackCacheKey(mediaId)
             AudioProviderOrderItem.JIOSAAVN -> jiosaavnFallbackCacheKey(mediaId)
             AudioProviderOrderItem.OFFLINE -> offlineFallbackCacheKey(mediaId)
         }
@@ -6280,15 +6274,6 @@ class MusicService :
                 mimeType = MimeTypes.AUDIO_MPEG,
             )
 
-        fun AppleAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
-            PlaybackStreamResolution(
-                uri = mediaUri,
-                expiresAtMs = expiresAtMs,
-                cacheKey = appleMusicFallbackCacheKey(mediaId),
-                format = appleMusicFallbackFormat(mediaId, this),
-                mimeType = mimeType,
-            )
-
         fun JioSaavnAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
             PlaybackStreamResolution(
                 uri = mediaUri,
@@ -6331,8 +6316,6 @@ class MusicService :
             Result.failure(IllegalStateException("TIDAL audio not enabled"))
         var deezerAttempt: Result<DeezerAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Deezer audio not enabled"))
-        var appleAttempt: Result<AppleAudioProvider.Resolved> =
-            Result.failure(IllegalStateException("Apple Music not enabled"))
         var youtubeAttempt: Result<PlaybackStreamResolution> =
             Result.failure(IllegalStateException("YouTube Music not attempted yet"))
         var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
@@ -6498,29 +6481,6 @@ class MusicService :
                         throwProviderFailure("YouTube Music", youtubeAttempt.exceptionOrNull())
                     }
                 }
-                AudioProviderOrderItem.APPLE_MUSIC -> {
-                    attemptedProviders += provider
-                    appleAttempt = runCatching {
-                        AppleAudioProvider.resolve(
-                            AppleAudioProvider.Query(
-                                song = song?.song?.title ?: queuedMetadata?.title ?: mediaId,
-                                artist = song?.orderedArtists?.firstOrNull()?.name ?: queuedMetadata?.artists?.firstOrNull()?.name ?: "",
-                                album = song?.song?.albumName ?: song?.album?.title ?: queuedMetadata?.album?.title,
-                                isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
-                                durationMs = (song?.song?.duration ?: (queuedMetadata?.duration))?.toLong()?.times(1000L),
-                                quality = dataStore.get<String>(AppleAudioQualityKey).toEnum(AppleAudioQuality.AAC),
-                                resolverEndpoints = dataStore.get(AppleResolverEndpointsKey, ""),
-                            )
-                        )
-                    }
-                    appleAttempt.getOrNull()?.let { resolved ->
-                        Timber.tag("MusicService").i("Using Apple Music stream for $mediaId: ${resolved.title}")
-                        return resolved.toPlaybackResolution()
-                    }
-                    if (stopOnProviderError) {
-                        throwProviderFailure("Apple Music", appleAttempt.exceptionOrNull())
-                    }
-                }
                 AudioProviderOrderItem.QOBUZ -> {
                     attemptedProviders += provider
                     qobuzAttempt = runCatching {
@@ -6665,13 +6625,6 @@ class MusicService :
         } else {
             ""
         }
-        val appleDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
-            appleAttempt.exceptionOrNull()?.readableMessage()
-                ?.let { "Apple Music failed: $it; " }
-                .orEmpty()
-        } else {
-            ""
-        }
         val jiosaavnDetail = if (attemptedProviders.contains(AudioProviderOrderItem.JIOSAAVN)) {
             jiosaavnAttempt.exceptionOrNull()?.readableMessage()
                 ?.let { "JioSaavn failed: $it; " }
@@ -6683,7 +6636,7 @@ class MusicService :
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
         val providerDetails =
-            "${qobuzDetail}${tidalDetail}${deezerDetail}${jiosaavnDetail}${appleDetail}" +
+            "${qobuzDetail}${tidalDetail}${deezerDetail}${jiosaavnDetail}" +
                 "SoundCloud failed: ${soundCloudError.readableMessage()}; " +
                 "YouTube failed: ${youtubeError.readableMessage()}"
         throw PlaybackException(
@@ -6976,7 +6929,13 @@ class MusicService :
         currentAppleCanvasUrl.value = null
         currentAppleTallCanvasUrl.value = null
         if (metadata == null || metadata.isEpisode || metadata.isVideoSong) return
-        if (!dataStore.get(AppleMusicArtistMotionBackgroundKey, true)) return
+        // The tall canvas URL feeds both the artist motion background and the
+        // "fade cover into UI" experiment, which has its own toggle. Gating
+        // the fetch on the motion-background setting alone left the fade
+        // toggle dead whenever motion backgrounds were off.
+        val motionBackgroundEnabled = dataStore.get(AppleMusicArtistMotionBackgroundKey, true)
+        val coverFadeEnabled = dataStore.get(ExperimentalAppleMusicCoverFadeKey, false)
+        if (!motionBackgroundEnabled && !coverFadeEnabled) return
         if (isLocalMedia(metadata)) return
 
         val artist = metadata.artists.firstOrNull()?.name?.takeIf { it.isNotBlank() } ?: return
@@ -7674,11 +7633,24 @@ class MusicService :
             // (OMX.google.*/c2.android.*), which sound identical but burn
             // CPU. Stable sort keeps ExoPlayer's internal order otherwise.
             // The FFmpeg extension renderer stays the true last resort.
+            // Opt-in escape hatch: some vendor hardware FLAC decoders emit
+            // corrupt PCM without raising an error (so decoder-fallback never
+            // kicks in). When the software-FLAC toggle is on, rank the
+            // platform software decoder first for FLAC only.
             setMediaCodecSelector(
                 MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                    val preferSoftwareFlac =
+                        mimeType.equals(MimeTypes.AUDIO_FLAC, ignoreCase = true) &&
+                            dataStore.get(FlacSoftwareDecoderKey, false)
                     MediaCodecUtil.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
                         .sortedBy { info ->
-                            if (info.name.startsWith("OMX.google.") || info.name.startsWith("c2.android.")) 1 else 0
+                            val isSoftware =
+                                info.name.startsWith("OMX.google.") || info.name.startsWith("c2.android.")
+                            if (preferSoftwareFlac) {
+                                if (isSoftware) 0 else 1
+                            } else {
+                                if (isSoftware) 1 else 0
+                            }
                         }
                 },
             )
@@ -10999,23 +10971,6 @@ class MusicService :
                 .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
                 .takeUnless { Uri.parse(it).isTidalPlaybackCdnUri() }
 
-
-        private fun appleMusicFallbackFormat(
-            mediaId: String,
-            resolved: AppleAudioProvider.Resolved,
-        ): FormatEntity =
-            FormatEntity(
-                id = mediaId,
-                itag = APPLE_MUSIC_FALLBACK_ITAG,
-                mimeType = resolved.mimeType,
-                codecs = resolved.codecs,
-                bitrate = resolved.bitrate,
-                sampleRate = 44100,
-                contentLength = 0L,
-                loudnessDb = null,
-                perceptualLoudnessDb = null,
-                playbackUrl = null,
-            )
 
         private fun qobuzFallbackFormat(
             mediaId: String,
