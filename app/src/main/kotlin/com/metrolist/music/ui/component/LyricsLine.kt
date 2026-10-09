@@ -469,7 +469,9 @@ private fun WordLevelLyrics(
         }
     }
 
-    LaunchedEffect(isActiveLine, currentPositionState) {
+    // Keyed on isActiveLine only: inactive lines now receive a stable position
+    // value, and re-sync once when transitioning back to inactive.
+    LaunchedEffect(isActiveLine) {
         if (!isActiveLine) {
             smoothPosition = currentPositionState + lyricsOffset
         }
@@ -1522,7 +1524,9 @@ private fun SpicyWordLevelLyrics(
         }
     }
 
-    LaunchedEffect(isActiveLine, currentPositionState) {
+    // Keyed on isActiveLine only: inactive lines now receive a stable position
+    // value, and re-sync once when transitioning back to inactive.
+    LaunchedEffect(isActiveLine) {
         if (!isActiveLine) {
             smoothPosition = currentPositionState + lyricsOffset
         }

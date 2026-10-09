@@ -143,8 +143,14 @@ private val LYRICS_FADE_TOP_DP = 130.dp
 private val LYRICS_FADE_BOTTOM_DP = 160.dp
 private val SPICY_LYRICS_FADE_TOP_DP = 72.dp
 private val SPICY_LYRICS_FADE_BOTTOM_DP = 72.dp
-private const val LYRICS_STAGGER_DELAY_PER_DISTANCE = 20
-private const val LYRICS_STAGGER_DELAY_MAX_MS = 200
+private const val LYRICS_STAGGER_DELAY_PER_DISTANCE = 12
+private const val LYRICS_STAGGER_DELAY_MAX_MS = 120
+private const val LYRICS_SCROLL_DURATION_MS = 500
+// Off-screen lines snap instead of animating so only the visible window runs tweens.
+private const val LYRICS_ANIM_WINDOW = 12
+// Parent position state only drives gap/indicator logic, so throttle it well below
+// vsync. Active lines run their own frame loop straight from the player.
+private const val LYRICS_PARENT_POSITION_RESOLUTION_MS = 200L
 private const val APPLE_LYRICS_SCROLL_DURATION_MS = 400
 // am-lyrics scroll easing for line settles.
 private val AppleLyricsScrollEasing = CubicBezierEasing(0.41f, 0f, 0.12f, 0.99f)
@@ -376,7 +382,9 @@ fun ExperimentalLyrics(
                 }
             }
 
-            currentPositionState = position
+            if (abs(position - currentPositionState) >= LYRICS_PARENT_POSITION_RESOLUTION_MS) {
+                currentPositionState = position
+            }
 
             val lyricsOffset = currentSong?.song?.lyricsOffset ?: 0
             val effectivePosition = position + lyricsOffset
@@ -452,8 +460,8 @@ fun ExperimentalLyrics(
                 lastMainMaxSeen = scrollMax
             }
             
-            previousScrollActiveIndices = scrollActiveIndices
-            activeLineIndices = newActiveIndices
+            if (scrollActiveIndices != previousScrollActiveIndices) previousScrollActiveIndices = scrollActiveIndices
+            if (newActiveIndices != activeLineIndices) activeLineIndices = newActiveIndices
         }
     }
 
@@ -737,7 +745,7 @@ fun ExperimentalLyrics(
                         animationSpec = if (isInitialLayout || !isAutoScrollEnabled) snap()
                         else {
                             tween(
-                                durationMillis = if (appleMusicLyrics) APPLE_LYRICS_SCROLL_DURATION_MS else 750,
+                                durationMillis = if (appleMusicLyrics) APPLE_LYRICS_SCROLL_DURATION_MS else LYRICS_SCROLL_DURATION_MS,
                                 easing = if (appleMusicLyrics) AppleLyricsScrollEasing else FastOutSlowInEasing,
                             )
                         },
@@ -760,10 +768,10 @@ fun ExperimentalLyrics(
                         }
                         val animatedOffset by animateFloatAsState(
                             targetValue = if (isAutoScrollEnabled) targetOffset else frozenOffset.floatValue,
-                            animationSpec = if (isInitialLayout || !isAutoScrollEnabled) snap() 
+                            animationSpec = if (isInitialLayout || !isAutoScrollEnabled || distance > LYRICS_ANIM_WINDOW) snap()
                                             else {
                                                 tween(
-                                                    durationMillis = if (appleMusicLyrics) APPLE_LYRICS_SCROLL_DURATION_MS else 750,
+                                                    durationMillis = if (appleMusicLyrics) APPLE_LYRICS_SCROLL_DURATION_MS else LYRICS_SCROLL_DURATION_MS,
                                                     delayMillis =
                                                         if (appleMusicLyrics) {
                                                             (distance * APPLE_LYRICS_STAGGER_DELAY_PER_DISTANCE).coerceAtMost(APPLE_LYRICS_STAGGER_DELAY_MAX_MS)
@@ -831,7 +839,10 @@ fun ExperimentalLyrics(
                                         index = index, item = item, isSynced = isSynced,
                                         isActiveLine = isActiveLine,
                                         bgVisible = bgVisible, isSelected = selectedIndices.contains(index),
-                                        isSelectionModeActive = isSelectionModeActive, currentPositionState = currentPositionState,
+                                        isSelectionModeActive = isSelectionModeActive,
+                                        // Only active lines need live position (karaoke sweep).
+                                        // Inactive lines get a stable value so they skip recomposition.
+                                        currentPositionState = if (isActiveLine) currentPositionState else item.time,
                                         lyricsOffset = (currentSong?.song?.lyricsOffset ?: 0).toLong(),
                                         playerConnection = playerConnection,
                                         lyricsTextSize = if (appleMusicLyrics) appleMusicLyricsSize else 36f,

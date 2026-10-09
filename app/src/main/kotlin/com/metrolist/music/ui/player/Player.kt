@@ -906,6 +906,45 @@ fun BottomSheetPlayer(
         }
     }
 
+    // Prefetch full lyrics for the current track as soon as it changes so opening
+    // the lyrics pane is instant even when the mini-player lyrics overlay is
+    // disabled (the effect above only prefetches for that overlay).
+    // InlineLyricsView still fetches on open as a fallback.
+    LaunchedEffect(mediaMetadata?.id, isLocalMedia) {
+        val currentMetadata = mediaMetadata ?: return@LaunchedEffect
+        if (isLocalMedia) return@LaunchedEffect
+        val trackId = currentMetadata.id
+        if (currentLyrics?.id == trackId) return@LaunchedEffect
+
+        delay(800)
+        if (!isActive || mediaMetadata?.id != trackId) return@LaunchedEffect
+
+        withContext(Dispatchers.IO) {
+            try {
+                val existing = database.lyrics(trackId).first()
+                if (existing != null) return@withContext
+
+                val entryPoint =
+                    EntryPointAccessors.fromApplication(
+                        context.applicationContext,
+                        com.metrolist.music.di.LyricsHelperEntryPoint::class.java,
+                    )
+                val lyricsHelper = entryPoint.lyricsHelper()
+                val fetchedLyricsWithProvider = lyricsHelper.getLyrics(currentMetadata)
+                database.query {
+                    upsert(
+                        LyricsEntity(
+                            trackId,
+                            fetchedLyricsWithProvider.lyrics,
+                            fetchedLyricsWithProvider.provider,
+                        ),
+                    )
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     // Use State objects for position/duration to pass to MiniPlayer without causing recomposition
     // These states persist across playback state changes to ensure continuous progress updates
     val positionState = remember { mutableLongStateOf(0L) }
@@ -3153,7 +3192,7 @@ fun InlineLyricsView(
 
     LaunchedEffect(mediaMetadata?.id, currentLyrics) {
         if (mediaMetadata != null && currentLyrics == null) {
-            delay(500)
+            delay(120)
             coroutineScope.launch(Dispatchers.IO) {
                 try {
                     val entryPoint =

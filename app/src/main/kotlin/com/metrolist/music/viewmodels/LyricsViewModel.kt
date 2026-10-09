@@ -28,6 +28,11 @@ class LyricsViewModel @Inject constructor() : ViewModel() {
 
     private var processJob: kotlinx.coroutines.Job? = null
 
+    private var lastLyrics: String? = null
+    private var lastEnabledLanguages: List<String> = emptyList()
+    private var lastRomanizeCyrillicByLine: Boolean = false
+    private var lastShowIntervalIndicator: Boolean = false
+
     private val _lines = MutableStateFlow<List<LyricsEntry>>(emptyList())
     val lines: StateFlow<List<LyricsEntry>> = _lines.asStateFlow()
 
@@ -40,6 +45,20 @@ class LyricsViewModel @Inject constructor() : ViewModel() {
         romanizeCyrillicByLine: Boolean,
         showIntervalIndicator: Boolean
     ) {
+        // Skip redundant re-processing when toggling the lyrics pane for the same
+        // song with the same options. Recomposition recreates the lyrics UI from
+        // scratch, and without this guard every open re-parses and re-measures.
+        if (lyrics == lastLyrics &&
+            enabledLanguages == lastEnabledLanguages &&
+            romanizeCyrillicByLine == lastRomanizeCyrillicByLine &&
+            showIntervalIndicator == lastShowIntervalIndicator
+        ) {
+            return
+        }
+        lastLyrics = lyrics
+        lastEnabledLanguages = enabledLanguages
+        lastRomanizeCyrillicByLine = romanizeCyrillicByLine
+        lastShowIntervalIndicator = showIntervalIndicator
         processJob?.cancel()
         processJob = viewModelScope.launch {
             val processedLines = withContext(Dispatchers.Default) {
