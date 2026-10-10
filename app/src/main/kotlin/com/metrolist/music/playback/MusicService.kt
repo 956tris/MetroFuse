@@ -191,6 +191,7 @@ import com.metrolist.music.constants.AutomixBarsKey
 import com.metrolist.music.constants.AutomixBlendStyle
 import com.metrolist.music.constants.AutomixEnabledKey
 import com.metrolist.music.constants.AutomixStyleKey
+import com.metrolist.music.constants.parseAutomixStyle
 import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.MediaSessionConstants
 import com.metrolist.music.constants.MediaSessionConstants.CommandAddToTargetPlaylist
@@ -466,14 +467,8 @@ private fun automixStyleParams(style: AutomixBlendStyle): AutomixStyleParams =
     when (style) {
         AutomixBlendStyle.FADE ->
             AutomixStyleParams(AutomixCurve.SINE, 1f, 1f, -2.0, 1800L, false, false, false, 0.0, 0.0)
-        AutomixBlendStyle.MIX ->
-            AutomixStyleParams(AutomixCurve.PLATEAU, 0.35f, 1.35f, -2.0, 2000L, false, false, false, 0.0, 0.0)
-        AutomixBlendStyle.SMOOTH ->
-            AutomixStyleParams(AutomixCurve.SINE, 0.4f, 1.3f, -3.0, 2200L, false, false, false, 0.0, 0.0)
         AutomixBlendStyle.QUICK_CUT ->
             AutomixStyleParams(AutomixCurve.STEEP, 1.2f, 0.4f, 0.0, 900L, true, true, false, 0.0, 0.0)
-        AutomixBlendStyle.SLOW_BLEND ->
-            AutomixStyleParams(AutomixCurve.PLATEAU, 0.4f, 1.6f, -1.0, 2500L, false, false, true, 0.0, 0.0)
         AutomixBlendStyle.BASS_SWAP ->
             AutomixStyleParams(AutomixCurve.PLATEAU, 0.5f, 1.2f, 0.0, 1500L, false, false, true, 0.0, -10.0)
         AutomixBlendStyle.FILTER_EXIT ->
@@ -482,8 +477,11 @@ private fun automixStyleParams(style: AutomixBlendStyle): AutomixStyleParams =
             AutomixStyleParams(AutomixCurve.SINE, 0.7f, 1f, 0.0, 1800L, false, false, true, -4.5, 0.0)
         AutomixBlendStyle.PUNCH ->
             AutomixStyleParams(AutomixCurve.STEEP, 0.5f, 0.7f, 0.0, 800L, false, false, true, 0.0, 0.0)
+        // Ethereal keeps the vocal guard ON (unlike the retired long blends):
+        // its overlaps are the longest, so a hot outgoing tail must still sit
+        // its mids back instead of fighting the incoming voice.
         AutomixBlendStyle.ETHEREAL ->
-            AutomixStyleParams(AutomixCurve.PLATEAU, 0.4f, 1.8f, -5.0, 3500L, false, false, true, 0.0, 0.0)
+            AutomixStyleParams(AutomixCurve.PLATEAU, 0.4f, 1.8f, -5.0, 3500L, false, false, false, 0.0, 0.0)
     }
 
 /**
@@ -1857,7 +1855,7 @@ class MusicService :
                     crossfadeGapless = prefs[CrossfadeGaplessKey] ?: true,
                     automixEnabled = prefs[AutomixEnabledKey] ?: false,
                     automixBars = prefs[AutomixBarsKey] ?: 8,
-                    automixStyle = prefs[AutomixStyleKey].toEnum(AutomixBlendStyle.FADE),
+                    automixStyle = parseAutomixStyle(prefs[AutomixStyleKey]),
                 )
             },
             listenTogetherManager.roomState,
@@ -9143,7 +9141,20 @@ class MusicService :
             outData.structure?.takeIf { it.confidence >= 0.55f }?.toLearned()?.let {
                 mixOutTriggerMs(it, player.duration, durationMs)
             }
-        val triggerTime = learnedTrigger ?: (player.duration - durationMs)
+        // Blind blends (no learned outro to land on) arm from a cautious
+        // width, not the full styled width: a 1.8x ethereal trigger would
+        // otherwise reach ~20s back into full vocals. Completion-anchoring
+        // at swap time stretches the actual blend to fill the rest, so
+        // nothing is lost - the fade just starts later, past the vocals.
+        val blindWidthMs =
+            if (learnedTrigger == null &&
+                (outData.structure?.confidence ?: 0f) < AUTOMIX_CAUTIOUS_CONFIDENCE
+            ) {
+                (durationMs * AUTOMIX_CAUTIOUS_DURATION_SCALE).toLong()
+            } else {
+                durationMs
+            }
+        val triggerTime = learnedTrigger ?: (player.duration - blindWidthMs)
         val phraseAlignedTrigger =
             if (automixProfile != null && learnedTrigger == null) {
                 alignToPhraseStart(triggerTime, player.duration, outData.bpm)
@@ -10027,8 +10038,8 @@ class MusicService :
 
     /**
      * The Automix volume curves, dispatched by style. FADE is the classic
-     * equal-power handoff; MIX-family plateau curves hold both tracks at
-     * full volume through the middle (a mix, not a fade) with fades only
+     * equal-power handoff; plateau curves (e.g. ETHEREAL) hold both tracks
+     * at full volume through the middle (a mix, not a fade) with fades only
      * at the edges; STEEP concentrates the whole move mid-blend for cuts.
      * The center dip scales with certainty and style either way.
      */
@@ -10288,6 +10299,12 @@ class MusicService :
         // outlive the old file - which then dies mid-fade with a hard cut.
         // Shrink the blend so it still completes exactly on the musical
         // end; if the end already passed, snap to a quick fade-in.
+        // Seamless completion is the mirror case: key/mode scaling usually
+        // shortens the actual blend below the armed trigger width, which
+        // would fade the outgoing track out seconds before its musical end
+        // (an early cut). On compatible pairs stretch the blend to fill the
+        // rest so the handoff lands exactly on the outro. Hot endings keep
+        // their short radio overlap, and clashing pairs keep their exit.
         activeAutomixPlan?.let { plan ->
             if (plan.musicalEndMs != Long.MAX_VALUE) {
                 val remainingMs = plan.musicalEndMs - (fadingPlayer?.currentPosition ?: 0L)
@@ -10296,6 +10313,12 @@ class MusicService :
                         remainingMs < AUTOMIX_ANCHOR_FLOOR_MS -> AUTOMIX_ANCHOR_MIN_MS
                         remainingMs < activeCrossfadeDurationMs ->
                             remainingMs.coerceAtLeast(AUTOMIX_ANCHOR_MIN_MS)
+
+                        remainingMs > activeCrossfadeDurationMs &&
+                            (plan.blendMode == AutomixBlendMode.WIDE ||
+                                plan.blendMode == AutomixBlendMode.FOCUSED) &&
+                            !isOutgoingTailHot(fadingPlayer) ->
+                            remainingMs.coerceIn(activeCrossfadeDurationMs, AUTOMIX_BLEND_FILL_CAP_MS)
 
                         else -> activeCrossfadeDurationMs
                     }
@@ -10374,7 +10397,11 @@ class MusicService :
                     ((hotOutgoing || styleParams.forceMidCarve) && !styleParams.suppressMidCarve)
                 val softMidTrim =
                     automixPlan?.blendMode == AutomixBlendMode.NEUTRAL ||
-                        (automixPlan?.cautiousOverlap == true && !midTrim)
+                        (automixPlan?.cautiousOverlap == true && !midTrim) ||
+                        // Ethereal overlaps run longest, so keep a whisper of
+                        // mid separation through them even on confident pairs
+                        // where no full carve is running - voices never stack.
+                        (automixPlan?.style == AutomixBlendStyle.ETHEREAL && !midTrim)
 
                 fun range(p: Float, start: Float, end: Float) = ((p - start) / (end - start)).coerceIn(0f, 1f)
                 fun smooth(value: Float) = value.coerceIn(0f, 1f).let { it * it * (3f - 2f * it) }
@@ -10777,6 +10804,9 @@ class MusicService :
         // radio-style overlap instead of a full blend over their climax.
         private const val AUTOMIX_ANCHOR_MIN_MS = 1500L
         private const val AUTOMIX_ANCHOR_FLOOR_MS = 750L
+        // Seamless-completion stretch cap: matches the blend width ceiling so
+        // a stretched handoff never exceeds what the trigger could arm.
+        private const val AUTOMIX_BLEND_FILL_CAP_MS = 16_000L
         private const val AUTOMIX_HOT_ENDING_DURATION_SCALE = 0.5f
         // Downbeat-synced swap: hold window for the next barline plus the
         // confidence bar for earning the full stretched-out wide blend.

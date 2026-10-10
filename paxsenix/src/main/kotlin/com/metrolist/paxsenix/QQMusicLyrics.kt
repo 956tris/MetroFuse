@@ -8,7 +8,7 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.contentType
+import io.ktor.http.content.TextContent
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeout
@@ -29,7 +29,6 @@ import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.Inflater
-import kotlin.math.abs
 
 /**
  * QQ Music lyrics path (lyrics-only — QQ refuses audio streams to this
@@ -50,10 +49,14 @@ import kotlin.math.abs
  *      GET c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg
  *      ?songmid=<mid>&format=json&nobase64=1 ("lyric" field).
  *
- * Matching is score-based (never first-hit): the artist must match one of
- * singer[].name, then title/album/duration (|interval - duration| <= 2s)
- * decide, with the official album preferred over reuploads. Results and
- * misses are cached in memory and on disk.
+ * Matching is score-based (never first-hit) in two passes: a strict pass
+ * on the "title artist" search, then a loose title-only pass for
+ * unreleased/alternate versions QQ ranks poorly under the full query.
+ * Artist AND title must always match one of singer[].name / the track
+ * title (vetoes - wrong-song acceptance is worse than a miss); duration
+ * is purely advisory so live/unreleased length differences never veto an
+ * exact match, with the official album preferred over reuploads. Results
+ * and misses are cached in memory and on disk.
  */
 internal object QQMusicLyrics {
     private const val TAG = "QQLyrics"
@@ -69,8 +72,15 @@ internal object QQMusicLyrics {
     /** Minimum score for a candidate to be accepted (see scoring below). */
     private const val MIN_SCORE = 150
 
-    /** Miss cache TTL: failed lookups aren't repeated within a day. */
-    private const val MISS_TTL_MS = 24L * 60 * 60 * 1000
+    /** Loose-pass bar: same vetoes, less supporting evidence required. */
+    private const val LOOSE_MIN_SCORE = 80
+
+    /**
+     * Miss cache TTL: failed lookups retry after a few hours, not a day, so
+     * a transient blip (or QQ indexing an unreleased song late) never
+     * poisons the track for long.
+     */
+    private const val MISS_TTL_MS = 6L * 60 * 60 * 1000
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -136,9 +146,19 @@ internal object QQMusicLyrics {
             } else {
                 val candidates = search(query)
                 Timber.tag(TAG).d("query='%s' candidates=%d", query, candidates.size)
-                if (candidates.isEmpty()) throw IllegalStateException("No QQ Music search results for '$query'")
-
-                val (best, score) = scoreCandidates(candidates, title, artist, album, duration)
+                // Strict pass first (accurate), then loose passes for
+                // unreleased/alternate versions: same vetoes, lower bar,
+                // then a title-only query QQ ranks better without the artist.
+                var picked = scoreCandidates(candidates, title, artist, album, duration, MIN_SCORE)
+                if (picked == null) {
+                    picked = scoreCandidates(candidates, title, artist, album, duration, LOOSE_MIN_SCORE)
+                }
+                if (picked == null && artist.isNotBlank()) {
+                    val loose = search(title)
+                    Timber.tag(TAG).d("query='%s' loose candidates=%d", title, loose.size)
+                    picked = scoreCandidates(loose, title, artist, album, duration, LOOSE_MIN_SCORE)
+                }
+                val (best, score) = picked
                     ?: throw IllegalStateException("No QQ match above threshold for '$query' (${candidates.size} candidates)")
                 val mid = best.mid
                     ?: throw IllegalStateException("QQ Music result missing songmid")
@@ -173,9 +193,10 @@ internal object QQMusicLyrics {
     }
 
     /**
-     * Lyric chain: QRC first, word-by-word fallback, LRC last resort.
-     * QRC and word-by-word are both word-timed and race in parallel
-     * (each ~350ms); QRC wins, so a missing QRC costs zero extra wait.
+     * Lyric chain: QRC first, word-by-word fallback, LRC last resort. All
+     * three launch together; QRC wins, word-by-word is next, LRC is only
+     * awaited when both word-timed stages miss - so the fallback path
+     * costs zero extra wait.
      */
     private suspend fun fetchLyricContent(
         mid: String,
@@ -190,7 +211,7 @@ internal object QQMusicLyrics {
             runCatching {
                 val songid = songidHint ?: throw IllegalStateException("no songid for QRC")
                 val decoded = downloadAndDecrypt(songid).getOrThrow()
-                toAppLyricsFormat(decoded).takeIf { it.isNotBlank() && hasWordTimings(it) }
+                toAppLyricsFormat(decoded).takeIf { it.isNotBlank() && hasConvertedWordTimings(it) }
                     ?: throw IllegalStateException("QRC has no word timings (songid=$songid)")
             }
         }
@@ -198,9 +219,13 @@ internal object QQMusicLyrics {
             runCatching {
                 val songid = songidHint ?: throw IllegalStateException("no songid for word-by-word")
                 val decoded = fetchWordByWord(title, artist, album, duration, songid).getOrThrow()
-                toAppLyricsFormat(decoded).takeIf { it.isNotBlank() && hasWordTimings(it) }
+                toAppLyricsFormat(decoded).takeIf { it.isNotBlank() && hasConvertedWordTimings(it) }
                     ?: throw IllegalStateException("word-by-word has no timings (mid=$mid)")
             }
+        }
+        // LRC flies alongside the word-timed race; only awaited on a full miss.
+        val lrcDeferred = async {
+            runCatching { fetchLrc(mid).getOrThrow() }
         }
         qrcDeferred.await().onSuccess { qrc ->
             Timber.tag(TAG).d("query='%s' stage=QRC chars=%d", query, qrc.length)
@@ -218,16 +243,27 @@ internal object QQMusicLyrics {
         }.onFailure {
             Timber.tag(TAG).d("query='%s' word-by-word miss: %s", query, it.message)
         }
-        // LRC last resort.
-        val lrc = fetchLrc(mid).getOrThrow()
+        // LRC last resort (already in flight - see above).
+        val lrc = lrcDeferred.await().getOrThrow()
         Timber.tag(TAG).d("query='%s' stage=LRC chars=%d", query, lrc.length)
         lyricsMem[mid] = lrc
         writeLyricsDisk(mid, lrc)
         lrc
     }
 
+    /** Raw-payload check: QRC word timings look like (startMs,durMs). */
     private fun hasWordTimings(text: String): Boolean =
         text.contains(Regex("""\(\d+,\d+\)"""))
+
+    /**
+     * Converted-output check: [toAppLyricsFormat] emits
+     * `[lineStart]<wordStart>word...<lineEnd>`, so a genuinely word-timed
+     * line carries 2+ angle-bracket stamps. (The old code ran the raw
+     * paren detector over converted output, which can never match - every
+     * QRC lookup failed closed on it.)
+     */
+    private fun hasConvertedWordTimings(text: String): Boolean =
+        text.lineSequence().any { line -> line.count { it == '<' } >= 2 }
 
     // ---- Word-by-word via musichallSong.PlayLyricInfo (different endpoint,
     // same verified DES cascade — confirmed against QQMusicDecoder,
@@ -278,8 +314,11 @@ internal object QQMusicLyrics {
             header("Referer", "https://y.qq.com/")
             header("Cookie", "tmeLoginType=-1")
             header("User-Agent", "okhttp/3.14.9")
-            contentType(ContentType.Application.Json)
-            setBody(body.toString())
+            // TextContent, NOT setBody(String): the shared client has
+            // ContentNegotiation installed, which would serialize a raw
+            // String body as a quoted JSON string ("{...}") that QQ cannot
+            // parse. TextContent bypasses conversion - bytes go as-is.
+            setBody(TextContent(body.toString(), ContentType.Application.Json))
         }
         val root = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
             ?: throw IllegalStateException("Bad PlayLyricInfo response")
@@ -292,7 +331,7 @@ internal object QQMusicLyrics {
             ?: throw IllegalStateException("No word-by-word lyric payload")
         // crypt=1 means DES-cascade hex; if the payload already carries
         // timestamps (crypt=0 style), use it directly.
-        if (!hex.contains(Regex("""\(\d+,\d+\)""")) && !hex.contains('[')) {
+        if (!hasWordTimings(hex) && !hex.contains('[')) {
             return@runCatching decryptQrcPayload(hex)
         }
         hex
@@ -337,7 +376,9 @@ internal object QQMusicLyrics {
                 putJsonObject("param") {
                     put("remoteplace", "txt.yqq.center")
                     put("query", query)
-                    put("num_per_page", 10)
+                    // Wide net in a single round-trip: the loose pass needs
+                    // lower-ranked versions (live/unreleased) to even see them.
+                    put("num_per_page", 20)
                     put("page_num", 1)
                     put("search_type", 0)
                 }
@@ -349,8 +390,12 @@ internal object QQMusicLyrics {
                 "User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36",
             )
-            contentType(ContentType.Application.Json)
-            setBody(body.toString())
+            // TextContent, NOT setBody(String): the shared client has
+            // ContentNegotiation installed, which would serialize a raw
+            // String body as a quoted JSON string ("{...}") that QQ cannot
+            // parse - this silently killed every search. TextContent bypasses
+            // conversion - bytes go as-is.
+            setBody(TextContent(body.toString(), ContentType.Application.Json))
         }
         val root = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
             ?: return@runCatching emptyList()
@@ -410,11 +455,13 @@ internal object QQMusicLyrics {
         artist: String,
         album: String?,
         duration: Int,
+        minScore: Int,
     ): Pair<Candidate, Int>? {
         val keep = keepTagsOf("$title $artist")
         val normTitle = normalizeForMatch(title, keep)
         val normAlbum = album?.let { normalizeForMatch(it, keep) }.orEmpty()
         val trackArtists = splitArtists(artist).map { normalizeForMatch(it, keep) }.filter { it.isNotBlank() }
+        val wantSecs = duration.toLong()
 
         var best: Candidate? = null
         var bestScore = Int.MIN_VALUE
@@ -422,7 +469,8 @@ internal object QQMusicLyrics {
             val normCTitle = c.title?.let { t -> normalizeForMatch(t, keepTagsOf(t)) }.orEmpty()
             val normCSingers = c.singers.map { normalizeForMatch(it, keepTagsOf(it)) }
 
-            // Hard requirement: the track artist must match any listed singer.
+            // Veto 1: the track artist must match any listed singer. A wrong
+            // artist with the right title is worse than no lyrics at all.
             val artistScore = when {
                 trackArtists.isEmpty() -> 0
                 trackArtists.any { ta -> normCSingers.any { it == ta } } -> 100
@@ -430,13 +478,17 @@ internal object QQMusicLyrics {
                 else -> continue
             }
 
-            var score = artistScore
-            score += when {
+            // Veto 2: the title must match at least by substring. Same artist
+            // + same album + similar length with a different title is a
+            // different song - previously accepted, now rejected.
+            val titleScore = when {
                 normCTitle.isEmpty() || normTitle.isEmpty() -> 0
                 normCTitle == normTitle -> 80
                 normCTitle.contains(normTitle) || normTitle.contains(normCTitle) -> 40
-                else -> 0
+                else -> continue
             }
+
+            var score = artistScore + titleScore
             // Official-album preference: reuploads carry a different album name.
             val normCAlbum = c.album?.let { a -> normalizeForMatch(a, keepTagsOf(a)) }.orEmpty()
             score += when {
@@ -445,12 +497,16 @@ internal object QQMusicLyrics {
                 normCAlbum.contains(normAlbum) || normAlbum.contains(normCAlbum) -> 25
                 else -> 0
             }
+            // Duration is purely advisory: live/unreleased versions run long
+            // or short, so length differences score down but never veto an
+            // otherwise exact match.
             score += c.interval?.let { d ->
-                when (abs(d - duration)) {
-                    in 0..2 -> 100
-                    in 3..5 -> 50
-                    in 6..10 -> 10
-                    else -> -50
+                val diff = if (d >= wantSecs) d - wantSecs else wantSecs - d
+                when {
+                    diff <= 3L -> 100
+                    diff <= 8L -> 50
+                    diff <= 15L -> 10
+                    else -> 0
                 }
             } ?: 0
 
@@ -460,7 +516,7 @@ internal object QQMusicLyrics {
             }
         }
         val winner = best ?: return null
-        return if (bestScore >= MIN_SCORE) winner to bestScore else null
+        return if (bestScore >= minScore) winner to bestScore else null
     }
 
     // ---- Normalisation: lowercase, strip tag segments unless the track itself has them ----
@@ -469,6 +525,17 @@ internal object QQMusicLyrics {
         "explicit", "live", "remaster", "acoustic", "remix", "cover",
         "karaoke", "instrumental", "sped up", "slowed", "reverb",
     )
+
+    /**
+     * Words that never distinguish versions (upload metadata, not music):
+     * always dropped from bracketed segments on both sides, so
+     * "Song (Official Video)" matches QQ's "Song" exactly.
+     */
+    private val fillerWords = setOf(
+        "official", "video", "audio", "lyrics", "lyric", "mv",
+        "visualizer", "visualiser", "hq", "hd", "topic",
+    )
+    private val tagSingleWords = tagWords.flatMap { it.split(' ') }.toSet()
 
     private fun keepTagsOf(raw: String): Set<String> {
         val lower = raw.lowercase()
@@ -482,10 +549,19 @@ internal object QQMusicLyrics {
     private fun normalizeForMatch(raw: String, keep: Set<String>): String {
         var s = raw.lowercase()
         // Drop bracketed tag segments ("(Explicit)", "[Live]") unless the
-        // current track carries that tag itself.
+        // current track carries that tag itself. Pure-filler segments
+        // ("(Official Video)", "[Audio]") go on both sides unconditionally -
+        // they are upload metadata, never part of the song identity.
         s = Regex("""[\(\[][^)\]]*[\)\]]""").replace(s) { m ->
             val inner = m.value.lowercase()
-            if (tagWords.any { it in inner && it !in keep }) "" else " ${m.value} "
+            val innerWords = inner.split(Regex("[^a-z0-9]+")).filter { it.isNotBlank() }
+            if (innerWords.isNotEmpty() && innerWords.all { it in fillerWords || it in tagSingleWords }) {
+                " "
+            } else if (tagWords.any { it in inner && it !in keep }) {
+                ""
+            } else {
+                " ${m.value} "
+            }
         }
         // Drop trailing feat. credits unless the track has them.
         if ("feat" !in keep) {
@@ -498,7 +574,10 @@ internal object QQMusicLyrics {
     }
 
     private fun splitArtists(artist: String): List<String> =
-        artist.split(Regex("""\s*(?:&|/|,|、|\bx\b|\bfeat\.?|\bft\.?|\bwith\b|\band\b)\s*""", RegexOption.IGNORE_CASE))
+        // NOTE: the "x" collab separator requires whitespace on BOTH sides,
+        // so a leading/trailing solo x ("X Ambassadors", "Model X") is never
+        // mistaken for a separator and mangled into a wrong artist name.
+        artist.split(Regex("""\s*(?:&|/|,|、|\bfeat\.?|\bft\.?|\bwith\b|\band\b)\s*|\s+x\s+""", RegexOption.IGNORE_CASE))
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .ifEmpty { listOf(artist.trim()) }
@@ -580,18 +659,28 @@ internal object QQMusicLyrics {
     /** Converts either QRC XML (word-timed) or plain LRC into the app's LyricsUtils rich-sync format. */
     private fun toAppLyricsFormat(decoded: String): String {
         val qrcBody = lyricContentRegex.find(decoded)?.groupValues?.get(1) ?: decoded
-        if (!qrcBody.contains(Regex("""\(\d+,\d+\)"""))) {
+        if (!hasWordTimings(qrcBody)) {
             // Not word-timed QRC (e.g. plain LRC) — pass through as-is.
             return qrcBody
         }
 
+        // QRC ships line breaks as &#10; entities inside the XML attribute;
+        // without this the whole blob is one "line" and only it converts.
         val out = StringBuilder()
-        qrcBody.lines().forEach { rawLine ->
+        qrcBody.replace("&#13;", "").replace("&#10;", "\n").lines().forEach { rawLine ->
             val m = qrcLineRegex.find(rawLine.trim()) ?: return@forEach
             val lineStartMs = m.groupValues[1].toLongOrNull() ?: return@forEach
             val wordsPart = m.groupValues[3]
             val words = qrcWordRegex.findAll(wordsPart).toList()
-            if (words.isEmpty()) return@forEach
+            if (words.isEmpty()) {
+                // Timed line without word stamps: keep it as a plain synced
+                // line instead of dropping it.
+                val plain = wordsPart.trim()
+                if (plain.isNotEmpty()) {
+                    out.append('[').append(formatTime(lineStartMs)).append(']').append(plain).append('\n')
+                }
+                return@forEach
+            }
 
             out.append('[').append(formatTime(lineStartMs)).append(']')
             var lastWordEndMs: Long? = null

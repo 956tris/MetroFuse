@@ -446,14 +446,8 @@
     <string name="automix_style">Blend style</string>
     <string name="automix_style_fade">Fade</string>
     <string name="automix_style_fade_desc">Classic crossfade handoff between songs</string>
-    <string name="automix_style_mix">Mix</string>
-    <string name="automix_style_mix_desc">DJ blend with both tracks fully present</string>
-    <string name="automix_style_smooth">Smooth</string>
-    <string name="automix_style_smooth_desc">Gentle effortless handoff</string>
     <string name="automix_style_quick_cut">Quick cut</string>
     <string name="automix_style_quick_cut_desc">Fast radio-style swap</string>
-    <string name="automix_style_slow_blend">Slow blend</string>
-    <string name="automix_style_slow_blend_desc">Extra-long dissolve for chill sets</string>
     <string name="automix_style_bass_swap">Bass swap</string>
     <string name="automix_style_bass_swap_desc">Techno-style low-end handoff</string>
     <string name="automix_style_filter_exit">Filter exit</string>

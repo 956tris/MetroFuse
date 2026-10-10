@@ -326,19 +326,33 @@ val AutomixStyleKey = stringPreferencesKey("automixStyle")
 /**
  * Automix blend character. FADE reproduces the classic crossfade handoff;
  * the rest reshape the same tempo/key/phase engine into different DJ
- * styles. Persisted by name; unknown values fall back to FADE.
+ * styles. Persisted by name; unknown values fall back to FADE, retired
+ * long-blend names map to ETHEREAL (see [parseAutomixStyle]).
  */
 enum class AutomixBlendStyle {
     FADE,
-    MIX,
-    SMOOTH,
     QUICK_CUT,
-    SLOW_BLEND,
     BASS_SWAP,
     FILTER_EXIT,
     VOCAL,
     PUNCH,
     ETHEREAL,
+}
+
+/** Presets retired for being near-identical long blends; ETHEREAL is their closest home. */
+val retiredAutomixStyleNames = setOf("MIX", "SMOOTH", "SLOW_BLEND")
+
+/** Parses a persisted automix style, migrating retired preset names to ETHEREAL. */
+fun parseAutomixStyle(raw: String?): AutomixBlendStyle {
+    if (raw != null && retiredAutomixStyleNames.contains(raw)) {
+        return AutomixBlendStyle.ETHEREAL
+    }
+    if (raw == null) return AutomixBlendStyle.FADE
+    return try {
+        enumValueOf(raw)
+    } catch (e: IllegalArgumentException) {
+        AutomixBlendStyle.FADE
+    }
 }
 
 val MaxImageCacheSizeKey = intPreferencesKey("maxImageCacheSize")

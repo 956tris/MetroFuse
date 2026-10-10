@@ -24,11 +24,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -62,6 +64,7 @@ import com.metrolist.music.constants.AutomixBarsKey
 import com.metrolist.music.constants.AutomixBlendStyle
 import com.metrolist.music.constants.AutomixEnabledKey
 import com.metrolist.music.constants.AutomixStyleKey
+import com.metrolist.music.constants.retiredAutomixStyleNames
 import com.metrolist.music.constants.NextTrackPreloadCountKey
 import com.metrolist.music.constants.PauseOnMute
 import com.metrolist.music.constants.PersistentQueueKey
@@ -84,8 +87,10 @@ import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
+import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
+import kotlinx.coroutines.flow.first
 import java.util.Locale
 import kotlin.math.roundToInt
 import com.metrolist.music.ui.component.SleepTimerDialog
@@ -150,6 +155,15 @@ fun PlayerSettings(
         AutomixStyleKey,
         defaultValue = AutomixBlendStyle.FADE,
     )
+    // One-time migration for retired presets (Mix/Smooth/Slow blend): they
+    // were near-identical long blends, so Ethereal is their closest home.
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        val raw = context.dataStore.data.first()[AutomixStyleKey]
+        if (raw != null && retiredAutomixStyleNames.contains(raw)) {
+            onAutomixStyleChange(AutomixBlendStyle.ETHEREAL)
+        }
+    }
     val (persistentQueue, onPersistentQueueChange) = rememberPreference(
         PersistentQueueKey,
         defaultValue = true
@@ -318,10 +332,7 @@ fun PlayerSettings(
             valueText = {
                 when (it) {
                     AutomixBlendStyle.FADE -> stringResource(R.string.automix_style_fade)
-                    AutomixBlendStyle.MIX -> stringResource(R.string.automix_style_mix)
-                    AutomixBlendStyle.SMOOTH -> stringResource(R.string.automix_style_smooth)
                     AutomixBlendStyle.QUICK_CUT -> stringResource(R.string.automix_style_quick_cut)
-                    AutomixBlendStyle.SLOW_BLEND -> stringResource(R.string.automix_style_slow_blend)
                     AutomixBlendStyle.BASS_SWAP -> stringResource(R.string.automix_style_bass_swap)
                     AutomixBlendStyle.FILTER_EXIT -> stringResource(R.string.automix_style_filter_exit)
                     AutomixBlendStyle.VOCAL -> stringResource(R.string.automix_style_vocal)
@@ -530,10 +541,7 @@ fun PlayerSettings(
                             Text(
                                 when (automixStyle) {
                                     AutomixBlendStyle.FADE -> stringResource(R.string.automix_style_fade_desc)
-                                    AutomixBlendStyle.MIX -> stringResource(R.string.automix_style_mix_desc)
-                                    AutomixBlendStyle.SMOOTH -> stringResource(R.string.automix_style_smooth_desc)
                                     AutomixBlendStyle.QUICK_CUT -> stringResource(R.string.automix_style_quick_cut_desc)
-                                    AutomixBlendStyle.SLOW_BLEND -> stringResource(R.string.automix_style_slow_blend_desc)
                                     AutomixBlendStyle.BASS_SWAP -> stringResource(R.string.automix_style_bass_swap_desc)
                                     AutomixBlendStyle.FILTER_EXIT -> stringResource(R.string.automix_style_filter_exit_desc)
                                     AutomixBlendStyle.VOCAL -> stringResource(R.string.automix_style_vocal_desc)
@@ -546,10 +554,7 @@ fun PlayerSettings(
                             Text(
                                 when (automixStyle) {
                                     AutomixBlendStyle.FADE -> stringResource(R.string.automix_style_fade)
-                                    AutomixBlendStyle.MIX -> stringResource(R.string.automix_style_mix)
-                                    AutomixBlendStyle.SMOOTH -> stringResource(R.string.automix_style_smooth)
                                     AutomixBlendStyle.QUICK_CUT -> stringResource(R.string.automix_style_quick_cut)
-                                    AutomixBlendStyle.SLOW_BLEND -> stringResource(R.string.automix_style_slow_blend)
                                     AutomixBlendStyle.BASS_SWAP -> stringResource(R.string.automix_style_bass_swap)
                                     AutomixBlendStyle.FILTER_EXIT -> stringResource(R.string.automix_style_filter_exit)
                                     AutomixBlendStyle.VOCAL -> stringResource(R.string.automix_style_vocal)
