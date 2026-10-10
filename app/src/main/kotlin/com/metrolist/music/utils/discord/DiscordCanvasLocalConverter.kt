@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Rect
 import android.graphics.RectF
 import android.media.MediaMetadataRetriever
@@ -12,6 +13,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -20,6 +22,7 @@ import timber.log.Timber
 import java.io.File
 import java.io.OutputStream
 import java.security.MessageDigest
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -36,6 +39,8 @@ object DiscordCanvasLocalConverter {
     private val hlsByteRangeRegex = Regex("""#EXT-X-BYTERANGE:(\d+)(?:@(\d+))?""")
     private val hlsDurationRegex = Regex("""#EXTINF:([0-9.]+)""")
     private val gifMediaType = "image/gif".toMediaType()
+    private val webpMediaType = "image/webp".toMediaType()
+    private const val MAX_WEBP_UPLOAD_BYTES = 8L * 1024L * 1024L
 
     suspend fun prepareAndUpload(
         context: Context,
@@ -130,6 +135,7 @@ object DiscordCanvasLocalConverter {
         headers: Map<String, String>,
         client: OkHttpClient,
         localVideoFile: File,
+        maxDurationMs: Long = DURATION_MS,
     ): List<CanvasSource> {
         val sources = mutableListOf<CanvasSource>()
         if (canvasUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true)) {
@@ -150,6 +156,7 @@ object DiscordCanvasLocalConverter {
                 masterUrl = masterUrl,
                 masterPlaylist = masterPlaylist,
                 mediaPlaylistUrl = mediaPlaylistUrl,
+                maxDurationMs = maxDurationMs,
             )?.let { sourcePath ->
                 sources += CanvasSource.Local(sourcePath)
             }
@@ -225,6 +232,198 @@ object DiscordCanvasLocalConverter {
         }
     }
 
+    /**
+     * On-device conversion to an animated WebP (pure-Kotlin encoder), uploaded
+     * straight to Cloudinary with an UNSIGNED preset. Blocking: call from a
+     * background thread. Returns the Cloudinary https URL, or null on failure.
+     *
+     * [publicId] should be the same "metrofuse_canvas/<hash>" the Space uses, so
+     * results land in the shared cache. Output matches the Space: centre-cropped
+     * square of [sizePx], [fps] frames per second, [seconds] long, looping.
+     */
+    fun convertToWebpAndUpload(
+        sourceUrl: String,
+        sizePx: Int,
+        fps: Int,
+        seconds: Int,
+        publicId: String,
+        cloudName: String,
+        uploadPreset: String,
+        client: OkHttpClient,
+        headers: Map<String, String> = emptyMap(),
+    ): String? {
+        val dir = File(System.getProperty("java.io.tmpdir") ?: ".", "discord-apple-canvas")
+        if (!dir.exists()) dir.mkdirs()
+        val id = publicId.substringAfterLast('/')
+        val webpFile = File(dir, "$id.webp.tmp")
+        val localVideoFile = File(dir, "$id.source.mp4")
+        webpFile.delete()
+        localVideoFile.delete()
+
+        return try {
+            val sources =
+                buildCanvasSources(
+                    canvasUrl = sourceUrl,
+                    headers = headers,
+                    client = client,
+                    localVideoFile = localVideoFile,
+                    maxDurationMs = seconds * 1_000L,
+                )
+            var lastFailure: Throwable? = null
+            var encoded = false
+            for (source in sources) {
+                webpFile.delete()
+                try {
+                    renderWebpFromSource(source, headers, sizePx, fps, seconds, webpFile)
+                    encoded = true
+                    break
+                } catch (error: Exception) {
+                    lastFailure = error
+                    Timber.tag(TAG).d(error, "Apple canvas WebP source failed: ${source.label}")
+                }
+            }
+            if (!encoded) {
+                Timber.tag(TAG).w(lastFailure, "Apple canvas local WebP conversion failed")
+                return null
+            }
+            if (webpFile.length() <= 0L || webpFile.length() > MAX_WEBP_UPLOAD_BYTES) {
+                Timber.tag(TAG).w("Apple canvas WebP unusable size: ${webpFile.length()} bytes")
+                return null
+            }
+            uploadWebpToCloudinary(webpFile, publicId, cloudName, uploadPreset, client)
+        } catch (error: Exception) {
+            Timber.tag(TAG).w(error, "Apple canvas local WebP conversion crashed")
+            null
+        } finally {
+            webpFile.delete()
+            localVideoFile.delete()
+        }
+    }
+
+    private fun renderWebpFromSource(
+        source: CanvasSource,
+        headers: Map<String, String>,
+        sizePx: Int,
+        fps: Int,
+        seconds: Int,
+        outputFile: File,
+    ) {
+        val retriever = MediaMetadataRetriever()
+        val frame = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+        frame.setHasAlpha(false)
+        val canvas = Canvas(frame)
+        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        try {
+            when (source) {
+                is CanvasSource.Local -> retriever.setDataSource(source.path)
+                is CanvasSource.Remote -> retriever.setDataSource(
+                    source.url,
+                    buildFrameRequestHeaders(headers),
+                )
+            }
+
+            val durationUs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull()
+                ?.takeIf { it > 0L }
+                ?.times(1_000L)
+            val frameCount = (seconds * fps).coerceAtLeast(1)
+            val frameDurationMs = (1_000f / fps.toFloat()).roundToInt().coerceAtLeast(1)
+            var firstFrameFingerprint: Long? = null
+            var changedFrameCount = 0
+            outputFile.outputStream().buffered().use { stream ->
+                val encoder = DiscordCanvasWebpEncoder(sizePx, sizePx, frameDurationMs)
+                encoder.start(stream)
+                repeat(frameCount) { index ->
+                    val requestedUs = ((index * 1_000_000L) / fps)
+                        .let { if (durationUs != null) it % durationUs else it }
+                    val sourceFrame = retriever.getFrameAtTime(
+                        requestedUs,
+                        MediaMetadataRetriever.OPTION_CLOSEST,
+                    ) ?: throw IllegalStateException("Could not decode Apple canvas frame")
+                    canvas.drawFrameCropped(sourceFrame, frame, sizePx, paint)
+                    val fingerprint = frame.fingerprint()
+                    val firstFingerprint = firstFrameFingerprint
+                    if (firstFingerprint == null) {
+                        firstFrameFingerprint = fingerprint
+                    } else if (fingerprint != firstFingerprint) {
+                        changedFrameCount++
+                    }
+                    encoder.addFrame(frame)
+                    sourceFrame.recycle()
+                    if (encoder.bufferedBytes > MAX_WEBP_UPLOAD_BYTES) {
+                        throw IllegalStateException("Apple canvas WebP is too large")
+                    }
+                }
+                encoder.finish()
+            }
+            if (outputFile.length() <= 0L) {
+                throw IllegalStateException("Apple canvas WebP encoder produced an empty file")
+            }
+            if (changedFrameCount == 0) {
+                outputFile.delete()
+                throw IllegalStateException("Apple canvas decoder returned only static frames")
+            }
+        } finally {
+            runCatching { retriever.release() }
+            frame.recycle()
+        }
+    }
+
+    private fun uploadWebpToCloudinary(
+        file: File,
+        publicId: String,
+        cloudName: String,
+        uploadPreset: String,
+        client: OkHttpClient,
+    ): String? {
+        val body =
+            MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("upload_preset", uploadPreset)
+                .addFormDataPart("public_id", publicId)
+                .addFormDataPart("file", "canvas.webp", file.asRequestBody(webpMediaType))
+                .build()
+        val request =
+            Request.Builder()
+                .url("https://api.cloudinary.com/v1_1/$cloudName/image/upload")
+                .post(body)
+                .build()
+        return client.newCall(request).execute().use { response ->
+            val text = response.body.string()
+            if (!response.isSuccessful) {
+                Timber.tag(TAG).w("Cloudinary WebP upload failed: HTTP ${response.code} ${text.take(200)}")
+                return@use null
+            }
+            JSONObject(text)
+                .optString("secure_url")
+                .takeIf { it.startsWith("https://", ignoreCase = true) }
+        }
+    }
+
+    /** Centre-crop (like the Space's scale+crop), not letterbox. */
+    private fun Canvas.drawFrameCropped(
+        source: Bitmap,
+        target: Bitmap,
+        sizePx: Int,
+        paint: Paint,
+    ) {
+        target.eraseColor(Color.BLACK)
+        val scale = max(
+            sizePx.toFloat() / source.width.toFloat(),
+            sizePx.toFloat() / source.height.toFloat(),
+        )
+        val drawWidth = source.width * scale
+        val drawHeight = source.height * scale
+        val left = (sizePx - drawWidth) / 2f
+        val top = (sizePx - drawHeight) / 2f
+        drawBitmap(
+            source,
+            Rect(0, 0, source.width, source.height),
+            RectF(left, top, left + drawWidth, top + drawHeight),
+            paint,
+        )
+    }
+
     private fun materializeHlsToLocalMp4(
         canvasUrl: String,
         headers: Map<String, String>,
@@ -233,6 +432,7 @@ object DiscordCanvasLocalConverter {
         masterUrl: HttpUrl? = null,
         masterPlaylist: String? = null,
         mediaPlaylistUrl: HttpUrl? = null,
+        maxDurationMs: Long = DURATION_MS,
     ): String? {
         if (!canvasUrl.substringBefore("?").endsWith(".m3u8", ignoreCase = true)) return null
         val resolvedMasterUrl = masterUrl ?: canvasUrl.toHttpUrlOrNull() ?: return null
@@ -253,6 +453,7 @@ object DiscordCanvasLocalConverter {
                 playlist = mediaPlaylist,
                 headers = headers,
                 output = output,
+                maxDurationMs = maxDurationMs,
             )
         }
         return outputFile.takeIf { it.length() > 0L }?.absolutePath
@@ -299,6 +500,7 @@ object DiscordCanvasLocalConverter {
         playlist: String,
         headers: Map<String, String>,
         output: OutputStream,
+        maxDurationMs: Long = DURATION_MS,
     ) {
         val nextOffsetByUrl = mutableMapOf<String, Long>()
         var pendingRange: ByteRange? = null
@@ -325,7 +527,7 @@ object DiscordCanvasLocalConverter {
         }
 
         playlist.lineSequence().forEach { rawLine ->
-            if (writtenDurationSeconds >= DURATION_MS / 1_000.0) return
+            if (writtenDurationSeconds >= maxDurationMs / 1_000.0) return
             val line = rawLine.trim()
             when {
                 line.startsWith("#EXTINF", ignoreCase = true) -> {

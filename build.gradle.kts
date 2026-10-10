@@ -5,11 +5,11 @@ plugins {
 }
 
 buildscript {
+    // Only the plugin repos: JitPack/Aliyun here just slow down plugin
+    // resolution, dependency repos live in settings.gradle.kts.
     repositories {
         google()
         mavenCentral()
-        maven { setUrl("https://jitpack.io") }
-        maven { setUrl("https://maven.aliyun.com/repository/public") }
     }
     dependencies {
         classpath(libs.gradle)

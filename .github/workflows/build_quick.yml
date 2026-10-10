@@ -49,8 +49,8 @@ jobs:
           mkdir -p app/keystore
           echo "${{ secrets.KEYSTORE }}" | base64 -d > app/keystore/release.keystore
 
-      - name: Build Release APK (No Lint)
-        run: ./gradlew --console=plain assembleFossRelease --warning-mode summary -x lint -x lintFossRelease
+      - name: Build Universal Release APK (No Lint)
+        run: ./gradlew --console=plain assembleFossRelease -PmetrofuseUniversalApk --warning-mode summary -x lint -x lintFossRelease
         env:
           METROLIST_APP_NAME: MetroFuse Nightly
           PULL_REQUEST: "false"
@@ -65,17 +65,7 @@ jobs:
         run: |
           OUTPUT_DIR="app/build/outputs/apk/foss/release"
           mkdir -p "$OUTPUT_DIR/out"
-          shopt -s nullglob
-          for APK in "$OUTPUT_DIR"/*.apk; do
-            if [[ "$APK" == *"arm64-v8a"* ]]; then
-              ABI="arm64-v8a"
-            elif [[ "$APK" == *"armeabi-v7a"* ]]; then
-              ABI="armeabi-v7a"
-            else
-              ABI="universal"
-            fi
-            mv "$APK" "$OUTPUT_DIR/out/MetroFuse-nightly-${ABI}.apk"
-          done
+          mv "$OUTPUT_DIR/app-universal-foss-release.apk" "$OUTPUT_DIR/out/MetroFuse-nightly-universal.apk"
           ls -la "$OUTPUT_DIR/out/"
 
       - name: Upload Signed APK

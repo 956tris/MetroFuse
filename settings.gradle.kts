@@ -14,8 +14,17 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven { setUrl("https://raw.githubusercontent.com/bravepipeproject/maven-repo/master/repository") }
-        maven { setUrl("https://jitpack.io") }
+        // Content filters stop Gradle from querying every repo for every
+        // artifact: JitPack and the bravepipe mirror only serve com.github.*
+        // groups, so Central/Google-only lookups skip them entirely.
+        maven {
+            setUrl("https://raw.githubusercontent.com/bravepipeproject/maven-repo/master/repository")
+            content { includeGroupByRegex("com\\.github\\.bravepipeproject.*") }
+        }
+        maven {
+            setUrl("https://jitpack.io")
+            content { includeGroupByRegex("com\\.github\\..*") }
+        }
         maven { setUrl("https://maven.aliyun.com/repository/public") }
     }
 }
