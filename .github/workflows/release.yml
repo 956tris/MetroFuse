@@ -97,7 +97,7 @@ jobs:
       - name: Set Up Gradle
         uses: gradle/actions/setup-gradle@v5
         with:
-          cache-disabled: true
+          cache-encryption-key: ${{ secrets.GRADLE_CACHE_KEY }}
           cache-cleanup: on-success
 
       - name: Grant execute permission for gradlew
@@ -108,8 +108,8 @@ jobs:
           mkdir -p app/keystore
           echo "${{ secrets.KEYSTORE }}" | base64 -d > app/keystore/release.keystore
 
-      - name: Build and Lint Release APK
-        run: ./gradlew --console=plain clean assemble${{ matrix.variantName }}Release :app:lint${{ matrix.variantName }}Release --warning-mode summary
+      - name: Build Release APK
+        run: ./gradlew --console=plain assemble${{ matrix.variantName }}Release --warning-mode summary
         env:
           METROLIST_APPLICATION_ID: com.metroapple.music
           METROLIST_APP_NAME: MetroFuse

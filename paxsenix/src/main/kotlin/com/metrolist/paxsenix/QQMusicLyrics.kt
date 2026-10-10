@@ -88,6 +88,12 @@ internal object QQMusicLyrics {
     private val KEY2 = "123ZXC!@#)(*$%^&".toByteArray(Charsets.ISO_8859_1)
     private val KEY3 = "!@#)(*$%^&abcDEF".toByteArray(Charsets.ISO_8859_1)
 
+    /**
+     * Browser UA for every QQ call: the shared client defaults to
+     * Metrolist/<version>, and QQ's lyric hosts 403 non-browser agents.
+     */
+    private const val BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
     private val qrcLineRegex = Regex("""^\[(\d+),(\d+)\](.*)$""")
     private val qrcWordRegex = Regex("""([^(]*)\((\d+),(\d+)\)""")
     private val lyricContentRegex = Regex("""<Lyric_1[^>]*LyricContent="(.*?)"\s*/?>""", RegexOption.DOT_MATCHES_ALL)
@@ -218,7 +224,7 @@ internal object QQMusicLyrics {
         val wbwDeferred = async {
             runCatching {
                 val songid = songidHint ?: throw IllegalStateException("no songid for word-by-word")
-                val decoded = fetchWordByWord(title, artist, album, duration, songid).getOrThrow()
+                val decoded = fetchWordByWord(title, artist, album, duration, songid, mid).getOrThrow()
                 toAppLyricsFormat(decoded).takeIf { it.isNotBlank() && hasConvertedWordTimings(it) }
                     ?: throw IllegalStateException("word-by-word has no timings (mid=$mid)")
             }
@@ -275,6 +281,7 @@ internal object QQMusicLyrics {
         album: String?,
         duration: Int,
         songid: Long,
+        mid: String,
     ): Result<String> = runCatching {
         val body = buildJsonObject {
             putJsonObject("comm") {
@@ -287,7 +294,9 @@ internal object QQMusicLyrics {
                 put("udid", "0")
                 put("uid", "0")
             }
-            putJsonObject("request") {
+            // Envelope MUST be req_1 (same as search): any other key is
+            // ignored by QQ and the response comes back bodyless.
+            putJsonObject("req_1") {
                 put("module", "music.musichallSong.PlayLyricInfo")
                 put("method", "GetPlayLyricInfo")
                 putJsonObject("param") {
@@ -302,18 +311,21 @@ internal object QQMusicLyrics {
                     put("roma", 1)
                     put("roma_t", 0)
                     put("singerName", b64(artist))
-                    put("songID", songid)
+                    // Reference clients send songId (lowercase d); songMid
+                    // rides along as fallback — both name this same song.
+                    put("songId", songid)
+                    put("songMid", mid)
                     put("songName", b64(title))
                     put("trans", 1)
                     put("trans_t", 0)
-                    put("type", 0)
+                    put("type", 1)
                 }
             }
         }
         val response = httpClient.post("https://u.y.qq.com/cgi-bin/musicu.fcg") {
             header("Referer", "https://y.qq.com/")
             header("Cookie", "tmeLoginType=-1")
-            header("User-Agent", "okhttp/3.14.9")
+            header("User-Agent", BROWSER_UA)
             // TextContent, NOT setBody(String): the shared client has
             // ContentNegotiation installed, which would serialize a raw
             // String body as a quoted JSON string ("{...}") that QQ cannot
@@ -322,12 +334,17 @@ internal object QQMusicLyrics {
         }
         val root = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
             ?: throw IllegalStateException("Bad PlayLyricInfo response")
-        // The envelope key echoes the request ("request", leniently also "req").
-        val reqObj = root["request"] as? JsonObject ?: root["req"] as? JsonObject
+        // The envelope key echoes the request (req_1).
+        val reqObj = root["req_1"] as? JsonObject
+            ?: root["request"] as? JsonObject
+            ?: root["req"] as? JsonObject
         val data = reqObj?.get("data") as? JsonObject
             ?: throw IllegalStateException("No PlayLyricInfo data (codes root=${root["code"]})")
-        val hex = data["lyric"]?.jsonPrimitive?.contentOrNull?.trim()
-            ?.takeIf { it.isNotBlank() }
+        // Word-timed blob lives in "qrc" when present, else "lyric".
+        // (Length guard: "qrc" can also be a 0/1 flag, never the blob.)
+        val hex = data["qrc"]?.jsonPrimitive?.contentOrNull?.trim()
+            ?.takeIf { it.isNotBlank() && it.length > 16 }
+            ?: data["lyric"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotBlank() }
             ?: throw IllegalStateException("No word-by-word lyric payload")
         // crypt=1 means DES-cascade hex; if the payload already carries
         // timestamps (crypt=0 style), use it directly.
@@ -386,10 +403,7 @@ internal object QQMusicLyrics {
         }
         val response = httpClient.post("https://u.y.qq.com/cgi-bin/musicu.fcg") {
             header("Referer", "https://y.qq.com/")
-            header(
-                "User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36",
-            )
+            header("User-Agent", BROWSER_UA)
             // TextContent, NOT setBody(String): the shared client has
             // ContentNegotiation installed, which would serialize a raw
             // String body as a quoted JSON string ("{...}") that QQ cannot
@@ -587,9 +601,18 @@ internal object QQMusicLyrics {
     private suspend fun fetchLrc(mid: String): Result<String> = runCatching {
         val response = httpClient.get("https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg") {
             header("Referer", "https://y.qq.com/")
+            header("User-Agent", BROWSER_UA)
             parameter("songmid", mid)
             parameter("format", "json")
             parameter("nobase64", 1)
+            parameter("g_tk", 5381)
+            parameter("loginUin", 0)
+            parameter("hostUin", 0)
+            parameter("inCharset", "utf8")
+            parameter("outCharset", "utf-8")
+            parameter("notice", 0)
+            parameter("platform", "yqq")
+            parameter("needNewCode", 0)
         }
         val root = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
             ?: throw IllegalStateException("Bad LRC response for mid=$mid")
@@ -625,6 +648,7 @@ internal object QQMusicLyrics {
     private suspend fun downloadAndDecrypt(songid: Long): Result<String> = runCatching {
         val response = httpClient.get("https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg") {
             header("Referer", "https://y.qq.com/")
+            header("User-Agent", BROWSER_UA)
             parameter("version", "15")
             parameter("miniversion", "82")
             parameter("lrctype", "4")
@@ -643,8 +667,17 @@ internal object QQMusicLyrics {
             .find(contentBlock)?.groupValues?.get(1)?.trim()
             ?: contentBlock
 
-        val encrypted = hexToBytes(hex)
-        String(inflate(decryptQrcPayloadBytes(encrypted)), Charsets.UTF_8)
+        // Normally hex; some songs serve base64 — try it before giving up
+        // (hexToBytes silently drops non-hex chars, which would otherwise
+        // feed garbage into DES and fail closed in inflate).
+        val encrypted = hexToBytes(hex).takeIf { it.isNotEmpty() }
+            ?: runCatching { Base64.getDecoder().decode(hex.trim()) }.getOrNull()?.takeIf { it.isNotEmpty() }
+            ?: throw IllegalStateException("Unparseable QRC payload for songid=$songid")
+        val decrypted = decryptQrcPayloadBytes(encrypted)
+        // Normally zlib-wrapped; fall back to raw deflate.
+        val inflated = runCatching { inflate(decrypted, nowrap = false) }
+            .getOrElse { inflate(decrypted, nowrap = true) }
+        String(inflated, Charsets.UTF_8)
     }.onFailure { e ->
         Timber.tag(TAG).w("QRC download/decrypt failed for songid=%d: %s", songid, e.message)
     }
@@ -721,8 +754,8 @@ internal object QQMusicLyrics {
 
     /** Single-DES cascade (not real 3DES — see QQMusicDes.kt), matches QQMusicCommon.dll's des/Ddes exactly. */
 
-    private fun inflate(data: ByteArray): ByteArray {
-        val inflater = Inflater()
+    private fun inflate(data: ByteArray, nowrap: Boolean = false): ByteArray {
+        val inflater = Inflater(nowrap)
         inflater.setInput(data)
         val out = java.io.ByteArrayOutputStream(data.size * 4)
         val buf = ByteArray(8192)

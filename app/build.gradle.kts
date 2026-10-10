@@ -5,6 +5,7 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.Internal
+import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
@@ -25,26 +26,18 @@ val metroFuseVersionName = "8.0"
 // the APK (versionCode/Name alone can't - every local build is 8.0/800).
 // A "-dirty" suffix means the tree had uncommitted changes at build time,
 // so the APK may not match the reported commit.
+// Read via providers.exec instead of ProcessBuilder so the values are
+// tracked build-logic inputs and the configuration cache stays reusable.
 val gitSha: String =
     runCatching {
-        ProcessBuilder("git", "rev-parse", "--short", "HEAD")
-            .directory(rootDir)
-            .redirectErrorStream(true)
-            .start()
-            .let { process ->
-                process.waitFor()
-                process.inputStream.bufferedReader().readText().trim()
-            }
+        providers.exec {
+            commandLine("git", "rev-parse", "--short", "HEAD")
+        }.standardOutput.asText.get().trim()
     }.getOrNull()?.takeIf { it.isNotBlank() }?.let { sha ->
         val dirty = runCatching {
-            ProcessBuilder("git", "status", "--porcelain")
-                .directory(rootDir)
-                .redirectErrorStream(true)
-                .start()
-                .let { process ->
-                    process.waitFor()
-                    process.inputStream.bufferedReader().readText().trim().isNotEmpty()
-                }
+            providers.exec {
+                commandLine("git", "status", "--porcelain")
+            }.standardOutput.asText.get().trim().isNotEmpty()
         }.getOrDefault(false)
         if (dirty) "$sha-dirty" else sha
     } ?: "unknown"
@@ -142,7 +135,9 @@ abstract class GenerateProtoTask : DefaultTask() {
     @get:InputFile
     abstract val protoSourceFile: RegularFileProperty
 
-    @get:Internal
+    // Declared as an output so the task is up-to-date-checked and skipped
+    // instead of re-running protoc on every build.
+    @get:OutputDirectory
     abstract val generatedSourcesDir: DirectoryProperty
 
     @get:Internal
@@ -237,12 +232,13 @@ android {
     splits {
         abi {
             // Per-ABI APKs for the smallest downloads: arm64 for modern
-            // devices, arm32 as fallback. No universal APK — CI uploads
-            // both and users pick their architecture.
+            // devices, arm32 as fallback. CI passes -PmetrofuseUniversalApk
+            // to also emit one universal APK, so a single job can ship a
+            // nightly that installs anywhere. Store releases stay per-ABI.
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = false
+            isUniversalApk = project.hasProperty("metrofuseUniversalApk")
         }
     }
 
@@ -355,6 +351,10 @@ android {
         warningsAsErrors = false
         abortOnError = false
         checkDependencies = false
+        // Release assembles must not run lintVital: it adds minutes on CI
+        // for checks already covered by the PR lint job. Explicit
+        // :app:lint<Variant> invocations still run.
+        checkReleaseBuilds = false
     }
 
     androidResources {
@@ -424,7 +424,9 @@ val generateProto = if (protoFile.exists()) {
         protoSourceFile.set(protoFile)
         generatedSourcesDir.set(file("src/main/java"))
         this.protocUrl.set(protocUrl)
-        protocExecutable.set(layout.buildDirectory.file("protoc/$protocFileName"))
+        // Kept under the gitignored .gradle dir (not build/) so `clean`
+        // does not force a protoc re-download on the next build.
+        protocExecutable.set(rootProject.layout.projectDirectory.dir(".gradle/protoc").file(protocFileName))
     }
 } else {
     logger.warn("Proto file not found at $protoFile. Skipping protobuf generation.")
@@ -432,7 +434,17 @@ val generateProto = if (protoFile.exists()) {
 }
 
 tasks.configureEach {
-    if (name.startsWith("compile") || name.startsWith("assemble")) {
+    // generateProto writes into src/main/java, which KSP/Java/Kotlin
+    // compilation tasks consume as sources. Since generatedSourcesDir is
+    // declared as @OutputDirectory, Gradle validation requires an explicit
+    // dependency for every consumer, otherwise the build fails with
+    // "uses this output of task ':app:generateProto' without declaring an
+    // explicit or implicit dependency" (seen on kspFossReleaseKotlin).
+    if (name.startsWith("compile") ||
+        name.startsWith("assemble") ||
+        name.startsWith("ksp") ||
+        name.startsWith("kapt")
+    ) {
         generateProto?.let { dependsOn(it) }
     }
 }

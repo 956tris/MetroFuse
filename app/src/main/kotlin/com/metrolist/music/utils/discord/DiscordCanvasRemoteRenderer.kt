@@ -29,6 +29,8 @@ object DiscordCanvasRemoteRenderer {
     private const val BASE_URL = "https://metrofuse-rpc-cdn-converter.hf.space"
     private const val CALL_URL = "$BASE_URL/gradio_api/call/canvas"
     private const val CLOUDINARY_CLOUD_NAME = "droeppomw"
+    // Unsigned upload preset (Cloudinary > Settings > Upload). Must match its exact name.
+    private const val CLOUDINARY_UPLOAD_PRESET = "Local g"
     private val jsonMediaType = "application/json".toMediaType()
     private val hlsResolutionRegex = Regex("""RESOLUTION=(\d+)x(\d+)""")
     private val hlsBandwidthRegex = Regex("""(?:AVERAGE-BANDWIDTH|BANDWIDTH)=(\d+)""")
@@ -58,13 +60,14 @@ object DiscordCanvasRemoteRenderer {
     fun renderAsync(
         canvasUrl: String,
         quality: DiscordAnimatedCanvasQuality,
+        localConversion: Boolean = false,
     ): Deferred<String?> {
         val key = cacheKey(canvasUrl, quality)
         renderedUrlCache[key]?.let { return CompletableDeferred(it) }
         return inFlightRenders.getOrPut(key) {
             rendererScope.async {
                 try {
-                    renderNow(canvasUrl, quality)
+                    renderNow(canvasUrl, quality, localConversion)
                 } finally {
                     inFlightRenders.remove(key)
                 }
@@ -75,11 +78,13 @@ object DiscordCanvasRemoteRenderer {
     suspend fun render(
         canvasUrl: String,
         quality: DiscordAnimatedCanvasQuality,
-    ): String? = renderAsync(canvasUrl, quality).await()
+        localConversion: Boolean = false,
+    ): String? = renderAsync(canvasUrl, quality, localConversion).await()
 
     private fun renderNow(
         canvasUrl: String,
         quality: DiscordAnimatedCanvasQuality,
+        localConversion: Boolean = false,
     ): String? {
         val key = cacheKey(canvasUrl, quality)
         renderedUrlCache[key]?.let { return it }
@@ -93,6 +98,15 @@ object DiscordCanvasRemoteRenderer {
         cloudinaryCachedUrl(inputUrl, targetSize, quality.fps, quality.seconds)?.let { hit ->
             renderedUrlCache[key] = hit
             return hit
+        }
+
+        // Optional (default off): convert on-device, upload straight to Cloudinary.
+        // Falls through to the Space if it fails.
+        if (localConversion) {
+            renderLocally(inputUrl, targetSize, quality)?.let { local ->
+                renderedUrlCache[key] = local
+                return local
+            }
         }
 
         return runCatching {
@@ -113,7 +127,7 @@ object DiscordCanvasRemoteRenderer {
                     Timber.tag(TAG).w("Canvas render failed: $message")
                     if (shouldRetryLowerQuality(result.code, result.body)) {
                         quality.fallback?.let { fallbackQuality ->
-                            return@runCatching renderNow(canvasUrl, fallbackQuality)
+                            return@runCatching renderNow(canvasUrl, fallbackQuality, localConversion)
                                 ?.also { renderedUrlCache[key] = it }
                         }
                     }
@@ -125,6 +139,44 @@ object DiscordCanvasRemoteRenderer {
             Timber.tag(TAG).w(error, "Canvas render request failed")
         }.getOrNull()
     }
+
+    /** Must stay identical to the Space's cache key in app.py. */
+    private fun canvasCacheHash(
+        inputUrl: String,
+        size: Int,
+        fps: Int,
+        seconds: Int,
+    ): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest("$inputUrl|$size|$fps|$seconds|webp".toByteArray(Charsets.UTF_8))
+            .joinToString(separator = "") { "%02x".format(it) }
+            .take(24)
+
+    private fun renderLocally(
+        inputUrl: String,
+        size: Int,
+        quality: DiscordAnimatedCanvasQuality,
+    ): String? =
+        runCatching {
+            DiscordCanvasLocalConverter.convertToWebpAndUpload(
+                sourceUrl = inputUrl,
+                sizePx = size,
+                fps = quality.fps,
+                seconds = quality.seconds,
+                publicId = "metrofuse_canvas/${canvasCacheHash(inputUrl, size, quality.fps, quality.seconds)}",
+                cloudName = CLOUDINARY_CLOUD_NAME,
+                uploadPreset = CLOUDINARY_UPLOAD_PRESET,
+                client = client,
+                headers =
+                    mapOf(
+                        "Origin" to "https://music.apple.com",
+                        "Referer" to "https://music.apple.com/",
+                    ),
+            )
+        }.onFailure { error ->
+            Timber.tag(TAG).w(error, "Local canvas render failed")
+        }.getOrNull()
+            ?.takeIf { it.endsWith(".webp", ignoreCase = true) }
 
     private val headClient by lazy {
         client.newBuilder()
@@ -145,11 +197,7 @@ object DiscordCanvasRemoteRenderer {
         fps: Int,
         seconds: Int,
     ): String? {
-        val hash =
-            MessageDigest.getInstance("SHA-256")
-                .digest("$inputUrl|$size|$fps|$seconds|webp".toByteArray(Charsets.UTF_8))
-                .joinToString(separator = "") { "%02x".format(it) }
-                .take(24)
+        val hash = canvasCacheHash(inputUrl, size, fps, seconds)
         val url =
             "https://res.cloudinary.com/$CLOUDINARY_CLOUD_NAME/image/upload/metrofuse_canvas/$hash.webp"
         return runCatching {
