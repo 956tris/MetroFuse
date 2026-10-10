@@ -434,7 +434,17 @@ val generateProto = if (protoFile.exists()) {
 }
 
 tasks.configureEach {
-    if (name.startsWith("compile") || name.startsWith("assemble")) {
+    // generateProto writes into src/main/java, which KSP/Java/Kotlin
+    // compilation tasks consume as sources. Since generatedSourcesDir is
+    // declared as @OutputDirectory, Gradle validation requires an explicit
+    // dependency for every consumer, otherwise the build fails with
+    // "uses this output of task ':app:generateProto' without declaring an
+    // explicit or implicit dependency" (seen on kspFossReleaseKotlin).
+    if (name.startsWith("compile") ||
+        name.startsWith("assemble") ||
+        name.startsWith("ksp") ||
+        name.startsWith("kapt")
+    ) {
         generateProto?.let { dependsOn(it) }
     }
 }

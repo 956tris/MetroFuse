@@ -39,6 +39,9 @@ object Paxsenix {
                 install(HttpTimeout) {
                     requestTimeoutMillis = 15000
                     connectTimeoutMillis = 10000
+                    // Fail stalled sockets fast so the QQ budget is spent on
+                    // working stages, not dead connections.
+                    socketTimeoutMillis = 5000
                 }
                 install(ContentNegotiation) {
                     json(
