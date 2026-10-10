@@ -22,6 +22,7 @@ data class ProviderMatchOverride(
             AudioProviderOrderItem.QOBUZ -> "qobuz:track:$providerTrackId"
             AudioProviderOrderItem.YOUTUBE_MUSIC -> providerTrackId
             AudioProviderOrderItem.JIOSAAVN -> providerTrackId
+            AudioProviderOrderItem.KUGOU -> providerTrackId
             AudioProviderOrderItem.OFFLINE -> providerTrackId
         }
 }
@@ -91,6 +92,7 @@ fun AudioProviderOrderItem.displayName(): String =
         AudioProviderOrderItem.TIDAL -> "TIDAL"
         AudioProviderOrderItem.DEEZER -> "Deezer"
         AudioProviderOrderItem.JIOSAAVN -> "JioSaavn"
+        AudioProviderOrderItem.KUGOU -> "KuGou"
         AudioProviderOrderItem.YOUTUBE_MUSIC -> "YouTube Music"
         AudioProviderOrderItem.QOBUZ -> "Qobuz"
         AudioProviderOrderItem.OFFLINE -> "Offline"

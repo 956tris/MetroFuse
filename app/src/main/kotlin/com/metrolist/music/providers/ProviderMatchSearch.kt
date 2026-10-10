@@ -29,6 +29,7 @@ import com.metrolist.music.constants.QobuzCustomInstancesKey
 import com.metrolist.music.constants.isPlaybackProvider
 import com.metrolist.music.deezer.DeezerAudioProvider
 import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
+import com.metrolist.music.kugou.KuGouAudioProvider
 import com.metrolist.music.extensions.toEnum
 import com.metrolist.music.models.MediaMetadata
 import com.metrolist.music.qobuz.QobuzAudioProvider
@@ -249,6 +250,24 @@ object ProviderMatchSearch {
                         album = track.album,
                         durationMs = track.durationMs,
                         shareUrl = track.shareUrl,
+                    )
+                }
+            }
+
+            AudioProviderOrderItem.KUGOU -> {
+                KuGouAudioProvider.searchCandidates(
+                    title = metadata.title,
+                    artists = metadata.artists.map { it.name },
+                    limit = limit,
+                ).map { track ->
+                    ProviderMatchCandidate(
+                        provider = provider,
+                        providerTrackId = track.trackId,
+                        title = track.title,
+                        artist = track.artist,
+                        album = track.album,
+                        durationMs = track.durationMs,
+                        shareUrl = null,
                     )
                 }
             }

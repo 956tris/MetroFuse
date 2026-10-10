@@ -555,6 +555,7 @@
     <string name="audio_provider_jiosaavn">JioSaavn</string>
     <string name="audio_provider_youtube_music">YouTube Music</string>
     <string name="audio_provider_qobuz">Qobuz</string>
+    <string name="audio_provider_kugou">KuGou</string>
     <string name="provider_qobuz">Qobuz</string>
     <string name="qobuz_integration">Qobuz</string>
     <string name="qobuz_country">Qobuz country</string>
