@@ -5424,6 +5424,17 @@ class MusicService :
                                                 isHlsStream = request.url.encodedPath.endsWith(".m3u8") || request.url.encodedPath.endsWith(".m4s")
                                             ).build()
                                         }
+                                        if (request.url.queryParameter(KuGouAudioProvider.MV_MARKER_QUERY) != null) {
+                                            val cleanUrl =
+                                                request.url
+                                                    .newBuilder()
+                                                    .removeAllQueryParameters(KuGouAudioProvider.MV_MARKER_QUERY)
+                                                    .build()
+                                            request =
+                                                KuGouAudioProvider.addPlaybackHeaders(
+                                                    request.newBuilder().url(cleanUrl),
+                                                ).build()
+                                        }
                                         if (request.url.queryParameter(PRIVATE_STREAM_MARKER) != null) {
                                             val cleanUrl =
                                                 request.url

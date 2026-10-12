@@ -16,6 +16,19 @@ import kotlin.math.abs
 object KuGouAudioProvider {
     const val TRACK_ID_PREFIX = "kugou:track:"
 
+    /**
+     * Marker appended to KuGou MV playback URLs so the playback interceptor
+     * can attach the headers the fetch needs. Stripped before the request
+     * hits the network (same pattern as the YouTube/SoundCloud markers).
+     */
+    const val MV_MARKER_QUERY = "_metrofuse_kgmv"
+
+    private const val GATEWAY_HOST = "gateway.kugou.com"
+    private const val GATEWAY_ROUTER = "trackermv.kugou.com"
+    private const val KUGOU_REFERER = "https://www.kugou.com/"
+    private const val KUGOU_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
     private const val TAG = "KuGouAudioProvider"
     private const val MAX_SEARCH_CANDIDATES = 6
     private const val STREAM_CACHE_TTL_MS = 30 * 60 * 1000L
@@ -177,6 +190,24 @@ object KuGouAudioProvider {
         }
     }
 
+    /**
+     * Attaches the headers a KuGou MV fetch needs. The CDN downurls play
+     * with plain requests, but gateway-proxied bytes (served when the
+     * gateway answers the resolve call with the MP4 itself) route 502
+     * without `x-router`, so it is reattached for that host. The marker
+     * must already be stripped from [requestBuilder]'s URL by the caller.
+     */
+    fun addPlaybackHeaders(requestBuilder: okhttp3.Request.Builder): okhttp3.Request.Builder {
+        val url = requestBuilder.build().url
+        requestBuilder
+            .header("Referer", KUGOU_REFERER)
+            .header("User-Agent", KUGOU_USER_AGENT)
+        if (url.host.equals(GATEWAY_HOST, ignoreCase = true)) {
+            requestBuilder.header("x-router", GATEWAY_ROUTER)
+        }
+        return requestBuilder
+    }
+
     private suspend fun buildResolved(
         fileHash: String,
         title: String,
@@ -214,8 +245,17 @@ object KuGouAudioProvider {
         cacheKey: String,
     ): Resolved {
         val stream = KuGouAudio.videoUrl(mvhash)
+        // Tag the URL for the playback interceptor: gateway-hosted bytes
+        // (served when the gateway proxies the MP4 itself) 502 without the
+        // x-router header, so the marker lets playback reattach it.
+        val mediaUri =
+            if (stream.url.contains("?$MV_MARKER_QUERY=")) {
+                stream.url
+            } else {
+                stream.url + (if (stream.url.contains("?")) "&" else "?") + "$MV_MARKER_QUERY=1"
+            }
         val resolved = Resolved(
-            mediaUri = stream.url,
+            mediaUri = mediaUri,
             sourceId = "kugou_mv_${mvhash}_${title}_${artist}".sanitizeId(),
             title = title,
             artist = artist,
