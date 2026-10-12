@@ -376,6 +376,10 @@ import java.io.File
 import java.io.IOException
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
+import java.net.Proxy
+import java.net.ProxySelector
+import java.net.SocketAddress
+import java.net.URI
 import java.time.LocalDateTime
 import java.util.ArrayDeque
 import java.util.Locale
@@ -5320,6 +5324,39 @@ class MusicService :
         }
     }
 
+    /**
+     * Proxy routing for the playback datasource client. The configured
+     * YouTube proxy exists to serve YouTube media hosts; forwarding unrelated
+     * provider CDNs through it gets a 502 from proxies that only allow
+     * YouTube traffic (observed with KuGou `fsmvpc` hosts, which play fine
+     * direct). KuGou hosts therefore always go direct; with no custom proxy
+     * configured the system selector is used exactly as before.
+     */
+    private fun playbackProxySelector(): ProxySelector {
+        val customProxy = YouTube.proxy
+        if (customProxy == null) {
+            return ProxySelector.getDefault() ?: object : ProxySelector() {
+                override fun select(uri: URI?): List<Proxy> = listOf(Proxy.NO_PROXY)
+
+                override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) = Unit
+            }
+        }
+        val system = ProxySelector.getDefault()
+        return object : ProxySelector() {
+            override fun select(uri: URI?): List<Proxy> {
+                val host = uri?.host.orEmpty()
+                if (host.endsWith("kugou.com", ignoreCase = true)) {
+                    return listOf(Proxy.NO_PROXY)
+                }
+                return listOf(customProxy)
+            }
+
+            override fun connectFailed(uri: URI?, sa: SocketAddress?, ioe: IOException?) {
+                system?.connectFailed(uri, sa, ioe)
+            }
+        }
+    }
+
     private fun createCacheDataSource(): CacheDataSource.Factory =
         CacheDataSource
             .Factory()
@@ -5335,7 +5372,7 @@ class MusicService :
                                 OkHttpDataSource.Factory(
                                     OkHttpClient
                                         .Builder()
-                                        .proxy(YouTube.proxy)
+                                        .proxySelector(playbackProxySelector())
                                         .proxyAuthenticator { _, response ->
                                         YouTube.proxyAuth?.let { auth ->
                                             response.request

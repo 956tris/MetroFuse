@@ -107,6 +107,14 @@ fun IntegrationScreen(
                     onClick = {
                         navController.navigate("settings/integrations/apple_music")
                     }
+                ),
+                IntegrationCardItem(
+                    icon = painterResource(R.drawable.music_note),
+                    title = { Text(stringResource(R.string.kugou_music_integration)) },
+                    description = { Text(stringResource(R.string.kugou_music_integration_desc)) },
+                    onClick = {
+                        navController.navigate("settings/integrations/kugou")
+                    }
                 )
             )
         )

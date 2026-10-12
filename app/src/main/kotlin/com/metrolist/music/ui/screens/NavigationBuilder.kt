@@ -65,6 +65,7 @@ import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
 import com.metrolist.music.ui.screens.settings.integrations.IntegrationScreen
 import com.metrolist.music.ui.screens.settings.integrations.JioSaavnSettings
+import com.metrolist.music.ui.screens.settings.integrations.KuGouSettings
 import com.metrolist.music.ui.screens.settings.integrations.LastFMSettings
 import com.metrolist.music.ui.screens.settings.integrations.ListenTogetherSettings
 import com.metrolist.music.ui.screens.settings.integrations.QobuzSettings
@@ -470,6 +471,10 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/apple_music") {
         AppleMusicSettings(navController)
+    }
+
+    composable("settings/integrations/kugou") {
+        KuGouSettings(navController)
     }
 
     composable(route = "settings/integrations/listen_together") {
