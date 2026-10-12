@@ -2,6 +2,7 @@ package com.metrolist.kugou
 
 import com.metrolist.kugou.models.AudioSearchResponse
 import com.metrolist.kugou.models.AudioStreamResponse
+import com.metrolist.kugou.models.VideoTierResponse
 import com.metrolist.kugou.models.VideoUrlResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -248,25 +249,47 @@ object KuGouAudio {
      */
     suspend fun videoUrl(mvhash: String): Stream {
         require(mvhash.isNotBlank()) { "KuGou MV hash is blank" }
-        val params = linkedMapOf(
-            "backupdomain" to "1",
-            "cmd" to "123",
-            "ext" to "mp4",
-            "ismp3" to "0",
-            "hash" to mvhash,
-            "pid" to "1",
-            "type" to "1",
-            "dfid" to "-",
-            "mid" to deviceMid,
-            "uuid" to "-",
-            "appid" to SIGNED_APP_ID,
-            "clientver" to SIGNED_CLIENT_VER,
-            "clienttime" to (System.currentTimeMillis() / 1000).toString(),
-            "key" to md5Hex(mvhash + SIGN_KEY_SALT + SIGNED_APP_ID + deviceMid + "0"),
+        // Tiered endpoint first: it always answers JSON with one replay-safe
+        // CDN downurl per quality tier. The single-file endpoint sometimes
+        // serves its JSON as application/octet-stream, which is
+        // indistinguishable from raw media bytes and would make playback
+        // replay the gateway URL itself -> HTTP 502 without x-router.
+        runCatching { videoUrlTiered(mvhash) }
+            .onSuccess { return it }
+        return videoUrlSingle(mvhash)
+    }
+
+    /**
+     * Tiered MV resolve (`cmd=100`). Prefers `hd` so the bytes are identical
+     * to the legacy single-file resolve; other tiers only fill in when `hd`
+     * is absent.
+     */
+    private suspend fun videoUrlTiered(mvhash: String): Stream {
+        val (params, signature) = signedGatewayParams(mvhash, cmd = "100")
+        val bytes: ByteArray =
+            withRegionIp { regionIp ->
+                client.get("https://gateway.kugou.com/v2/interface/index") {
+                    applyRegionHeaders(regionIp)
+                    header("x-router", "trackermv.kugou.com")
+                    params.forEach { (key, value) -> parameter(key, value) }
+                    parameter("signature", signature)
+                }.body()
+            }
+        val response = lenientJson.decodeFromString<VideoTierResponse>(bytes.decodeToString())
+        val tiers = response.mvdata ?: throw IllegalStateException("KuGou MV tiers missing for $mvhash")
+        val entry =
+            TIER_PREFERENCE.firstNotNullOfOrNull { tiers[it] }?.takeIf { !it.downurl.isNullOrBlank() }
+                ?: tiers.values.firstOrNull { !it.downurl.isNullOrBlank() }
+                ?: throw IllegalStateException("KuGou MV tiers returned no URL for $mvhash")
+        return Stream(
+            url = entry.downurl!!,
+            extName = "mp4",
+            fileSize = entry.fileSizeLong(),
         )
-        val signature = md5Hex(
-            ANDROID_SIGN_SALT + params.toSortedMap().entries.joinToString("") { it.key + "=" + it.value } + ANDROID_SIGN_SALT,
-        )
+    }
+
+    private suspend fun videoUrlSingle(mvhash: String): Stream {
+        val (params, signature) = signedGatewayParams(mvhash, cmd = "123")
         val httpResponse: HttpResponse =
             withRegionIp { regionIp ->
                 client.get("https://gateway.kugou.com/v2/interface/index") {
@@ -312,6 +335,40 @@ object KuGouAudio {
     }
     private val deviceMid: String by lazy {
         BigInteger(md5Hex(deviceGuid), 16).toString()
+    }
+
+    private val lenientJson = Json { ignoreUnknownKeys = true }
+
+    /** `hd` first so tiered resolves stay byte-identical to the legacy path. */
+    private val TIER_PREFERENCE = listOf("hd", "sq", "sd", "rq")
+
+    /**
+     * Signed trackermv gateway parameters shared by the MV endpoints.
+     * Returns the params plus the request signature.
+     */
+    private fun signedGatewayParams(mvhash: String, cmd: String): Pair<LinkedHashMap<String, String>, String> {
+        val params =
+            linkedMapOf(
+                "backupdomain" to "1",
+                "cmd" to cmd,
+                "ext" to "mp4",
+                "ismp3" to "0",
+                "hash" to mvhash,
+                "pid" to "1",
+                "type" to "1",
+                "dfid" to "-",
+                "mid" to deviceMid,
+                "uuid" to "-",
+                "appid" to SIGNED_APP_ID,
+                "clientver" to SIGNED_CLIENT_VER,
+                "clienttime" to (System.currentTimeMillis() / 1000).toString(),
+                "key" to md5Hex(mvhash + SIGN_KEY_SALT + SIGNED_APP_ID + deviceMid + "0"),
+            )
+        val signature =
+            md5Hex(
+                ANDROID_SIGN_SALT + params.toSortedMap().entries.joinToString("") { it.key + "=" + it.value } + ANDROID_SIGN_SALT,
+            )
+        return params to signature
     }
 
     private fun md5Hex(text: String): String {

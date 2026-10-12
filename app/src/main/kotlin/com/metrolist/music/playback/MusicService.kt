@@ -5461,6 +5461,13 @@ class MusicService :
                                                 .proceed(request)
                                         } else {
                                             chain.proceed(request)
+                                        }.also { response ->
+                                            if (!response.isSuccessful) {
+                                                Timber.tag("MusicService").w(
+                                                    "Playback fetch HTTP ${response.code} " +
+                                                        "${request.method} ${request.url.host}${request.url.encodedPath}",
+                                                )
+                                            }
                                         }
                                         }.build(),
                                 ),
