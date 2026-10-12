@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   build_quick:
-    name: Quick Universal Release Build
+    name: Quick Release Build
     runs-on: ubuntu-latest
 
     steps:
@@ -49,8 +49,8 @@ jobs:
           mkdir -p app/keystore
           echo "${{ secrets.KEYSTORE }}" | base64 -d > app/keystore/release.keystore
 
-      - name: Build Universal Release APK (No Lint)
-        run: ./gradlew --console=plain assembleFossRelease -PmetrofuseUniversalApk --warning-mode summary -x lint -x lintFossRelease
+      - name: Build Per-ABI Release APKs (No Lint)
+        run: ./gradlew --console=plain assembleFossRelease --warning-mode summary -x lint -x lintFossRelease
         env:
           METROLIST_APP_NAME: MetroFuse Nightly
           PULL_REQUEST: "false"
@@ -61,11 +61,34 @@ jobs:
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
-      - name: Move signed APK
+      - name: Move signed APKs
         run: |
           OUTPUT_DIR="app/build/outputs/apk/foss/release"
           mkdir -p "$OUTPUT_DIR/out"
-          mv "$OUTPUT_DIR/app-universal-foss-release.apk" "$OUTPUT_DIR/out/MetroFuse-nightly-universal.apk"
+
+          echo "=== contents of $OUTPUT_DIR ==="
+          ls -la "$OUTPUT_DIR"
+
+          shopt -s nullglob
+          COUNT=0
+          for SIGNED_APK in "$OUTPUT_DIR"/*.apk; do
+            if [[ "$SIGNED_APK" == *"arm64-v8a"* ]]; then
+              ABI="arm64-v8a"
+            elif [[ "$SIGNED_APK" == *"armeabi-v7a"* ]]; then
+              ABI="armeabi-v7a"
+            else
+              ABI="universal"
+            fi
+            mv "$SIGNED_APK" "$OUTPUT_DIR/out/MetroFuse-nightly-${ABI}.apk"
+            COUNT=$((COUNT + 1))
+          done
+
+          if [ "$COUNT" -eq 0 ]; then
+            echo "No APKs found for foss"
+            exit 1
+          fi
+
+          echo "=== contents of $OUTPUT_DIR/out ==="
           ls -la "$OUTPUT_DIR/out/"
 
       - name: Upload Signed APK
