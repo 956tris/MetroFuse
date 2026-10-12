@@ -56,6 +56,7 @@ import androidx.media3.common.Player.REPEAT_MODE_ONE
 import androidx.media3.common.Player.STATE_IDLE
 import androidx.media3.common.Timeline
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -5753,15 +5754,21 @@ class MusicService :
                     .setKey(resolved.cacheKey)
                     .build()
             }
-        return LiveFlacBitrateDataSourceFactory(
-            upstreamFactory = ResilientPlaybackDataSourceFactory(resolvingFactory),
-            isEnabled = ::isLivePlaybackBitrateCollectionEnabled,
+        return AlacCookieBitrateDataSourceFactory(
+            upstreamFactory =
+                LiveFlacBitrateDataSourceFactory(
+                    upstreamFactory = ResilientPlaybackDataSourceFactory(resolvingFactory),
+                    isEnabled = ::isLivePlaybackBitrateCollectionEnabled,
+                    mediaIdResolver = ::liveBitrateMediaIdFromDataSpec,
+                    isParserCandidate = ::isLivePlaybackParserCandidate,
+                    sampleRateProvider = ::liveBitrateSampleRate,
+                    onBitrate = { mediaId, bitrate, mediaStartMs, mediaEndMs ->
+                        recordLivePlaybackBitrateSample(mediaId, mediaStartMs, mediaEndMs, bitrate)
+                    },
+                ),
+            isCandidate = ::isAlacCookieCandidate,
             mediaIdResolver = ::liveBitrateMediaIdFromDataSpec,
-            isParserCandidate = ::isLivePlaybackParserCandidate,
-            sampleRateProvider = ::liveBitrateSampleRate,
-            onBitrate = { mediaId, bitrate, mediaStartMs, mediaEndMs ->
-                recordLivePlaybackBitrateSample(mediaId, mediaStartMs, mediaEndMs, bitrate)
-            },
+            onCookie = ::recordAlacCookieBitrate,
         )
     }
 
@@ -5803,6 +5810,49 @@ class MusicService :
                 key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
                 key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
                 key.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX)
+    }
+
+    /**
+     * Gate for [AlacCookieBitrateDataSource]. Deliberately not tied to the
+     * live-bitrate prefs: the Apple resolver stores bitrate 0 for ALAC, so
+     * the cookie sniff is the only default-path source of a real number.
+     * Skips streams that already carry a plausible measured bitrate.
+     */
+    private fun isAlacCookieCandidate(dataSpec: DataSpec): Boolean {
+        val mediaId = liveBitrateMediaIdFromDataSpec(dataSpec)?.takeIf { it.isNotBlank() } ?: return false
+        val format =
+            currentPlaybackFormat.value?.takeIf { it.id == mediaId }
+                ?: songUrlCache[mediaId]?.format
+                ?: return false
+        if (!format.isAlacFormat()) return false
+        return !(format.bitrate > 0 && format.bitrate.isPlausibleAlacBitrate(format.sampleRate))
+    }
+
+    /**
+     * Persists an `alac`-cookie bitrate/sample rate and refreshes the
+     * now-playing label when it belongs to the current track.
+     */
+    private fun recordAlacCookieBitrate(
+        mediaId: String,
+        bitrate: Int,
+        sampleRate: Int,
+    ) {
+        if (!bitrate.isPlausibleAlacBitrate(sampleRate)) return
+        scope.launch(Dispatchers.IO) {
+            var updated: FormatEntity? = null
+            database.query {
+                val existing = getFormatByIdBlocking(mediaId) ?: return@query
+                if (!existing.isAlacFormat()) return@query
+                if (existing.bitrate > 0 && existing.bitrate.isPlausibleAlacBitrate(existing.sampleRate)) return@query
+                updated =
+                    existing.copy(
+                        bitrate = bitrate,
+                        sampleRate = existing.sampleRate?.takeIf { it > 0 } ?: sampleRate,
+                    )
+                updated?.let { upsert(it) }
+            }
+            updated?.let { publishCurrentPlaybackFormat(mediaId, it) }
+        }
     }
 
     private fun liveBitrateSampleRate(mediaId: String?): Int? =
@@ -7939,7 +7989,8 @@ class MusicService :
                 val shouldClearBadAlacBitrate =
                     isAlac &&
                             baseFormat.bitrate > 0 &&
-                            !baseFormat.bitrate.isPlausibleAlacBitrate(rendererSampleRate ?: baseFormat.sampleRate)
+                            (!baseFormat.bitrate.isPlausibleAlacBitrate(rendererSampleRate ?: baseFormat.sampleRate) ||
+                                    baseFormat.bitrate == APPLE_ALAC_ESTIMATE_BPS)
                 val shouldUpdateBitrate =
                     rendererBitrate != null &&
                             (
@@ -8216,6 +8267,30 @@ class MusicService :
     ) {
         val mediaId = currentPlaybackMediaId() ?: player.currentMediaItem?.mediaId
         Timber.tag(TAG).d("Audio decoder initialized: $decoderName (mediaId=$mediaId, init=${initializationDurationMs}ms)")
+    }
+
+    override fun onVideoDecoderInitialized(
+        eventTime: AnalyticsListener.EventTime,
+        decoderName: String,
+        initializedTimestampMs: Long,
+        initializationDurationMs: Long,
+    ) {
+        val mediaId = eventTime.mediaId() ?: currentPlaybackMediaId() ?: player.currentMediaItem?.mediaId
+        Timber.tag(TAG).d("Video decoder initialized: $decoderName (mediaId=$mediaId, init=${initializationDurationMs}ms)")
+    }
+
+    override fun onRenderedFirstFrame(
+        eventTime: AnalyticsListener.EventTime,
+        output: Any,
+        renderTimeMs: Long,
+    ) {
+        val mediaId = eventTime.mediaId() ?: currentPlaybackMediaId() ?: player.currentMediaItem?.mediaId
+        Timber.tag(TAG).d("Video first frame rendered (mediaId=$mediaId, output=$output)")
+    }
+
+    override fun onVideoSizeChanged(eventTime: AnalyticsListener.EventTime, videoSize: VideoSize) {
+        val mediaId = eventTime.mediaId() ?: currentPlaybackMediaId() ?: player.currentMediaItem?.mediaId
+        Timber.tag(TAG).d("Video size ${videoSize.width}x${videoSize.height} (mediaId=$mediaId)")
     }
 
     private fun publishLivePlaybackTransferEstimate(
@@ -11093,6 +11168,8 @@ class MusicService :
         private const val AUDIO_BUFFER_FOR_REBUFFER_MS = 750
         private const val AUDIO_TARGET_BUFFER_BYTES = 8 * 1024 * 1024
         private const val LEGACY_PLACEHOLDER_BPS = 4_000_000
+        /** Nominal ALAC estimate the Apple resolver used to seed (never a measured value). */
+        private const val APPLE_ALAC_ESTIMATE_BPS = 900_000
 
         private fun qobuzFallbackCacheKey(mediaId: String) = "$QOBUZ_FALLBACK_CACHE_PREFIX$mediaId"
 

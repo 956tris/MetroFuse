@@ -26,8 +26,8 @@ import java.util.concurrent.ConcurrentHashMap
  *  1. Caller-supplied candidate ISRC (local tag / MediaStore / cached
  *     metadata / provider field) — normalized + validated shape only.
  *  2. Harvested ISRCs previously learned by audio/canvas providers during
- *     real playback (see [publish]) — exact duration bucket first, then a
- *     duration-agnostic song+artist fallback.
+ *     real playback (see [publish]) — scoped to the same duration bucket so
+ *     a same-titled recording of a different length can't inherit them.
  *  3. Deezer catalog search by song+artist (cheap, no auth) — first result
  *     with a matching title/artist/duration wins.
  *  4. Apple Music catalog search by song+artist, using the same shared
@@ -54,13 +54,12 @@ object IsrcResolver {
     private val cache = ConcurrentHashMap<CacheKey, String>()
 
     /**
-     * Duration-agnostic fallback: (clean song, clean artist) -> ISRC.
-     * Harvested entries often lack a trustworthy duration (or were learned
-     * under a different duration bucket than the current lookup), so the
-     * exact-bucket [cache] alone would miss them. Exact-bucket hits always
-     * win; this is only consulted on a bucket miss.
+     * Harvested-ISRC fallback keyed by (clean song, clean artist, duration
+     * bucket). Duration is part of the key so an ISRC learned from a track
+     * of one length is never reused for a same-titled track of a different
+     * length (e.g. a radio edit feeding a full album version).
      */
-    private val unversioned = ConcurrentHashMap<Pair<String, String>, String>()
+    private val unversioned = ConcurrentHashMap<CacheKey, String>()
 
     @Volatile
     private var diskLoaded = false
@@ -82,7 +81,7 @@ object IsrcResolver {
                 val isrc = ProviderIsrc.normalize(entry.optString("isrc")) ?: continue
                 val bucket = entry.opt("b")?.toString()?.toIntOrNull()
                 cache[CacheKey(song, artist, bucket)] = isrc
-                unversioned[song to artist] = isrc
+                unversioned[CacheKey(song, artist, bucket)] = isrc
             }
             Timber.tag(TAG).d("Preloaded ${array.length()} learned ISRCs from disk")
         }.getOrElse { error ->
@@ -96,9 +95,9 @@ object IsrcResolver {
      * valid ISRCs; only stores when song+artist are non-blank after
      * cleaning. Never throws — safe to call from any provider path.
      *
-     * Both the caller's exact duration bucket and the duration-agnostic
-     * fallback are written so later lookups hit regardless of which
-     * duration variant they carry.
+     * Both the caller's exact duration bucket and the duration-scoped
+     * fallback are written so later lookups hit regardless of whether they
+     * read the resolution cache or the harvested-ISRC fallback.
      */
     fun publish(
         song: String,
@@ -111,7 +110,7 @@ object IsrcResolver {
         val (cleanSong, cleanArtist) = clean
         val bucket = durationBucket(durationSeconds)
         cache[CacheKey(cleanSong, cleanArtist, bucket)] = normalized
-        unversioned[cleanSong to cleanArtist] = normalized
+        unversioned[CacheKey(cleanSong, cleanArtist, bucket)] = normalized
         persistAsync()
     }
 
@@ -130,7 +129,7 @@ object IsrcResolver {
         val (cleanSong, cleanArtist) = clean
         val key = CacheKey(cleanSong, cleanArtist, durationBucket(durationSeconds))
         cache[key]?.takeIf { it != NEGATIVE_RESULT }?.let { return it }
-        return unversioned[cleanSong to cleanArtist]
+        return unversioned[key]
     }
 
     /**
@@ -160,8 +159,8 @@ object IsrcResolver {
         val key = CacheKey(cleanSong, cleanArtist, durationBucket)
         cache[key]?.let { return@withContext if (it == NEGATIVE_RESULT) null else it }
 
-        // 2. Harvested / disk-learned ISRC under a different duration bucket.
-        unversioned[cleanSong to cleanArtist]?.let { harvested ->
+        // 2. Harvested / disk-learned ISRC learned under the same duration bucket.
+        unversioned[key]?.let { harvested ->
             cache[key] = harvested
             return@withContext harvested
         }

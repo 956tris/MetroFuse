@@ -42,6 +42,13 @@ object CanvasQueryCleaner {
             RegexOption.IGNORE_CASE,
         )
 
+    // Markers that denote a genuinely different recording (different canvas)
+    // rather than the same track. Kept in the cleaned form on purpose, but
+    // exposed to matchers so a variant candidate can be rejected unless
+    // title/artist/duration confirm it is actually the same recording.
+    private val variantMarker =
+        Regex("""\b(?:covers?|remixes?|karaoke|tribute|live)\b""", RegexOption.IGNORE_CASE)
+
     fun cleanArtist(artist: String): String =
         artist.replace(topicSuffix, "").replace(Regex("""\s+"""), " ").trim()
 
@@ -50,4 +57,11 @@ object CanvasQueryCleaner {
         result = result.replace(Regex("""\s+"""), " ").trim()
         return result.ifBlank { title.trim() }
     }
+
+    /**
+     * True when [text] carries a remix/cover/live/karaoke/tribute marker.
+     * Used by scoring to reject a variant recording when the queried track is
+     * the plain studio version (see AppleMusicCanvasProvider.pickBestCandidate).
+     */
+    fun hasVariantMarker(text: String): Boolean = variantMarker.containsMatchIn(text)
 }

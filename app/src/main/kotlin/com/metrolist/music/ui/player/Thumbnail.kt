@@ -105,6 +105,7 @@ import com.metrolist.music.utils.rememberPlayerBackgroundStyle
 import com.metrolist.music.utils.rememberPreference
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
+import timber.log.Timber
 
 /**
  * Shared HTTP client for remote canvas video streams. Previously each
@@ -112,6 +113,8 @@ import okhttp3.OkHttpClient
  * track) — one process-wide client fixes that.
  */
 private val canvasHttpClient by lazy { OkHttpClient() }
+
+private const val MV_TAG = "MvVideo"
 
 /**
  * Pre-calculated thumbnail dimensions to avoid repeated calculations during recomposition.
@@ -299,6 +302,11 @@ fun Thumbnail(
     // track playing from its MV as background audio never spins a decoder.
     val isVideoSurfaceVisible = currentMediaIsVideo && (isPlayerOpenState || showVideoFullscreen)
     DisposableEffect(playerConnection.player, isVideoSurfaceVisible) {
+        Timber.tag(MV_TAG).d(
+            "videoTracks=%s on player=%s",
+            isVideoSurfaceVisible,
+            playerConnection.player.hashCode(),
+        )
         playerConnection.player.setVideoTracksEnabled(isVideoSurfaceVisible)
         onDispose { playerConnection.player.setVideoTracksEnabled(false) }
     }
@@ -1137,14 +1145,30 @@ fun MvVideo(
         },
         update = { textureView ->
             if (shouldPlay) {
+                Timber.tag(MV_TAG).d(
+                    "attach tv=%s to player=%s avail=%s",
+                    textureView.hashCode(),
+                    player.hashCode(),
+                    textureView.isAvailable,
+                )
                 player.setVideoTextureView(textureView)
                 textureView.visibility = View.VISIBLE
             } else {
+                Timber.tag(MV_TAG).d(
+                    "detach tv=%s from player=%s",
+                    textureView.hashCode(),
+                    player.hashCode(),
+                )
                 player.clearVideoTextureView(textureView)
                 textureView.visibility = View.INVISIBLE
             }
         },
         onRelease = { textureView ->
+            Timber.tag(MV_TAG).d(
+                "release tv=%s from player=%s",
+                textureView.hashCode(),
+                player.hashCode(),
+            )
             player.clearVideoTextureView(textureView)
             val listener = textureView.tag as? Player.Listener
             if (listener != null) {

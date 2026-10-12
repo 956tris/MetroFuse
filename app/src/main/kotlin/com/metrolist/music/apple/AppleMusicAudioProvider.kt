@@ -316,8 +316,13 @@ object AppleMusicAudioProvider {
             artist = artist,
             mimeType = effectiveQuality.mimeType,
             codecs = effectiveQuality.codecs,
-            bitrate = effectiveQuality.estimatedBitrate,
-            sampleRate = 44_100,
+            // ALAC stores no estimate: the nominal 900 kbps is not measured and
+            // the player derives the real average from the `alac` magic cookie
+            // sniffed off the stream (AlacCookieBitrateDataSource), including
+            // the true sample rate. Seeding estimates here would be echoed back
+            // by the renderer and mistaken for measured data downstream.
+            bitrate = if (effectiveQuality == AppleMusicAudioQuality.ALAC) 0 else effectiveQuality.estimatedBitrate,
+            sampleRate = if (effectiveQuality == AppleMusicAudioQuality.ALAC) null else 44_100,
             contentLength = contentLength,
             expiresAtMs = System.currentTimeMillis() + 12 * 60 * 60 * 1000L,
         )

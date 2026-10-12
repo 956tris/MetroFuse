@@ -59,9 +59,10 @@ object CanvasIndex {
     /** O(1) lookup by normalized ISRC. */
     fun getByIsrc(isrc: String): CanvasMatchEntry? = byIsrc[isrc]
 
-    /** Fallback lookup when no ISRC is available. */
-    fun getBySongArtist(song: String, artist: String): CanvasMatchEntry? =
-        bySongArtist[songArtistKey(song, artist)]
+    /** Fallback lookup when no ISRC is available. Scoped by duration so a
+     *  same-titled recording of a different length can't collide. */
+    fun getBySongArtist(song: String, artist: String, durationMs: Long? = null): CanvasMatchEntry? =
+        bySongArtist[songArtistKey(song, artist, durationMs)]
 
     /**
      * Stores [entry], refusing to let a lower-confidence match clobber a
@@ -78,7 +79,7 @@ object CanvasIndex {
                 return
             }
         } else {
-            val key = songArtistKey(entry.title, entry.artist)
+            val key = songArtistKey(entry.title, entry.artist, entry.durationMs)
             val existing = bySongArtist[key]
             if (existing == null || entry.confidence >= existing.confidence) {
                 bySongArtist[key] = entry
@@ -123,7 +124,7 @@ object CanvasIndex {
                         count++
                     }
                 } else {
-                    val key = songArtistKey(entry.title, entry.artist)
+                    val key = songArtistKey(entry.title, entry.artist, entry.durationMs)
                     val existing = bySongArtist[key]
                     if (existing == null || entry.confidence >= existing.confidence) {
                         bySongArtist[key] = entry
@@ -166,6 +167,8 @@ object CanvasIndex {
         bySongArtist.clear()
     }
 
-    private fun songArtistKey(song: String, artist: String): String =
-        "${song.trim().lowercase()}\u001F${artist.trim().lowercase()}"
+    private fun songArtistKey(song: String, artist: String, durationMs: Long?): String {
+        val durationBucket = durationMs?.takeIf { it > 30_000L }?.let { it / 15_000L } ?: 0L
+        return "${song.trim().lowercase()}\u001F${artist.trim().lowercase()}\u001F$durationBucket"
+    }
 }

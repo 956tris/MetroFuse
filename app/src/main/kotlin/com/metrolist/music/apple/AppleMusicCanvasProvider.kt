@@ -78,6 +78,12 @@ object AppleMusicCanvasProvider {
 
     private const val DEBUG_MATCHING = true
 
+    /** Title/artist matches only count as duration-confirmed within this delta. */
+    private const val DURATION_CONFIRM_TOLERANCE_MS = 3_000L
+
+    /** Minimum score a search candidate must reach to be accepted. */
+    private const val MIN_ACCEPT_SCORE = 80
+
     private fun logMatchDecision(
         song: String,
         artist: String,
@@ -118,7 +124,7 @@ object AppleMusicCanvasProvider {
         durationSeconds: Int?,
         preferredAspect: CanvasAspectPreference,
     ): AppleMusicCanvas? {
-        val key = cacheKey(isrc, song, artist, preferredAspect)
+        val key = cacheKey(isrc, song, artist, preferredAspect, durationSeconds)
         cache[key]?.let { return it }
         // Negative cache: we previously confirmed no canvas exists.
         val neg = negativeCache[key]
@@ -152,7 +158,7 @@ object AppleMusicCanvasProvider {
         val cleanSong = CanvasQueryCleaner.cleanTitle(song).ifBlank { song }
         val cleanArtist = CanvasQueryCleaner.cleanArtist(artist).ifBlank { artist }
         val validDuration = durationSeconds?.takeIf { it > 30 }
-        val key = cacheKey(isrc, cleanSong, cleanArtist, preferredAspect)
+        val key = cacheKey(isrc, cleanSong, cleanArtist, preferredAspect, validDuration)
         cache[key]?.let { return@withContext it }
         // Respect negative cache so we don't re-query AMP every play.
         val neg = negativeCache[key]
@@ -213,14 +219,17 @@ object AppleMusicCanvasProvider {
 
             // Tier 3/4: scored catalog search fallback.
             fun searchLeg(activeToken: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
-                val search = fetchBySearch(cleanSong, cleanArtist, validDuration, activeToken, preferredAspect)
+                // Pass the ISRC we already hold so the scorer can confirm the
+                // exact catalog entry (accept immediately) or hard-reject a
+                // candidate that carries a different ISRC.
+                val search = fetchBySearch(cleanSong, cleanArtist, validDuration, resolvedIsrc, activeToken, preferredAspect)
                 if (search.transportFailed) searchTransportFailed = true
                 // Raw-title retry: if cleaning overshot (rare), one attempt
                 // with the original query before giving up.
                 if (search.canvas == null && search.item == null &&
                     (cleanSong != song || cleanArtist != artist)
                 ) {
-                    val retry = fetchBySearch(song, artist, validDuration, activeToken, preferredAspect)
+                    val retry = fetchBySearch(song, artist, validDuration, resolvedIsrc, activeToken, preferredAspect)
                     if (retry.transportFailed) searchTransportFailed = true
                     return Triple(retry.canvas, retry.tier, retry.item)
                 }
@@ -279,8 +288,32 @@ object AppleMusicCanvasProvider {
             val matchedAttrs = matchedItem?.optJSONObject("attributes")
             val matchedTitle = matchedAttrs?.optString("name")
             val matchedCatalogId = matchedItem?.optString("id")?.takeIf { it.isNotBlank() }
-            val matchedIsrcRaw = matchedAttrs?.optString("isrc")?.takeIf { it.isNotBlank() }
-            val effectiveIsrc = resolvedIsrc ?: ProviderIsrc.normalize(matchedIsrcRaw)
+            val matchedIsrc = ProviderIsrc.normalize(matchedAttrs?.optString("isrc"))
+
+            // Duration agreement between the queried track and the matched
+            // catalog entry — the only evidence that can confirm a text-only
+            // match as the same recording.
+            val matchedDurationMs = matchedAttrs?.optLong("durationInMillis")?.takeIf { it > 30_000L }
+            val durationDeltaMs =
+                if (validDuration != null && matchedDurationMs != null) {
+                    kotlin.math.abs(validDuration * 1000L - matchedDurationMs)
+                } else {
+                    null
+                }
+            val durationConfirmed = durationDeltaMs != null && durationDeltaMs <= DURATION_CONFIRM_TOLERANCE_MS
+
+            // A match may only teach the shared ISRC map / CanvasIndex when it
+            // is precise: either the ISRC itself confirmed the catalog entry,
+            // or title + artist + duration agree. A FUZZY/metadata-only hit
+            // must never publish, or a wrong ISRC poisons every later
+            // ISRC-first lookup and gets persisted to disk.
+            val confirmedTier: CanvasMatchTier? =
+                tier?.takeIf { it == CanvasMatchTier.ISRC_EXACT || durationConfirmed }
+            val publishableIsrc = when {
+                tier == CanvasMatchTier.ISRC_EXACT -> matchedIsrc ?: resolvedIsrc
+                confirmedTier != null -> matchedIsrc
+                else -> null
+            }
 
             logMatchDecision(cleanSong, cleanArtist, resolvedIsrc, tier, tier?.baseConfidence ?: 0, matchedTitle)
 
@@ -290,20 +323,20 @@ object AppleMusicCanvasProvider {
                 // Harvest: a confirmed canvas match teaches the shared ISRC
                 // map, so YTM-frontend plays skip discovery next time.
                 runCatching {
-                    effectiveIsrc?.let { IsrcResolver.publish(cleanSong, cleanArtist, it, validDuration) }
+                    publishableIsrc?.let { IsrcResolver.publish(cleanSong, cleanArtist, it, validDuration) }
                 }
-                if (tier != null) {
+                if (confirmedTier != null) {
                     CanvasIndex.put(
                         CanvasMatchEntry(
-                            isrc = effectiveIsrc,
+                            isrc = publishableIsrc,
                             appleCatalogId = matchedCatalogId,
                             title = matchedTitle ?: cleanSong,
                             artist = cleanArtist,
                             album = null,
                             durationMs = validDuration?.toLong()?.times(1000L),
                             sourceUrl = canvas.animated.orEmpty(),
-                            matchTier = tier,
-                            confidence = tier.baseConfidence,
+                            matchTier = confirmedTier,
+                            confidence = confirmedTier.baseConfidence,
                             lastMatchedAtMs = System.currentTimeMillis(),
                         ),
                     )
@@ -326,7 +359,13 @@ object AppleMusicCanvasProvider {
      * needing a canvas URL. Returns the first validated ISRC from the
      * best-scoring search candidate, or null.
      */
-    internal fun searchIsrcOnly(song: String, artist: String, durationSeconds: Int?, token: String): String? {
+    internal fun searchIsrcOnly(
+        song: String,
+        artist: String,
+        durationSeconds: Int?,
+        token: String,
+        knownIsrc: String? = null,
+    ): String? {
         val cleanSong = CanvasQueryCleaner.cleanTitle(song).ifBlank { song }
         val cleanArtist = CanvasQueryCleaner.cleanArtist(artist).ifBlank { artist }
         val url = buildAmpUrl(
@@ -341,7 +380,7 @@ object AppleMusicCanvasProvider {
         }.getOrNull() ?: return null
         val root = JSONObject(body)
         val candidates = collectSearchSongs(root)
-        val best = pickBestCandidate(candidates, cleanSong, cleanArtist, durationSeconds) ?: return null
+        val best = pickBestCandidate(candidates, cleanSong, cleanArtist, durationSeconds, knownIsrc) ?: return null
         return ProviderIsrc.normalize(best.optJSONObject("attributes")?.optString("isrc"))
     }
 
@@ -352,8 +391,18 @@ object AppleMusicCanvasProvider {
         song: String,
         artist: String,
         aspect: CanvasAspectPreference,
-    ): String =
-        ((isrc?.takeIf { it.isNotBlank() } ?: "$song\u001F$artist") + "\u001F$aspect").lowercase()
+        durationSeconds: Int?,
+    ): String {
+        // When no ISRC is available the song+artist key is additionally scoped
+        // by duration bucket so a remix/edit of the same name can't be served
+        // the original recording's cached canvas.
+        val fallback = "$song\u001F$artist\u001F${durationBucket(durationSeconds)}"
+        return ((isrc?.takeIf { it.isNotBlank() } ?: fallback) + "\u001F$aspect").lowercase()
+    }
+
+    /** 15s duration window, matching [com.metrolist.music.providers.IsrcResolver]. */
+    private fun durationBucket(durationSeconds: Int?): Int =
+        durationSeconds?.takeIf { it > 30 }?.let { it / 15 } ?: 0
 
     /**
      * Returns the hardcoded Apple Music JWT so other components can reuse it
@@ -427,12 +476,10 @@ object AppleMusicCanvasProvider {
         // STRICT: only look at the exact song that matched this ISRC.
         val songItem = getResourceById(root, foundId) ?: return null to null
 
-        // extractMotionFromData checks the matched song, then its directly
-        // linked album, then broad-scans every other resource already
-        // present in *this same* ISRC-filtered response (e.g. resources
-        // pulled in via include[songs]=albums,artists) before giving up.
-        // Still scoped to this one response payload — never a different
-        // track from a search — so it can't attach the wrong canvas.
+        // extractMotionFromData only inspects the matched song and its
+        // directly linked album relationships — never a broad scan of the
+        // other resources the response happens to include, which is what
+        // previously attached an unrelated track's canvas.
         extractMotionFromData(root, foundId, aspect)?.let {
             Timber.tag(TAG).d("AMP ISRC hit for $isrc -> $it")
             return AppleMusicCanvas(animated = it) to songItem
@@ -467,6 +514,7 @@ object AppleMusicCanvasProvider {
         song: String,
         artist: String,
         durationSeconds: Int?,
+        knownIsrc: String?,
         token: String,
         aspect: CanvasAspectPreference,
     ): SearchResult {
@@ -489,19 +537,21 @@ object AppleMusicCanvasProvider {
         val candidates = collectSearchSongs(root)
         if (candidates.isEmpty()) return SearchResult(null, null, CanvasMatchTier.FUZZY)
 
-        val best = pickBestCandidate(candidates, song, artist, durationSeconds)
+        val best = pickBestCandidate(candidates, song, artist, durationSeconds, knownIsrc)
             ?: return SearchResult(null, null, CanvasMatchTier.FUZZY)
 
-        // Tier 2 (catalog-ID style confirmation): the search result itself
-        // carries an ISRC that matches what we already know about the
-        // track (title/artist exact after normalization). Tier 3: title +
-        // artist normalize to an exact match without an ISRC to confirm it.
-        // Anything weaker that still cleared pickBestCandidate's score
-        // threshold is Tier 4 (FUZZY).
+        // Tier 2 (ISRC confirmation): the picked result carries the same ISRC
+        // we already know for this track — the strongest possible evidence.
+        // ALBUM_ARTIST_TITLE: title + artist normalize to an exact match.
+        // Anything weaker that still cleared pickBestCandidate's gates is
+        // Tier 4 (FUZZY).
         val bestAttrs = best.optJSONObject("attributes")
         val bestTitleNorm = normalize(bestAttrs?.optString("name").orEmpty())
         val bestArtistNorm = normalize(bestAttrs?.optString("artistName").orEmpty())
+        val bestIsrc = ProviderIsrc.normalize(bestAttrs?.optString("isrc"))
         val tier = when {
+            ProviderIsrc.equal(bestIsrc, knownIsrc) ->
+                CanvasMatchTier.ISRC_EXACT
             bestTitleNorm == normalize(song) && bestArtistNorm == normalize(artist) ->
                 CanvasMatchTier.ALBUM_ARTIST_TITLE
             else -> CanvasMatchTier.FUZZY
@@ -567,28 +617,66 @@ object AppleMusicCanvasProvider {
     }
 
     /**
-     * Scores search candidates against the query to find the most-likely-correct
-     * match. Uses normalized title + artist similarity. Returns null if no
-     * candidate scores high enough (avoids returning a canvas for a different song).
+     * A scored search candidate. Ordered for deterministic tie-breaking:
+     * artist score first, then smallest duration delta. ISRC confirmation is
+     * handled by an immediate early return (see [pickBestCandidate]).
+     */
+    private data class ScoredCandidate(
+        val item: JSONObject,
+        val score: Int,
+        val artistScore: Int,
+        val durationDeltaMs: Long?,
+    )
+
+    /**
+     * Scores search candidates against the query and returns the single
+     * best-matching item, or null when nothing clears the confidence gates.
+     *
+     * Gates, in order:
+     *  1. ISRC — a candidate carrying [knownIsrc] wins immediately; a
+     *     candidate carrying a *different* ISRC is a hard reject.
+     *  2. Artist — at least one artist token must match, so a same-titled
+     *     track by another artist can never be selected.
+     *  3. Variant — a cover/remix/karaoke/tribute/live candidate is rejected
+     *     unless the query is that variant too, or its duration agrees within
+     *     [DURATION_CONFIRM_TOLERANCE_MS].
+     *  4. Score must reach [MIN_ACCEPT_SCORE].
+     *
+     * Remaining ties break on artist score, then smallest duration delta; a
+     * full tie keeps the first candidate (stable, deterministic).
      */
     private fun pickBestCandidate(
         candidates: List<JSONObject>,
         querySong: String,
         queryArtist: String,
         queryDurationSeconds: Int?,
+        knownIsrc: String?,
     ): JSONObject? {
-        data class Scored(val item: JSONObject, val score: Int)
-
         val normQuerySong = normalize(querySong)
         val normQueryArtist = normalize(queryArtist)
+        val queryDurationMs = queryDurationSeconds?.takeIf { it > 30 }?.toLong()?.times(1000L)
+        val queryIsVariant =
+            CanvasQueryCleaner.hasVariantMarker(querySong) || CanvasQueryCleaner.hasVariantMarker(queryArtist)
 
-        var best: Scored? = null
+        var best: ScoredCandidate? = null
         for (candidate in candidates) {
             val attrs = candidate.optJSONObject("attributes") ?: continue
-            val title = normalize(attrs.optString("name"))
+            val rawTitle = attrs.optString("name")
+            val title = normalize(rawTitle)
             if (title.isBlank()) continue
 
-            val artistName = normalize(attrs.optString("artistName"))
+            val rawArtist = attrs.optString("artistName")
+            val artistName = normalize(rawArtist)
+
+            // ---- ISRC gate ------------------------------------------------
+            val candidateIsrc = ProviderIsrc.normalize(attrs.optString("isrc"))
+            // Exact confirmation of a known ISRC accepts this candidate now.
+            if (knownIsrc != null && ProviderIsrc.equal(candidateIsrc, knownIsrc)) return candidate
+            // A candidate that contradicts a known ISRC can never be right.
+            if (knownIsrc != null && candidateIsrc != null) continue
+
+            // ---- Artist gate ----------------------------------------------
+            if (!artistTokensMatch(normQueryArtist, artistName)) continue
 
             var score = 0
 
@@ -605,48 +693,78 @@ object AppleMusicCanvasProvider {
                 }
             }
 
-            // Artist matching
-            if (artistName.isNotBlank()) {
-                score += when {
-                    artistName == normQueryArtist -> 60
-                    artistName.contains(normQueryArtist) || normQueryArtist.contains(artistName) -> 40
-                    else -> {
-                        val artistWords = normQueryArtist.split(" ").filter { it.length > 3 }
-                        if (artistWords.isNotEmpty()) {
-                            val matchCount = artistWords.count { artistName.contains(it) }
-                            (matchCount.toFloat() / artistWords.size * 30).toInt()
-                        } else -20
-                    }
+            // Artist matching (the gate above guarantees a non-zero match;
+            // the exact figure only feeds tie-breaking and the final score).
+            val artistScore = when {
+                artistName.isBlank() -> 0
+                artistName == normQueryArtist -> 60
+                artistName.contains(normQueryArtist) || normQueryArtist.contains(artistName) -> 40
+                else -> {
+                    val artistWords = normQueryArtist.split(" ").filter { it.length > 3 }
+                    if (artistWords.isNotEmpty()) {
+                        val matchCount = artistWords.count { artistName.contains(it) }
+                        (matchCount.toFloat() / artistWords.size * 30).toInt()
+                    } else 0
                 }
             }
+            score += artistScore
 
             // Duration verification — catches remixes/live versions with same name.
             // A big diff is only trusted as "wrong song" when title/artist aren't
             // already an exact match — otherwise it's more likely a radio edit,
             // remaster, or rip with extra silence, and shouldn't nuke a correct hit.
             // Unknown durations (YTM reports -1) skip verification entirely.
-            if (queryDurationSeconds != null && queryDurationSeconds > 30) {
-                val trackDurMs = attrs.optLong("durationInMillis")
-                if (trackDurMs > 30_000) {
-                    val diff = kotlin.math.abs(queryDurationSeconds * 1000L - trackDurMs)
-                    val exactTitleAndArtist = title == normQuerySong && artistName == normQueryArtist
-                    when {
-                        diff < 4_000 -> score += 60
-                        diff < 12_000 -> score += 30
-                        diff > 25_000 -> score -= if (exactTitleAndArtist) 20 else 80
-                    }
+            var durationDeltaMs: Long? = null
+            val trackDurMs = attrs.optLong("durationInMillis")
+            if (queryDurationMs != null && trackDurMs > 30_000) {
+                durationDeltaMs = kotlin.math.abs(queryDurationMs - trackDurMs)
+                val exactTitleAndArtist = title == normQuerySong && artistName == normQueryArtist
+                when {
+                    durationDeltaMs < 4_000 -> score += 60
+                    durationDeltaMs < 12_000 -> score += 30
+                    durationDeltaMs > 25_000 -> score -= if (exactTitleAndArtist) 20 else 80
                 }
             }
 
-            // Minimum confidence: 55. Title-exact (100) + artist-contains (40)
-            // clears it without duration; word-overlap + artist-exact can too.
-            // 70 was systematically rejecting cleaned YTM queries whose only
-            // evidence is title-words + artist-exact and no duration bonus.
-            if (score >= 55 && (best == null || score > best!!.score)) {
-                best = Scored(candidate, score)
-            }
+            // ---- Variant gate ---------------------------------------------
+            // A remix/cover/live/karaoke/tribute result is a different
+            // recording (different canvas): only accept when the query asked
+            // for that variant, or duration confirms the same recording.
+            val candidateIsVariant =
+                CanvasQueryCleaner.hasVariantMarker(rawTitle) || CanvasQueryCleaner.hasVariantMarker(rawArtist)
+            val durationConfirmsVariant =
+                durationDeltaMs != null && durationDeltaMs <= DURATION_CONFIRM_TOLERANCE_MS
+            if (candidateIsVariant && !queryIsVariant && !durationConfirmsVariant) continue
+
+            if (score < MIN_ACCEPT_SCORE) continue
+
+            val scored = ScoredCandidate(candidate, score, artistScore, durationDeltaMs)
+            val current = best
+            if (current == null || isBetterMatch(scored, current)) best = scored
         }
         return best?.item
+    }
+
+    /**
+     * True when at least one meaningful artist token from [normQueryArtist]
+     * appears in [artistName]. Singleton/short names ("U2", "Sia") fall back
+     * to a substring check; a blank query artist (nothing to match) passes.
+     */
+    private fun artistTokensMatch(normQueryArtist: String, artistName: String): Boolean {
+        if (normQueryArtist.isBlank()) return true
+        if (artistName.isBlank()) return false
+        if (artistName == normQueryArtist) return true
+        if (artistName.contains(normQueryArtist) || normQueryArtist.contains(artistName)) return true
+        val tokens = normQueryArtist.split(" ").filter { it.length > 3 }
+        return tokens.any { artistName.contains(it) }
+    }
+
+    /** Deterministic ordering: higher artist score, then smaller duration delta, then first-seen. */
+    private fun isBetterMatch(candidate: ScoredCandidate, current: ScoredCandidate): Boolean {
+        if (candidate.artistScore != current.artistScore) return candidate.artistScore > current.artistScore
+        val candidateDelta = candidate.durationDeltaMs ?: Long.MAX_VALUE
+        val currentDelta = current.durationDeltaMs ?: Long.MAX_VALUE
+        return candidateDelta < currentDelta
     }
 
     private val STRIP_REGEX = Regex(
@@ -767,62 +885,33 @@ object AppleMusicCanvasProvider {
         return null
     }
 
-    private val RESOURCE_SCAN_TYPES = listOf("songs", "albums", "playlists", "music-videos")
-
     /**
-     * Finds the best motion video URL in an AMP response, preferring [targetId]
-     * (and its related albums) before falling back to scanning every resource
-     * in the payload.
+     * Finds the motion video URL for the ISRC-matched song [targetId] and its
+     * directly linked album relationships only. Deliberately does NOT scan
+     * other resources present in the payload — that broad scan attached
+     * unrelated tracks' canvases.
      */
     private fun extractMotionFromData(
         root: JSONObject,
         targetId: String?,
         aspect: CanvasAspectPreference,
     ): String? {
-        // 1. Target priority
-        if (!targetId.isNullOrBlank()) {
-            val item = getResourceById(root, targetId)
-            if (item != null) {
-                searchItem(item, aspect)?.let { return it }
+        if (targetId.isNullOrBlank()) return null
+        val item = getResourceById(root, targetId) ?: return null
 
-                if (item.optString("type") == "songs") {
-                    val albumRefs = item.optJSONObject("relationships")
-                        ?.optJSONObject("albums")?.optJSONArray("data")
-                    if (albumRefs != null) {
-                        for (i in 0 until albumRefs.length()) {
-                            val albumId = albumRefs.optJSONObject(i)?.optString("id")
-                            val album = getResourceById(root, albumId)
-                            if (album != null) {
-                                searchItem(album, aspect)?.let { return it }
-                            }
-                        }
-                    }
+        // 1. The matched song itself.
+        searchItem(item, aspect)?.let { return it }
+
+        // 2. Only the album(s) directly linked from the matched song.
+        if (item.optString("type") == "songs") {
+            val albumRefs = item.optJSONObject("relationships")
+                ?.optJSONObject("albums")?.optJSONArray("data")
+            if (albumRefs != null) {
+                for (i in 0 until albumRefs.length()) {
+                    val albumId = albumRefs.optJSONObject(i)?.optString("id")
+                    val album = getResourceById(root, albumId) ?: continue
+                    searchItem(album, aspect)?.let { return it }
                 }
-            }
-        }
-
-        // 2. Broad scan of resources map
-        root.optJSONObject("resources")?.let { resources ->
-            for (type in RESOURCE_SCAN_TYPES) {
-                val bucket = resources.optJSONObject(type) ?: continue
-                for (id in bucket.keys()) {
-                    searchItem(bucket.optJSONObject(id), aspect)?.let { return it }
-                }
-            }
-        }
-
-        // 3. included array directly
-        root.optJSONArray("included")?.let { included ->
-            for (i in 0 until included.length()) {
-                searchItem(included.optJSONObject(i), aspect)?.let { return it }
-            }
-        }
-
-        // 4. results (search responses), recursive
-        root.optJSONObject("results")?.let { results ->
-            for (type in results.keys()) {
-                val sub = results.optJSONObject(type) ?: continue
-                extractMotionFromData(sub, targetId, aspect)?.let { return it }
             }
         }
 
