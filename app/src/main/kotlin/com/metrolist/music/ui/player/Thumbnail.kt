@@ -15,12 +15,14 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -68,6 +70,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -94,6 +98,7 @@ import com.metrolist.music.constants.PlayerHorizontalPadding
 import com.metrolist.music.constants.SeekExtraSeconds
 import com.metrolist.music.constants.SwipeThumbnailKey
 import com.metrolist.music.constants.ThumbnailCornerRadius
+import com.metrolist.music.extensions.setVideoTracksEnabled
 import com.metrolist.music.listentogether.RoomRole
 import com.metrolist.music.ui.component.CastButton
 import com.metrolist.music.utils.rememberPlayerBackgroundStyle
@@ -278,6 +283,26 @@ fun Thumbnail(
         derivedStateOf { isPlayerOpen() }
     }
 
+    // True while the stream currently playing is a video container (e.g. a
+    // KuGou MV used as the gated-audio fallback): its video track is shown
+    // in place of artwork and the fullscreen watch affordance is offered.
+    val currentMediaIsVideo by playerConnection.service.currentMediaIsVideo.collectAsStateWithLifecycle()
+
+    // Fullscreen MV watch overlay. While it is up the in-carousel video
+    // surface is dropped so exactly one view owns the player's video output;
+    // otherwise dismissing the overlay would clear the surface and leave the
+    // square thumbnail black until the next recomposition.
+    var showVideoFullscreen by remember { mutableStateOf(false) }
+
+    // Video decoding stays off unless a video surface is actually on screen
+    // (sheet open enough for the carousel or the fullscreen watch). A gated
+    // track playing from its MV as background audio never spins a decoder.
+    val isVideoSurfaceVisible = currentMediaIsVideo && (isPlayerOpenState || showVideoFullscreen)
+    DisposableEffect(playerConnection.player, isVideoSurfaceVisible) {
+        playerConnection.player.setVideoTracksEnabled(isVideoSurfaceVisible)
+        onDispose { playerConnection.player.setVideoTracksEnabled(false) }
+    }
+
     // Grid state
     val thumbnailLazyGridState = rememberLazyGridState()
     
@@ -457,6 +482,9 @@ fun Thumbnail(
                                 currentPreferredArtworkUrl = preferredArtworkUrl,
                                 artworkAlpha = artworkAlpha,
                                 isPlayerOpen = isPlayerOpenState,
+                                isCurrentTrackVideo = currentMediaIsVideo,
+                                isVideoFullscreenActive = showVideoFullscreen,
+                                onWatchVideoFullscreen = { showVideoFullscreen = true },
                             )
                         }
                     }
@@ -479,6 +507,30 @@ fun Thumbnail(
             modifier = Modifier.align(Alignment.Center)
         ) {
             SeekEffectOverlay(seekDirection = seekDirection)
+        }
+    }
+
+    // Fullscreen MV watch. A separate window so the video can use the whole
+    // screen (letterboxed, not cropped) while the sheet, app bars, and
+    // queue stay behind it. Tapping anywhere or back dismisses.
+    if (showVideoFullscreen && currentMediaIsVideo) {
+        Dialog(
+            onDismissRequest = { showVideoFullscreen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable { showVideoFullscreen = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                MvVideo(
+                    player = playerConnection.player,
+                    shouldPlay = true,
+                    cropToFill = false,
+                )
+            }
         }
     }
 }
@@ -559,6 +611,14 @@ private fun ThumbnailItem(
     // handler and the canvas video are disabled then so a hidden thumbnail
     // can never swallow taps meant for the UI underneath it.
     isPlayerOpen: Boolean = true,
+    // True when the current stream is a video container: the playing MV is
+    // rendered in this slot instead of static artwork.
+    isCurrentTrackVideo: Boolean = false,
+    // True while the fullscreen watch overlay owns the player's video
+    // output; the in-carousel surface is dropped then so only one view
+    // holds the video output at a time.
+    isVideoFullscreenActive: Boolean = false,
+    onWatchVideoFullscreen: (() -> Unit)? = null,
 ) {
     val incrementalSeekSkipEnabled by rememberPreference(SeekExtraSeconds, defaultValue = false)
     var skipMultiplier by remember { mutableIntStateOf(1) }
@@ -634,7 +694,30 @@ private fun ThumbnailItem(
                         else -> item.mediaMetadata.artworkUri?.toString()
                     }
 
-                if (item.mediaId == currentMediaId && !currentCanvasUrl.isNullOrBlank()) {
+                if (item.mediaId == currentMediaId && isCurrentTrackVideo) {
+                    // MV playing from the shared player. The artwork stays
+                    // underneath as a fallback until frames actually render
+                    // (a TextureView with no buffer composites transparent).
+                    // While the fullscreen overlay is up the in-carousel
+                    // surface is dropped so the two never race for the
+                    // player's single video output.
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        ThumbnailImage(
+                            artworkUri = artworkUriToUse,
+                            modifier =
+                                Modifier.graphicsLayer {
+                                    alpha = artworkAlpha.coerceIn(0f, 1f)
+                                },
+                        )
+                        if (!isVideoFullscreenActive) {
+                            MvVideo(
+                                player = playerConnection.player,
+                                shouldPlay = isPlayerOpen,
+                                cropToFill = true,
+                            )
+                        }
+                    }
+                } else if (item.mediaId == currentMediaId && !currentCanvasUrl.isNullOrBlank()) {
                     // Stack the artwork underneath and only reveal the video once
                     // it actually renders. A broken canvas URL (expired link,
                     // unplayable embed, codec failure) previously replaced the
@@ -678,6 +761,35 @@ private fun ThumbnailItem(
                     .padding(8.dp),
                 tintColor = textBackgroundColor
             )
+
+            // Watch-the-MV entry point, offered only for the track that is
+            // actually playing a video stream.
+            if (!hidePlayerThumbnail && item.mediaId == currentMediaId && isCurrentTrackVideo && onWatchVideoFullscreen != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .clickable(enabled = isPlayerOpen, onClick = onWatchVideoFullscreen)
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.slow_motion_video),
+                        contentDescription = stringResource(R.string.watch_music_video),
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = stringResource(R.string.music_video_badge),
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
         }
     }
 }
@@ -944,5 +1056,104 @@ private fun SeekEffectOverlay(
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
             .padding(8.dp)
+    )
+}
+
+/**
+ * Renders the *main* player's video track (e.g. a KuGou official MV used as
+ * an audio fallback) in place of static artwork.
+ *
+ * Unlike [CanvasVideo], this never owns, pauses, or releases the player —
+ * it only attaches/detaches a [TextureView] surface. Playback, audio focus,
+ * and queue behavior are untouched; hiding the surface merely stops frame
+ * rendering while the music keeps playing.
+ *
+ * @param player the shared playback [ExoPlayer].
+ * @param shouldPlay false while the sheet is closed/fullscreen hidden: the
+ * surface is detached so no frames decode for nobody, mirroring canvas.
+ * @param cropToFill true crops to fill square artwork bounds (like
+ * [ThumbnailImage]); false letterboxes (fullscreen).
+ */
+@Composable
+fun MvVideo(
+    player: ExoPlayer,
+    modifier: Modifier = Modifier,
+    shouldPlay: Boolean = true,
+    cropToFill: Boolean = true,
+) {
+    AndroidView(
+        factory = { ctx ->
+            TextureView(ctx).also { textureView ->
+                val listener = object : Player.Listener, View.OnLayoutChangeListener {
+                    private var videoWidth = 0
+                    private var videoHeight = 0
+
+                    override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                        videoWidth = videoSize.width
+                        videoHeight = videoSize.height
+                        applyMatrix()
+                    }
+
+                    override fun onLayoutChange(
+                        v: View, l: Int, t: Int, r: Int, b: Int,
+                        ol: Int, ot: Int, or: Int, ob: Int
+                    ) {
+                        applyMatrix()
+                    }
+
+                    private fun applyMatrix() {
+                        if (!cropToFill) {
+                            textureView.setTransform(Matrix())
+                            return
+                        }
+                        if (videoWidth <= 0 || videoHeight <= 0) return
+                        val viewWidth = textureView.width.toFloat()
+                        val viewHeight = textureView.height.toFloat()
+                        if (viewWidth <= 0 || viewHeight <= 0) return
+
+                        val videoAspect = videoWidth.toFloat() / videoHeight
+                        val viewAspect = viewWidth / viewHeight
+
+                        val scaleX: Float
+                        val scaleY: Float
+
+                        if (videoAspect > viewAspect) {
+                            scaleX = videoAspect / viewAspect
+                            scaleY = 1f
+                        } else {
+                            scaleX = 1f
+                            scaleY = viewAspect / videoAspect
+                        }
+
+                        val matrix = Matrix()
+                        matrix.setScale(scaleX, scaleY, viewWidth / 2f, viewHeight / 2f)
+                        textureView.setTransform(matrix)
+                    }
+                }
+                textureView.addOnLayoutChangeListener(listener)
+                player.addListener(listener)
+                textureView.tag = listener
+            }
+        },
+        update = { textureView ->
+            if (shouldPlay) {
+                player.setVideoTextureView(textureView)
+                textureView.visibility = View.VISIBLE
+            } else {
+                player.clearVideoTextureView(textureView)
+                textureView.visibility = View.INVISIBLE
+            }
+        },
+        onRelease = { textureView ->
+            player.clearVideoTextureView(textureView)
+            val listener = textureView.tag as? Player.Listener
+            if (listener != null) {
+                player.removeListener(listener)
+            }
+            if (listener is View.OnLayoutChangeListener) {
+                textureView.removeOnLayoutChangeListener(listener)
+            }
+        },
+        modifier = modifier.fillMaxSize(),
     )
 }

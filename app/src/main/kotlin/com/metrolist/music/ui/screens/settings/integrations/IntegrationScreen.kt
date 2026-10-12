@@ -99,6 +99,14 @@ fun IntegrationScreen(
                     onClick = {
                         navController.navigate("settings/integrations/jiosaavn")
                     }
+                ),
+                IntegrationCardItem(
+                    icon = painterResource(R.drawable.music_note),
+                    title = { Text(stringResource(R.string.apple_music_integration)) },
+                    description = { Text(stringResource(R.string.apple_music_integration_desc)) },
+                    onClick = {
+                        navController.navigate("settings/integrations/apple_music")
+                    }
                 )
             )
         )

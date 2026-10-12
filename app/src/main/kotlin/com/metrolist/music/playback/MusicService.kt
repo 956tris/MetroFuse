@@ -241,6 +241,8 @@ import com.metrolist.music.constants.JioSaavnAudioQuality
 import com.metrolist.music.constants.JioSaavnAudioQualityKey
 import com.metrolist.music.constants.KuGouAudioQuality
 import com.metrolist.music.constants.KuGouAudioQualityKey
+import com.metrolist.music.constants.AppleMusicAudioQuality
+import com.metrolist.music.constants.AppleMusicAudioQualityKey
 import com.metrolist.music.constants.SpotifyCookieKey
 import com.metrolist.music.constants.SpotifyCanvasEnabledKey
 import com.metrolist.music.constants.SpotifyListeningHistoryEnabledKey
@@ -315,6 +317,7 @@ import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.kugou.KuGouAudioProvider
+import com.metrolist.music.apple.AppleMusicAudioProvider
 import com.metrolist.music.constants.LoudnessLevel
 import com.metrolist.music.constants.LoudnessLevelKey
 import com.metrolist.music.ui.utils.resize
@@ -706,6 +709,7 @@ class MusicService :
             currentAppleTallCanvasUrl.value = null
             currentEmbeddedCanvasUrl.value = null
             currentEmbeddedCanvasProvider.value = null
+            currentMediaIsVideo.value = false
         }
         currentMediaMetadata.value = metadata
     }
@@ -731,6 +735,11 @@ class MusicService :
             database.format(mediaMetadata?.id)
         }
     val currentPlaybackFormat = MutableStateFlow<FormatEntity?>(null)
+    // True while the currently loaded stream actually carries a video track
+    // (KuGou MV used as the gated-audio fallback). The player UI uses this to
+    // offer the video surface / fullscreen "watch" affordance. Reset on every
+    // track change so a previous video never leaks onto an audio-only song.
+    val currentMediaIsVideo = MutableStateFlow(false)
     val currentLivePlaybackBitrate = MutableStateFlow<Int?>(null)
     private val livePlaybackBitrateSamples = ArrayDeque<LivePlaybackBitrateSample>()
     private val livePlaybackBitrateLock = Any()
@@ -940,6 +949,10 @@ class MusicService :
         val drmLicenseUri: String? = null,
         val kid: String? = null,
         val decryptionKey: String? = null,
+        // True when this stream is a video container (e.g. a KuGou MV used
+        // as the gated-audio fallback): the player can surface its video
+        // track in the UI instead of static artwork.
+        val isVideo: Boolean = false,
     )
 
     private data class PlaybackStreamResolution(
@@ -952,6 +965,7 @@ class MusicService :
         val tempFilePath: String? = null,
         val kid: String? = null,
         val decryptionKey: String? = null,
+        val isVideo: Boolean = false,
     )
 
     // Cached preferences to avoid runBlocking DataStore reads in hot paths
@@ -1393,6 +1407,7 @@ class MusicService :
                     DeezerAudioProvider.invalidate(mediaId)
                     JioSaavnAudioProvider.invalidate(mediaId)
                     KuGouAudioProvider.invalidate(mediaId)
+                    AppleMusicAudioProvider.invalidate(mediaId)
                     SoundCloudAudioProvider.invalidate(mediaId)
                     YouTubeAudioProvider.invalidate(mediaId)
 
@@ -3691,6 +3706,7 @@ class MusicService :
         setCurrentMediaMetadata(transitionedMetadata)
         val transitionedMediaId = newMetadata?.id ?: mediaItem?.mediaId
         currentPlaybackFormat.value = null
+        currentMediaIsVideo.value = false
         currentLivePlaybackBitrate.value = null
         lastLivePlaybackBitrateUpdateMs = 0L
         refreshCurrentPlaybackFormatFromDatabase(transitionedMediaId)
@@ -5279,6 +5295,7 @@ class MusicService :
             DEEZER_FALLBACK_ITAG -> "deezer"
             SOUNDCLOUD_FALLBACK_ITAG -> "soundcloud"
             APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_FALLBACK_ITAG -> "apple music"
+            APPLE_MUSIC_PROVIDER_ITAG -> "apple music"
             JIOSAAVN_FALLBACK_ITAG -> "jiosaavn"
             KUGOU_FALLBACK_ITAG -> "kugou"
             DIRECT_HTTP_AUDIO_ITAG -> "direct audio"
@@ -5293,6 +5310,7 @@ class MusicService :
             value.startsWith(deezerFallbackCacheKey(""), ignoreCase = true) -> "deezer"
             value.startsWith(soundCloudFallbackCacheKey(""), ignoreCase = true) -> "soundcloud"
             value.startsWith(appleMusicFallbackCacheKey(""), ignoreCase = true) -> "apple music"
+            value.startsWith(appleMusicProviderCacheKey(""), ignoreCase = true) -> "apple music"
             value.startsWith(jiosaavnFallbackCacheKey(""), ignoreCase = true) -> "jiosaavn"
             value.startsWith(kugouFallbackCacheKey(""), ignoreCase = true) -> "kugou"
             value.startsWith(directHttpAudioCacheKey(""), ignoreCase = true) -> "direct audio"
@@ -5383,7 +5401,18 @@ class MusicService :
                                             }
                                             request = builder.build()
                                         }
-                                        chain.proceed(request)
+                                        if (AppleMusicAudioProvider.isApiUrl(request.url)) {
+                                            // /stream decrypts + transcodes on demand, so
+                                            // response headers can take 10s+. The default
+                                            // ~10s timeouts trip first (SocketTimeout in
+                                            // readResponseHeaders) and kill playback.
+                                            chain
+                                                .withConnectTimeout(60, TimeUnit.SECONDS)
+                                                .withReadTimeout(180, TimeUnit.SECONDS)
+                                                .proceed(request)
+                                        } else {
+                                            chain.proceed(request)
+                                        }
                                         }.build(),
                                 ),
                             ),
@@ -5667,6 +5696,7 @@ class MusicService :
                     } == true
                     if (!currentDataSpecIsFallback || cached.isFallbackStream(mediaId)) {
                         upsertCachedStreamFormat(mediaId, cached.format)
+                        publishCurrentMediaIsVideo(mediaId, cached.isVideo)
                         return@Factory dataSpec
                             .buildUpon()
                             .setUri(cached.uri.toUri())
@@ -5690,6 +5720,7 @@ class MusicService :
                     upsert(resolved.format)
                 }
                 publishCurrentPlaybackFormat(mediaId, resolved.format)
+                publishCurrentMediaIsVideo(mediaId, resolved.isVideo)
 
                 if (bypassCacheForQualityChange.remove(mediaId)) {
                     Timber.tag("MusicService").d("Cleared bypass cache flag for $mediaId after stream fetch")
@@ -5705,6 +5736,7 @@ class MusicService :
                     drmLicenseUri = resolved.drmLicenseUri,
                     kid = resolved.kid,
                     decryptionKey = resolved.decryptionKey,
+                    isVideo = resolved.isVideo,
                 )
                 if (isPendingTidalDashRequest && resolved.mimeType != MimeTypes.APPLICATION_MPD) {
                     skipTidalLiveManifestOnceMediaIds.add(mediaId)
@@ -5877,6 +5909,26 @@ class MusicService :
             val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
             if (currentMediaId == mediaId && format.id == mediaId) {
                 currentPlaybackFormat.value = format
+            }
+        }
+    }
+
+    /**
+     * Publishes whether the stream currently loaded for [mediaId] carries a
+     * video track. Gated on the track actually being current so background
+     * preloads of later queue items can never flip the UI into video mode.
+     */
+    private fun publishCurrentMediaIsVideo(
+        mediaId: String,
+        isVideo: Boolean,
+    ) {
+        // Resolved on a data-source thread; hop to the main thread before
+        // touching the player (ExoPlayer is single-threaded) and re-check
+        // that the resolved track is still the current one.
+        scope.launch {
+            val currentMediaId = currentMediaMetadata.value?.id ?: player.currentMediaItem?.mediaId
+            if (currentMediaId == mediaId) {
+                currentMediaIsVideo.value = isVideo
             }
         }
     }
@@ -6060,6 +6112,7 @@ class MusicService :
             drmLicenseUri = drmLicenseUri,
             kid = kid,
             decryptionKey = decryptionKey,
+            isVideo = isVideo,
         )
 
     private fun PlaybackStreamResolution.toCachedSongStream(selectionKey: String) =
@@ -6073,6 +6126,7 @@ class MusicService :
             drmLicenseUri = drmLicenseUri,
             kid = kid,
             decryptionKey = decryptionKey,
+            isVideo = isVideo,
         )
 
     private fun PlaybackStreamResolution.supportsProgressivePreload(): Boolean {
@@ -6096,6 +6150,7 @@ class MusicService :
             cacheKey.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) -> "deezer"
             cacheKey.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) -> "soundcloud"
             cacheKey.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) -> "apple"
+            cacheKey.startsWith(APPLE_MUSIC_PROVIDER_CACHE_PREFIX) -> "apple"
             cacheKey.startsWith(YOUTUBE_FALLBACK_CACHE_PREFIX) -> "youtube"
             cacheKey.startsWith(DIRECT_HTTP_AUDIO_CACHE_PREFIX) -> "direct"
             else -> "unknown"
@@ -6108,6 +6163,7 @@ class MusicService :
         DeezerAudioProvider.invalidate(mediaId)
         JioSaavnAudioProvider.invalidate(mediaId)
         KuGouAudioProvider.invalidate(mediaId)
+        AppleMusicAudioProvider.invalidate(mediaId)
         SoundCloudAudioProvider.invalidate(mediaId)
         YouTubeAudioProvider.invalidate(mediaId)
     }
@@ -6160,6 +6216,7 @@ class MusicService :
             AudioProviderOrderItem.QOBUZ -> qobuzFallbackCacheKey(mediaId)
             AudioProviderOrderItem.JIOSAAVN -> jiosaavnFallbackCacheKey(mediaId)
             AudioProviderOrderItem.KUGOU -> kugouFallbackCacheKey(mediaId)
+            AudioProviderOrderItem.APPLE_MUSIC -> appleMusicProviderCacheKey(mediaId)
             AudioProviderOrderItem.OFFLINE -> offlineFallbackCacheKey(mediaId)
         }
 
@@ -6298,6 +6355,16 @@ class MusicService :
                 cacheKey = kugouFallbackCacheKey(mediaId),
                 format = kugouFallbackFormat(mediaId, this),
                 mimeType = mimeType,
+                isVideo = isVideoAudio,
+            )
+
+        fun AppleMusicAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
+            PlaybackStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = appleMusicProviderCacheKey(mediaId),
+                format = appleMusicProviderFallbackFormat(mediaId, this),
+                mimeType = mimeType,
             )
 
         fun OfflineAudioProvider.Resolved.toPlaybackResolution(): PlaybackStreamResolution =
@@ -6341,6 +6408,8 @@ class MusicService :
             Result.failure(IllegalStateException("JioSaavn audio not enabled"))
         var kugouAttempt: Result<KuGouAudioProvider.Resolved> =
             Result.failure(IllegalStateException("KuGou audio not enabled"))
+        var appleMusicAttempt: Result<AppleMusicAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Apple Music audio not enabled"))
         var offlineAttempt: Result<OfflineAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Offline local match not attempted yet"))
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
@@ -6357,6 +6426,7 @@ class MusicService :
                 }
                 if (directDeezerMediaId) add(AudioProviderOrderItem.DEEZER)
                 if (JioSaavnAudioProvider.isJioSaavnTrackId(mediaId)) add(AudioProviderOrderItem.JIOSAAVN)
+                if (AppleMusicAudioProvider.isAppleMusicTrackId(mediaId)) add(AudioProviderOrderItem.APPLE_MUSIC)
                 addAll(audioProviderOrder)
                 }.distinct(),
                 enabled = dataStore.get(ExperimentalDeezerFirstKey, false),
@@ -6495,6 +6565,21 @@ class MusicService :
                     }
                     if (stopOnProviderError) {
                         throwProviderFailure("KuGou", kugouAttempt.exceptionOrNull())
+                    }
+                }
+                AudioProviderOrderItem.APPLE_MUSIC -> {
+                    attemptedProviders += provider
+                    appleMusicAttempt = runCatching {
+                        AppleMusicAudioProvider.resolve(
+                            buildAppleMusicQuery(attemptMediaId, mediaId, song, queuedMetadata, spotifyIsrc),
+                        )
+                    }
+                    appleMusicAttempt.getOrNull()?.let { resolved ->
+                        Timber.tag("MusicService").i("Using Apple Music stream for $mediaId: ${resolved.title}")
+                        return resolved.toPlaybackResolution()
+                    }
+                    if (stopOnProviderError) {
+                        throwProviderFailure("Apple Music", appleMusicAttempt.exceptionOrNull())
                     }
                 }
                 AudioProviderOrderItem.YOUTUBE_MUSIC -> {
@@ -6673,11 +6758,18 @@ class MusicService :
         } else {
             ""
         }
+        val appleMusicDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
+            appleMusicAttempt.exceptionOrNull()?.readableMessage()
+                ?.let { "Apple Music failed: $it; " }
+                .orEmpty()
+        } else {
+            ""
+        }
         val qobuzDetail = qobuzAttempt.exceptionOrNull()?.readableMessage()
             ?.let { "Qobuz failed: $it; " }
             .orEmpty()
         val providerDetails =
-            "${qobuzDetail}${tidalDetail}${deezerDetail}${jiosaavnDetail}${kugouDetail}" +
+            "${qobuzDetail}${tidalDetail}${deezerDetail}${jiosaavnDetail}${kugouDetail}${appleMusicDetail}" +
                 "SoundCloud failed: ${soundCloudError.readableMessage()}; " +
                 "YouTube failed: ${youtubeError.readableMessage()}"
         throw PlaybackException(
@@ -6991,6 +7083,45 @@ class MusicService :
                 attemptMediaId != mediaId -> attemptMediaId
                 else -> null
             },
+        )
+    }
+
+    private fun buildAppleMusicQuery(
+        attemptMediaId: String,
+        mediaId: String,
+        song: Song?,
+        metadataOverride: com.metrolist.music.models.MediaMetadata? = null,
+        isrcOverride: String? = null,
+    ): AppleMusicAudioProvider.Query {
+        val queuedMetadata = metadataOverride ?: if (song == null) currentQueueMetadata(mediaId) else null
+        val title = song?.song?.title ?: queuedMetadata?.title ?: mediaId
+        val artists = song?.orderedArtists?.map { it.name }
+            ?.takeIf { it.isNotEmpty() }
+            ?: queuedMetadata?.artists?.map { it.name }.orEmpty()
+        val album = song?.song?.albumName
+            ?: song?.album?.title
+            ?: queuedMetadata?.album?.title
+        val durationMs = song?.song?.duration
+            ?.takeIf { it > 0 }
+            ?.toLong()
+            ?.times(1000L)
+            ?: queuedMetadata?.duration?.takeIf { it > 0 }?.toLong()?.times(1000L)
+
+        return AppleMusicAudioProvider.Query(
+            mediaId = mediaId,
+            title = title,
+            artists = artists,
+            album = album,
+            durationMs = durationMs,
+            isrc = isrcOverride ?: ProviderIsrc.firstOf(mediaId, song?.song?.id, queuedMetadata?.id),
+            trackIdOverride = when {
+                AppleMusicAudioProvider.isAppleMusicTrackId(attemptMediaId) ->
+                    AppleMusicAudioProvider.trackIdFromMediaId(attemptMediaId)
+
+                attemptMediaId != mediaId -> attemptMediaId
+                else -> null
+            },
+            quality = dataStore.get<String>(AppleMusicAudioQualityKey).toEnum(AppleMusicAudioQuality.AAC),
         )
     }
 
@@ -9304,6 +9435,7 @@ class MusicService :
             DEEZER_FALLBACK_ITAG,
             SOUNDCLOUD_FALLBACK_ITAG,
             APPLE_MUSIC_FALLBACK_ITAG,
+            APPLE_MUSIC_PROVIDER_ITAG,
             DIRECT_HTTP_AUDIO_ITAG,
         )
 
@@ -10951,6 +11083,8 @@ class MusicService :
         private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
         private const val KUGOU_FALLBACK_ITAG = 100_054
         private const val KUGOU_FALLBACK_CACHE_PREFIX = "kugou-fallback-audio:"
+        private const val APPLE_MUSIC_PROVIDER_ITAG = 100_055
+        private const val APPLE_MUSIC_PROVIDER_CACHE_PREFIX = "apple-music-provider-audio:"
         private const val DIRECT_HTTP_AUDIO_CACHE_PREFIX = "direct-http-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
         private const val AUDIO_MIN_BUFFER_MS = 15_000
@@ -10988,6 +11122,8 @@ class MusicService :
 
         private fun kugouFallbackCacheKey(mediaId: String) = "$KUGOU_FALLBACK_CACHE_PREFIX$mediaId"
 
+        private fun appleMusicProviderCacheKey(mediaId: String) = "$APPLE_MUSIC_PROVIDER_CACHE_PREFIX$mediaId"
+
         private fun directHttpAudioCacheKey(mediaId: String) = "$DIRECT_HTTP_AUDIO_CACHE_PREFIX$mediaId"
 
         private fun youtubeFallbackCacheKey(mediaId: String) = "$YOUTUBE_FALLBACK_CACHE_PREFIX$mediaId"
@@ -11000,7 +11136,9 @@ class MusicService :
             key.startsWith(QOBUZ_FALLBACK_CACHE_PREFIX) ||
                     isTidalFallbackCacheKey(key) ||
                     key.startsWith(DEEZER_FALLBACK_CACHE_PREFIX) ||
-                    key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
+                key.startsWith(APPLE_MUSIC_FALLBACK_CACHE_PREFIX) ||
+                key.startsWith(APPLE_MUSIC_PROVIDER_CACHE_PREFIX) ||
+                    key.startsWith(APPLE_MUSIC_PROVIDER_CACHE_PREFIX) ||
                     key.startsWith(SOUNDCLOUD_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(JIOSAAVN_FALLBACK_CACHE_PREFIX) ||
                     key.startsWith(KUGOU_FALLBACK_CACHE_PREFIX) ||
@@ -11081,6 +11219,7 @@ class MusicService :
                 .removePrefix(OLD_TIDAL_FALLBACK_CACHE_PREFIX)
                 .removePrefix(DEEZER_FALLBACK_CACHE_PREFIX)
                 .removePrefix(APPLE_MUSIC_FALLBACK_CACHE_PREFIX)
+                .removePrefix(APPLE_MUSIC_PROVIDER_CACHE_PREFIX)
                 .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
                 .removePrefix(JIOSAAVN_FALLBACK_CACHE_PREFIX)
                 .removePrefix(DIRECT_HTTP_AUDIO_CACHE_PREFIX)
@@ -11203,6 +11342,22 @@ class MusicService :
         ) = FormatEntity(
             id = mediaId,
             itag = KUGOU_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = resolved.contentLength ?: 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun appleMusicProviderFallbackFormat(
+            mediaId: String,
+            resolved: AppleMusicAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = APPLE_MUSIC_PROVIDER_ITAG,
             mimeType = resolved.mimeType,
             codecs = resolved.codecs,
             bitrate = resolved.bitrate,

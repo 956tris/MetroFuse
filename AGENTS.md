@@ -4,12 +4,6 @@ Metrolist is a 3rd party YouTube Music client written in Kotlin. It follows mate
 
 ## Rules for working on the project
 
-1. Always create a new branch for your feature work. Follow these naming conventions:
-   - Bug fixes: `fix/short-description`
-   - New features: `feat/short-description`
-   - Refactoring: `ref/short-description`
-   - Documentation: `docs/short-description`
-   - Chores: `chore/short-description`
 2. Branch descriptions should be concise yet descriptive enough to understand the purpose of the branch at a glance.
 3. Always pull the latest changes from `main` before starting your work to minimize merge conflicts.
 4. While working on your feature you should rebase your branch on top of the latest `main` at least once a day to ensure compatibility.

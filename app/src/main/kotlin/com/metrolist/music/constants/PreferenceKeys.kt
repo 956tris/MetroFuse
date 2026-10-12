@@ -136,6 +136,7 @@ enum class AudioProviderOrderItem {
     SOUNDCLOUD,
     TIDAL,
     DEEZER,
+    APPLE_MUSIC,
     JIOSAAVN,
     YOUTUBE_MUSIC,
     QOBUZ,
@@ -150,6 +151,7 @@ object AudioProviderOrder {
         listOf(
             AudioProviderOrderItem.OFFLINE,
             AudioProviderOrderItem.DEEZER,
+            AudioProviderOrderItem.APPLE_MUSIC,
             AudioProviderOrderItem.JIOSAAVN,
             AudioProviderOrderItem.YOUTUBE_MUSIC,
             AudioProviderOrderItem.QOBUZ,
@@ -272,6 +274,31 @@ val KuGouAudioQualityOptions =
         KuGouAudioQuality.LOSSLESS,
         KuGouAudioQuality.HIGH,
         KuGouAudioQuality.STANDARD,
+    )
+
+enum class AppleMusicAudioQuality(
+    /** LyricsFlow `/stream` codec param. */
+    val codecParam: String,
+    val mimeType: String,
+    val codecs: String,
+    val estimatedBitrate: Int,
+    /** Spatial codecs only exist on spatial-mastered tracks: probe before use. */
+    val probeBeforeUse: Boolean,
+) {
+    AAC("aac", "audio/mp4", "mp4a.40.2", 256_000, false),
+    ALAC("alac", "audio/mp4", "alac", 900_000, false),
+    DOLBY_ATMOS("atmos", "audio/mp4", "ec-3", 768_000, true),
+    AC3("ac3", "audio/mp4", "ac-3", 640_000, true),
+}
+
+val AppleMusicAudioQualityKey = stringPreferencesKey("appleMusicAudioQuality")
+
+val AppleMusicAudioQualityOptions =
+    listOf(
+        AppleMusicAudioQuality.AAC,
+        AppleMusicAudioQuality.ALAC,
+        AppleMusicAudioQuality.DOLBY_ATMOS,
+        AppleMusicAudioQuality.AC3,
     )
 
 enum class DeezerProxyMode {

@@ -30,6 +30,8 @@ import com.metrolist.music.constants.JioSaavnAudioQuality
 import com.metrolist.music.constants.JioSaavnAudioQualityKey
 import com.metrolist.music.constants.KuGouAudioQuality
 import com.metrolist.music.constants.KuGouAudioQualityKey
+import com.metrolist.music.constants.AppleMusicAudioQuality
+import com.metrolist.music.constants.AppleMusicAudioQualityKey
 import com.metrolist.music.constants.ProxyEnabledKey
 import com.metrolist.music.constants.QobuzBackend
 import com.metrolist.music.constants.QobuzBackendKey
@@ -54,6 +56,7 @@ import com.metrolist.music.soundcloud.SoundCloudAudioProvider
 import com.metrolist.music.tidal.TidalAudioProvider
 import com.metrolist.music.jiosaavn.JioSaavnAudioProvider
 import com.metrolist.music.kugou.KuGouAudioProvider
+import com.metrolist.music.apple.AppleMusicAudioProvider
 import com.metrolist.music.utils.dataStore
 import com.metrolist.music.utils.get
 import com.metrolist.music.youtube.YouTubeAudioProvider
@@ -75,6 +78,7 @@ import timber.log.Timber
 import java.time.LocalDateTime
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -165,7 +169,17 @@ constructor(
                                                     isHlsStream,
                                                 ).build()
                                         }
-                                        chain.proceed(request)
+                                        if (AppleMusicAudioProvider.isApiUrl(request.url)) {
+                                            // /stream decrypts + transcodes on demand, so
+                                            // response headers can take 10s+. The default
+                                            // ~10s timeouts trip first and kill playback.
+                                            chain
+                                                .withConnectTimeout(60, TimeUnit.SECONDS)
+                                                .withReadTimeout(180, TimeUnit.SECONDS)
+                                                .proceed(request)
+                                        } else {
+                                            chain.proceed(request)
+                                        }
                                     }.build(),
                             ),
                         ),
@@ -244,9 +258,11 @@ constructor(
         )
         val audioProviderOrder = AudioProviderOrder.deserialize(context.dataStore.get(AudioProviderOrderKey, ""))
         val soundCloudAuthConfigured = context.dataStore.get(SoundCloudAuthTokenKey, "").isNotBlank()
+        val appleMusicQuality = context.dataStore[AppleMusicAudioQualityKey].toEnum(AppleMusicAudioQuality.AAC)
         return listOf(
             "deezerResolver=${deezerResolverUrl.hashCode()}",
             "deezerQuality=${deezerQuality.name}",
+            "appleMusicQuality=${appleMusicQuality.name}",
             "deezerProxy=${DeezerAudioProvider.normalizeProxyUrl(deezerProxyUrl).hashCode()}",
             "providerOrder=${audioProviderOrder.joinToString(",") { it.name }}",
             "soundCloudAuth=$soundCloudAuthConfigured",
@@ -315,6 +331,14 @@ constructor(
                 format = kugouFallbackFormat(mediaId, this),
             )
 
+        fun AppleMusicAudioProvider.Resolved.toDownloadResolution(): DownloadStreamResolution =
+            DownloadStreamResolution(
+                uri = mediaUri,
+                expiresAtMs = expiresAtMs,
+                cacheKey = appleMusicProviderCacheKey(mediaId),
+                format = appleMusicProviderFallbackFormat(mediaId, this),
+            )
+
         var qobuzAttempt: Result<QobuzAudioProvider.Resolved> =
             Result.failure(IllegalStateException("Qobuz not attempted yet"))
         var soundCloudAttempt: Result<SoundCloudAudioProvider.Resolved> =
@@ -327,6 +351,8 @@ constructor(
             Result.failure(IllegalStateException("JioSaavn audio not enabled"))
         var kugouAttempt: Result<KuGouAudioProvider.Resolved> =
             Result.failure(IllegalStateException("KuGou audio not enabled"))
+        var appleMusicAttempt: Result<AppleMusicAudioProvider.Resolved> =
+            Result.failure(IllegalStateException("Apple Music audio not enabled"))
         val attemptedProviders = mutableSetOf<AudioProviderOrderItem>()
         val orderedProviders =
             buildList {
@@ -399,6 +425,16 @@ constructor(
                     }
                     kugouAttempt.getOrNull()?.let { resolved ->
                         Timber.tag(TAG).i("Using KuGou stream for download $mediaId: ${resolved.title}")
+                        return resolved.toDownloadResolution()
+                    }
+                }
+                AudioProviderOrderItem.APPLE_MUSIC -> {
+                    attemptedProviders += provider
+                    appleMusicAttempt = runCatching {
+                        AppleMusicAudioProvider.resolve(buildAppleMusicQuery(mediaId, song))
+                    }
+                    appleMusicAttempt.getOrNull()?.let { resolved ->
+                        Timber.tag(TAG).i("Using Apple Music stream for download $mediaId: ${resolved.title}")
                         return resolved.toDownloadResolution()
                     }
                 }
@@ -492,9 +528,16 @@ constructor(
         } else {
             ""
         }
+        val appleMusicDetail = if (attemptedProviders.contains(AudioProviderOrderItem.APPLE_MUSIC)) {
+            appleMusicAttempt.exceptionOrNull()?.message
+                ?.let { "Apple Music failed: $it; " }
+                .orEmpty()
+        } else {
+            ""
+        }
         val qobuzError = qobuzAttempt.exceptionOrNull() ?: IllegalStateException("Qobuz failed")
         throw QobuzAudioProvider.QobuzResolutionException(
-            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${jiosaavnDetail}${kugouDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
+            "Qobuz failed: ${qobuzError.message ?: qobuzError.javaClass.simpleName}; ${deezerDetail}${jiosaavnDetail}${kugouDetail}${appleMusicDetail}SoundCloud failed: ${soundCloudError.message ?: soundCloudError.message ?: soundCloudError.javaClass.simpleName}; YouTube failed: ${youtubeError.message ?: youtubeError.javaClass.simpleName}",
             qobuzError,
         )
     }
@@ -593,6 +636,31 @@ constructor(
             quality = quality,
             hashOverride = KuGouAudioProvider.trackIdFromMediaId(mediaId)
                 .takeIf { KuGouAudioProvider.isKuGouTrackId(mediaId) },
+        )
+    }
+
+    private fun buildAppleMusicQuery(
+        mediaId: String,
+        song: Song?,
+    ): AppleMusicAudioProvider.Query {
+        val quality = context.dataStore[AppleMusicAudioQualityKey].toEnum(AppleMusicAudioQuality.AAC)
+        return AppleMusicAudioProvider.Query(
+            mediaId = mediaId,
+            title = song?.song?.title ?: mediaId,
+            artists = song?.orderedArtists?.map { it.name }.orEmpty(),
+            album = song?.song?.albumName ?: song?.album?.title,
+            durationMs = song?.song?.duration
+                ?.takeIf { it > 0 }
+                ?.toLong()
+                ?.times(1000L),
+            isrc = ProviderIsrc.firstOf(mediaId, song?.song?.id),
+            trackIdOverride = when {
+                AppleMusicAudioProvider.isAppleMusicTrackId(mediaId) ->
+                    AppleMusicAudioProvider.trackIdFromMediaId(mediaId)
+
+                else -> null
+            },
+            quality = quality,
         )
     }
 
@@ -721,11 +789,13 @@ constructor(
         private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
         private const val JIOSAAVN_FALLBACK_ITAG = 100_053
         private const val KUGOU_FALLBACK_ITAG = 100_054
+        private const val APPLE_MUSIC_PROVIDER_ITAG = 100_055
         const val APPLE_MUSIC_FALLBACK_ITAG = 100_050
         private const val DEEZER_FALLBACK_CACHE_PREFIX = "deezer-fallback-audio:"
         private const val SOUNDCLOUD_FALLBACK_CACHE_PREFIX = "soundcloud-fallback-mp3:"
         private const val JIOSAAVN_FALLBACK_CACHE_PREFIX = "jiosaavn-fallback-mp3:"
         private const val KUGOU_FALLBACK_CACHE_PREFIX = "kugou-fallback-audio:"
+        private const val APPLE_MUSIC_PROVIDER_CACHE_PREFIX = "apple-music-provider-audio:"
         private const val APPLE_MUSIC_FALLBACK_CACHE_PREFIX = "apple-music-fallback-audio:"
         private const val YOUTUBE_FALLBACK_CACHE_PREFIX = "youtube-fallback-aac:"
         private const val QOBUZ_FALLBACK_CACHE_PREFIX = "qobuz-fallback-v2:"
@@ -737,6 +807,8 @@ constructor(
         private fun jiosaavnFallbackCacheKey(mediaId: String) = "$JIOSAAVN_FALLBACK_CACHE_PREFIX$mediaId"
 
         private fun kugouFallbackCacheKey(mediaId: String) = "$KUGOU_FALLBACK_CACHE_PREFIX$mediaId"
+
+        private fun appleMusicProviderCacheKey(mediaId: String) = "$APPLE_MUSIC_PROVIDER_CACHE_PREFIX$mediaId"
 
         private fun appleMusicFallbackCacheKey(mediaId: String) = "$APPLE_MUSIC_FALLBACK_CACHE_PREFIX$mediaId"
 
@@ -751,6 +823,7 @@ constructor(
             .removePrefix(SOUNDCLOUD_FALLBACK_CACHE_PREFIX)
             .removePrefix(JIOSAAVN_FALLBACK_CACHE_PREFIX)
             .removePrefix(KUGOU_FALLBACK_CACHE_PREFIX)
+            .removePrefix(APPLE_MUSIC_PROVIDER_CACHE_PREFIX)
             .removePrefix(APPLE_MUSIC_FALLBACK_CACHE_PREFIX)
             .removePrefix(YOUTUBE_FALLBACK_CACHE_PREFIX)
 
@@ -808,6 +881,22 @@ constructor(
         ) = FormatEntity(
             id = mediaId,
             itag = KUGOU_FALLBACK_ITAG,
+            mimeType = resolved.mimeType,
+            codecs = resolved.codecs,
+            bitrate = resolved.bitrate,
+            sampleRate = resolved.sampleRate,
+            contentLength = resolved.contentLength ?: 0L,
+            loudnessDb = null,
+            perceptualLoudnessDb = null,
+            playbackUrl = null,
+        )
+
+        private fun appleMusicProviderFallbackFormat(
+            mediaId: String,
+            resolved: AppleMusicAudioProvider.Resolved,
+        ) = FormatEntity(
+            id = mediaId,
+            itag = APPLE_MUSIC_PROVIDER_ITAG,
             mimeType = resolved.mimeType,
             codecs = resolved.codecs,
             bitrate = resolved.bitrate,

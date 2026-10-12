@@ -67,6 +67,7 @@ fun getLoudnessLevelLabel(loudnessLevel: LoudnessLevel): String {
 }
 
 private const val APPLE_MUSIC_WRAPPER_ITAG = 100_001
+private const val APPLE_MUSIC_PROVIDER_ITAG = 100_055
 private const val QOBUZ_FALLBACK_ITAG = 100_027
 private const val TIDAL_FALLBACK_ITAG = 100_029
 private const val DEEZER_FALLBACK_ITAG = 100_033
@@ -81,7 +82,7 @@ private fun String.canFetchYouTubeMediaInfo(): Boolean =
 
 private fun FormatEntity.audioSourceLabel(): String? =
     when (itag) {
-        APPLE_MUSIC_WRAPPER_ITAG -> "Apple Music".takeIf { hasUsefulPlaybackDetails() }
+        APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_PROVIDER_ITAG -> "Apple Music".takeIf { hasUsefulPlaybackDetails() }
         QOBUZ_FALLBACK_ITAG -> "Qobuz"
         TIDAL_FALLBACK_ITAG -> "TIDAL"
         DEEZER_FALLBACK_ITAG -> "Deezer"

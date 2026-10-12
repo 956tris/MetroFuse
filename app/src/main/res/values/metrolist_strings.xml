@@ -552,6 +552,7 @@
     <string name="audio_provider_soundcloud">SoundCloud</string>
     <string name="audio_provider_tidal">TIDAL</string>
     <string name="audio_provider_deezer">Deezer</string>
+    <string name="audio_provider_apple_music">Apple Music</string>
     <string name="audio_provider_jiosaavn">JioSaavn</string>
     <string name="audio_provider_youtube_music">YouTube Music</string>
     <string name="audio_provider_qobuz">Qobuz</string>
@@ -639,6 +640,14 @@
     <string name="jiosaavn_quality_low">Data saver (96 kbps)</string>
     <string name="jiosaavn_quality_mini">Mini (48 kbps)</string>
     <string name="jiosaavn_quality_ultra_low">Song 12 kbps</string>
+    <string name="apple_music_integration">Apple Music</string>
+    <string name="apple_music_integration_desc">Stream full songs from Apple Music. No login needed.</string>
+    <string name="apple_music_quality_title">Apple Music quality</string>
+    <string name="apple_music_quality_desc">Preferred stream codec. Dolby Atmos and AC-3 only exist on spatial-mastered tracks and fall back to AAC otherwise.</string>
+    <string name="apple_music_quality_aac">AAC 256 kbps (fast)</string>
+    <string name="apple_music_quality_alac">ALAC lossless (slow to load)</string>
+    <string name="apple_music_quality_atmos">Dolby Atmos (spatial only)</string>
+    <string name="apple_music_quality_ac3">AC-3 (spatial only)</string>
     <string name="jiosaavn_home_language_title">JioSaavn home language</string>
     <string name="jiosaavn_home_language_desc">Language used for the JioSaavn home feed (trending, charts, new releases).</string>
 
@@ -1305,4 +1314,9 @@
     <string name="loudness_level_quiet">Quiet (-19 dB)</string>
     <string name="discord_show_playback_details">Show playback details</string>
     <string name="discord_show_playback_details_description">Shows bitrate and sample rate in Rich Presence</string>
+
+    <!-- Music Video -->
+    <string name="music_video">Music video</string>
+    <string name="music_video_badge">MV</string>
+    <string name="watch_music_video">Watch music video</string>
 </resources>

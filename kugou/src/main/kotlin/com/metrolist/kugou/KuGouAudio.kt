@@ -2,6 +2,7 @@ package com.metrolist.kugou
 
 import com.metrolist.kugou.models.AudioSearchResponse
 import com.metrolist.kugou.models.AudioStreamResponse
+import com.metrolist.kugou.models.VideoUrlResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.compression.ContentEncoding
@@ -9,7 +10,10 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import io.ktor.client.statement.HttpResponse
 import io.ktor.http.ContentType
+import io.ktor.http.contentLength
+import io.ktor.http.contentType
 import io.ktor.http.encodeURLParameter
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -263,15 +267,34 @@ object KuGouAudio {
         val signature = md5Hex(
             ANDROID_SIGN_SALT + params.toSortedMap().entries.joinToString("") { it.key + "=" + it.value } + ANDROID_SIGN_SALT,
         )
-        val response =
+        val httpResponse: HttpResponse =
             withRegionIp { regionIp ->
                 client.get("https://gateway.kugou.com/v2/interface/index") {
                     applyRegionHeaders(regionIp)
                     header("x-router", "trackermv.kugou.com")
                     params.forEach { (key, value) -> parameter(key, value) }
                     parameter("signature", signature)
-                }.body<com.metrolist.kugou.models.VideoUrlResponse>()
+                }
             }
+        // The gateway normally answers JSON (`VideoUrlResponse`) with the
+        // CDN downurl, but for some MV hashes it serves the MP4 bytes
+        // directly (`application/octet-stream`, HTTP 200). Deserializing
+        // those bytes as JSON throws NoTransformationFoundException, so
+        // branch on content type: raw bytes mean the request URL itself is
+        // already the playable media URL.
+        val contentType = httpResponse.contentType()
+        if (contentType != null &&
+            !contentType.match(ContentType.Application.Json) &&
+            !contentType.match(ContentType.Text.Html) &&
+            !contentType.match(ContentType.Text.Plain)
+        ) {
+            return Stream(
+                url = httpResponse.call.request.url.toString(),
+                extName = "mp4",
+                fileSize = httpResponse.contentLength(),
+            )
+        }
+        val response: VideoUrlResponse = httpResponse.body()
         val url = response.firstUrl()
             ?: throw IllegalStateException("KuGou MV endpoint returned no URL for $mvhash")
         return Stream(

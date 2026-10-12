@@ -227,6 +227,7 @@ private const val DEEZER_FALLBACK_ITAG = 100_033
 private const val SOUNDCLOUD_FALLBACK_ITAG = 100_031
 private const val JIOSAAVN_FALLBACK_ITAG = 100_053
 private const val APPLE_MUSIC_FALLBACK_ITAG = 100_050
+private const val APPLE_MUSIC_PROVIDER_ITAG = 100_055
 private const val LOCAL_FILE_ITAG = -2000
 private const val DefaultAdaptiveGalaxyArtworkAlpha = 0.58f
 private val AppleMusicCanvasHeaders =
@@ -241,7 +242,7 @@ private val YouTubeAudioItags = setOf(139, 140, 141, 249, 250, 251, 256, 258, 32
 @Suppress("DEPRECATION")
 private fun FormatEntity.audioSourceLabel(): String? =
     when (itag) {
-        APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_FALLBACK_ITAG -> "Apple Music".takeIf { hasUsefulPlaybackDetails() }
+        APPLE_MUSIC_WRAPPER_ITAG, APPLE_MUSIC_FALLBACK_ITAG, APPLE_MUSIC_PROVIDER_ITAG -> "Apple Music".takeIf { hasUsefulPlaybackDetails() }
         QOBUZ_FALLBACK_ITAG -> "Qobuz"
         TIDAL_FALLBACK_ITAG -> "TIDAL"
         DEEZER_FALLBACK_ITAG -> "Deezer"

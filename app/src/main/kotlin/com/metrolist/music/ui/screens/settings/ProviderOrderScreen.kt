@@ -70,6 +70,7 @@ fun ProviderOrderScreen(
     val soundCloudName = stringResource(R.string.audio_provider_soundcloud)
     val tidalName = stringResource(R.string.audio_provider_tidal)
     val deezerName = stringResource(R.string.audio_provider_deezer)
+    val appleMusicName = stringResource(R.string.audio_provider_apple_music)
     val jiosaavnName = stringResource(R.string.audio_provider_jiosaavn)
     val youtubeMusicName = stringResource(R.string.audio_provider_youtube_music)
     val qobuzName = stringResource(R.string.audio_provider_qobuz)
@@ -82,6 +83,7 @@ fun ProviderOrderScreen(
         soundCloudName,
         tidalName,
         deezerName,
+        appleMusicName,
         jiosaavnName,
         youtubeMusicName,
         qobuzName,
@@ -97,6 +99,7 @@ fun ProviderOrderScreen(
                         AudioProviderOrderItem.SOUNDCLOUD -> soundCloudName
                         AudioProviderOrderItem.TIDAL -> tidalName
                         AudioProviderOrderItem.DEEZER -> deezerName
+                        AudioProviderOrderItem.APPLE_MUSIC -> appleMusicName
                         AudioProviderOrderItem.JIOSAAVN -> jiosaavnName
                         AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeMusicName
                         AudioProviderOrderItem.QOBUZ -> qobuzName

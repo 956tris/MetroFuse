@@ -162,6 +162,7 @@ class PlayerConnection(
             database.format(mediaMetadata?.id)
         }
     val currentPlaybackFormat = service.currentPlaybackFormat
+    val currentMediaIsVideo = service.currentMediaIsVideo
     val currentLivePlaybackBitrate = service.currentLivePlaybackBitrate
 
     val queueTitle = MutableStateFlow<String?>(null)

@@ -225,7 +225,9 @@ object KuGouAudioProvider {
             bitrate = 128_000,
             sampleRate = null,
             contentLength = stream.fileSize,
-            expiresAtMs = System.currentTimeMillis() + 6 * 60 * 60 * 1000L,
+            // Gateway URLs are time-signed: re-resolve often so a cached
+            // entry can't outlive its signature.
+            expiresAtMs = System.currentTimeMillis() + 10 * 60 * 1000L,
             isVideoAudio = true,
         )
         cacheStream(cacheKey, resolved)

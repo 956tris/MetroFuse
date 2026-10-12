@@ -59,6 +59,7 @@ import com.metrolist.music.ui.screens.settings.SettingsScreen
 import com.metrolist.music.ui.screens.settings.StorageSettings
 import com.metrolist.music.ui.screens.settings.ThemeScreen
 import com.metrolist.music.ui.screens.settings.UpdaterScreen
+import com.metrolist.music.ui.screens.settings.integrations.AppleMusicSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerSettings
 import com.metrolist.music.ui.screens.settings.integrations.DeezerLoginScreen
 import com.metrolist.music.ui.screens.settings.integrations.DiscordSettings
@@ -465,6 +466,10 @@ fun NavGraphBuilder.navigationBuilder(
 
     composable("settings/integrations/jiosaavn") {
         JioSaavnSettings(navController)
+    }
+
+    composable("settings/integrations/apple_music") {
+        AppleMusicSettings(navController)
     }
 
     composable(route = "settings/integrations/listen_together") {

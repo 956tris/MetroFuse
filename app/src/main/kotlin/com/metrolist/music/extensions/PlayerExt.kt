@@ -124,3 +124,16 @@ fun Player.setOffloadEnabled(enabled: Boolean) {
                 .build()
         ).build()
 }
+
+/**
+ * Enables or disables selection of the player's video track without touching
+ * audio selection. The main player renders audio-only by default (the audio
+ * track selector disables video), so MV streams — KuGou MV audio fallbacks,
+ * for example — only spin up a video decoder while a watch surface is on
+ * screen and this is enabled.
+ */
+fun Player.setVideoTracksEnabled(enabled: Boolean) {
+    trackSelectionParameters = trackSelectionParameters.buildUpon()
+        .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, !enabled)
+        .build()
+}
