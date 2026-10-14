@@ -397,6 +397,7 @@ import kotlin.math.cos
 import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.random.Random
 import java.util.Collections
 
@@ -1003,6 +1004,12 @@ class MusicService :
     )
     private val audioFormatRetryJobs = ConcurrentHashMap<String, Job>()
     private val audioFormatRefreshJobs = ConcurrentHashMap<String, Job>()
+    /**
+     * Media IDs whose ALAC bitrate came from the encoder-written magic cookie
+     * (ground truth). Renderer/container estimates must never overwrite these,
+     * and the cookie sniffer runs until an ID lands here.
+     */
+    private val cookieConfirmedAlacIds = ConcurrentHashMap.newKeySet<String>()
 
     // Flag to bypass cache when quality changes - forces fresh stream fetch
     private val bypassCacheForQualityChange = mutableSetOf<String>()
@@ -5871,21 +5878,25 @@ class MusicService :
      * Gate for [AlacCookieBitrateDataSource]. Deliberately not tied to the
      * live-bitrate prefs: the Apple resolver stores bitrate 0 for ALAC, so
      * the cookie sniff is the only default-path source of a real number.
-     * Skips streams that already carry a plausible measured bitrate.
+     * Sniffs every ALAC stream until its cookie lands ([cookieConfirmedAlacIds]):
+     * renderer/container estimates (e.g. a bogus 321 kbps echo) must never
+     * count as "already measured" and lock the truth out.
      */
     private fun isAlacCookieCandidate(dataSpec: DataSpec): Boolean {
         val mediaId = liveBitrateMediaIdFromDataSpec(dataSpec)?.takeIf { it.isNotBlank() } ?: return false
+        if (cookieConfirmedAlacIds.contains(mediaId)) return false
         val format =
             currentPlaybackFormat.value?.takeIf { it.id == mediaId }
                 ?: songUrlCache[mediaId]?.format
                 ?: return false
         if (!format.isAlacFormat()) return false
-        return !(format.bitrate > 0 && format.bitrate.isPlausibleAlacBitrate(format.sampleRate))
+        return true
     }
 
     /**
      * Persists an `alac`-cookie bitrate/sample rate and refreshes the
-     * now-playing label when it belongs to the current track.
+     * now-playing label when it belongs to the current track. The cookie is
+     * encoder-written ground truth: it always overwrites renderer estimates.
      */
     private fun recordAlacCookieBitrate(
         mediaId: String,
@@ -5893,12 +5904,12 @@ class MusicService :
         sampleRate: Int,
     ) {
         if (!bitrate.isPlausibleAlacBitrate(sampleRate)) return
+        cookieConfirmedAlacIds.add(mediaId)
         scope.launch(Dispatchers.IO) {
             var updated: FormatEntity? = null
             database.query {
                 val existing = getFormatByIdBlocking(mediaId) ?: return@query
                 if (!existing.isAlacFormat()) return@query
-                if (existing.bitrate > 0 && existing.bitrate.isPlausibleAlacBitrate(existing.sampleRate)) return@query
                 updated =
                     existing.copy(
                         bitrate = bitrate,
@@ -8147,7 +8158,11 @@ class MusicService :
             resolvedCodecs.contains("alac", ignoreCase = true) ||
                     resolvedMimeType.contains("alac", ignoreCase = true)
         val existingBitrate =
-            if (isAlac && !bitrate.isPlausibleAlacBitrate(sampleRate ?: rendererSampleRate)) {
+            if (isAlac && cookieConfirmedAlacIds.contains(id)) {
+                // Encoder-cookie truth already stored: renderer estimates
+                // must not touch it.
+                bitrate
+            } else if (isAlac && !bitrate.isPlausibleAlacBitrate(sampleRate ?: rendererSampleRate)) {
                 0
             } else {
                 bitrate
@@ -8158,7 +8173,8 @@ class MusicService :
             mimeType = resolvedMimeType,
             codecs = resolvedCodecs,
             bitrate = when {
-                isAlac && rendererBitrate != null && existingBitrate <= 0 -> rendererBitrate
+                isAlac && rendererBitrate != null && existingBitrate <= 0 &&
+                    rendererBitrate.isPlausibleAlacRendererBitrate(rendererSampleRate ?: sampleRate) -> rendererBitrate
                 isAlac -> existingBitrate
                 rendererBitrate != null && (existingBitrate <= 0 || providerItag) -> rendererBitrate
                 else -> existingBitrate
@@ -8175,7 +8191,10 @@ class MusicService :
             .takeIf { it > 0 }
             ?: peakBitrate.takeIf { it > 0 }
         return if (isAlacRendererFormat()) {
-            bitrate?.takeIf { it.isPlausibleAlacBitrate(sampleRate) }
+            // Renderer container estimates for ALAC are routinely fiction
+            // (e.g. a 321 kbps echo on 16/44.1); only plausible magnitudes
+            // survive, and the cookie sniffer owns the final number.
+            bitrate?.takeIf { it.isPlausibleAlacRendererBitrate(sampleRate) }
         } else {
             bitrate
         }
@@ -8195,6 +8214,25 @@ class MusicService :
             else -> 10_000_000
         }
         return this in 128_000..max
+    }
+
+    /**
+     * Strict gate for renderer/container bitrate *estimates* on ALAC. Real
+     * CD-quality stereo ALAC never averages below ~450 kbps, so echoes like
+     * 321 kbps are dropped at the door instead of persisting as fact. The
+     * trusted floor for encoder-written cookie values stays in
+     * [isPlausibleAlacBitrate]; the cookie sniffer resolves the true number.
+     */
+    private fun Int.isPlausibleAlacRendererBitrate(sampleRate: Int?): Boolean {
+        if (this <= 0) return false
+        if (this == LEGACY_PLACEHOLDER_BPS) return false
+        val (min, max) = when {
+            sampleRate == null -> 450_000 to 6_500_000
+            sampleRate <= 48_000 -> 450_000 to 2_400_000
+            sampleRate <= 96_000 -> 900_000 to 5_500_000
+            else -> 1_800_000 to 10_000_000
+        }
+        return this in min..max
     }
 
     private fun scheduleAudioFormatRetry(mediaId: String) {
@@ -10381,10 +10419,11 @@ class MusicService :
 
     /**
      * The Automix volume curves, dispatched by style. FADE is the classic
-     * equal-power handoff; plateau curves (e.g. ETHEREAL) hold both tracks
-     * at full volume through the middle (a mix, not a fade) with fades only
-     * at the edges; STEEP concentrates the whole move mid-blend for cuts.
-     * The center dip scales with certainty and style either way.
+     * equal-power handoff; plateau curves (e.g. ETHEREAL) overlap both tracks
+     * at a constant-power plateau (~-3 dB each) with fades only at the edges;
+     * STEEP concentrates the whole move mid-blend for cuts.
+     * The center dip scales with certainty and style either way, and summed
+     * power never exceeds solo playback.
      */
     private fun automixVolumePair(
         progress: Float,
@@ -10395,6 +10434,16 @@ class MusicService :
         fun range(value: Float, start: Float, end: Float) = ((value - start) / (end - start)).coerceIn(0f, 1f)
         fun equalPowerIn(value: Float) = sin(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
         fun equalPowerOut(value: Float) = cos(value.coerceIn(0f, 1f) * (PI / 2.0)).toFloat()
+        fun limitPower(fadeIn: Float, fadeOut: Float): Pair<Float, Float> {
+            // Constant-power guard: overlapping tracks must never sum louder
+            // than solo playback.
+            val power = fadeIn * fadeIn + fadeOut * fadeOut
+            if (power > 1f) {
+                val scale = (1f / sqrt(power))
+                return (fadeIn * scale).coerceIn(0f, 1f) to (fadeOut * scale).coerceIn(0f, 1f)
+            }
+            return fadeIn.coerceIn(0f, 1f) to fadeOut.coerceIn(0f, 1f)
+        }
         val params = automixStyleParams(plan?.style ?: AutomixBlendStyle.FADE)
         // The dip scales with certainty: a fully-learned lock barely dips
         // (there is nothing to hide behind), a blind overlap keeps the
@@ -10412,16 +10461,22 @@ class MusicService :
         return when (params.curve) {
             AutomixCurve.SINE -> {
                 val shaped = smooth(range(p, 0.02f, 0.98f))
-                (equalPowerIn(shaped) * headroom).coerceIn(0f, 1f) to (equalPowerOut(shaped) * headroom).coerceIn(0f, 1f)
+                limitPower(equalPowerIn(shaped) * headroom, equalPowerOut(shaped) * headroom)
             }
             AutomixCurve.PLATEAU -> {
                 val fadeIn = smooth(range(p, 0f, 0.35f))
                 val fadeOut = 1f - smooth(range(p, 0.65f, 1f))
-                (fadeIn * headroom).coerceIn(0f, 1f) to (fadeOut * headroom).coerceIn(0f, 1f)
+                // Constant-power plateau: both tracks fully overlapped in the
+                // middle, so each sits at -3 dB (~0.707) to keep summed power
+                // flat instead of producing a loud bump at the song ending.
+                // Fades only happen at the edges, the middle is a true mix.
+                val overlap = (fadeIn * fadeOut).coerceIn(0f, 1f)
+                val plateauComp = 1f - (1f - 0.7071f) * smooth(overlap)
+                limitPower(fadeIn * headroom * plateauComp, fadeOut * headroom * plateauComp)
             }
             AutomixCurve.STEEP -> {
                 val shaped = smooth(range(p, 0.25f, 0.75f))
-                (equalPowerIn(shaped) * headroom).coerceIn(0f, 1f) to (equalPowerOut(shaped) * headroom).coerceIn(0f, 1f)
+                limitPower(equalPowerIn(shaped) * headroom, equalPowerOut(shaped) * headroom)
             }
         }
     }

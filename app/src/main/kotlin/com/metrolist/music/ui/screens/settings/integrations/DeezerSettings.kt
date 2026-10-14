@@ -53,7 +53,10 @@ import com.metrolist.music.ui.component.Material3SettingsGroup
 import com.metrolist.music.ui.component.Material3SettingsItem
 import com.metrolist.music.ui.component.TextFieldDialog
 import com.metrolist.music.ui.utils.backToMain
+import com.metrolist.music.utils.deezer.isDeezerArlConfigured
 import com.metrolist.music.utils.deezer.isDeezerCookieConfigured
+import com.metrolist.music.utils.deezer.mergeArlIntoStoredCookie
+import com.metrolist.music.utils.deezer.normalizeDeezerArlInput
 import com.metrolist.music.utils.deezer.normalizeDeezerCookieInput
 import com.metrolist.music.utils.rememberEnumPreference
 import com.metrolist.music.utils.rememberPreference
@@ -78,6 +81,8 @@ fun DeezerSettings(
     var showProxyDialog by rememberSaveable { mutableStateOf(false) }
     var showQualityDialog by rememberSaveable { mutableStateOf(false) }
     var showCookieDialog by rememberSaveable { mutableStateOf(false) }
+    var showArlDialog by rememberSaveable { mutableStateOf(false) }
+    val arlConfigured = isDeezerArlConfigured(deezerCookie)
 
     // One-time migration off the dead resolver for installs that stored it.
     LaunchedEffect(resolverUrl) {
@@ -103,6 +108,29 @@ fun DeezerSettings(
             },
             extraContent = {
                 InfoLabel(text = stringResource(R.string.deezer_cookie_helper))
+            },
+        )
+    }
+
+    if (showArlDialog) {
+        TextFieldDialog(
+            onDismiss = { showArlDialog = false },
+            icon = { Icon(painterResource(R.drawable.key), contentDescription = null) },
+            title = { Text(stringResource(R.string.deezer_arl_title)) },
+            initialTextFieldValue = TextFieldValue(""),
+            placeholder = { Text(stringResource(R.string.deezer_arl_placeholder)) },
+            singleLine = false,
+            isInputValid = { value ->
+                value.isBlank() || isDeezerArlConfigured(value)
+            },
+            onDone = { value ->
+                normalizeDeezerArlInput(value)?.let { arl ->
+                    deezerCookie = mergeArlIntoStoredCookie(deezerCookie, arl)
+                }
+                showArlDialog = false
+            },
+            extraContent = {
+                InfoLabel(text = stringResource(R.string.deezer_arl_helper))
             },
         )
     }
@@ -254,6 +282,22 @@ fun DeezerSettings(
                         icon = painterResource(R.drawable.login),
                         onClick = {
                             navController.navigate("settings/integrations/deezer/login")
+                        },
+                    ),
+                    Material3SettingsItem(
+                        title = { Text(stringResource(R.string.deezer_arl_title)) },
+                        description = {
+                            Text(
+                                if (arlConfigured) {
+                                    stringResource(R.string.deezer_arl_configured)
+                                } else {
+                                    stringResource(R.string.deezer_cookie_not_configured)
+                                },
+                            )
+                        },
+                        icon = painterResource(R.drawable.key),
+                        onClick = {
+                            showArlDialog = true
                         },
                     ),
                     Material3SettingsItem(

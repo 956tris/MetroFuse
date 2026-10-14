@@ -14,6 +14,9 @@ import java.util.concurrent.ConcurrentHashMap
 /** How a [CanvasMatchEntry] was matched to its underlying track. */
 enum class CanvasMatchTier(val baseConfidence: Int) {
     ISRC_EXACT(100),
+    /** Same recording re-issued under a different ISRC (re-issue/regional variant),
+     *  confirmed by exact title+artist and duration agreement. */
+    ISRC_VARIANT(95),
     APPLE_CATALOG_ID(90),
     ALBUM_ARTIST_TITLE(75),
     FUZZY(50),

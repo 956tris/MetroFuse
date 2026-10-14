@@ -625,6 +625,10 @@
     <string name="deezer_cookie_not_configured">No Deezer login configured</string>
     <string name="deezer_clear_cookie">Clear Deezer login</string>
     <string name="deezer_cookie_saved">Deezer login saved.</string>
+    <string name="deezer_arl_title">Deezer ARL login</string>
+    <string name="deezer_arl_placeholder">Paste your 192-character arl value</string>
+    <string name="deezer_arl_helper">Paste just the arl from your Deezer cookies. MetroFuse mints its own short-lived tokens from it for the fast mobile path and never sends the arl anywhere except Deezer.</string>
+    <string name="deezer_arl_configured">ARL login configured</string>
     <string name="deezer_login_notice_title">Log in to Deezer</string>
     <string name="deezer_login_notice_subtitle">New in this update</string>
     <string name="deezer_login_notice_body">MetroFuse can now stream straight from your own Deezer account. Logging in gives you the most reliable playback and cuts loading to near-instant, because tracks resolve directly from Deezer instead of passing through a shared server.</string>

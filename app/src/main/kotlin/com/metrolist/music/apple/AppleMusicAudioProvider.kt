@@ -6,6 +6,7 @@
 package com.metrolist.music.apple
 
 import com.metrolist.music.constants.AppleMusicAudioQuality
+import com.metrolist.music.providers.ProviderIsrc
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -37,6 +38,13 @@ import kotlin.math.abs
  * HTTP Range requests with 500, so seeking past the buffered window fails.
  * Linear playback and downloads work; ExoPlayer serves backward seeks from
  * cache.
+ *
+ * Spatial fast path (live-verified against `/openapi.json`): cheap
+ * `GET /api/music/audio-traits?id=` reports `dolby_atmos` before any
+ * transcode starts, so atmos/ac3 availability resolves in milliseconds
+ * instead of waiting out a full transcode for headers. Results are cached
+ * per track+codec. Note `fallback=true` does NOT rescue non-spatial tracks
+ * (still HTTP 500) — the client-side AAC fallback stays.
  */
 object AppleMusicAudioProvider {
     const val TRACK_ID_PREFIX = "apple:track:"
@@ -50,6 +58,9 @@ object AppleMusicAudioProvider {
     private const val MIN_ACCEPT_SCORE = 80
     private const val MIN_ACCEPT_SCORE_NO_DURATION = 90
     private const val DURATION_HARD_REJECT_MS = 10_000L
+    /** Same recording under a variant ISRC must agree this tightly. */
+    private const val VARIANT_DURATION_CONFIRM_MS = 3_000L
+    private const val PROBE_CACHE_TTL_MS = 60 * 60 * 1000L
 
     data class Query(
         val mediaId: String,
@@ -102,6 +113,44 @@ object AppleMusicAudioProvider {
 
     private val streamCache = ConcurrentHashMap<String, CacheEntry>()
 
+    /** Spatial probe results per track+codec: transcode-latency, so never re-probed within TTL. */
+    private data class CodecProbeEntry(
+        val available: Boolean,
+        val atMs: Long,
+    )
+
+    private val codecProbeCache = ConcurrentHashMap<String, CodecProbeEntry>()
+
+    /**
+     * Short-timeout client for the geeked route check. Render free-tier hosts
+     * sleep when idle: a cold HEAD can hang for tens of seconds, so this
+     * fails fast (8s) and the resolver drops back to LyricsFlow.
+     */
+    private val routeClient =
+        client
+            .newBuilder()
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(8, TimeUnit.SECONDS)
+            .callTimeout(10, TimeUnit.SECONDS)
+            .build()
+
+    /**
+     * Fast route check: HEADs the geeked stream URL. 2xx = serve from geeked
+     * (main path); anything else (sleeping host, unknown codec, bad URL) =
+     * LyricsFlow. Never throws.
+     */
+    private fun geekedRouteOk(streamUrl: String): Boolean =
+        runCatching {
+            val request = Request.Builder()
+                .url(streamUrl)
+                .head()
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .build()
+            routeClient.newCall(request).execute().use { response ->
+                response.isSuccessful
+            }
+        }.getOrDefault(false)
+
     /**
      * Short-timeout client for metadata + codec probes. Playback itself goes
      * through ExoPlayer's data source (which carries per-host long timeouts
@@ -132,6 +181,32 @@ object AppleMusicAudioProvider {
         return "$API_BASE_URL/stream?song=$encoded&codec=${quality.codecParam}&websupport=false"
     }
 
+    /**
+     * Main transport: geeked-api serves AAC/Atmos/AC3 from an Apple Music
+     * share URL with instant HEAD responses and Range support; ALAC is not
+     * served there (HTTP 422) and stays on LyricsFlow. Contract verified
+     * live: `/stream?url=<shareUrl>&codec=aac|atmos|ac3`, HEAD-safe.
+     */
+    const val GEEKED_BASE_URL = "https://geeked-api.onrender.com"
+
+    private fun AppleMusicAudioQuality.geekedCodec(): String? =
+        when (this) {
+            AppleMusicAudioQuality.AAC -> "aac"
+            AppleMusicAudioQuality.DOLBY_ATMOS -> "atmos"
+            AppleMusicAudioQuality.AC3 -> "ac3"
+            AppleMusicAudioQuality.ALAC -> null
+        }
+
+    private fun geekedStreamUrl(
+        shareUrl: String,
+        quality: AppleMusicAudioQuality,
+    ): String? {
+        val codec = quality.geekedCodec() ?: return null
+        if (shareUrl.isBlank()) return null
+        val encoded = URLEncoder.encode(shareUrl.trim(), "UTF-8")
+        return "$GEEKED_BASE_URL/stream?url=$encoded&codec=$codec"
+    }
+
     fun resolve(query: Query): Resolved {
         if (query.title.isBlank() && query.trackIdOverride.isNullOrBlank()) {
             throw AppleMusicResolutionException("Apple Music audio needs a track title to search for")
@@ -147,14 +222,18 @@ object AppleMusicAudioProvider {
         getCachedStream(cacheKey)?.let { return it }
 
         query.trackIdOverride?.takeIf { it.isNotBlank() }?.let { trackId ->
-            val details = songDetails(trackId.trim())
+            // Canonical metadata is one extra round trip: skip it when the
+            // query already carries a usable title+artist (the common case),
+            // saving ~a full RTT on every direct-ID play.
+            val hasIdentity = query.title.isNotBlank() && query.artists.any { it.isNotBlank() }
+            val details = if (hasIdentity) null else songDetails(trackId.trim())
             val title = details?.title?.takeIf { it.isNotBlank() } ?: query.title
             val artist = details?.artist?.takeIf { it.isNotBlank() }
                 ?: query.artists.joinToString(", ")
-            return buildResolved(trackId.trim(), title, artist, null, query.quality, cacheKey)
+            return buildResolved(trackId.trim(), title, artist, null, query.quality, cacheKey, details?.shareUrl)
         }
 
-        val candidates = searchCandidates(query.title, query.artists, MAX_SEARCH_CANDIDATES)
+        val candidates = searchCandidates(query.title, query.artists, MAX_SEARCH_CANDIDATES, query.isrc)
         if (candidates.isEmpty()) {
             throw AppleMusicResolutionException(
                 "Apple Music search returned nothing for ${query.title} ${query.artists.firstOrNull().orEmpty()}",
@@ -177,6 +256,7 @@ object AppleMusicAudioProvider {
             contentLength = null,
             quality = query.quality,
             cacheKey = cacheKey,
+            shareUrl = best.first.shareUrl,
         )
     }
 
@@ -184,13 +264,17 @@ object AppleMusicAudioProvider {
         title: String,
         artists: List<String>,
         limit: Int,
+        isrc: String? = null,
     ): List<TrackCandidate> {
         if (title.isBlank()) return emptyList()
         val queries = linkedSetOf(
+            // ISRC-first: catalog search matches exact ISRC strings, landing
+            // the precise recording (any version) in one round trip.
+            ProviderIsrc.normalize(isrc)?.takeIf { it.isNotBlank() },
             listOf(title, artists.firstOrNull().orEmpty()).filter { it.isNotBlank() }.joinToString(" "),
             listOf(artists.firstOrNull().orEmpty(), title).filter { it.isNotBlank() }.joinToString(" "),
             title,
-        ).filter { it.isNotBlank() }.take(2)
+        ).filterNotNull().filter { it.isNotBlank() }.take(3)
         val found = linkedMapOf<String, TrackCandidate>()
         for (text in queries) {
             runCatching { searchSongs(text, limit) }
@@ -298,6 +382,7 @@ object AppleMusicAudioProvider {
         contentLength: Long?,
         quality: AppleMusicAudioQuality,
         cacheKey: String,
+        shareUrl: String? = null,
     ): Resolved {
         // Spatial codecs only exist on spatial-mastered tracks (HTTP 500
         // otherwise), so degrade to AAC inside the provider instead of
@@ -309,8 +394,20 @@ object AppleMusicAudioProvider {
             } else {
                 quality
             }
+        // Main transport is geeked-api (AAC/Atmos/AC3 from the share URL);
+        // ALAC is not served there, and a failed route check (sleeping host,
+        // unknown codec) drops back to LyricsFlow with zero playback impact.
+        val geekedUrl = geekedStreamUrl(shareUrl.orEmpty(), effectiveQuality)
+        val mediaUri = if (geekedUrl != null && geekedRouteOk(geekedUrl)) {
+            geekedUrl
+        } else {
+            if (geekedUrl != null) {
+                Timber.tag(TAG).i("Geeked route unavailable for $appleSongId, using LyricsFlow")
+            }
+            streamUrl(appleSongId, effectiveQuality)
+        }
         val resolved = Resolved(
-            mediaUri = streamUrl(appleSongId, effectiveQuality),
+            mediaUri = mediaUri,
             sourceId = "apple_${appleSongId}_${title}_${artist}".sanitizeId(),
             title = title,
             artist = artist,
@@ -322,7 +419,11 @@ object AppleMusicAudioProvider {
             // the true sample rate. Seeding estimates here would be echoed back
             // by the renderer and mistaken for measured data downstream.
             bitrate = if (effectiveQuality == AppleMusicAudioQuality.ALAC) 0 else effectiveQuality.estimatedBitrate,
-            sampleRate = if (effectiveQuality == AppleMusicAudioQuality.ALAC) null else 44_100,
+            sampleRate = when (effectiveQuality) {
+                AppleMusicAudioQuality.ALAC -> null
+                AppleMusicAudioQuality.DOLBY_ATMOS, AppleMusicAudioQuality.AC3 -> 48_000
+                else -> 44_100
+            },
             contentLength = contentLength,
             expiresAtMs = System.currentTimeMillis() + 12 * 60 * 60 * 1000L,
         )
@@ -332,11 +433,60 @@ object AppleMusicAudioProvider {
     }
 
     /**
-     * Cheap availability probe for spatial codecs: opens the stream URL and
-     * reads only the response headers (arrives post-transcode). The body is
-     * never consumed. Any failure means "not available".
+     * Cheap availability probe for spatial codecs. `GET /api/music/audio-traits`
+     * reports `dolby_atmos` in milliseconds (no transcode wait); results are
+     * cached per track+codec. Falls back to the legacy header-sniff probe only
+     * when the traits call itself fails, so an API change degrades to old
+     * behavior instead of blocking spatial entirely. Any failure means
+     * "not available".
      */
     private fun isCodecAvailable(
+        appleSongId: String,
+        quality: AppleMusicAudioQuality,
+    ): Boolean {
+        val key = "$appleSongId::${quality.name}"
+        val now = System.currentTimeMillis()
+        codecProbeCache[key]?.takeIf { now - it.atMs < PROBE_CACHE_TTL_MS }?.let { return it.available }
+        // Traits only speak Dolby Atmos; AC3 keeps the legacy header probe.
+        val available = if (quality == AppleMusicAudioQuality.DOLBY_ATMOS) {
+            audioTraitsDolbyAtmos(appleSongId) ?: legacyStreamProbe(appleSongId, quality)
+        } else {
+            legacyStreamProbe(appleSongId, quality)
+        }
+        codecProbeCache[key] = CodecProbeEntry(available, now)
+        if (codecProbeCache.size > 500) {
+            val oldest = codecProbeCache.entries.minByOrNull { it.value.atMs }
+            if (oldest != null) codecProbeCache.remove(oldest.key)
+        }
+        return available
+    }
+
+    /** Returns dolby_atmos for [appleSongId], or null when unknowable (probe legacy path). */
+    private fun audioTraitsDolbyAtmos(appleSongId: String): Boolean? =
+        runCatching {
+            val url = "$API_BASE_URL/api/music/audio-traits".toHttpUrl().newBuilder()
+                .addQueryParameter("id", appleSongId)
+                .build()
+            val request = Request.Builder()
+                .url(url)
+                .get()
+                .header("User-Agent", BROWSER_USER_AGENT)
+                .header("Accept", "application/json")
+                .build()
+            probeClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
+                val obj = JSONObject(payload)
+                if (!obj.has("dolby_atmos")) return@use null
+                obj.optBoolean("dolby_atmos", false)
+            }
+        }.getOrNull()
+
+    /**
+     * Legacy availability probe: opens the stream URL and reads only the
+     * response headers (arrives post-transcode). The body is never consumed.
+     */
+    private fun legacyStreamProbe(
         appleSongId: String,
         quality: AppleMusicAudioQuality,
     ): Boolean =
@@ -355,13 +505,46 @@ object AppleMusicAudioProvider {
         val normalizedTitle = query.title.normalizedSearchText()
         val normalizedCandidateTitle = candidate.title.normalizedSearchText()
         if (normalizedTitle.isBlank() || normalizedCandidateTitle.isBlank()) return null
-        if (!query.isrc.isNullOrBlank() && !candidate.isrc.isNullOrBlank() &&
-            query.isrc.trim().equals(candidate.isrc.trim(), ignoreCase = true)
-        ) {
-            return 1000
+        val normalizedQueryArtists = query.artists.map { it.normalizedSearchText() }.filter { it.isNotBlank() }
+        val normalizedArtists = candidate.artist.normalizedSearchText()
+        val exactTitle = normalizedTitle == normalizedCandidateTitle
+        val exactArtist = normalizedQueryArtists.isNotEmpty() &&
+            normalizedQueryArtists.any { it == normalizedArtists }
+        val durationDeltaMs = if (query.durationMs != null && candidate.durationMs != null) {
+            abs(candidate.durationMs - query.durationMs)
+        } else {
+            null
         }
+
+        // ISRC: exact match wins immediately. A differing ISRC is the same
+        // recording re-issued (another version/region) when title+artist are
+        // exact and duration confirms it — accept those at near-max score.
+        // Any other ISRC contradiction rejects: a cover with ISRC metadata
+        // must never outscore the real track on text alone.
+        val queryIsrc = ProviderIsrc.normalize(query.isrc)
+        val candidateIsrc = ProviderIsrc.normalize(candidate.isrc)
+        if (queryIsrc != null && candidateIsrc != null) {
+            if (queryIsrc == candidateIsrc) return 1000
+            val sameRecording = exactTitle && exactArtist &&
+                durationDeltaMs != null && durationDeltaMs <= VARIANT_DURATION_CONFIRM_MS
+            if (!sameRecording) return null
+            return 900
+        }
+
+        // Artist gate: with named artists, at least one must appear in the
+        // candidate — a same-titled track by someone else can never win.
+        if (normalizedQueryArtists.isNotEmpty() &&
+            normalizedQueryArtists.none { queryArtist ->
+                normalizedArtists == queryArtist ||
+                    normalizedArtists.contains(queryArtist) ||
+                    queryArtist.contains(normalizedArtists)
+            }
+        ) {
+            return null
+        }
+
         var score = 0
-        if (normalizedTitle == normalizedCandidateTitle) score += 100
+        if (exactTitle) score += 100
         if (normalizedCandidateTitle.contains(normalizedTitle) || normalizedTitle.contains(normalizedCandidateTitle)) {
             score += 40
         } else {
@@ -371,7 +554,6 @@ object AppleMusicAudioProvider {
             if (queryTokens.isEmpty() || overlap < queryTokens.size) return null
             score += 15
         }
-        val normalizedArtists = candidate.artist.normalizedSearchText()
         query.artists.forEach { artist ->
             val normalized = artist.normalizedSearchText()
             if (normalized.isNotBlank() && normalizedArtists.contains(normalized)) score += 35
@@ -391,6 +573,10 @@ object AppleMusicAudioProvider {
                 delta <= 3_000L -> 50
                 delta <= 8_000L -> 20
                 delta <= DURATION_HARD_REJECT_MS -> 0
+                // Same recording, longer edition (extended/deluxe): don't
+                // nuke an exact title+artist hit on duration alone.
+                exactTitle && normalizedQueryArtists.isNotEmpty() &&
+                    normalizedQueryArtists.any { it == normalizedArtists } -> 0
                 else -> return null
             }
         }
@@ -423,6 +609,16 @@ object AppleMusicAudioProvider {
             .replace(Regex("\\p{Mn}+"), "")
         return normalized.lowercase(Locale.ROOT)
             .replace(Regex("""\([^)]*\)|\[[^]]*]"""), " ")
+            // Edition suffixes ("Song - 2023 Remaster", "Song - Live") describe
+            // the version, not the recording: strip them so deluxe/anniversary
+            // editions match the canonical title. Only known markers strip —
+            // a bare " - " with other text is left intact.
+            .replace(
+                Regex(
+                    """\s+-\s+(remaster(?:ed)?|remix|live|version|edition|explicit|clean|acoustic|instrumental|cover|tribute|karaoke|sped|slowed|audio|official|single|ep|deluxe|anniversary|expanded|bonus|demo|mono|stereo|dts|atmos)\b.*$""",
+                ),
+                " ",
+            )
             .replace(Regex("""[^a-z0-9]+"""), " ")
             .trim()
     }

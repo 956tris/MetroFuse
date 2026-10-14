@@ -43,6 +43,49 @@ fun mergeDeezerCookieInputs(inputs: Iterable<String>): String? {
 fun isDeezerCookieConfigured(value: String): Boolean =
     normalizeDeezerCookieInput(value) != null
 
+/**
+ * Normalizes a bare ARL paste (or an `arl=` pair / full header) down to the
+ * raw ARL value. Returns null when nothing ARL-shaped is present.
+ */
+fun normalizeDeezerArlInput(input: String): String? {
+    val fromPair = deezerCookieValue(input, "arl")?.trim()
+    if (!fromPair.isNullOrBlank()) return fromPair
+    val trimmed = input.trim()
+    return trimmed.takeIf { it.isPlausibleRawArl() }
+}
+
+/** True when [input] contains a usable ARL (bare value or `arl=` pair). */
+fun isDeezerArlConfigured(input: String): Boolean =
+    normalizeDeezerArlInput(input) != null
+
+/**
+ * Merges a freshly pasted [arl] into an already-stored cookie header,
+ * preserving companion cookies (sid, …) and dropping nothing else.
+ */
+fun mergeArlIntoStoredCookie(
+    stored: String,
+    arl: String,
+): String {
+    val kept =
+        stored
+            .split(';', '\n', '\r')
+            .mapNotNull { part ->
+                val trimmed = part.trim().trim(';')
+                if (trimmed.isEmpty()) return@mapNotNull null
+                val separator = trimmed.indexOf('=')
+                if (separator <= 0) return@mapNotNull null
+                val name = trimmed.substring(0, separator).trim()
+                val value = trimmed.substring(separator + 1).trim()
+                if (name.equals("arl", ignoreCase = true) || value.isBlank()) {
+                    null
+                } else {
+                    "$name=$value"
+                }
+            }.toMutableList()
+    kept.add(0, "arl=$arl")
+    return kept.joinToString("; ")
+}
+
 fun deezerCookieValue(
     input: String,
     cookieName: String,

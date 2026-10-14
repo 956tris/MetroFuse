@@ -58,6 +58,8 @@ object DeezerAudioProvider {
 
     private const val BROWSER_USER_AGENT =
         "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Mobile Safari/537.36"
+    /** Deezer's web gateway + media calls carry the origin as Referer (live HAR). */
+    private const val DEEZER_REFERER = "https://www.deezer.com/"
     private const val SEARCH_API_URL = "https://api.deezer.com/search/track"
     private const val STREAM_CACHE_MS = 45 * 60 * 1000L
     private const val MIN_MATCH_SCORE = 80
@@ -71,6 +73,22 @@ object DeezerAudioProvider {
     private const val DEFAULT_API_PROXY_PATH = "/deezer-api-proxy"
     private const val GW_LIGHT_URL = "https://www.deezer.com/ajax/gw-light.php"
     private const val GET_URL_URL = "https://media.deezer.com/v1/get_url"
+    /**
+     * Mobile (native-app) path. auth.deezer.com mints short-lived JWTs from a
+     * bare ARL — no app-check involved (mirrors Deezer's own web client,
+     * bundle 5310.xx): POST /login/arl?i=p&jo=p&rto=p {arl} -> {jwt,
+     * refresh_token}, then POST /login/renew?jo=p {refresh_token} before
+     * exp-15s. The JWT is a Bearer on pipe.deezer.com, whose track/media
+     * graph answers in one round trip where gw-light needs two.
+     */
+    private const val AUTH_BASE_URL = "https://auth.deezer.com"
+    private const val PIPE_API_URL = "https://pipe.deezer.com/api"
+    private const val PIPE_USER_AGENT = "Deezer/9.0.25.1 (Android; Mobile)"
+    private const val JWT_REFRESH_SKEW_MS = 15_000L
+    private const val TRACK_MEDIA_QUERY =
+        "query TrackMediaToken(\$trackId: String!) { track(trackId: \$trackId) { " +
+            "media { token { payload expiresAt } " +
+            "estimatedSizes { MP3_128 MP3_320 FLAC FLAC_24 } } } }"
     private const val ACCOUNT_SESSION_TTL_MS = 30 * 60 * 1000L
     private const val TRACK_TOKEN_FALLBACK_TTL_MS = 10 * 60 * 1000L
     private const val TRACK_TOKEN_CACHE_MAX_SIZE = 200
@@ -149,6 +167,12 @@ object DeezerAudioProvider {
         val createdAtMs: Long,
     )
 
+    private data class MobileJwtSession(
+        val jwt: String,
+        val refreshToken: String,
+        val expiresAtMs: Long,
+    )
+
     private class DeezerAccountCookieJar(initialCookieHeader: String) : CookieJar {
         private val jarCookies = ConcurrentHashMap<String, String>()
 
@@ -199,6 +223,8 @@ object DeezerAudioProvider {
     private val accountTrackTokens = ConcurrentHashMap<String, AccountTrackToken>()
     private val proxiedClients = ConcurrentHashMap<String, OkHttpClient>()
     private val accountSessions = ConcurrentHashMap<String, AccountSession>()
+    private val mobileJwtSessions = ConcurrentHashMap<String, MobileJwtSession>()
+    private val mobileJwtLocks = ConcurrentHashMap<String, Any>()
     private val resolverPermits = Semaphore(RESOLVER_MAX_IN_FLIGHT, true)
     private val lastResolverRequestAtMs = AtomicLong(0L)
 
@@ -258,6 +284,26 @@ object DeezerAudioProvider {
             streamCache[accountCacheKey]
                 ?.takeIf { it.expiresAtMs > now + 20_000L }
                 ?.let { return it }
+            // Mobile (pipe) direct path first: one round trip for the track
+            // token; gw-light direct path stays as fallback, then the server.
+            val mobileStartMs = System.currentTimeMillis()
+            val mobileAttempt = requestMobileStream(
+                cookie = query.cookie,
+                mediaId = query.mediaId,
+                trackId = track.trackId,
+                preferredQuality = query.quality,
+                qualities = qualities,
+                durationMs = query.durationMs ?: track.durationMs,
+                proxyUrl = proxyUrl,
+            )
+            Timber.tag("DeezerLatency").d(
+                "mobile resolve for ${track.trackId}: ${System.currentTimeMillis() - mobileStartMs}ms (${if (mobileAttempt.resolved != null) "hit" else "miss"})",
+            )
+            mobileAttempt.resolved?.let { resolved ->
+                streamCache[accountCacheKey] = resolved
+                return resolved
+            }
+            mobileAttempt.error?.takeIf { it.isNotBlank() }?.let { Timber.tag("DeezerAudioProvider").w(it) }
             val accountStartMs = System.currentTimeMillis()
             val accountAttempt = requestAccountStream(
                 cookie = query.cookie,
@@ -806,9 +852,10 @@ object DeezerAudioProvider {
             .build()
         val request = Request.Builder()
             .url(userDataUrl)
-            .post("".toRequestBody(JSON_MEDIA_TYPE))
+            .post("{}".toRequestBody(JSON_MEDIA_TYPE))
             .header("Accept", "application/json")
             .header("User-Agent", BROWSER_USER_AGENT)
+            .header("Referer", DEEZER_REFERER)
             .header("Cookie", jar.headerValue())
             .build()
 
@@ -851,24 +898,31 @@ object DeezerAudioProvider {
             .addQueryParameter("api_version", "1.0")
             .addQueryParameter("api_token", session.apiToken)
             .build()
-        val body = JSONObject().put("sng_ids", JSONArray().put(trackId.toLongOrNull() ?: trackId))
+        val body = JSONObject()
+            .put("sng_ids", JSONArray().put(trackId.toLongOrNull() ?: trackId))
+            .put("array_default", JSONArray().put("SNG_ID").put("TRACK_TOKEN"))
         val request = Request.Builder()
             .url(url)
             .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
             .header("Accept", "application/json")
             .header("User-Agent", BROWSER_USER_AGENT)
+            .header("Referer", DEEZER_REFERER)
             .header("Cookie", session.cookie)
             .build()
         return runCatching {
             session.client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
-                val data = JSONObject(payload)
-                    .optJSONObject("results")
-                    ?.optJSONArray("data")
-                    ?.optJSONObject(0) ?: return@use null
-                val token = data.stringOrNull("TRACK_TOKEN") ?: return@use null
-                val expiresAtMs = data.optLong("TRACK_TOKEN_EXPIRE", 0L)
+                // gw-light wraps the list as results.data [...]; accept a bare array too.
+                val root = JSONObject(payload)
+                val data = when (val results = root.opt("results")) {
+                    is JSONArray -> results
+                    is JSONObject -> results.optJSONArray("data")
+                    else -> null
+                } ?: return@use null
+                val item = data.optJSONObject(0) ?: return@use null
+                val token = item.stringOrNull("TRACK_TOKEN") ?: return@use null
+                val expiresAtMs = item.optLong("TRACK_TOKEN_EXPIRE", 0L)
                     .takeIf { it > 0L }
                     ?.times(1000L)
                     ?.minus(30_000L)
@@ -883,6 +937,241 @@ object DeezerAudioProvider {
                 token
             }
         }.getOrNull()
+    }
+
+    /**
+     * Mobile JWT lifecycle (mirrors Deezer web client auth module): cached per
+     * ARL with client-side expiry (refresh 15s early), singleflight per ARL,
+     * renew-via-refresh-token first, full ARL login as fallback.
+     */
+    private fun mobileJwtSession(
+        arl: String,
+        pipeClient: OkHttpClient,
+    ): MobileJwtSession? {
+        val key = arl.hashCode().toString()
+        val now = System.currentTimeMillis()
+        mobileJwtSessions[key]?.takeIf { it.expiresAtMs > now + JWT_REFRESH_SKEW_MS }?.let { return it }
+        val lock = mobileJwtLocks.getOrPut(key) { Any() }
+        synchronized(lock) {
+            mobileJwtSessions[key]?.takeIf { it.expiresAtMs > System.currentTimeMillis() + JWT_REFRESH_SKEW_MS }
+                ?.let { return it }
+            val previous = mobileJwtSessions[key]
+            var fresh: MobileJwtSession? = null
+            if (previous != null && previous.refreshToken.isNotBlank()) {
+                fresh = renewMobileJwt(pipeClient, previous.refreshToken)
+            }
+            if (fresh == null) {
+                fresh = loginMobileJwt(pipeClient, arl)
+            }
+            if (fresh != null) {
+                mobileJwtSessions[key] = fresh
+            } else if (previous != null) {
+                mobileJwtSessions.remove(key)
+            }
+            return fresh
+        }
+    }
+
+    private fun jwtExpiryMs(jwt: String): Long? =
+        runCatching {
+            val payload = jwt.split(".").getOrNull(1) ?: return@runCatching null
+            val decoded = java.util.Base64.getUrlDecoder().decode(payload)
+            JSONObject(String(decoded, Charsets.UTF_8)).optLong("exp", 0L)
+                .takeIf { it > 0L }?.times(1000L)
+        }.getOrNull()
+
+    private fun storeMobileJwt(jwt: String?, refreshToken: String?): MobileJwtSession? {
+        if (jwt.isNullOrBlank()) return null
+        val expiresAtMs = jwtExpiryMs(jwt) ?: return null
+        return MobileJwtSession(jwt, refreshToken.orEmpty(), expiresAtMs)
+    }
+
+    private fun loginMobileJwt(
+        pipeClient: OkHttpClient,
+        arl: String,
+    ): MobileJwtSession? {
+        val url = "$AUTH_BASE_URL/login/arl?i=p&jo=p&rto=p".toHttpUrl()
+        val request = Request.Builder()
+            .url(url)
+            .post(JSONObject().put("arl", arl).toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .header("User-Agent", BROWSER_USER_AGENT)
+            .header("Origin", DEEZER_REFERER.trimEnd('/'))
+            .build()
+        return runCatching {
+            pipeClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
+                val obj = JSONObject(payload)
+                storeMobileJwt(obj.stringOrNull("jwt"), obj.stringOrNull("refresh_token"))
+            }
+        }.getOrNull()
+    }
+
+    private fun renewMobileJwt(
+        pipeClient: OkHttpClient,
+        refreshToken: String,
+    ): MobileJwtSession? {
+        val url = "$AUTH_BASE_URL/login/renew?jo=p".toHttpUrl()
+        val request = Request.Builder()
+            .url(url)
+            .post(JSONObject().put("refresh_token", refreshToken).toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .header("User-Agent", BROWSER_USER_AGENT)
+            .header("Origin", DEEZER_REFERER.trimEnd('/'))
+            .build()
+        return runCatching {
+            pipeClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
+                val obj = JSONObject(payload)
+                storeMobileJwt(obj.stringOrNull("jwt"), obj.stringOrNull("refresh_token"))
+            }
+        }.getOrNull()
+    }
+
+    private data class PipeTrackMedia(
+        val trackToken: String,
+        /** Catalog-side sizes by tier (null = tier not encoded); guides quality choice. */
+        val sizes: Map<String, Long>,
+    )
+
+    private fun pipeTrackMedia(
+        pipeClient: OkHttpClient,
+        jwt: String,
+        trackId: String,
+    ): PipeTrackMedia? {
+        val body = JSONObject()
+            .put("operationName", "TrackMediaToken")
+            .put("variables", JSONObject().put("trackId", trackId))
+            .put("query", TRACK_MEDIA_QUERY)
+        val request = Request.Builder()
+            .url(PIPE_API_URL)
+            .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .header("User-Agent", PIPE_USER_AGENT)
+            .header("Authorization", "Bearer $jwt")
+            .build()
+        return runCatching {
+            pipeClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val payload = response.body.string().takeIf { it.isNotBlank() } ?: return@use null
+                val media = JSONObject(payload)
+                    .optJSONObject("data")
+                    ?.optJSONObject("track")
+                    ?.optJSONObject("media") ?: return@use null
+                val token = media.optJSONObject("token")?.stringOrNull("payload")
+                    ?.takeIf { it.isNotBlank() } ?: return@use null
+                val sizesObj = media.optJSONObject("estimatedSizes")
+                val sizes = linkedMapOf<String, Long>()
+                if (sizesObj != null) {
+                    val keys = sizesObj.keys()
+                    while (keys.hasNext()) {
+                        val name = keys.next()
+                        sizesObj.optLong(name, 0L).takeIf { it > 0L }?.let { sizes[name] = it }
+                    }
+                }
+                PipeTrackMedia(token, sizes)
+            }
+        }.getOrNull()
+    }
+
+    private fun extractArl(cookieHeader: String): String? {
+        cookieHeader.split(';').forEach { pair ->
+            val trimmed = pair.trim()
+            if (trimmed.isEmpty()) return@forEach
+            val separatorIndex = trimmed.indexOf('=')
+            if (separatorIndex <= 0) return@forEach
+            if (trimmed.substring(0, separatorIndex).trim().equals("arl", ignoreCase = true)) {
+                return trimmed.substring(separatorIndex + 1).trim().takeIf { it.isNotEmpty() }
+            }
+        }
+        return null
+    }
+
+    /**
+     * Mobile-first direct path: pipe GraphQL resolves the track token (plus
+     * catalog tier sizes) in one round trip; the license token still comes
+     * from the gw-light session, exactly like Deezer's own web player, which
+     * pairs pipe track tokens with gw license tokens. Falls back to null so
+     * the caller can try the gw-light-only path, then the resolver server.
+     */
+    private fun requestMobileStream(
+        cookie: String,
+        mediaId: String,
+        trackId: String,
+        preferredQuality: DeezerAudioQuality,
+        qualities: List<DeezerAudioQuality>,
+        durationMs: Long?,
+        proxyUrl: String,
+    ): StreamAttempt {
+        val arl = extractArl(cookie)
+            ?: return StreamAttempt(error = "Deezer mobile path needs an arl cookie")
+        val normalizedProxy = normalizeProxyUrl(proxyUrl)
+        val pipeClient = clientForProxy(client, normalizedProxy)
+        val session = accountSession(cookie, proxyUrl)
+            ?: return StreamAttempt(error = "Deezer account session unavailable (check login)")
+        if (session.licenseToken.isBlank()) {
+            return StreamAttempt(error = "Deezer account session has no license token")
+        }
+        val jwtSession = mobileJwtSession(arl, pipeClient)
+            ?: return StreamAttempt(error = "Deezer mobile login failed (JWT mint/renew)")
+        val pipeMedia = pipeTrackMedia(pipeClient, jwtSession.jwt, trackId)
+            ?: return StreamAttempt(error = "Deezer mobile track media unavailable for $trackId")
+        if (pipeMedia.sizes.isNotEmpty()) {
+            Timber.tag("DeezerAudio").d("Pipe sizes for $trackId: ${pipeMedia.sizes.keys}")
+        }
+
+        val bodyJson = JSONObject()
+            .put("track_tokens", JSONArray().put(pipeMedia.trackToken))
+            .put("license_token", session.licenseToken)
+            .put(
+                "media",
+                JSONArray().put(
+                    JSONObject()
+                        .put("type", "FULL")
+                        .put(
+                            "formats",
+                            JSONArray().also { formats ->
+                                qualities.distinct().forEach { quality ->
+                                    formats.put(
+                                        JSONObject()
+                                            .put("cipher", "BF_CBC_STRIPE")
+                                            .put("format", quality.formatId),
+                                    )
+                                }
+                            },
+                        ),
+                ),
+            )
+        val request = Request.Builder()
+            .url(GET_URL_URL)
+            .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Accept", "application/json")
+            .header("User-Agent", BROWSER_USER_AGENT)
+            .header("Referer", DEEZER_REFERER)
+            .header("Cookie", session.cookie)
+            .build()
+
+        return runCatching {
+            session.client.newCall(request).execute().use { response ->
+                val payload = response.body.string()
+                if (!response.isSuccessful) {
+                    return@use StreamAttempt(error = "Deezer mobile media HTTP ${response.code}: ${payload.take(160)}")
+                }
+                parseMediaEnvelope(
+                    payload = payload,
+                    mediaId = mediaId,
+                    trackId = trackId,
+                    preferredQuality = preferredQuality,
+                    durationMs = durationMs,
+                    proxyUrl = proxyUrl,
+                    sourceLabel = "Deezer mobile session",
+                )
+            }
+        }.getOrElse { error ->
+            StreamAttempt(error = "Deezer mobile stream failed: ${error.message ?: error.javaClass.simpleName}")
+        }
     }
 
     /**
@@ -944,6 +1233,7 @@ object DeezerAudioProvider {
             .post(bodyJson.toString().toRequestBody(JSON_MEDIA_TYPE))
             .header("Accept", "application/json")
             .header("User-Agent", BROWSER_USER_AGENT)
+            .header("Referer", DEEZER_REFERER)
             .header("Cookie", session.cookie)
             .build()
 
@@ -1406,7 +1696,7 @@ object DeezerAudioProvider {
 
     private fun deezerQualityFromFormatId(format: String?): DeezerAudioQuality? =
         when (format?.uppercase(Locale.US)) {
-            "FLAC" -> DeezerAudioQuality.FLAC
+            "FLAC_24", "FLAC" -> DeezerAudioQuality.FLAC
             "MP3_320" -> DeezerAudioQuality.MP3_320
             "MP3_128" -> DeezerAudioQuality.MP3_128
             else -> null

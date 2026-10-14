@@ -52,9 +52,21 @@ class CrashHandler private constructor(
     private fun Throwable.isMedia3HlsTrackSelectionCrash(): Boolean {
         if (this !is ArrayIndexOutOfBoundsException) return false
         val stackClassNames = stackTrace.map { it.className }
+        // Upstream Media3 race in the HLS error-fallback path: with a single-variant
+        // (audio-only, e.g. SoundCloud) HLS stream, a playlist/chunk load error makes
+        // HlsChunkSource build fallback options against a stale single-track selection
+        // (length=1; index=1). It is thrown on ExoPlayer's internal loader thread, so it
+        // can never reach onPlayerError — swallowing it here is the only app-side
+        // handling. Two stack shapes observed: via HlsSampleStreamWrapper (chunk-load
+        // error) and via HlsMediaPeriod/DefaultHlsPlaylistTracker (playlist-load error,
+        // e.g. an expired SoundCloud HLS URL returning 403/404 on refresh).
         return stackClassNames.any { it == "androidx.media3.exoplayer.trackselection.BaseTrackSelection" } &&
             stackClassNames.any { it == "androidx.media3.exoplayer.hls.HlsChunkSource" } &&
-            stackClassNames.any { it == "androidx.media3.exoplayer.hls.HlsSampleStreamWrapper" }
+            stackClassNames.any {
+                it == "androidx.media3.exoplayer.hls.HlsSampleStreamWrapper" ||
+                    it == "androidx.media3.exoplayer.hls.HlsMediaPeriod" ||
+                    it.startsWith("androidx.media3.exoplayer.hls.playlist.DefaultHlsPlaylistTracker")
+            }
     }
 
     private fun buildCrashLog(throwable: Throwable): String {

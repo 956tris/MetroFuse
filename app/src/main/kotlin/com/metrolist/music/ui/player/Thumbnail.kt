@@ -9,9 +9,15 @@ import android.content.Context
 import android.graphics.Matrix
 import android.view.TextureView
 import android.view.View
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
@@ -521,6 +527,14 @@ fun Thumbnail(
     // Fullscreen MV watch. A separate window so the video can use the whole
     // screen (letterboxed, not cropped) while the sheet, app bars, and
     // queue stay behind it. Tapping anywhere or back dismisses.
+    // Same fade-in-over-black as the carousel surface: the dialog would
+    // otherwise pop from black to video on the first frame.
+    var dialogMvReady by remember(showVideoFullscreen) { mutableStateOf(false) }
+    val dialogMvAlpha by animateFloatAsState(
+        targetValue = if (dialogMvReady) 1f else 0f,
+        animationSpec = tween(durationMillis = 600),
+        label = "mvDialogFadeIn",
+    )
     if (showVideoFullscreen && currentMediaIsVideo) {
         Dialog(
             onDismissRequest = { showVideoFullscreen = false },
@@ -537,6 +551,8 @@ fun Thumbnail(
                     player = playerConnection.player,
                     shouldPlay = true,
                     cropToFill = false,
+                    modifier = Modifier.graphicsLayer { alpha = dialogMvAlpha },
+                    onReadyChange = { ready -> dialogMvReady = ready },
                 )
             }
         }
@@ -692,6 +708,19 @@ private fun ThumbnailItem(
                 .size(dimensions.thumbnailSize)
                 .clip(RoundedCornerShape(dimensions.cornerRadius))
         ) {
+            // Screen-swap on track change: incoming artwork scales up and
+            // fades in over the outgoing one instead of hard-cutting. GPU
+            // layer only, no layout work, so it stays cheap at 300ms.
+            AnimatedContent(
+                targetState = currentMediaId,
+                transitionSpec = {
+                    (fadeIn(animationSpec = tween(300)) +
+                        scaleIn(initialScale = 0.94f, animationSpec = tween(300))) togetherWith
+                        (fadeOut(animationSpec = tween(300)) +
+                            scaleOut(targetScale = 1.04f, animationSpec = tween(300)))
+                },
+                label = "thumbnailSwap",
+            ) { animatedMediaId ->
             if (hidePlayerThumbnail) {
                 HiddenThumbnailPlaceholder(textBackgroundColor = textBackgroundColor)
             } else {
@@ -704,11 +733,17 @@ private fun ThumbnailItem(
 
                 if (item.mediaId == currentMediaId && isCurrentTrackVideo) {
                     // MV playing from the shared player. The artwork stays
-                    // underneath as a fallback until frames actually render
-                    // (a TextureView with no buffer composites transparent).
+                    // underneath while the video fades in over it on the
+                    // first rendered frame — no hard pop from cover to MV.
                     // While the fullscreen overlay is up the in-carousel
                     // surface is dropped so the two never race for the
                     // player's single video output.
+                    var mvReady by remember(item.mediaId, animatedMediaId) { mutableStateOf(false) }
+                    val mvAlpha by animateFloatAsState(
+                        targetValue = if (mvReady) artworkAlpha.coerceIn(0f, 1f) else 0f,
+                        animationSpec = tween(durationMillis = 600),
+                        label = "mvFadeIn",
+                    )
                     Box(modifier = Modifier.fillMaxSize()) {
                         ThumbnailImage(
                             artworkUri = artworkUriToUse,
@@ -722,6 +757,8 @@ private fun ThumbnailItem(
                                 player = playerConnection.player,
                                 shouldPlay = isPlayerOpen,
                                 cropToFill = true,
+                                modifier = Modifier.graphicsLayer { alpha = mvAlpha },
+                                onReadyChange = { ready -> mvReady = ready },
                             )
                         }
                     }
@@ -760,6 +797,7 @@ private fun ThumbnailItem(
                             },
                     )
                 }
+            }
             }
             
             // Cast button at top-right corner of thumbnail
@@ -1088,6 +1126,9 @@ fun MvVideo(
     modifier: Modifier = Modifier,
     shouldPlay: Boolean = true,
     cropToFill: Boolean = true,
+    // Fires true on the first rendered frame / valid video size so callers
+    // can fade the surface in over the artwork instead of popping.
+    onReadyChange: ((Boolean) -> Unit)? = null,
 ) {
     AndroidView(
         factory = { ctx ->
@@ -1095,11 +1136,24 @@ fun MvVideo(
                 val listener = object : Player.Listener, View.OnLayoutChangeListener {
                     private var videoWidth = 0
                     private var videoHeight = 0
+                    private var readyFired = false
+
+                    private fun markReady() {
+                        if (!readyFired && videoWidth > 0 && videoHeight > 0) {
+                            readyFired = true
+                            onReadyChange?.invoke(true)
+                        }
+                    }
 
                     override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
                         videoWidth = videoSize.width
                         videoHeight = videoSize.height
                         applyMatrix()
+                        markReady()
+                    }
+
+                    override fun onRenderedFirstFrame() {
+                        markReady()
                     }
 
                     override fun onLayoutChange(

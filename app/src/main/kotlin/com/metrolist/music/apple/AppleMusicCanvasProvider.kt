@@ -187,10 +187,12 @@ object AppleMusicCanvasProvider {
             var searchTransportFailed = false
 
             // Tier 1: exact ISRC match. Returns (canvas, ISRC_EXACT, item)
-            // on a hit, (null, ISRC_EXACT, item) when the ISRC identifies a
-            // real track with no canvas (definitive negative — no retry),
+            // on a hit, (null, null, item) + variant hunt when the ISRC
+            // identifies the right recording but it carries no canvas (the
+            // same recording may exist under a variant ISRC that does),
             // (null, null, item-or-null) when the ISRC matches nothing or
             // points at a different artist's track (fall through to search).
+            var huntVariants = false
             fun tier1(activeToken: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
                 val current = resolvedIsrc ?: return Triple(null, null, null)
                 val (canvasResult, songItem) = fetchByIsrc(current, activeToken, preferredAspect)
@@ -202,10 +204,11 @@ object AppleMusicCanvasProvider {
                     if (matchedArtist.isBlank() || matchedArtist == wantArtist ||
                         matchedArtist.contains(wantArtist) || wantArtist.contains(matchedArtist)
                     ) {
-                        // ISRC matched a real catalog track but it has no
-                        // canvas — a correct negative that must NOT fall
-                        // through to fuzzy matching for a different track.
-                        return Triple(null, CanvasMatchTier.ISRC_EXACT, songItem)
+                        // Right recording, no canvas on this ISRC variant —
+                        // hunt the same recording under its sibling ISRCs
+                        // instead of stopping or fuzzy-matching neighbors.
+                        huntVariants = true
+                        return Triple(null, null, songItem)
                     }
                     // Resolver ISRC belongs to another artist's recording
                     // (common for single-word YTM titles) — drop it and let
@@ -217,19 +220,23 @@ object AppleMusicCanvasProvider {
                 return Triple(null, null, songItem)
             }
 
-            // Tier 3/4: scored catalog search fallback.
-            fun searchLeg(activeToken: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
+            // Tier 3/4: scored catalog search fallback (variant-constrained
+            // when Tier 1 identified the right recording without canvas).
+            fun searchLeg(
+                activeToken: String,
+                variantHunt: Boolean = false,
+            ): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
                 // Pass the ISRC we already hold so the scorer can confirm the
-                // exact catalog entry (accept immediately) or hard-reject a
-                // candidate that carries a different ISRC.
-                val search = fetchBySearch(cleanSong, cleanArtist, validDuration, resolvedIsrc, activeToken, preferredAspect)
+                // exact catalog entry (accept immediately) or require variant
+                // proof (exact + duration) for a differing ISRC.
+                val search = fetchBySearch(cleanSong, cleanArtist, validDuration, resolvedIsrc, activeToken, preferredAspect, variantHunt)
                 if (search.transportFailed) searchTransportFailed = true
                 // Raw-title retry: if cleaning overshot (rare), one attempt
                 // with the original query before giving up.
                 if (search.canvas == null && search.item == null &&
                     (cleanSong != song || cleanArtist != artist)
                 ) {
-                    val retry = fetchBySearch(song, artist, validDuration, resolvedIsrc, activeToken, preferredAspect)
+                    val retry = fetchBySearch(song, artist, validDuration, resolvedIsrc, activeToken, preferredAspect, variantHunt)
                     if (retry.transportFailed) searchTransportFailed = true
                     return Triple(retry.canvas, retry.tier, retry.item)
                 }
@@ -245,12 +252,13 @@ object AppleMusicCanvasProvider {
                 }
 
             suspend fun runRound(activeToken: String): Triple<AppleMusicCanvas?, CanvasMatchTier?, JSONObject?> {
+                huntVariants = false
                 // Precise leg first whenever an ISRC is already in hand.
                 resolvedIsrc?.let { isrc ->
                     indexedHit(isrc)?.let { return it }
                     val t1 = tier1(activeToken)
                     if (t1.first != null || t1.second == CanvasMatchTier.ISRC_EXACT) return t1
-                    return searchLeg(activeToken)
+                    return searchLeg(activeToken, huntVariants)
                 }
 
                 // No ISRC yet: race slow discovery against the direct AMP
@@ -308,9 +316,10 @@ object AppleMusicCanvasProvider {
             // must never publish, or a wrong ISRC poisons every later
             // ISRC-first lookup and gets persisted to disk.
             val confirmedTier: CanvasMatchTier? =
-                tier?.takeIf { it == CanvasMatchTier.ISRC_EXACT || durationConfirmed }
+                tier?.takeIf { it == CanvasMatchTier.ISRC_EXACT || it == CanvasMatchTier.ISRC_VARIANT || durationConfirmed }
             val publishableIsrc = when {
                 tier == CanvasMatchTier.ISRC_EXACT -> matchedIsrc ?: resolvedIsrc
+                tier == CanvasMatchTier.ISRC_VARIANT -> matchedIsrc
                 confirmedTier != null -> matchedIsrc
                 else -> null
             }
@@ -340,6 +349,27 @@ object AppleMusicCanvasProvider {
                             lastMatchedAtMs = System.currentTimeMillis(),
                         ),
                     )
+                    // Variant win: also index under the queried (variant)
+                    // ISRC so the next play skips straight to the canvas via
+                    // indexedHit instead of re-hunting.
+                    if (tier == CanvasMatchTier.ISRC_VARIANT && resolvedIsrc != null &&
+                        !ProviderIsrc.equal(resolvedIsrc, publishableIsrc)
+                    ) {
+                        CanvasIndex.put(
+                            CanvasMatchEntry(
+                                isrc = resolvedIsrc,
+                                appleCatalogId = matchedCatalogId,
+                                title = matchedTitle ?: cleanSong,
+                                artist = cleanArtist,
+                                album = null,
+                                durationMs = validDuration?.toLong()?.times(1000L),
+                                sourceUrl = canvas.animated.orEmpty(),
+                                matchTier = confirmedTier,
+                                confidence = confirmedTier.baseConfidence,
+                                lastMatchedAtMs = System.currentTimeMillis(),
+                            ),
+                        )
+                    }
                 }
             } else if (!searchTransportFailed) {
                 // Only negative-cache definitive misses. Transport failures
@@ -517,6 +547,7 @@ object AppleMusicCanvasProvider {
         knownIsrc: String?,
         token: String,
         aspect: CanvasAspectPreference,
+        variantHunt: Boolean = false,
     ): SearchResult {
         val url = buildAmpUrl(
             "$AMP_BASE/v1/catalog/$STOREFRONT/search",
@@ -537,11 +568,14 @@ object AppleMusicCanvasProvider {
         val candidates = collectSearchSongs(root)
         if (candidates.isEmpty()) return SearchResult(null, null, CanvasMatchTier.FUZZY)
 
-        val best = pickBestCandidate(candidates, song, artist, durationSeconds, knownIsrc)
+        val best = pickBestCandidate(candidates, song, artist, durationSeconds, knownIsrc, variantHunt)
             ?: return SearchResult(null, null, CanvasMatchTier.FUZZY)
 
         // Tier 2 (ISRC confirmation): the picked result carries the same ISRC
         // we already know for this track — the strongest possible evidence.
+        // ISRC_VARIANT: same recording re-issued under a different ISRC —
+        // accepted only with exact title+artist and duration-confirmed same
+        // recording (enforced by pickBestCandidate, rechecked here).
         // ALBUM_ARTIST_TITLE: title + artist normalize to an exact match.
         // Anything weaker that still cleared pickBestCandidate's gates is
         // Tier 4 (FUZZY).
@@ -549,9 +583,18 @@ object AppleMusicCanvasProvider {
         val bestTitleNorm = normalize(bestAttrs?.optString("name").orEmpty())
         val bestArtistNorm = normalize(bestAttrs?.optString("artistName").orEmpty())
         val bestIsrc = ProviderIsrc.normalize(bestAttrs?.optString("isrc"))
+        val bestDurMs = bestAttrs?.optLong("durationInMillis") ?: 0L
+        val queryDurMs = durationSeconds?.takeIf { it > 30 }?.toLong()?.times(1000L)
+        val variantConfirmed = bestIsrc != null && knownIsrc != null &&
+            !ProviderIsrc.equal(bestIsrc, knownIsrc) &&
+            bestTitleNorm == normalize(song) && bestArtistNorm == normalize(artist) &&
+            queryDurMs != null && bestDurMs > 30_000L &&
+            kotlin.math.abs(queryDurMs - bestDurMs) <= DURATION_CONFIRM_TOLERANCE_MS
         val tier = when {
             ProviderIsrc.equal(bestIsrc, knownIsrc) ->
                 CanvasMatchTier.ISRC_EXACT
+            variantConfirmed ->
+                CanvasMatchTier.ISRC_VARIANT
             bestTitleNorm == normalize(song) && bestArtistNorm == normalize(artist) ->
                 CanvasMatchTier.ALBUM_ARTIST_TITLE
             else -> CanvasMatchTier.FUZZY
@@ -634,7 +677,12 @@ object AppleMusicCanvasProvider {
      *
      * Gates, in order:
      *  1. ISRC — a candidate carrying [knownIsrc] wins immediately; a
-     *     candidate carrying a *different* ISRC is a hard reject.
+     *     candidate carrying a *different* ISRC is accepted only as an
+     *     ISRC_VARIANT (exact title+artist, duration-confirmed same
+     *     recording — same track re-issued under another ISRC), and only
+     *     then; anything weaker with a contradicting ISRC is rejected.
+     *     In [variantHunt] mode (Tier 1 found the right recording with no
+     *     canvas) only such variant-confirmed candidates may win at all.
      *  2. Artist — at least one artist token must match, so a same-titled
      *     track by another artist can never be selected.
      *  3. Variant — a cover/remix/karaoke/tribute/live candidate is rejected
@@ -651,6 +699,7 @@ object AppleMusicCanvasProvider {
         queryArtist: String,
         queryDurationSeconds: Int?,
         knownIsrc: String?,
+        variantHunt: Boolean = false,
     ): JSONObject? {
         val normQuerySong = normalize(querySong)
         val normQueryArtist = normalize(queryArtist)
@@ -668,12 +717,31 @@ object AppleMusicCanvasProvider {
             val rawArtist = attrs.optString("artistName")
             val artistName = normalize(rawArtist)
 
+            val exactTitleArtist = title == normQuerySong && artistName == normQueryArtist
+            val trackDurMs = attrs.optLong("durationInMillis")
+            val durationDeltaMs: Long? =
+                if (queryDurationMs != null && trackDurMs > 30_000) {
+                    kotlin.math.abs(queryDurationMs - trackDurMs)
+                } else {
+                    null
+                }
+            val durationConfirms =
+                durationDeltaMs != null && durationDeltaMs <= DURATION_CONFIRM_TOLERANCE_MS
+
             // ---- ISRC gate ------------------------------------------------
             val candidateIsrc = ProviderIsrc.normalize(attrs.optString("isrc"))
             // Exact confirmation of a known ISRC accepts this candidate now.
             if (knownIsrc != null && ProviderIsrc.equal(candidateIsrc, knownIsrc)) return candidate
-            // A candidate that contradicts a known ISRC can never be right.
-            if (knownIsrc != null && candidateIsrc != null) continue
+            // Same recording re-issued under a different ISRC: acceptable
+            // only on exact title+artist with duration-confirmed same
+            // recording. Anything weaker stays rejected — a bare ISRC
+            // mismatch must never pull in a different track.
+            if (knownIsrc != null && candidateIsrc != null && !durationConfirms) continue
+            if (knownIsrc != null && candidateIsrc != null && !exactTitleArtist) continue
+            // Variant hunt (known ISRC hit a canvas-less entry): only an
+            // exact, duration-confirmed same recording may win — never a
+            // fuzzy/neighboring track.
+            if (variantHunt && !(exactTitleArtist && durationConfirms)) continue
 
             // ---- Artist gate ----------------------------------------------
             if (!artistTokensMatch(normQueryArtist, artistName)) continue
@@ -714,15 +782,12 @@ object AppleMusicCanvasProvider {
             // already an exact match — otherwise it's more likely a radio edit,
             // remaster, or rip with extra silence, and shouldn't nuke a correct hit.
             // Unknown durations (YTM reports -1) skip verification entirely.
-            var durationDeltaMs: Long? = null
-            val trackDurMs = attrs.optLong("durationInMillis")
-            if (queryDurationMs != null && trackDurMs > 30_000) {
-                durationDeltaMs = kotlin.math.abs(queryDurationMs - trackDurMs)
-                val exactTitleAndArtist = title == normQuerySong && artistName == normQueryArtist
+            // (durationDeltaMs computed up-front for the ISRC gate; reused here.)
+            if (durationDeltaMs != null) {
                 when {
                     durationDeltaMs < 4_000 -> score += 60
                     durationDeltaMs < 12_000 -> score += 30
-                    durationDeltaMs > 25_000 -> score -= if (exactTitleAndArtist) 20 else 80
+                    durationDeltaMs > 25_000 -> score -= if (exactTitleArtist) 20 else 80
                 }
             }
 
