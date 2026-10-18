@@ -140,7 +140,6 @@ enum class AudioProviderOrderItem {
     JIOSAAVN,
     YOUTUBE_MUSIC,
     QOBUZ,
-    KUGOU,
 }
 
 fun AudioProviderOrderItem.isPlaybackProvider(): Boolean =
@@ -157,7 +156,6 @@ object AudioProviderOrder {
             AudioProviderOrderItem.QOBUZ,
             AudioProviderOrderItem.TIDAL,
             AudioProviderOrderItem.SOUNDCLOUD,
-            AudioProviderOrderItem.KUGOU,
         )
 
     fun serialize(providers: List<AudioProviderOrderItem>): String =
@@ -259,21 +257,6 @@ val JioSaavnAudioQualityOptions =
         JioSaavnAudioQuality.LOW,
         JioSaavnAudioQuality.MINI,
         JioSaavnAudioQuality.ULTRA_LOW,
-    )
-
-enum class KuGouAudioQuality {
-    LOSSLESS,
-    HIGH,
-    STANDARD,
-}
-
-val KuGouAudioQualityKey = stringPreferencesKey("kugouAudioQuality")
-
-val KuGouAudioQualityOptions =
-    listOf(
-        KuGouAudioQuality.LOSSLESS,
-        KuGouAudioQuality.HIGH,
-        KuGouAudioQuality.STANDARD,
     )
 
 enum class AppleMusicAudioQuality(

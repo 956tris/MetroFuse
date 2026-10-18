@@ -74,7 +74,6 @@ fun ProviderOrderScreen(
     val jiosaavnName = stringResource(R.string.audio_provider_jiosaavn)
     val youtubeMusicName = stringResource(R.string.audio_provider_youtube_music)
     val qobuzName = stringResource(R.string.audio_provider_qobuz)
-    val kugouName = stringResource(R.string.audio_provider_kugou)
 
     LaunchedEffect(
         providerOrder,
@@ -87,7 +86,6 @@ fun ProviderOrderScreen(
         jiosaavnName,
         youtubeMusicName,
         qobuzName,
-        kugouName,
     ) {
         draggableItems.clear()
         draggableItems.addAll(
@@ -103,7 +101,6 @@ fun ProviderOrderScreen(
                         AudioProviderOrderItem.JIOSAAVN -> jiosaavnName
                         AudioProviderOrderItem.YOUTUBE_MUSIC -> youtubeMusicName
                         AudioProviderOrderItem.QOBUZ -> qobuzName
-                        AudioProviderOrderItem.KUGOU -> kugouName
                     },
                     icon = providerIcon,
                     enabled = provider !in disabled,

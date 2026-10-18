@@ -556,7 +556,6 @@
     <string name="audio_provider_jiosaavn">JioSaavn</string>
     <string name="audio_provider_youtube_music">YouTube Music</string>
     <string name="audio_provider_qobuz">Qobuz</string>
-    <string name="audio_provider_kugou">KuGou</string>
     <string name="provider_qobuz">Qobuz</string>
     <string name="qobuz_integration">Qobuz</string>
     <string name="qobuz_country">Qobuz country</string>
@@ -652,13 +651,6 @@
     <string name="apple_music_quality_alac">ALAC lossless (slow to load)</string>
     <string name="apple_music_quality_atmos">Dolby Atmos (spatial only)</string>
     <string name="apple_music_quality_ac3">AC-3 (spatial only)</string>
-    <string name="kugou_music_integration">KuGou</string>
-    <string name="kugou_music_integration_desc">Stream songs and music videos from KuGou. No login needed.</string>
-    <string name="kugou_music_quality_title">KuGou quality</string>
-    <string name="kugou_music_quality_desc">Preferred audio tier for privilege-free tracks. Locked tracks skip the audio tiers and fall back to music-video audio (~130 kbps).</string>
-    <string name="kugou_music_quality_lossless">FLAC lossless</string>
-    <string name="kugou_music_quality_high">320 kbps</string>
-    <string name="kugou_music_quality_standard">128 kbps</string>
     <string name="jiosaavn_home_language_title">JioSaavn home language</string>
     <string name="jiosaavn_home_language_desc">Language used for the JioSaavn home feed (trending, charts, new releases).</string>
 

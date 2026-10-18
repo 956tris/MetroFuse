@@ -15,7 +15,9 @@ import timber.log.Timber
 import java.net.URLEncoder
 import java.text.Normalizer
 import java.util.Locale
+import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 
@@ -61,6 +63,20 @@ object AppleMusicAudioProvider {
     /** Same recording under a variant ISRC must agree this tightly. */
     private const val VARIANT_DURATION_CONFIRM_MS = 3_000L
     private const val PROBE_CACHE_TTL_MS = 60 * 60 * 1000L
+    /** Candidate carries the same parental rating as the source track. */
+    private const val EXPLICIT_MATCH_BONUS = 25
+    /** Candidate carries the opposite parental rating. */
+    private const val EXPLICIT_MISMATCH_PENALTY = 40
+    /** How long a passing geeked route check is trusted per host. */
+    private const val ROUTE_HEALTHY_TTL_MS = 5 * 60 * 1000L
+    /** How long a failing geeked route check is trusted per host (Render free tier wakes in ~50s). */
+    private const val ROUTE_UNHEALTHY_TTL_MS = 90 * 1000L
+    /** Per-URL "not served" verdicts (404/422), where the host itself is fine. */
+    private const val ROUTE_URL_MISS_TTL_MS = 10 * 60 * 1000L
+    private const val MAX_ROUTE_CACHE_ENTRIES = 512
+    private const val MAX_PARALLEL_SEARCHES = 3
+    /** Upper bound for one fanned-out search query; the 30 s call timeout already caps it. */
+    private const val SEARCH_FANOUT_TIMEOUT_S = 31L
 
     data class Query(
         val mediaId: String,
@@ -71,6 +87,14 @@ object AppleMusicAudioProvider {
         val isrc: String? = null,
         val trackIdOverride: String? = null,
         val quality: AppleMusicAudioQuality = AppleMusicAudioQuality.AAC,
+        /**
+         * Parental rating of the track being matched, from the YouTube Music
+         * source: `true` = explicit, `false` = clean, `null` = unknown. Apple
+         * ships both editions of a track with byte-identical title/artist/album
+         * and near-identical duration, so without this the explicit and clean
+         * releases are indistinguishable and whichever ranks first wins.
+         */
+        val explicit: Boolean? = null,
     )
 
     data class Resolved(
@@ -94,6 +118,8 @@ object AppleMusicAudioProvider {
         val durationMs: Long?,
         val isrc: String?,
         val shareUrl: String?,
+        /** From `attributes.contentRating`: true = explicit, false = clean, null = unrated. */
+        val explicit: Boolean? = null,
     )
 
     class AppleMusicResolutionException(message: String, cause: Throwable? = null) : Exception(message, cause)
@@ -112,6 +138,16 @@ object AppleMusicAudioProvider {
             .build()
 
     private val streamCache = ConcurrentHashMap<String, CacheEntry>()
+
+    /**
+     * Pool for fanning out the up-to-three search queries. Daemon threads:
+     * a late search result must never keep the process alive. Sized to the
+     * query count so a single resolve never queues behind itself.
+     */
+    private val searchPool =
+        Executors.newFixedThreadPool(MAX_PARALLEL_SEARCHES) { runnable ->
+            Thread(runnable, "apple-search").apply { isDaemon = true }
+        }
 
     /** Spatial probe results per track+codec: transcode-latency, so never re-probed within TTL. */
     private data class CodecProbeEntry(
@@ -135,21 +171,91 @@ object AppleMusicAudioProvider {
             .build()
 
     /**
+     * Result of a geeked route check, trusted for a short window. Keyed by
+     * host (the Render free tier sleeps as a whole) and, separately, by full
+     * URL for "host is up but this track isn't served" verdicts.
+     */
+    private data class RouteHealth(
+        val healthy: Boolean,
+        val expiresAtMs: Long,
+    )
+
+    private val routeHealthCache = ConcurrentHashMap<String, RouteHealth>()
+
+    private fun routeHealth(key: String): Boolean? =
+        routeHealthCache[key]?.takeIf { System.currentTimeMillis() < it.expiresAtMs }?.healthy
+            ?: run {
+                routeHealthCache.remove(key)
+                null
+            }
+
+    private fun rememberRouteHealth(key: String, healthy: Boolean, ttlMs: Long) {
+        routeHealthCache[key] = RouteHealth(healthy, System.currentTimeMillis() + ttlMs)
+        if (routeHealthCache.size > MAX_ROUTE_CACHE_ENTRIES) {
+            val now = System.currentTimeMillis()
+            routeHealthCache.entries.removeIf { it.value.expiresAtMs <= now }
+            while (routeHealthCache.size > MAX_ROUTE_CACHE_ENTRIES) {
+                val oldest = routeHealthCache.entries.minByOrNull { it.value.expiresAtMs } ?: break
+                routeHealthCache.remove(oldest.key)
+            }
+        }
+    }
+
+    /**
      * Fast route check: HEADs the geeked stream URL. 2xx = serve from geeked
      * (main path); anything else (sleeping host, unknown codec, bad URL) =
      * LyricsFlow. Never throws.
+     *
+     * The HEAD costs a full extra round trip, so the verdict is remembered:
+     * a passing check is trusted per host for [ROUTE_HEALTHY_TTL_MS], which
+     * removes the RTT from every resolve after the first. A 404/422 blames
+     * the track rather than the host (cached per URL for
+     * [ROUTE_URL_MISS_TTL_MS]); any other failure marks the whole host down
+     * briefly, so a sleeping Render instance costs one slow probe instead of
+     * one per track until it wakes.
      */
-    private fun geekedRouteOk(streamUrl: String): Boolean =
-        runCatching {
+    private fun geekedRouteOk(streamUrl: String): Boolean {
+        val url = runCatching { streamUrl.toHttpUrl() }.getOrNull() ?: return false
+        val urlKey = "url:$streamUrl"
+        val hostKey = "host:${url.host}"
+        // Host verdict first: a sleeping host answers for every track on it,
+        // so this spares the per-URL bookkeeping entirely.
+        routeHealth(hostKey)?.let { return it }
+        routeHealth(urlKey)?.let { return it }
+        return runCatching {
             val request = Request.Builder()
-                .url(streamUrl)
+                .url(url)
                 .head()
                 .header("User-Agent", BROWSER_USER_AGENT)
                 .build()
             routeClient.newCall(request).execute().use { response ->
-                response.isSuccessful
+                when {
+                    response.isSuccessful -> {
+                        rememberRouteHealth(hostKey, healthy = true, ROUTE_HEALTHY_TTL_MS)
+                        true
+                    }
+                    response.code == 404 || response.code == 422 -> {
+                        // Host answered: it's up, it just doesn't serve this
+                        // track (unknown codec / not in catalog). Blame the
+                        // URL, not the host, so other tracks still use geeked.
+                        rememberRouteHealth(hostKey, healthy = true, ROUTE_HEALTHY_TTL_MS)
+                        rememberRouteHealth(urlKey, healthy = false, ROUTE_URL_MISS_TTL_MS)
+                        false
+                    }
+                    else -> {
+                        rememberRouteHealth(hostKey, healthy = false, ROUTE_UNHEALTHY_TTL_MS)
+                        false
+                    }
+                }
             }
-        }.getOrDefault(false)
+        }.getOrElse {
+            // Timeout / connection failure: the host is asleep or unreachable.
+            // Never blame the URL here — the same track must be retried once
+            // the host wakes.
+            rememberRouteHealth(hostKey, healthy = false, ROUTE_UNHEALTHY_TTL_MS)
+            false
+        }
+    }
 
     /**
      * Short-timeout client for metadata + codec probes. Playback itself goes
@@ -218,6 +324,9 @@ object AppleMusicAudioProvider {
             query.durationMs?.div(1000L)?.toString().orEmpty(),
             query.trackIdOverride.orEmpty(),
             query.quality.name,
+            // Same title/artist/duration resolves to different catalog IDs for
+            // the explicit and clean editions; keep their streams apart.
+            query.explicit?.toString().orEmpty(),
         ).joinToString("|")
         getCachedStream(cacheKey)?.let { return it }
 
@@ -275,12 +384,27 @@ object AppleMusicAudioProvider {
             listOf(artists.firstOrNull().orEmpty(), title).filter { it.isNotBlank() }.joinToString(" "),
             title,
         ).filterNotNull().filter { it.isNotBlank() }.take(3)
+        if (queries.isEmpty()) return emptyList()
+
+        // The queries were sequential so an early hit could short-circuit the
+        // rest; they mostly miss (titles differ by punctuation/artist order)
+        // and each miss was a full round trip on the critical path. Fire them
+        // together and merge in query order so ISRC hits still rank first.
+        val futures = queries.map { text ->
+            searchPool.submit(
+                Callable<List<TrackCandidate>> {
+                    runCatching { searchSongs(text, limit) }
+                        .onFailure { Timber.tag(TAG).w(it, "Apple Music search failed for query=$text") }
+                        .getOrDefault(emptyList())
+                },
+            )
+        }
         val found = linkedMapOf<String, TrackCandidate>()
-        for (text in queries) {
-            runCatching { searchSongs(text, limit) }
-                .onSuccess { hits -> hits.forEach { found.putIfAbsent(it.trackId, it) } }
-                .onFailure { Timber.tag(TAG).w(it, "Apple Music search failed for query=$text") }
-            if (found.size >= limit) break
+        futures.forEachIndexed { index, future ->
+            val hits = runCatching { future.get(SEARCH_FANOUT_TIMEOUT_S, TimeUnit.SECONDS) }
+                .onFailure { Timber.tag(TAG).w(it, "Apple Music search timed out for query=${queries[index]}") }
+                .getOrDefault(emptyList())
+            hits.forEach { found.putIfAbsent(it.trackId, it) }
         }
         return found.values.take(limit)
     }
@@ -372,6 +496,11 @@ object AppleMusicAudioProvider {
             durationMs = durationMs,
             isrc = isrc,
             shareUrl = shareUrl,
+            explicit = when (attrs.optString("contentRating").trim().lowercase(Locale.ROOT)) {
+                "explicit" -> true
+                "clean" -> false
+                else -> null
+            },
         )
     }
 
@@ -564,6 +693,16 @@ object AppleMusicAudioProvider {
             (normalizedAlbum == normalizedCandidateAlbum || normalizedCandidateAlbum.contains(normalizedAlbum))
         ) {
             score += 10
+        }
+        // Parental rating. The two editions differ by nothing else the text
+        // signals (titles normalize identically), so this is the only signal
+        // that can separate them. Size the swing against the other weights:
+        // +25/-40 beats the album (+10) and duration (+20 vs +50) terms, so a
+        // rating-known candidate wins whenever the rest is comparable. A
+        // mismatch is a penalty rather than a rejection — a clean edition of
+        // the right recording still beats no Apple stream at all.
+        if (query.explicit != null && candidate.explicit != null) {
+            score += if (query.explicit == candidate.explicit) EXPLICIT_MATCH_BONUS else -EXPLICIT_MISMATCH_PENALTY
         }
         val expectedMs = query.durationMs
         val actualMs = candidate.durationMs
