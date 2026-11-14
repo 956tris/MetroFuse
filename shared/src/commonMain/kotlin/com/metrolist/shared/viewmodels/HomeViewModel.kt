@@ -19,6 +19,7 @@ import com.metrolist.shared.deviceconnect.DeviceCrypto
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.albums
 import com.metrolist.shared.generated.resources.history
+import com.metrolist.shared.generated.resources.home_load_failed
 import com.metrolist.shared.generated.resources.liked_songs
 import com.metrolist.shared.generated.resources.playlists
 import com.metrolist.shared.generated.resources.quick_picks
@@ -46,6 +47,9 @@ import com.metrolist.shared.model.isPodcastChip
 import com.metrolist.shared.model.mergeAndDeduplicateHomeSections
 import com.metrolist.shared.model.toSongItem
 import com.metrolist.shared.model.withoutRegionalCharts
+import com.metrolist.shared.plugins.PluginHomePage
+import com.metrolist.shared.plugins.PluginServicesStore
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
 import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.settings.AiSlopBlocklist
 import com.metrolist.shared.settings.BlockedContent
@@ -565,6 +569,8 @@ class HomeViewModel(
         onComplete: () -> Unit = {},
     ) {
         if (!useUpstreamDiscovery) {
+            val owner = effectiveMusicFrontendOwner()
+            if (owner.isNotEmpty()) PluginServicesStore.current?.refreshHome(owner, force = isRefresh)
             val refresh = libraryHomeRefresh.value + 1
             libraryHomeRefresh.value = refresh
             scope.launch {
@@ -860,14 +866,18 @@ class HomeViewModel(
                 LibraryHomeSnapshot(songs, events, savedPlaylists, albums)
             }
         scope.launch(Dispatchers.Default) {
+            val updates =
+                combine(libraryHomeRefresh, BlockedContent.version, PluginServicesStore.homePages) { refresh, _, pages ->
+                    refresh to
+                        pages
+                }
             combine(
                 library,
                 musicFrontendOwnerChanges(),
                 database.speedDialDao().getAll(),
-                libraryHomeRefresh,
-                BlockedContent.version,
-            ) { snapshot, owner, pins, refresh, _ ->
-                LibraryHomeRequest(snapshot, owner, pins, refresh)
+                updates,
+            ) { snapshot, owner, pins, update ->
+                LibraryHomeRequest(snapshot, owner, pins, update.first, update.second[owner])
             }.collectLatest { request ->
                 try {
                     val state = buildLibraryHome(request).withoutBlockedContent()
@@ -884,6 +894,17 @@ class HomeViewModel(
     }
 
     private suspend fun buildLibraryHome(request: LibraryHomeRequest): HomeUiState {
+        if (request.owner.isNotEmpty()) {
+            val page = request.page ?: PluginHomePage()
+            return HomeUiState(
+                libraryRefreshGeneration = request.refresh,
+                data = page.sections,
+                sections = page.sections,
+                isLoading = !page.loaded && !page.error,
+                isRefreshing = page.loading && page.loaded,
+                error = if (page.error) getString(Res.string.home_load_failed) else null,
+            )
+        }
         val snapshot = request.snapshot
         val owner = request.owner
         val songs =
@@ -998,6 +1019,7 @@ class HomeViewModel(
         val owner: String,
         val pins: List<SpeedDialItem>,
         val refresh: Long,
+        val page: PluginHomePage?,
     )
 
     fun loadMoreSections() {
@@ -1331,7 +1353,10 @@ class HomeViewModel(
     }
 
     fun invalidateCacheForLocaleChange() {
-        if (!useUpstreamDiscovery) return
+        if (!useUpstreamDiscovery) {
+            effectiveMusicFrontendOwner().takeIf(String::isNotEmpty)?.let { PluginServicesStore.current?.refreshHome(it, force = true) }
+            return
+        }
         val locale = GlobalYouTube.innerTube.locale
         lastKnownLocaleSignature = "${locale.hl}:${locale.gl}"
         cachedAllContent = null

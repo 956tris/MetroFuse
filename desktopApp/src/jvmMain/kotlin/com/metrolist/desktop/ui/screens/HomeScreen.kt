@@ -190,7 +190,7 @@ fun HomeScreen() {
                     item(key = "home_loading") {
                         HomeLoadingPlaceholder(Modifier.fillMaxWidth().height(600.dp))
                     }
-                } else if (!uiState.error.isNullOrBlank() && uiState.hasNoHomeContent()) {
+                } else if (!uiState.error.isNullOrBlank()) {
                     item(key = "home_error") {
                         Column(Modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(homeContentText().homeUnavailable)

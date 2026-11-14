@@ -1,5 +1,6 @@
 package com.metrolist.shared.plugins
 
+import androidx.compose.runtime.snapshotFlow
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.model.AlbumItem
@@ -8,12 +9,14 @@ import com.metrolist.shared.model.AlbumTiny
 import com.metrolist.shared.model.ArtistItem
 import com.metrolist.shared.model.ArtistPageResult
 import com.metrolist.shared.model.ArtistTiny
+import com.metrolist.shared.model.HomeSection
 import com.metrolist.shared.model.LyricsEntry
 import com.metrolist.shared.model.LyricsWithProvider
 import com.metrolist.shared.model.MlxDocument
 import com.metrolist.shared.model.MlxMeta
 import com.metrolist.shared.model.MlxSong
 import com.metrolist.shared.model.PlaylistItem
+import com.metrolist.shared.model.PluginHomeLayout
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.WordTimestamp
 import com.metrolist.shared.model.YTItem
@@ -27,6 +30,8 @@ import dev.metrofuse.api.AudioQuery
 import dev.metrofuse.api.CatalogAlbum
 import dev.metrofuse.api.CatalogArtist
 import dev.metrofuse.api.CatalogPlaylist
+import dev.metrofuse.api.HomeLayout
+import dev.metrofuse.api.HomeRequest
 import dev.metrofuse.api.HostLogger
 import dev.metrofuse.api.HostNavigation
 import dev.metrofuse.api.HostServices
@@ -41,8 +46,11 @@ import dev.metrofuse.api.StreamTransport
 import dev.metrofuse.api.Track
 import dev.metrofuse.api.TrackCatalog
 import dev.metrofuse.api.TrackIdentity
+import dev.metrofuse.runtime.CredentialStore
 import dev.metrofuse.runtime.MetadataMapping
 import dev.metrofuse.runtime.Runtime
+import dev.metrofuse.runtime.UnavailableCredentialStore
+import dev.metrofuse.runtime.pluginHomeSources
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -61,6 +69,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.net.URI
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Instant
 
@@ -90,6 +99,7 @@ object MetroFuseHost : PluginServices {
         directory: File,
         platform: String,
         parentScope: CoroutineScope,
+        credentialStore: CredentialStore = UnavailableCredentialStore,
     ) {
         if (engine != null) return
         this.platform = platform
@@ -125,17 +135,77 @@ object MetroFuseHost : PluginServices {
                     }
                 override val logger = HostLogger { owner, message -> Logger.i("MetroFuse/$owner", message) }
             }
-        engine = Runtime(directory, platform, scope, services, hostVersion = BuildConfig.APP_VERSION)
+        engine = Runtime(directory, platform, scope, services, hostVersion = BuildConfig.APP_VERSION, credentialStore = credentialStore)
         PluginServicesStore.current = this
         scope.launch {
-            combine(runtime.plugins, runtime.registry.state) { plugins, _ ->
-                val owners =
-                    (runtime.registry.catalogProviders().map { it.owner } + runtime.registry.searchProviders().map { it.owner })
-                        .toSet()
-                plugins
-                    .filter { it.state == "Enabled" && it.manifest.id in owners }
-                    .map { MusicFrontend(it.manifest.id, it.manifest.name) }
-            }.collect { PluginServicesStore.frontends.value = it }
+            ready.await()
+            combine(runtime.plugins, snapshotFlow { Settings.shared.musicFrontendOwner }) { plugins, _ ->
+                pluginHomeSources(plugins).map { MusicFrontend(it.owner, it.title, it.icon) }
+            }.collect { frontends ->
+                PluginServicesStore.frontends.value = frontends
+                val selection = Settings.shared.musicFrontendOwner.toHomeSelection().available(frontends)
+                if (Settings.shared.musicFrontendOwner != selection.persisted) Settings.shared.musicFrontendOwner = selection.persisted
+            }
+        }
+        scope.launch {
+            runtime.homes.pages.collect { pages ->
+                PluginServicesStore.homePages.value =
+                    pages.mapValues { (owner, page) ->
+                        PluginHomePage(
+                            sections =
+                                page.shelves.mapIndexed { index, shelf ->
+                                    HomeSection(
+                                        title = shelf.title,
+                                        items =
+                                            shelf.items.mapNotNull { item ->
+                                                item.track?.let(::songFor)
+                                                    ?: item.album?.let {
+                                                        retain(albums, it.id, it)
+                                                        albumItem(it)
+                                                    }
+                                                    ?: item.artist?.let {
+                                                        retain(artists, it.id, it)
+                                                        ArtistItem(it.id, it.name, it.artwork.takeIf(String::isNotBlank))
+                                                    }
+                                                    ?: item.playlist?.let {
+                                                        retain(playlists, it.id, it)
+                                                        PlaylistItem(
+                                                            it.id,
+                                                            it.title,
+                                                            it.artwork.takeIf(String::isNotBlank),
+                                                            author = it.author,
+                                                        )
+                                                    }
+                                            },
+                                        browseId = "metrofuse-home:$owner:$index",
+                                        pluginLayout =
+                                            if (shelf.layout ==
+                                                HomeLayout.ROWS_GRID
+                                            ) {
+                                                PluginHomeLayout.ROWS_GRID
+                                            } else {
+                                                PluginHomeLayout.CARDS
+                                            },
+                                        isResponsiveList = shelf.layout == HomeLayout.ROWS_GRID,
+                                        numItemsPerColumn = if (shelf.layout == HomeLayout.ROWS_GRID) 4 else 1,
+                                    )
+                                },
+                            loading = page.loading,
+                            error = page.error,
+                            loaded = page.loaded,
+                        )
+                    }
+            }
+        }
+        scope.launch {
+            ready.await()
+            combine(
+                musicFrontendOwnerChanges(),
+                snapshotFlow {
+                    Settings.shared.contentLanguage to Settings.shared.contentCountry
+                },
+            ) { owner, _ -> owner }
+                .collect { owner -> if (owner.isNotEmpty()) refreshHome(owner) }
         }
         scope.launch {
             try {
@@ -166,6 +236,20 @@ object MetroFuseHost : PluginServices {
                     withContext(Dispatchers.Main.immediate) { controller.stop() }
                 }
             }
+        }
+    }
+
+    override fun refreshHome(
+        owner: String,
+        force: Boolean,
+    ) {
+        val scope = hostScope ?: return
+        scope.launch {
+            ready.await()
+            val locale = Locale.getDefault()
+            val language = Settings.shared.contentLanguage.takeUnless { it == "SYSTEM" } ?: locale.language
+            val country = Settings.shared.contentCountry.takeUnless { it == "SYSTEM" } ?: locale.country
+            runtime.homes.refresh(owner, HomeRequest(language, country), force)
         }
     }
 
@@ -328,7 +412,7 @@ object MetroFuseHost : PluginServices {
     private fun activeCatalogOwner(id: String): Boolean {
         val owner = id.substringAfter(':').substringBefore(':')
         if (owner != effectiveMusicFrontendOwner()) return false
-        return runtime.registry.catalogProviders().any { it.owner == owner } || runtime.registry.searchProviders().any { it.owner == owner }
+        return runtime.plugins.value.any { it.manifest.id == owner && it.state == "Enabled" }
     }
 
     override suspend fun album(id: String): AlbumPage? {

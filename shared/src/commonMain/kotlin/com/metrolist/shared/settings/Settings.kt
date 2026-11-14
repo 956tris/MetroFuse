@@ -544,7 +544,7 @@ class Settings(
     var downloadQueueJson by preference(DownloadQueueJsonKey, "")
     var defaultOpenTab by preference(DefaultOpenTabKey, "HOME")
     var desktopMusicFolders by preference(DesktopMusicFoldersKey, "")
-    var musicFrontendOwner by preference(MusicFrontendOwnerKey, "")
+    var musicFrontendOwner by preference(MusicFrontendOwnerKey, "offline")
     var showBottomNavHome by preference(ShowBottomNavHomeKey, true)
     var showBottomNavSearch by preference(ShowBottomNavSearchKey, true)
     var showBottomNavLibrary by preference(ShowBottomNavLibraryKey, true)

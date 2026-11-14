@@ -56,7 +56,7 @@ class NavigationTabPreferencesTest {
         val backing = MapSettings()
         val settings = Settings(backing)
         assertEquals("HOME", settings.defaultOpenTab)
-        assertEquals("", settings.musicFrontendOwner)
+        assertEquals("offline", settings.musicFrontendOwner)
         settings.libraryFilter = LibraryFilterType.ALBUMS
         settings.updateDefaultOpenTab("TRACKS")
         val restored = Settings(backing)

@@ -139,7 +139,6 @@ import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.desktop.storage.DownloadManager
 import com.metrolist.desktop.storage.DownloadState
 import com.metrolist.desktop.storage.downloadQueueSummary
-import com.metrolist.desktop.ui.layouts.AccountMenu
 import com.metrolist.desktop.utils.WindowDragHandle
 import com.metrolist.desktop.window.jna.structure.isWindows10OrLater
 import com.metrolist.shared.generated.resources.Res
@@ -185,6 +184,7 @@ import com.metrolist.shared.generated.resources.stop_downloading
 import com.metrolist.shared.model.RepeatMode
 import com.metrolist.shared.model.previewThumbnailUrl
 import com.metrolist.shared.playlistimport.PlaylistImportProgressIndicator
+import com.metrolist.shared.plugins.PluginAccountButton
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.settings.displayName
 import com.metrolist.shared.ui.icons.MetrolistIcons
@@ -212,8 +212,6 @@ fun WindowScope.CustomTitleBar(
     onRefresh: (() -> Unit)? = null,
     titleContent: (@Composable () -> Unit)? = null,
 ) {
-    var showAccountPanel by remember { mutableStateOf(false) }
-
     val adaptiveInfo = currentWindowAdaptiveInfoV2()
     val isWindowTight = adaptiveInfo.windowSizeClass.minWidthDp < 960
     val searchWidth =
@@ -246,12 +244,7 @@ fun WindowScope.CustomTitleBar(
                 if (isMacOS) {
                     Spacer(Modifier.width(12.dp))
                 }
-                AccountMenuButton(
-                    showAccountMenu = showAccountPanel,
-                    onToggleAccountMenu = { showAccountPanel = !showAccountPanel },
-                    onDismissAccountMenu = { showAccountPanel = false },
-                    colorScheme = colorScheme,
-                )
+                PluginAccountButton(Modifier.size(40.dp).navigationPopupSource())
                 titleContent?.invoke()
                 navItems()
                 DevtoolsButton(colorScheme)
@@ -330,7 +323,7 @@ fun WindowScope.TopBarWithPlayer(
     val swapControls = PlayerState.swapPlayerControls
     val isListenTogetherGuest = ListenTogetherState.isListenTogetherGuest()
     val isMacOS = OsUtil.isMac
-    var showAccountPanel by remember { mutableStateOf(false) }
+
     val navItems: @Composable () -> Unit = {
         TopBarRefreshButton(onRefresh)
     }
@@ -369,12 +362,7 @@ fun WindowScope.TopBarWithPlayer(
                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AccountMenuButton(
-                    showAccountMenu = showAccountPanel,
-                    onToggleAccountMenu = { showAccountPanel = !showAccountPanel },
-                    onDismissAccountMenu = { showAccountPanel = false },
-                    colorScheme = colorScheme,
-                )
+                PluginAccountButton(Modifier.size(40.dp).navigationPopupSource())
                 titleContent?.invoke()
                 navItems()
                 DevtoolsButton(colorScheme)
@@ -778,42 +766,6 @@ private fun DevtoolsButton(colorScheme: ColorScheme) {
             modifier = Modifier.size(20.dp),
             tint = colorScheme.onSurfaceVariant,
         )
-    }
-}
-
-@Composable
-private fun AccountMenuButton(
-    showAccountMenu: Boolean,
-    onToggleAccountMenu: () -> Unit,
-    onDismissAccountMenu: () -> Unit,
-    colorScheme: ColorScheme,
-) {
-    Box {
-        IconButton(
-            onClick = onToggleAccountMenu,
-            modifier = Modifier.size(40.dp).navigationPopupSource(),
-            shapes = IconButtonDefaults.shapes(),
-        ) {
-            val profilePicUrl = AuthState.profilePicUrl
-            if (AuthState.isSignedIn && !profilePicUrl.isNullOrBlank()) {
-                AsyncImage(
-                    url = profilePicUrl,
-                    modifier = Modifier.size(28.dp).clip(CircleShape),
-                )
-            } else {
-                Icon(
-                    MetrolistIcons.Outlined.AccountCircle,
-                    contentDescription = stringResource(Res.string.cd_account_menu),
-                    modifier = Modifier.size(24.dp),
-                    tint = if (showAccountMenu) colorScheme.primary else colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (showAccountMenu) {
-            AccountMenu(
-                onDismiss = onDismissAccountMenu,
-            )
-        }
     }
 }
 

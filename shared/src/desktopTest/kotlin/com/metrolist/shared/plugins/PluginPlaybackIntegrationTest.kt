@@ -1,5 +1,7 @@
 package com.metrolist.shared.plugins
 
+import androidx.compose.runtime.snapshots.Snapshot
+
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.playback.MusicPlayer
@@ -15,6 +17,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -75,7 +78,10 @@ class PluginPlaybackIntegrationTest {
                             .state,
                     )
                     withTimeout(5_000) { PluginServicesStore.frontends.first { values -> values.any { it.owner == pluginId } } }
+                    Settings.shared.musicFrontendOwner = pluginId
+                    awaitSelection("plugin:$pluginId")
                     selectMusicFrontend(pluginId)
+                    assertEquals("plugin:$pluginId", Settings.shared.musicFrontendOwner)
                     val song = SongItem("metrofuse:$pluginId:wave", "Local plugin fixture", null, emptyList(), null, duration = 10)
                     for (quality in AudioQuality.entries) {
                         val resource = withTimeout(5_000) { resolver.resolve(song.id, audioQuality = quality, sourceSong = song) }
@@ -104,6 +110,7 @@ class PluginPlaybackIntegrationTest {
                     assertFalse(player.wantsPlayback)
                     player.stop()
                     MetroFuseHost.runtime.disable(pluginId)
+                    awaitSelection("offline")
                     assertFalse(
                         MetroFuseHost.runtime.registry
                             .audioSources()
@@ -126,6 +133,15 @@ class PluginPlaybackIntegrationTest {
                 directory.deleteRecursively()
             }
         }
+
+    private suspend fun awaitSelection(expected: String) {
+        withTimeout(5000) {
+            while (Settings.shared.musicFrontendOwner != expected) {
+                Snapshot.sendApplyNotifications()
+                delay(10)
+            }
+        }
+    }
 
     private fun nativeArtifact(
         directory: File,
@@ -196,6 +212,7 @@ class PluginPlaybackIntegrationTest {
                 runtime = "kotlin",
                 entryClass = "fixture.PlaybackPlugin",
                 composeAbi = COMPOSE_ABI,
+                capabilities = listOf("home", "search", "audio"),
             )
         JarOutputStream(artifact.outputStream()).use { jar ->
             jar.putNextEntry(JarEntry("manifest.json"))
@@ -227,7 +244,16 @@ class PluginPlaybackIntegrationTest {
               });
             }};
             """.trimIndent()
-        val manifest = Manifest(pluginId, "JS playback fixture", "1.0.0", "Tests", runtime = "javascript", script = "index.js")
+        val manifest =
+            Manifest(
+                pluginId,
+                "JS playback fixture",
+                "1.0.0",
+                "Tests",
+                runtime = "javascript",
+                script = "index.js",
+                capabilities = listOf("home", "search", "audio"),
+            )
         val artifact = File(directory, "fixture.mfp")
         ZipOutputStream(artifact.outputStream()).use { zip ->
             mapOf("manifest.json" to packageJson.encodeToString(manifest), "index.js" to script).forEach { (name, contents) ->

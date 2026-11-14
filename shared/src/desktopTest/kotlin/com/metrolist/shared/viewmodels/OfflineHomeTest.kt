@@ -10,9 +10,14 @@ import com.metrolist.shared.db.entities.SpeedDialItem
 import com.metrolist.shared.db.getDesktopDatabaseBuilder
 import com.metrolist.shared.local.LocalLibraryImporter
 import com.metrolist.shared.local.LocalTrack
+import com.metrolist.shared.model.HomeSection
+import com.metrolist.shared.model.PluginHomeLayout
 import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.plugins.HomeSelection
 import com.metrolist.shared.plugins.MusicFrontend
+import com.metrolist.shared.plugins.PluginHomePage
 import com.metrolist.shared.plugins.PluginServicesStore
+import com.metrolist.shared.plugins.selectHomeSource
 import com.metrolist.shared.settings.Settings
 import com.russhwolf.settings.MapSettings
 import io.ktor.client.HttpClient
@@ -91,13 +96,29 @@ class OfflineHomeTest {
                 val second = SongEntity("metrofuse:second:two", "Second provider")
                 listOf(offline, first, second).forEach { dao.insert(it) }
                 PluginServicesStore.frontends.value = listOf(MusicFrontend("first", "First"), MusicFrontend("second", "Second"))
+                val firstPage =
+                    PluginHomePage(
+                        listOf(HomeSection("Cards", listOf(song(first.id)), pluginLayout = PluginHomeLayout.CARDS)),
+                        loaded = true,
+                    )
+                val secondPage =
+                    PluginHomePage(
+                        listOf(HomeSection("Rows", listOf(song(second.id)), pluginLayout = PluginHomeLayout.ROWS_GRID)),
+                        loaded = true,
+                    )
+                PluginServicesStore.homePages.value = mapOf("first" to firstPage, "second" to secondPage)
                 val model = HomeViewModel(database, scope, client, likedSongsName = "Liked", useUpstreamDiscovery = false)
                 awaitHome(model) { it.loadedHomeSongs().map { song -> song.id } == listOf(offline.id) }
 
                 Settings.shared.musicFrontendOwner = "first"
                 val firstFeed = awaitHome(model) { it.loadedHomeSongs().map { song -> song.id } == listOf(first.id) }
                 assertFalse(firstFeed.loadedHomeSongs().any { it.isLocal })
-                Settings.shared.musicFrontendOwner = "second"
+                PluginServicesStore.homePages.value += "first" to firstPage.copy(loading = true)
+                awaitHome(model) { it.isRefreshing && it.loadedHomeSongs().single().id == first.id }
+                PluginServicesStore.homePages.value += "first" to firstPage.copy(error = true)
+                awaitHome(model) { it.error != null && it.loadedHomeSongs().single().id == first.id }
+                selectHomeSource(HomeSelection.Plugin("second"))
+                assertEquals("plugin:second", Settings.shared.musicFrontendOwner)
                 awaitHome(model) { it.loadedHomeSongs().map { song -> song.id } == listOf(second.id) }
                 PluginServicesStore.frontends.value = emptyList()
                 awaitHome(model) { it.loadedHomeSongs().map { song -> song.id } == listOf(offline.id) }
@@ -131,6 +152,7 @@ class OfflineHomeTest {
 
     private suspend fun withHomeDatabase(block: suspend (MusicDatabase, CoroutineScope, HttpClient) -> Unit) {
         val previousFrontends = PluginServicesStore.frontends.value
+        val previousPages = PluginServicesStore.homePages.value
         Settings.replaceSharedForTest(Settings(MapSettings()))
         PluginServicesStore.frontends.value = emptyList()
         val path = Files.createTempFile("offline-home", ".db")
@@ -154,6 +176,7 @@ class OfflineHomeTest {
             database.close()
             Files.deleteIfExists(path)
             PluginServicesStore.frontends.value = previousFrontends
+            PluginServicesStore.homePages.value = previousPages
             Settings.replaceSharedForTest(null)
         }
     }

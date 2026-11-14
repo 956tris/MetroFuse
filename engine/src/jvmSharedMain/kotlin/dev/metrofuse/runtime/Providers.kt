@@ -449,6 +449,24 @@ class ProviderPipelines(
             )
         }
 
+    fun home(
+        owner: String,
+        shelves: List<HomeShelf>,
+    ): List<HomeShelf> =
+        shelves.map { shelf ->
+            shelf.copy(
+                items =
+                    shelf.items.map { item ->
+                        HomeItem(
+                            track = item.track?.let { ownedTrack(owner, it) },
+                            album = item.album?.let { ownedAlbum(owner, it) },
+                            artist = item.artist?.let { ownedArtist(owner, it) },
+                            playlist = item.playlist?.let { ownedPlaylist(owner, it) },
+                        )
+                    },
+            )
+        }
+
     private fun ownedTrack(
         owner: String,
         track: Track,

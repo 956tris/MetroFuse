@@ -8,6 +8,7 @@ import com.metrolist.shared.model.Chip
 import com.metrolist.shared.model.EpisodeItem
 import com.metrolist.shared.model.HomeSection
 import com.metrolist.shared.model.PlaylistItem
+import com.metrolist.shared.model.PluginHomeLayout
 import com.metrolist.shared.model.PodcastItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.settings.Settings
@@ -25,6 +26,19 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 
 class HomeShelfBuilderTest {
+    @Test
+    fun pluginLayoutsOverrideTitlesAndKeepItemsInSeparateShelves() {
+        val cards = HomeSection("Quick picks", listOf(song("same")), pluginLayout = PluginHomeLayout.CARDS)
+        val rows = HomeSection("Forgotten favorites", listOf(song("same")), pluginLayout = PluginHomeLayout.ROWS_GRID)
+        val shelves = build(HomeUiState(data = listOf(cards, rows), sections = listOf(cards, rows)))
+        assertEquals(listOf("Quick picks", "Forgotten favorites"), shelves.map { it.title })
+        assertEquals(listOf(HomeShelfStyle.CAROUSEL, HomeShelfStyle.SONG_GRID), shelves.map { it.style })
+        assertEquals(listOf(false, true), shelves.map { it.compactRows })
+        assertEquals(listOf(1, 4), shelves.map { it.rows })
+        assertEquals(listOf(cards.items, rows.items), shelves.map { it.items })
+        assertEquals(listOf(HomeShelfHeaderAction.NONE, HomeShelfHeaderAction.NONE), shelves.map { it.headerAction })
+    }
+
     @BeforeTest
     fun setUp() {
         Settings.replaceSharedForTest(Settings(MapSettings()))

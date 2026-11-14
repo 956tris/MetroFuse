@@ -242,6 +242,9 @@ data class AlbumTiny(
 )
 
 @Serializable
+enum class PluginHomeLayout { CARDS, ROWS_GRID }
+
+@Serializable
 data class HomeSection(
     val title: String,
     val items: List<YTItem>,
@@ -258,6 +261,7 @@ data class HomeSection(
     val headerBrowseId: String? = null,
     val numItemsPerColumn: Int? = null,
     val isResponsiveList: Boolean = false,
+    val pluginLayout: PluginHomeLayout? = null,
 )
 
 @Serializable

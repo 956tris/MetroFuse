@@ -1,6 +1,8 @@
 package dev.metrofuse.runtime
 
 import dev.metrofuse.api.AudioQuery
+import dev.metrofuse.api.HomeLayout
+import dev.metrofuse.api.HomeShelf
 import dev.metrofuse.api.Manifest
 import dev.metrofuse.api.SearchRequest
 import dev.metrofuse.api.TrackIdentity
@@ -14,6 +16,7 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
@@ -151,6 +154,7 @@ class JioSaavnPluginTest {
                     track:parseSong(request.song), preview:previewStream(request.song,request.enabled??true),
                     album:parseAlbum(request.album,'album-id'),artist:parseArtist(request.artist,'artist-id'),
                     playlist:parsePlaylist(request.playlist,'playlist-id'),id:catalogId(request.identity),
+                    home:homeShelves(request.home??{}),
                     decrypted:decryptMediaUrl(request.encrypted)??null,
                     full:fullSongStream(request.song,request.quality),
                     resolved:resolveSongStream(request.song,request.quality,request.enabled??true)
@@ -164,6 +168,7 @@ class JioSaavnPluginTest {
                     "modules/catalog.js" to source.resolve("modules/catalog.js").readText(),
                     "modules/media.js" to source.resolve("modules/media.js").readText(),
                     "modules/request.js" to source.resolve("modules/request.js").readText(),
+                    "modules/home.js" to source.resolve("modules/home.js").readText(),
                 )
             val bytes =
                 ByteArrayOutputStream().use { output ->
@@ -247,6 +252,20 @@ class JioSaavnPluginTest {
                 )
                 assertNotNull(result.getValue("artist"))
                 assertNotNull(result.getValue("playlist"))
+                val homeFixture =
+                    codec.parseToJsonElement(
+                        """
+                    {"modules":{"songs":{"source":"songs","title":"Tracks &amp; more","position":2},
+                      "mixed":{"source":"mixed","title":"Albums","position":1}},
+                      "songs":[$song],
+                      "mixed":[{"id":"album_1","type":"album","title":"Album"},{"id":"radio_1","type":"radio","title":"Unsupported"}]}
+                """,
+                    )
+                val homes = runtime.registry.invoke("fixture.jiosaavn/v1", JsonObject(request + ("home" to homeFixture)))
+                val shelves = codec.decodeFromJsonElement<List<HomeShelf>>(homes.getValue("home"))
+                assertEquals(listOf("Albums", "Tracks & more"), shelves.map { it.title })
+                assertEquals(listOf(HomeLayout.CARDS, HomeLayout.ROWS_GRID), shelves.map { it.layout })
+                assertEquals(listOf(1, 1), shelves.map { it.items.size })
                 val deniedSong =
                     JsonObject(
                         song.jsonObject +

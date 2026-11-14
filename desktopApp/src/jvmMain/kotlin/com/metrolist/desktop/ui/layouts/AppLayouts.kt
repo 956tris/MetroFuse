@@ -64,9 +64,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowScope
@@ -384,7 +387,9 @@ private fun WindowScope.AdaptiveDesktopLayout(
     val routeNavigationId = route.navigationId
     val currentNavIndex = currentSelectedNavIndex(visibleItems, routeNavigationId ?: selectedNavId)
     val currentTitle by LayoutUtils.rememberCurrentTitle(route, visibleItems, currentNavIndex)
-    val homeTitle: (@Composable () -> Unit)? = if (route == Screen.Home) ({ MusicFrontendSelector() }) else null
+    var navigationContentBounds by remember { mutableStateOf<Rect?>(null) }
+    val homeTitle: (@Composable () -> Unit)? =
+        if (route == Screen.Home) ({ MusicFrontendSelector(navigationContentBounds) }) else null
     val adaptiveLayout = currentAdaptiveLayout(AdaptiveFormFactor.DESKTOP, Settings.shared.forceBottomNavBar)
 
     LaunchedEffect(route) {
@@ -446,7 +451,9 @@ private fun WindowScope.AdaptiveDesktopLayout(
             onLibraryReselect = { activeLibraryGridState.requestScrollToItem(0) },
             modifier = Modifier.weight(1f).fillMaxWidth(),
         ) { _ ->
-            Column(Modifier.fillMaxSize()) {
+            Column(
+                Modifier.fillMaxSize().onGloballyPositioned { navigationContentBounds = it.boundsInWindow() },
+            ) {
                 MainLayoutContent(
                     layoutState = layoutState,
                     colorScheme = colorScheme,

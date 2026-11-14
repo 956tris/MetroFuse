@@ -5022,6 +5022,7 @@
 <string name="playlist_cover_updated">Playlist cover updated</string>
 <string name="playlist_cover_removed">Custom cover removed</string>
 <string name="login">Login</string>
+    <string name="plugin_login_failed">Plugin login could not finish. Check your details and try again.</string>
 <string name="app_version">App version</string>
 <string name="yeah">Yeah!</string>
 <string name="navigation">Navigation</string>

@@ -5,6 +5,7 @@ import com.metrolist.shared.model.AlbumItem
 import com.metrolist.shared.model.BrowseItem
 import com.metrolist.shared.model.HomeSection
 import com.metrolist.shared.model.PlaylistItem
+import com.metrolist.shared.model.PluginHomeLayout
 import com.metrolist.shared.model.PodcastItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
@@ -28,6 +29,14 @@ object HomeShelfBuilder {
             title: String,
         ) = includeHidden || Settings.shared.shouldShowHomeSection(key, title)
         val sourceSections = state.data.orEmpty().ifEmpty { state.sections }
+        val pluginSections = sourceSections.filter { it.pluginLayout != null }
+        if (pluginSections.isNotEmpty()) {
+            return pluginSections
+                .filter { isVisible(it.visibilityKey, it.title) }
+                .mapIndexed { index, section ->
+                    section.toHomeShelf("plugin_section_$index", text, emptySet())
+                }.filterRenderable(pageWidth)
+        }
 
         fun sourceFor(shelf: HomeShelf): HomeSection? {
             state.sections
@@ -472,6 +481,17 @@ private fun HomeSection.toHomeShelf(
     items: List<YTItem> = this.items,
 ): HomeShelf {
     val section = this
+    section.pluginLayout?.let { layout ->
+        return HomeShelf(
+            key = key,
+            visibilityKey = section.visibilityKey,
+            title = section.title,
+            items = items,
+            style = if (layout == PluginHomeLayout.ROWS_GRID) HomeShelfStyle.SONG_GRID else HomeShelfStyle.CAROUSEL,
+            rows = if (layout == PluginHomeLayout.ROWS_GRID) 4 else 1,
+            compactRows = layout == PluginHomeLayout.ROWS_GRID,
+        )
+    }
     val isShuffleShelf =
         section.title.equals(text.quickPicks, true) || section.title.equals(text.forgottenFavorites, true)
     val isSimilar =

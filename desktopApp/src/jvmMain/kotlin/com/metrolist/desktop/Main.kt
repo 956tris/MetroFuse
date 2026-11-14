@@ -215,6 +215,7 @@ import com.metrolist.shared.ui.utils.verticalScrollWithDrag
 import com.metrolist.shared.utils.OsUtil
 import com.metrolist.shared.utils.XdgUtils
 import com.metrolist.shared.youtube.di.sharedModule
+import dev.metrofuse.runtime.desktopCredentialStore
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -898,7 +899,12 @@ private fun runDesktopApp(args: Array<String>) {
                 }
             startup.trace("database")
             SongMetadataState.bind(database, applicationScope)
-            MetroFuseHost.configure(File(XdgUtils.getXdgDataHome(), "metrofuse/plugins"), "desktop", applicationScope)
+            MetroFuseHost.configure(
+                File(XdgUtils.getXdgDataHome(), "metrofuse/plugins"),
+                "desktop",
+                applicationScope,
+                desktopCredentialStore(File(XdgUtils.getXdgDataHome(), "metrofuse/plugin-credentials")),
+            )
             DesktopLocalMusicLibrary.initialize(database, applicationScope)
 
             LastFM.initialize(

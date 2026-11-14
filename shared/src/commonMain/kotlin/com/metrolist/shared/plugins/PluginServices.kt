@@ -24,6 +24,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 interface PluginServices {
     suspend fun awaitReady() {}
 
+    fun refreshHome(
+        owner: String,
+        force: Boolean = false,
+    ) {}
+
     suspend fun resolve(
         id: String,
         song: SongItem?,
@@ -57,11 +62,15 @@ interface PluginServices {
 object PluginServicesStore {
     private val services = MutableStateFlow<PluginServices?>(null)
     val frontends = MutableStateFlow<List<MusicFrontend>>(emptyList())
+    val homePages = MutableStateFlow<Map<String, PluginHomePage>>(emptyMap())
     var current: PluginServices?
         get() = services.value
         set(value) {
             services.value = value
-            if (value == null) frontends.value = emptyList()
+            if (value == null) {
+                frontends.value = emptyList()
+                homePages.value = emptyMap()
+            }
         }
 }
 
@@ -118,7 +127,7 @@ class PluginStreamResolver(
                 return it
             }
         }
-        if (Settings.shared.musicFrontendOwner.isNotEmpty()) PluginServicesStore.current?.awaitReady()
+        if (Settings.shared.musicFrontendOwner.toHomeSelection() is HomeSelection.Plugin) PluginServicesStore.current?.awaitReady()
         if (offlineOnly() || hints.isLocal == true || song?.isLocal == true) throw NoPlayableSourceException()
 
         val resolved =

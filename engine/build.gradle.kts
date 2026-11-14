@@ -33,7 +33,11 @@ kotlin {
         }
         getByName("desktopMain") {
             dependsOn(jvmSharedMain)
-            dependencies { implementation(compose.desktop.currentOs) }
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                implementation(libs.jna)
+                implementation(libs.jna.platform)
+            }
         }
         getByName("androidMain") { dependsOn(jvmSharedMain) }
         getByName("desktopTest").dependencies {

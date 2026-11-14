@@ -3,6 +3,7 @@ package dev.metrofuse.runtime
 import dev.metrofuse.api.API_VERSION
 import dev.metrofuse.api.COMPOSE_ABI
 import dev.metrofuse.api.Manifest
+import kotlinx.serialization.json.jsonObject
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -12,7 +13,6 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
-import kotlinx.serialization.json.jsonObject
 
 /** Imports .mfp JavaScript archives and direct .jar/.apk native artifacts. */
 class PackageStore(private val root: File, private val platform: String) {
@@ -189,7 +189,19 @@ class PackageStore(private val root: File, private val platform: String) {
             }
             manifest.minimumHostVersion?.let(SemVer::parse)
             manifest.icon?.let(::validatePath)
-            require(manifest.settings.map { it.key }.toSet().size == manifest.settings.size) { "Duplicate setting keys" }
+            manifest.home?.let { home ->
+                home.title?.let { require(it.isNotBlank() && it.length <= 120) }
+                home.icon?.let {
+                    validatePath(it)
+                    require(it.startsWith("assets/"))
+                }
+            }
+            require(
+                manifest.settings
+                    .map { it.key }
+                    .toSet()
+                    .size == manifest.settings.size,
+            ) { "Duplicate setting keys" }
             manifest.settings.forEach { PersistentPluginSettings.validate(it, it.default) }
             require(manifest.integrity.values.all { it.matches(Regex("[a-f0-9]{64}")) }) { "Invalid SHA-256 digest" }
         }

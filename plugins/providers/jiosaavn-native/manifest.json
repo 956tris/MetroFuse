@@ -8,7 +8,7 @@
   "platforms": ["desktop", "android"],
   "entryClass": "dev.metrofuse.jiosaavn.JioSaavnPlugin",
   "composeAbi": "kotlin-2.4.21_compose-1.13.0-beta02_api-1.1.0",
-  "capabilities": ["search", "metadata", "catalog", "audio", "settings"],
+  "capabilities": ["home", "search", "metadata", "catalog", "audio", "settings"],
   "description": "Native JioSaavn catalog and full-song audio provider for desktop and Android.",
   "settings": [
     {"key": "previewEnabled", "title": "Allow public previews when full audio is unavailable", "type": "BOOLEAN", "default": true},

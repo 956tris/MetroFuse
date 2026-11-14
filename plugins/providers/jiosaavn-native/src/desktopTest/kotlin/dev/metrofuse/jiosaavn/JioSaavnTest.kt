@@ -1,6 +1,7 @@
 package dev.metrofuse.jiosaavn
 
 import dev.metrofuse.api.AudioQuery
+import dev.metrofuse.api.HomeLayout
 import dev.metrofuse.api.HttpRequest
 import dev.metrofuse.api.HttpResponse
 import dev.metrofuse.api.MetadataDocument
@@ -27,6 +28,41 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class JioSaavnTest {
+    @Test
+    fun homePreservesServiceTitlesOrderingAndCatalogTypes() {
+        val data =
+            Json.parseToJsonElement(
+                """
+            {"modules":{"songs":{"source":"songs","title":"Tracks &amp; more","position":2},
+              "mixed":{"source":"mixed","title":"Albums","position":1}},
+              "songs":[{"id":"song_1","type":"song","title":"Song"}],
+              "mixed":[{"id":"album_1","type":"album","title":"Album"},{"id":"radio_1","type":"radio","title":"Unsupported"}]}
+        """,
+            ) as JsonObject
+        val shelves = JioHome.shelves(data)
+        assertEquals(listOf("Albums", "Tracks & more"), shelves.map { it.title })
+        assertEquals(listOf(HomeLayout.CARDS, HomeLayout.ROWS_GRID), shelves.map { it.layout })
+        assertEquals(listOf(1, 1), shelves.map { it.items.size })
+        assertEquals(
+            "album_1",
+            shelves
+                .first()
+                .items
+                .single()
+                .album
+                ?.id,
+        )
+        assertEquals(
+            "jiosaavn:track:song_1",
+            shelves
+                .last()
+                .items
+                .single()
+                .track
+                ?.id,
+        )
+    }
+
     private val identity = TrackIdentity("jiosaavn:track:western_1")
     private val locator = "https://aac.saavncdn.com/123/fixture_96.mp4"
 

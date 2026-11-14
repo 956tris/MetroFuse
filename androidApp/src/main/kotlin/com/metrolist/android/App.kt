@@ -70,6 +70,7 @@ import com.metrolist.shared.state.coreModule
 import com.metrolist.shared.youtube.di.sharedModule
 import com.metrolist.shared.youtube.playback.AndroidContextProvider
 import com.metrolist.shared.youtube.playback.PlaybackNetworkStateStore
+import dev.metrofuse.runtime.androidCredentialStore
 import dev.metrofuse.runtime.initializeNativePlatform
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -252,7 +253,12 @@ class App :
         }
         Timber.tag(TAG).d("Koin init complete elapsed=%dms", SystemClock.elapsedRealtime() - koinStart)
         initializeNativePlatform(applicationContext)
-        MetroFuseHost.configure(File(filesDir, "plugins"), "android", get<CoroutineScope>())
+        MetroFuseHost.configure(
+            File(filesDir, "plugins"),
+            "android",
+            get<CoroutineScope>(),
+            androidCredentialStore(File(noBackupFilesDir, "plugin-credentials")),
+        )
         MetroFuseHost.attachController(AndroidPlaybackController(get<PlayerConnection>(), get<CoroutineScope>()))
 
         get<CoroutineScope>().launch(Dispatchers.Main.immediate) {

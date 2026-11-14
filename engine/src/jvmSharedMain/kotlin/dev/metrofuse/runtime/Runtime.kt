@@ -1,24 +1,24 @@
 package dev.metrofuse.runtime
 
+import androidx.compose.ui.graphics.ImageBitmap
 import com.dokar.quickjs.*
 import com.dokar.quickjs.binding.*
 import dev.metrofuse.api.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
-import java.nio.file.StandardCopyOption
-import java.nio.file.AtomicMoveNotSupportedException
-import java.nio.file.Files
-import java.util.UUID
-import androidx.compose.ui.graphics.ImageBitmap
 import java.io.File
 import java.io.InputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.channels.Channel
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 val codec = Json { ignoreUnknownKeys = false; prettyPrint = true; encodeDefaults = true }
 data class PluginStatus(val manifest: Manifest, val directory: File, val state: String = "Installed", val error: String? = null,
@@ -26,7 +26,14 @@ data class PluginStatus(val manifest: Manifest, val directory: File, val state: 
     val history: List<LifecycleTransition> = listOf(LifecycleTransition(LifecyclePhase.DISCOVERED),LifecycleTransition(LifecyclePhase.INSTALLED)))
 private interface JavaScriptBoundService : JsonService
 
-class Runtime(val storage: File, val platform: String, parentScope: CoroutineScope, val host: HostServices, private val hostVersion: String? = null) {
+class Runtime(
+    val storage: File,
+    val platform: String,
+    parentScope: CoroutineScope,
+    val host: HostServices,
+    private val hostVersion: String? = null,
+    private val credentialStore: CredentialStore = UnavailableCredentialStore,
+) {
     private val runtimeJob = SupervisorJob(parentScope.coroutineContext[Job])
     val scope = CoroutineScope(parentScope.coroutineContext + runtimeJob)
     val registry = Registry()
@@ -38,6 +45,9 @@ class Runtime(val storage: File, val platform: String, parentScope: CoroutineSco
     val plugins = MutableStateFlow<List<PluginStatus>>(emptyList())
     val logs = MutableStateFlow<List<String>>(emptyList())
     val recovery = MutableStateFlow(false)
+    val logins = PluginLogins(scope, credentialStore)
+    val homes = PluginHomes(scope)
+    val homeSources = plugins.map(::pluginHomeSources).stateIn(scope, SharingStarted.Eagerly, emptyList())
     private val gate = Mutex()
     private val initialization = Mutex()
     private val packageOperations = Mutex()
@@ -304,53 +314,115 @@ class Runtime(val storage: File, val platform: String, parentScope: CoroutineSco
             registry.order("lifecycle.activate", closure).forEach { enable(it) }
         } catch (e: Exception) { ids.forEach { status(it, "Failed", e.toString()) }; log("host", "Activation graph rejected: $e") }
     }
-    suspend fun enable(id: String) = withContext(Dispatchers.Default) { gate.withLock {
-        check(!closing.get()) { "Runtime is closed" }
-        if (sessions.containsKey(id)) return@withLock
-        val p = plugins.value.first { it.manifest.id == id }
-        status(id, "Loading")
-        var session: Session? = null
-        beginRisk()
-        try {
-            val settings = pluginSettings(id)
-            session = Session(p, settings)
-            sessions[id] = session
-            if (p.directory.parentFile.canonicalFile == File(storage, "installed").canonicalFile) withContext(Dispatchers.IO) { store.verify(p.directory) }
-            PluginOrdering.validateDependencies(plugins.value.associate { it.manifest.id to it.manifest }, listOf(id))
-            require(p.manifest.dependencies.keys.all { dep -> plugins.value.any { it.manifest.id == dep && it.state == "Enabled" } }) { "Dependencies must be enabled" }
-            if (p.manifest.runtime == "javascript") session.startJs()
-            if (p.manifest.runtime == "kotlin") {
-                require(p.manifest.composeAbi == COMPOSE_ABI) { "Native Compose ABI mismatch: rebuild plugin with $COMPOSE_ABI" }
-                val file = File(p.directory, if (platform == "desktop") "native/plugin.jar" else "native/plugin.apk")
-                session.native = loadNative(file.absolutePath, requireNotNull(p.manifest.entryClass))
-                if (session.native!!.requiresRestartForReplacement) nativeRestartRequiredIds.add(id)
-                withTimeout(30000) { session.native!!.plugin.start(session.context) }
+    suspend fun enable(id: String) =
+        withContext(Dispatchers.Default) {
+            gate.withLock {
+                check(!closing.get()) { "Runtime is closed" }
+                if (sessions.containsKey(id)) return@withLock
+                val p = plugins.value.first { it.manifest.id == id }
+                status(id, "Loading")
+                var session: Session? = null
+                beginRisk()
+                try {
+                    val settings = pluginSettings(id)
+                    session = Session(p, settings)
+                    sessions[id] = session
+                    if (p.directory.parentFile.canonicalFile ==
+                        File(storage, "installed").canonicalFile
+                    ) {
+                        withContext(Dispatchers.IO) { store.verify(p.directory) }
+                    }
+                    PluginOrdering.validateDependencies(plugins.value.associate { it.manifest.id to it.manifest }, listOf(id))
+                    require(
+                        p.manifest.dependencies.keys.all { dep ->
+                            plugins.value.any { it.manifest.id == dep && it.state == "Enabled" }
+                        },
+                    ) { "Dependencies must be enabled" }
+                    if (p.manifest.runtime == "javascript") session.startJs()
+                    if (p.manifest.runtime == "kotlin") {
+                        require(p.manifest.composeAbi == COMPOSE_ABI) { "Native Compose ABI mismatch: rebuild plugin with $COMPOSE_ABI" }
+                        val file = File(p.directory, if (platform == "desktop") "native/plugin.jar" else "native/plugin.apk")
+                        session.native = loadNative(file.absolutePath, requireNotNull(p.manifest.entryClass))
+                        if (session.native!!.requiresRestartForReplacement) nativeRestartRequiredIds.add(id)
+                        withTimeout(30000) { session.native!!.plugin.start(session.context) }
+                    }
+                    require(p.manifest.runtime in listOf("javascript", "kotlin"))
+                    phase(id, LifecyclePhase.LOADED)
+                    phase(id, LifecyclePhase.ENABLED)
+                    session.publish()
+                    if ("home" in p.manifest.capabilities) session.bindHome()
+                    if ("login" in p.manifest.capabilities) session.bindLogin()
+                    status(id, "Enabled")
+                    desiredEnabled = desiredEnabled + id
+                    saveConfiguration()
+                    log(id, "Enabled external ${p.manifest.runtime} plugin")
+                    failureCounts = failureCounts - id
+                    scope.launch { events.publish("plugin_enabled", buildJsonObject { put("id", id) }) }
+                } catch (e: Throwable) {
+                    homes.unbind(id)
+                    logins.unbind(id)
+                    withContext(NonCancellable) {
+                        try {
+                            session?.close()
+                        } catch (cleanup: Throwable) {
+                            log(id, "Cleanup failed: $cleanup")
+                        }
+                    }
+                    sessions.remove(id)
+                    registry.remove(id)
+                    status(id, "Failed", e.toString())
+                    log(id, e.stackTraceToString())
+                    desiredEnabled = desiredEnabled - id
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        recordFailure(id)
+                        saveConfiguration()
+                    }
+                    if (e is CancellationException) throw e
+                } finally {
+                    endRisk()
+                }
+                refreshMetadata()
             }
-            require(p.manifest.runtime in listOf("javascript", "kotlin"))
-            phase(id,LifecyclePhase.LOADED); phase(id,LifecyclePhase.ENABLED)
-            session.publish()
-            status(id, "Enabled"); desiredEnabled = desiredEnabled + id; saveConfiguration(); log(id, "Enabled external ${p.manifest.runtime} plugin")
-            failureCounts = failureCounts - id
-            scope.launch { events.publish("plugin_enabled", buildJsonObject { put("id", id) }) }
-        } catch (e: Throwable) {
-            withContext(NonCancellable) { try { session?.close() } catch (cleanup: Throwable) { log(id, "Cleanup failed: $cleanup") } }
-            sessions.remove(id); registry.remove(id); status(id, "Failed", e.toString()); log(id, e.stackTraceToString())
-            desiredEnabled = desiredEnabled - id
-            withContext(NonCancellable + Dispatchers.IO) { recordFailure(id); saveConfiguration() }
-            if (e is CancellationException) throw e
-        } finally { endRisk() }
-        refreshMetadata()
-    } }
-    suspend fun disable(id: String) = withContext(Dispatchers.Default) { gate.withLock {
-        val dependents = plugins.value.filter { it.state == "Enabled" && id in it.manifest.dependencies }
-        require(dependents.isEmpty()) { "Disable dependents first: ${dependents.map { it.manifest.id }}" }
-        stop(id); refreshMetadata()
-        desiredEnabled = desiredEnabled - id; saveConfiguration()
-    } }
+        }
+
+    suspend fun disable(id: String) =
+        withContext(Dispatchers.Default) {
+            gate.withLock {
+                val dependents = plugins.value.filter { it.state == "Enabled" && id in it.manifest.dependencies }
+                require(dependents.isEmpty()) { "Disable dependents first: ${dependents.map { it.manifest.id }}" }
+                stop(id)
+                refreshMetadata()
+                desiredEnabled = desiredEnabled - id
+                saveConfiguration()
+            }
+        }
+
     private suspend fun stop(id: String) {
-        try { sessions.remove(id)?.close(); status(id, "Installed"); phase(id,LifecyclePhase.DISABLED); if(plugins.value.firstOrNull { it.manifest.id==id }?.manifest?.runtime=="javascript") phase(id,LifecyclePhase.UNLOADED) }
-        catch (e: Throwable) { status(id, "Failed", "Cleanup: $e"); log(id, "Cleanup: $e") }
-        finally { registry.remove(id); scope.launch { events.publish("plugin_disabled", buildJsonObject { put("id", id) }) } }
+        homes.unbind(id)
+        logins.unbind(id)
+        try {
+            sessions.remove(id)?.close()
+            status(id, "Installed")
+            phase(id, LifecyclePhase.DISABLED)
+            if (plugins.value
+                    .firstOrNull {
+                        it.manifest.id ==
+                            id
+                    }?.manifest
+                    ?.runtime ==
+                "javascript"
+            ) {
+                phase(id, LifecyclePhase.UNLOADED)
+            }
+        } catch (
+            e: Throwable,
+        ) {
+            status(id, "Failed", "Cleanup: $e")
+            log(id, "Cleanup: $e")
+        } finally {
+            registry.remove(id)
+            scope.launch { events.publish("plugin_disabled", buildJsonObject { put("id", id) }) }
+        }
     }
     private fun shutdownOrder(): List<String> = try { registry.order("lifecycle.activate",sessions.keys.toList()).asReversed() }
         catch(e: IllegalArgumentException) { log("host","Shutdown graph invalid: $e"); sessions.keys.sortedDescending() }
@@ -433,6 +505,81 @@ class Runtime(val storage: File, val platform: String, parentScope: CoroutineSco
         fun publish() { registry.publish(staged,id); committed = true }
         var js: QuickJs? = null
         var native: NativeHandle? = null
+        private val jsLoginState = MutableStateFlow(PluginLoginState())
+
+        fun bindHome() {
+            val provider = native?.plugin as? HomePlugin
+            homes.bind(id) { request ->
+                owned {
+                    val shelves =
+                        if (js !=
+                            null
+                        ) {
+                            codec.decodeFromString<List<HomeShelf>>(
+                                evaluate("JSON.stringify(await globalThis.__home?.(${codec.encodeToString(request)}) ?? [])"),
+                            )
+                        } else {
+                            provider?.getHome(request).orEmpty()
+                        }
+                    validateHome(shelves)
+                    pipelines.home(id, shelves)
+                }
+            }
+        }
+
+        fun bindLogin() {
+            val provider = native?.plugin as? LoginPlugin
+            logins.bind(
+                id,
+                token,
+                provider?.loginState ?: jsLoginState,
+                request = {
+                    owned {
+                        if (js !=
+                            null
+                        ) {
+                            codec.decodeFromString<LoginRequest?>(evaluate("JSON.stringify(await globalThis.__login?.request?.() ?? null)"))
+                        } else {
+                            provider?.loginRequest()
+                        }
+                    }
+                },
+                login = { credentials ->
+                    owned {
+                        if (js !=
+                            null
+                        ) {
+                            val result = codec.decodeFromString<PluginLoginState>(
+                                evaluate(
+                                    "JSON.stringify(await globalThis.__login?.login?.(${codec.encodeToString(
+                                        credentials,
+                                    )}) ?? {loggedIn:false})",
+                                ),
+                            )
+                            jsLoginState.value = result
+                            result
+                        } else {
+                            provider?.login(credentials) ?: PluginLoginState()
+                        }
+                    }
+                },
+                logout = {
+                    owned {
+                        if (js !=
+                            null
+                        ) {
+                            evaluate("JSON.stringify(await globalThis.__login?.logout?.() ?? null)")
+                            jsLoginState.value =
+                                PluginLoginState()
+                        } else {
+                            provider?.logout()
+                        }
+                        Unit
+                    }
+                },
+            )
+        }
+
         @Volatile var alive = true
         private fun requireActive() { check(alive && job.isActive) { "Plugin is no longer active" } }
         private suspend fun <T> owned(block: suspend () -> T): T {
@@ -555,8 +702,21 @@ class Runtime(val storage: File, val platform: String, parentScope: CoroutineSco
                 validateTree(tree)
                 registrations.ui(UiContribution(id, point, Layer.valueOf(args[2] as String), tree = tree)); null
             }
-            q.function("__patch") { args -> requireActive(); registrations.patch(id, args[0] as String, codec.decodeFromString<Map<String, String>>(args[1] as String)); null }
-            q.function("__log") { args -> log(id, args.joinToString()); null }
+            q.function("__patch") { args ->
+                requireActive()
+                registrations.patch(id, args[0] as String, codec.decodeFromString<Map<String, String>>(args[1] as String))
+                null
+            }
+            q.function("__log") { args ->
+                log(id, args.joinToString())
+                null
+            }
+            q.function("__loginState") { args ->
+                requireActive()
+                require("login" in p.manifest.capabilities)
+                jsLoginState.value = codec.decodeFromString<PluginLoginState>(args[0] as String)
+                null
+            }
             q.asyncFunction("__player") { args ->
                 bridgeWaiters.incrementAndGet()
                 try { withContext(Dispatchers.Main.immediate) {
@@ -744,6 +904,9 @@ class Runtime(val storage: File, val platform: String, parentScope: CoroutineSco
               playerCapabilities: () => JSON.parse(__playerCapabilities()),
               settings: Object.freeze({get: async key => JSON.parse(await __settings('get'))[key], all: async () => JSON.parse(await __settings('get')), set: async (key,value) => JSON.parse(await __settings('set',key,JSON.stringify(value)))}),
               storage: Object.freeze({get: async key => JSON.parse(await __storage('get',key)), set: async (key,value) => JSON.parse(await __storage('set',key,JSON.stringify(value))), remove: async key => __storage('set',key,'null')}),
+              login: callbacks => { if(!callbacks || typeof callbacks.request!=='function' || typeof callbacks.login!=='function')throw Error('Login requires request and login callbacks'); if(callbacks.logout!=null)requireFunction(callbacks.logout);globalThis.__login=callbacks; },
+              loginState: state => __loginState(JSON.stringify(state)),
+              home: callback => { globalThis.__home=requireFunction(callback); },
               http: async request => JSON.parse(await __http(JSON.stringify(request))),
               track: async identity => JSON.parse(await __catalog(JSON.stringify(identity))),
               service: (name, fn) => { __services[name] = requireFunction(fn); __service(name); },

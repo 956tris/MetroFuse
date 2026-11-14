@@ -6,6 +6,8 @@ import dev.metrofuse.api.AudioQuery
 import dev.metrofuse.api.AudioResult
 import dev.metrofuse.api.AudioSource
 import dev.metrofuse.api.CatalogProvider
+import dev.metrofuse.api.HomePlugin
+import dev.metrofuse.api.HomeRequest
 import dev.metrofuse.api.HttpRequest
 import dev.metrofuse.api.MetadataContribution
 import dev.metrofuse.api.MetadataRequest
@@ -30,8 +32,13 @@ import kotlinx.serialization.json.booleanOrNull
 import java.net.URLEncoder
 import kotlin.random.Random
 
-class JioSaavnPlugin : NativePlugin {
+class JioSaavnPlugin :
+    NativePlugin,
+    HomePlugin {
     private var api: JioApi? = null
+
+    override suspend fun getHome(request: HomeRequest) =
+        JioHome.shelves(checkNotNull(api).call("webapi.getLaunchData", mapOf("hl" to request.language, "gl" to request.country)))
 
     override suspend fun start(context: PluginContext) {
         val api = JioApi(context.network, context.settings)

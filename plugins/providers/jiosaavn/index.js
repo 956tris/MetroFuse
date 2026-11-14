@@ -2,6 +2,7 @@
 import {catalogId,parseSong,parseSongs,parseAlbum,parseArtist,parsePlaylist,previewStream} from './modules/catalog.js';
 import {decryptMediaUrl,fullSongStream,resolveSongStream} from './modules/media.js';
 import {catalogUrl,catalogHeaders,catalogRoutingIp} from './modules/request.js';
+import {homeShelves} from './modules/home.js';
 
 const cache = new Map();
 let host;
@@ -34,6 +35,7 @@ globalThis.plugin = {
   async init(context) {
     host = context;
     routingIp = catalogRoutingIp();
+    host.home(async request => homeShelves(await api('webapi.getLaunchData',{hl:request.language,gl:request.country})));
     host.search('jiosaavn.search', async request => {
       if (!String(request.query ?? '').trim()) return {tracks:[]};
       const params = {q:request.query,n:String(Math.max(1,Math.min(request.limit ?? 30,30))),p:'1'};

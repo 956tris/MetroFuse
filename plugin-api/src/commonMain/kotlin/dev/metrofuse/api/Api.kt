@@ -1,8 +1,8 @@
 package dev.metrofuse.api
 
 import androidx.compose.runtime.Composable
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
@@ -110,4 +110,5 @@ interface NativePlugin {
     val icon: String? = null,
     val minimumHostVersion: String? = null,
     val settings: List<SettingDefinition> = emptyList(),
+    val home: HomeSourceMetadata? = null,
 )
