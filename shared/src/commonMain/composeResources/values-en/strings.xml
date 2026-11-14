@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Imported from the official Metrolist Android translations. -->
 <!-- Source revision: 6ee482cbe3a076092436a3cb1b53571ffead3097 -->
-<!-- See docs/translation-attribution.md for credits and licensing. -->
+<!-- See docs/translation-attribution for credits and licensing. -->
 <resources>
     <string name="song_cache_location_custom">Custom folder</string>
     <string name="song_cache_location_custom_desc">Folder selected with the Storage Access Framework</string>

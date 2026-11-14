@@ -95,3 +95,10 @@ HANDOFF.md
 .codeium
 .opencode
 .mcp.json
+
+# Documentation is maintained separately; keep local notes out of Git.
+*.md
+*.MD
+!README.md
+!readme.md
+desktopApp/src/desktopMain/resources/windows/Microsoft.Web.WebView2.*.xml

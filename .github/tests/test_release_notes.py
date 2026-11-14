@@ -67,7 +67,7 @@ class StableReleaseNotesTest(unittest.TestCase):
         (root / '.github').mkdir()
         (root / '.github/scripts').symlink_to(PARSER.parent, target_is_directory=True)
         (root / 'docs').mkdir()
-        (root / 'docs/changelog.md').write_text(f'---v14.0.0\n{notes}\n---v13.7.0\nOld notes\n')
+        (root / 'docs/changelog').write_text(f'---v14.0.0\n{notes}\n---v13.7.0\nOld notes\n')
         (root / 'androidApp').mkdir()
         (root / 'androidApp/build.gradle.kts').write_text(f'    versionCode = {version_code}\n')
         fastlane = root / f'fastlane/metadata/android/en-US/changelogs/{version_code}.txt'
@@ -90,11 +90,11 @@ class StableReleaseNotesTest(unittest.TestCase):
                 root = Path(directory)
                 fastlane = self.fixture(root)
                 if case == 'missing entry':
-                    (root / 'docs/changelog.md').write_text('---v13.7.0\nOld notes\n')
+                    (root / 'docs/changelog').write_text('---v13.7.0\nOld notes\n')
                 elif case == 'todo':
-                    (root / 'docs/changelog.md').write_text('---v14.0.0\nTODO\n')
+                    (root / 'docs/changelog').write_text('---v14.0.0\nTODO\n')
                 elif case == 'empty entry':
-                    (root / 'docs/changelog.md').write_text('---v14.0.0\n\n')
+                    (root / 'docs/changelog').write_text('---v14.0.0\n\n')
                 elif case == 'missing store notes':
                     fastlane.rename(fastlane.with_name('154.txt'))
                 elif case == 'empty store notes':

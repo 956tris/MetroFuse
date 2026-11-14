@@ -1,4 +1,4 @@
-/* MetroFuse contributors, GPL-3.0. See SOURCE.md. */
+/* MetroFuse contributors, GPL-3.0. See SOURCE. */
 const failure = code => ({error:{code}});
 
 export function guestMusicContext(source) {

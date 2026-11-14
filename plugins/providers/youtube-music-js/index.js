@@ -1,4 +1,4 @@
-/* MetroFuse contributors, GPL-3.0. See SOURCE.md for provenance and limits. */
+/* MetroFuse contributors, GPL-3.0. See SOURCE for provenance and limits. */
 import {videoId,search,page} from './modules/catalog.js';
 import {jsonValue,guestMusicContext,selectAudio,signaturePlan} from './modules/media.js';
 

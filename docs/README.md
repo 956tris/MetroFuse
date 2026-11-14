@@ -1,40 +1,31 @@
-# Contributing to Metrolist
+# MetroFuse documentation
 
-To install the app, use the [installation guides](install/README.md): [Android](install/android.md), [iOS](install/ios.md), [Windows](install/windows.md), [macOS](install/macos.md) and [Linux](install/linux.md).
+The public [plugin authoring guide](https://github.com/956tris/MetroFuse-Plugin-Docs) covers API 1.1.0, MFP/JAR/APK development, Home/login, packaging, installation and troubleshooting.
 
-Start with [development.md](development.md) to build the app and find the code for your change. Then run the relevant [checks](checks.md). Read [strings.md](strings.md) when adding UI text or changing translations.
+The application retains its [README](../README.md) and [installation index](install/README.md). Technical references from before documentation cleanup remain available at [the previous source revision](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs). Local development notes stay outside Git tracking.
 
-Contributor rules are in [AGENTS.md](../AGENTS.md).
+Required legal and build inputs remain available as [translation attribution](translation-attribution), [fixture provenance](test-fixtures), [release history](changelog) and [security policy](../SECURITY). Provider packages carry their SOURCE files and license notices.
 
-## References for specific changes
+## Rejected features
 
-Read these when working on the corresponding feature. They are not prerequisites for a first contribution.
+The following list preserves the upstream issue-triage policy. Do not apply it to bugs in existing functionality. MetroFuse's existing plugin architecture remains part of this fork.
 
-| Area | Reference |
-| --- | --- |
-| Desktop packaging, login, logs and runtime | [Desktop](desktop.md) |
-| Built-in local music scanning and offline playback | [Offline player](offline-player.md) |
-| Desktop Native Image experiment and measurements | [Native Image experiment](desktop-native-image.md) |
-| Package-manager recipes and distribution automation | [Distribution](distribution.md) |
-| Artwork, animated covers and system colors | [Rendering](rendering.md) |
-| Media menus, action ownership and platform differences | [Media menus](media-menus.md) |
-| YouTube integration, pagination and live tests | [InnerTube](innertube.md) |
-| Cache, downloads and storage safety | [Audio caching](audio-cache.md) |
-| Crash recovery, saved reports and downgrade safety | [Crash recovery](crash-recovery.md) |
-| Android service binding and startup | [Android startup](android-startup.md) |
-| Device pairing and remote playback | [Device Connect](device-connect.md) |
-| Shared rooms, codecs and invitation links | [Listen Together](listen-together.md) |
-| Playback failures and automatic error skipping | [Playback errors](playback.md) |
-| Audio processing and equalizer profiles | [Audio processing](audio-processing.md) |
-| iOS Opus playback | [iOS Opus](ios-opus.md) |
+- Liquid Glass UI.
+- Other streaming services as music-playback backends.
+- Google Play Store publication or distribution support.
+- Comment sections.
+- YouTube Shorts.
+- Music alarms.
+- New-music notifications.
+- Multiple queues.
+- Listen Together profile pictures taken directly from local storage without uploading them.
+- Tizen TV support.
+- A web/browser client.
+- Audio visualizers.
+- Custom app icons.
 
-## Release and CI
+Playlist imports, artwork and scrobbling are separate from streaming backends.
 
-- [Releasing](releasing.md) covers version changes and releases.
-- [Build performance](build-performance.md) covers release build bottlenecks, caching and compiler settings.
-- [Running without kotlin-reflect](kotlin-reflect.md) lists restrictions on the embedded server.
-- [Test fixtures](test-fixtures.md) records provenance and regeneration commands.
-- [Japanese romanization](japanese-romanization.md) and [Android and desktop Mandarin data](desktop-mandarin.md) cover dictionary sources, packaging and compatibility.
-- [Translation attribution](translation-attribution.md) records imported translation credits and revisions.
+## Writing to maintainers
 
-Stable release history is in [changelog.md](changelog.md).
+Search open and closed issues and pull requests before filing a duplicate. Keep reports factual and include the app version, OS, reproduction steps and relevant diagnostics. Remove credentials and private account data. Ask a maintainer before proposing a listed rejected feature; playlist imports, artwork and scrobbling are separate from streaming backends.

@@ -1,4 +1,4 @@
-/* Metrolist Project (C) 2026, GPL-3.0. See SOURCE.md. */
+/* Metrolist Project (C) 2026, GPL-3.0. See SOURCE. */
 import {parseSong,previewStream} from './catalog.js';
 
 // DES permutations are the public FIPS 46-3 tables; this module only decodes

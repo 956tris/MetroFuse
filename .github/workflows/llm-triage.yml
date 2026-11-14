@@ -26,7 +26,7 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: |
-            AGENTS.md
+            docs/README.md
             .github/scripts/llm-triage.cjs
           sparse-checkout-cone-mode: false
       - name: Triage with OpenRouter Decisions

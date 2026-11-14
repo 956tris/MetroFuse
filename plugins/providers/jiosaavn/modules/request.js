@@ -1,4 +1,4 @@
-/* Metrolist Project (C) 2026, GPL-3.0. See SOURCE.md. */
+/* Metrolist Project (C) 2026, GPL-3.0. See SOURCE. */
 const API = 'https://www.jiosaavn.com/api.php';
 
 export function catalogUrl(call, parameters) {

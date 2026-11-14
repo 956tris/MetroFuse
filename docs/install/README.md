@@ -1,6 +1,6 @@
 # Install Metrolist KMP
 
-Choose your platform: [Android](android.md), [iOS and iPadOS](ios.md), [Windows](windows.md), [macOS](macos.md), or [Linux](linux.md).
+Choose your platform: [Android](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/android.md), [iOS and iPadOS](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/ios.md), [Windows](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/windows.md), [macOS](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/macos.md), or [Linux](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/linux.md).
 
 ## Get the package
 
@@ -17,7 +17,7 @@ The [release workflow](../../.github/workflows/release.yml) defines these packag
 | macOS | `metrolist-desktop-macos-arm64-VERSION.dmg`, `metrolist-desktop-macos-x64-VERSION.dmg` |
 | Linux | `metrolist-desktop-linux-x64-VERSION.AppImage`, `metrolist-desktop-linux-arm64-VERSION.AppImage` |
 
-The workflows do not publish MSI, DEB, RPM or Flatpak files. DEB/RPM Gradle targets and a local Flatpak build exist, but they are not release downloads. See the [desktop reference](../desktop.md#native-packages) for local packaging.
+The workflows do not publish MSI, DEB, RPM or Flatpak files. DEB/RPM Gradle targets and a local Flatpak build exist, but they are not release downloads. See the [desktop reference](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/desktop.md#native-packages) for local packaging.
 
 ## Verify a download
 
@@ -56,6 +56,6 @@ For Android or iOS, you can verify the APK or IPA on a computer before transferr
 
 Export a backup from Metrolist's settings and keep it outside the installation directory or mobile app storage. Keep downloaded music separately if you need it. Do not assume a backup includes every downloaded audio file.
 
-Use the same platform, architecture and installation method for updates. Avoid downgrading a database created by a newer version; see [downgrade safety](../crash-recovery.md). Uninstalling a mobile app deletes its local data. Removing a desktop application can leave settings, credentials, caches and downloaded music behind.
+Use the same platform, architecture and installation method for updates. Avoid downgrading a database created by a newer version; see [downgrade safety](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/crash-recovery.md). Uninstalling a mobile app deletes its local data. Removing a desktop application can leave settings, credentials, caches and downloaded music behind.
 
-If installation or startup still fails, include the package filename, app version, OS version, CPU architecture and exact error in a report to the [issue tracker](https://github.com/MetrolistGroup/Metrolist/issues). For desktop failures, collect the [application log](../desktop.md#logs-and-profiling). Remove account details and tokens before sharing logs.
+If installation or startup still fails, include the package filename, app version, OS version, CPU architecture and exact error in a report to the [issue tracker](https://github.com/MetrolistGroup/Metrolist/issues). For desktop failures, collect the [application log](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/desktop.md#logs-and-profiling). Remove account details and tokens before sharing logs.

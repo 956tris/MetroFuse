@@ -13,7 +13,7 @@
 		B161A9B6D7F34140A19AC001 /* kuromoji.js in Resources */ = {isa = PBXBuildFile; fileRef = B161A9B6D7F34140A19AC101 /* kuromoji.js */; };
 		B161A9B6D7F34140A19AC002 /* kuromoji-bootstrap.js in Resources */ = {isa = PBXBuildFile; fileRef = B161A9B6D7F34140A19AC102 /* kuromoji-bootstrap.js */; };
 		B161A9B6D7F34140A19AC003 /* kuromoji-LICENSE-2.0.txt in Resources */ = {isa = PBXBuildFile; fileRef = B161A9B6D7F34140A19AC103 /* kuromoji-LICENSE-2.0.txt */; };
-		B161A9B6D7F34140A19AC004 /* kuromoji-NOTICE.md in Resources */ = {isa = PBXBuildFile; fileRef = B161A9B6D7F34140A19AC104 /* kuromoji-NOTICE.md */; };
+		B161A9B6D7F34140A19AC004 /* kuromoji-NOTICE.txt in Resources */ = {isa = PBXBuildFile; fileRef = B161A9B6D7F34140A19AC104 /* kuromoji-NOTICE.txt */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -25,7 +25,7 @@
 		B161A9B6D7F34140A19AC101 /* kuromoji.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = ../shared/src/iosMain/resources/kuromoji.js; sourceTree = SOURCE_ROOT; };
 		B161A9B6D7F34140A19AC102 /* kuromoji-bootstrap.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = ../shared/src/iosMain/resources/kuromoji-bootstrap.js; sourceTree = SOURCE_ROOT; };
 		B161A9B6D7F34140A19AC103 /* kuromoji-LICENSE-2.0.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../shared/src/iosMain/resources/kuromoji-LICENSE-2.0.txt; sourceTree = SOURCE_ROOT; };
-		B161A9B6D7F34140A19AC104 /* kuromoji-NOTICE.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = ../shared/src/iosMain/resources/kuromoji-NOTICE.md; sourceTree = SOURCE_ROOT; };
+		B161A9B6D7F34140A19AC104 /* kuromoji-NOTICE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = ../shared/src/iosMain/resources/kuromoji-NOTICE.txt; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -56,7 +56,7 @@
 				B161A9B6D7F34140A19AC101 /* kuromoji.js */,
 				B161A9B6D7F34140A19AC102 /* kuromoji-bootstrap.js */,
 				B161A9B6D7F34140A19AC103 /* kuromoji-LICENSE-2.0.txt */,
-				B161A9B6D7F34140A19AC104 /* kuromoji-NOTICE.md */,
+				B161A9B6D7F34140A19AC104 /* kuromoji-NOTICE.txt */,
 				A2402BE361735165BE944747 /* Configuration */,
 			);
 			sourceTree = "<group>";
@@ -145,7 +145,7 @@
 				B161A9B6D7F34140A19AC001 /* kuromoji.js in Resources */,
 				B161A9B6D7F34140A19AC002 /* kuromoji-bootstrap.js in Resources */,
 				B161A9B6D7F34140A19AC003 /* kuromoji-LICENSE-2.0.txt in Resources */,
-				B161A9B6D7F34140A19AC004 /* kuromoji-NOTICE.md in Resources */,
+				B161A9B6D7F34140A19AC004 /* kuromoji-NOTICE.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

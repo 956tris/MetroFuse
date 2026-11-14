@@ -54,7 +54,7 @@ def classify(paths):
         elif path.startswith("aur/"):
             selected.update(("arch", "repository"))
         elif path.startswith(("scripts/", ".github/tests/", ".github/scripts/", ".githooks/", "packaging/", "flatpak/", "fastlane/")) or path in (
-            "Makefile", "flake.nix", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore",
+            "Makefile", "flake.nix", "README.md", ".gitignore",
         ):
             selected.add("repository")
         else:
@@ -82,7 +82,7 @@ def metadata_only(base, head):
             before, after = (subprocess.check_output(["git", "show", f"{sha}:{path}"], text=True) for sha in (base, head))
             if properties_without_version(before) != properties_without_version(after):
                 return False
-        elif path == "docs/changelog.md" or re.fullmatch(r"fastlane/metadata/android/[^/]+/changelogs/[^/]+\.txt", path):
+        elif path == "docs/changelog" or re.fullmatch(r"fastlane/metadata/android/[^/]+/changelogs/[^/]+\.txt", path):
             continue
         else:
             return False

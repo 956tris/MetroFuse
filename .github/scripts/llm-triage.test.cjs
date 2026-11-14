@@ -4,7 +4,7 @@ const { readFileSync } = require('node:fs');
 const handle = require('./llm-triage.cjs');
 const { extractPolicy, searchQuery, decide, plainComment, marker, alreadyHandled, commentBody } = handle;
 
-const policy = extractPolicy(readFileSync('AGENTS.md', 'utf8'));
+const policy = extractPolicy(readFileSync('docs/README.md', 'utf8'));
 const repo = { owner: 'MetrolistGroup', repo: 'Metrolist' };
 const labels = ['bug', 'enhancement', 'duplicate', 'wontfix', 'needs-info', 'audio', 'size: small', 'confirmed']
   .map(name => ({ name, description: `${name} description` }));
@@ -25,7 +25,7 @@ function fixture(overrides = {}, kind = 'issue') {
   const comments = [];
   const item = { number: 42, title: 'Audio crashes', body: 'Details', state: 'open', updated_at: '2026-01-01',
     user: { type: 'User' }, author_association: 'NONE', ...(kind === 'PR' ? { pull_request: {} } : {}) };
-  const f = { calls, logs, comments, item, apiKey: 'test-key', readPolicy: () => readFileSync('AGENTS.md', 'utf8'),
+  const f = { calls, logs, comments, item, apiKey: 'test-key', readPolicy: () => readFileSync('docs/README.md', 'utf8'),
     core: { info: message => logs.push(message) },
     context: { repo, payload: { action: 'opened', [kind === 'PR' ? 'pull_request' : 'issue']: item } },
     fetchImpl: async (url, options) => {
@@ -64,7 +64,7 @@ function fixture(overrides = {}, kind = 'issue') {
 test('extracts current policy but never treats contributor policies as rejected features', () => {
   assert.ok(policy.rules.includes('Liquid Glass UI.'));
   assert.ok(policy.rejected.includes('Playlist imports, artwork and scrobbling'));
-  assert.ok(policy.writing.includes('unslop'));
+  assert.ok(policy.writing.includes('Keep reports factual'));
   assert.ok(policy.rules.every(rule => !rule.startsWith('Keep each PR')));
   assert.deepEqual(extractPolicy('## Rejected features\r\nText\r\n\r\n- New feature.\r\n\r\n- Other policy.\r\n## Writing to maintainers\r\nBe brief.\r\n').rules, ['New feature.']);
   assert.throws(() => extractPolicy('## Rejected features\n- Feature.'));

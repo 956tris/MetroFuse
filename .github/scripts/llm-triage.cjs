@@ -132,7 +132,7 @@ function questionsFor({ labels, candidates, rules }) {
 }
 
 async function handle({ github, context, core, fetchImpl = globalThis.fetch,
-  apiKey = process.env.OPENROUTER_API_KEY, readPolicy = () => readFileSync('AGENTS.md', 'utf8') }) {
+  apiKey = process.env.OPENROUTER_API_KEY, readPolicy = () => readFileSync('docs/README.md', 'utf8') }) {
   const eventItem = context.payload.pull_request || context.payload.issue;
   const kind = context.payload.pull_request ? 'PR' : 'issue';
   if (!['opened', 'reopened'].includes(context.payload.action) || eventItem?.user?.type !== 'User' ||

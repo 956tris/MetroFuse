@@ -116,7 +116,7 @@ releasedRequest.responseType = "arraybuffer";
 releasedRequest.onerror = error => { releasedDataError = error; };
 releasedRequest.send();
 assert.ok(releasedDataError);
-for (const file of ["kuromoji-LICENSE-2.0.txt", "kuromoji-NOTICE.md"]) {
+for (const file of ["kuromoji-LICENSE-2.0.txt", "kuromoji-NOTICE.txt"]) {
     assert.ok((await readFile(new URL(file, assetRoot))).length > 0);
 }
 console.log("Verified isolated full-IPADIC Kuromoji.js runtime and iOS dictionary bridge");

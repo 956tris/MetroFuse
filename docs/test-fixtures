@@ -81,4 +81,4 @@ To refresh, POST to `https://music.youtube.com/youtubei/v1/browse` with the brow
 
 ## Home renderer projection
 
-`HomeRendererParityTest` uses reduced synthetic JSON for ordinary and immersive Home headers, mix subtitle runs and initial/shelf/page continuation tokens. Its IDs, titles and artwork strings are invented; it is not a signed-in Home capture. `HomeShelfBuilderTest` exercises the shared data projection without rendering UI. See [Home projection](innertube.md#home) for the shared behavior.
+`HomeRendererParityTest` uses reduced synthetic JSON for ordinary and immersive Home headers, mix subtitle runs and initial/shelf/page continuation tokens. Its IDs, titles and artwork strings are invented; it is not a signed-in Home capture. `HomeShelfBuilderTest` exercises the shared data projection without rendering UI. See [Home projection](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/innertube.md#home) for the shared behavior.

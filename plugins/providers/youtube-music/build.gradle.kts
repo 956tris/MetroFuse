@@ -67,7 +67,7 @@ val providerJar =
         from(compilation.output.allOutputs)
         from(manifestFile)
         from(rootProject.file("LICENSE"))
-        from(layout.projectDirectory.file("SOURCE.md"))
+        from(layout.projectDirectory.file("SOURCE"))
         from({ providerJvm.files.map { zipTree(it) } }) {
             exclude("META-INF/MANIFEST.MF", "META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA")
         }
@@ -80,7 +80,7 @@ val preparePluginApk =
         into(preparedAndroid)
         from(manifestFile) { into("assets/metrofuse") }
         from(rootProject.file("LICENSE")) { into("assets") }
-        from(layout.projectDirectory.file("SOURCE.md")) { into("assets") }
+        from(layout.projectDirectory.file("SOURCE")) { into("assets") }
         from({ providerAndroid.files.map { zipTree(it) } }) {
             include("jni/**", "assets/**")
             eachFile { if (path.startsWith("jni/")) path = "lib/" + path.removePrefix("jni/") }

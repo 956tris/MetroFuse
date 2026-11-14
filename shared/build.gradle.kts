@@ -243,7 +243,7 @@ abstract class VerifyIosKuromojiPackagingTask : DefaultTask() {
         check(sha256(engine) == "ab0ac10f1c4a9b5e246e63e57b04ba14d3a6148cd7e8d62cb97a960d4f85a3e6")
         check(sha256(bootstrap) == "3a2f75400ef6f04301408701c2a2dbe23e614561df4aea3ab36504e9cca4ceb9")
         check(File(resources, "kuromoji-LICENSE-2.0.txt").isFile)
-        check(File(resources, "kuromoji-NOTICE.md").isFile)
+        check(File(resources, "kuromoji-NOTICE.txt").isFile)
         check(resources.listFiles().orEmpty().none { it.name.endsWith(".dat.gz") })
         val project = xcodeProject.get().asFile.readText()
         check(
@@ -251,7 +251,7 @@ abstract class VerifyIosKuromojiPackagingTask : DefaultTask() {
                 "kuromoji.js in Resources",
                 "kuromoji-bootstrap.js in Resources",
                 "kuromoji-LICENSE-2.0.txt in Resources",
-                "kuromoji-NOTICE.md in Resources",
+                "kuromoji-NOTICE.txt in Resources",
             ).all { it in project },
         )
     }

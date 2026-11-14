@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Imported from the official Metrolist Android translations. --><!-- Source revision: 6ee482cbe3a076092436a3cb1b53571ffead3097 --><!-- See docs/translation-attribution.md for credits and licensing. --><resources xmlns:tools="http://schemas.android.com/tools">
+<!-- Imported from the official Metrolist Android translations. --><!-- Source revision: 6ee482cbe3a076092436a3cb1b53571ffead3097 --><!-- See docs/translation-attribution for credits and licensing. --><resources xmlns:tools="http://schemas.android.com/tools">
     <string name="bitrate_value">%1$d kbit/s</string>
     <string name="sample_rate_value">%1$d Hz</string>
     <string name="import_error_unsupported_playlist_entries">Šajā atskaņošanas sarakstā ir lokāli faili vai tiešas saites, kam Android nevar piekļūt. Importējiet sarakstu ar YouTube saitēm vai izvēlieties lokālos failus datorā.</string>

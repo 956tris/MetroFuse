@@ -1,4 +1,4 @@
-/* Metrolist Project (C) 2026, GPL-3.0. See SOURCE.md for source attribution. */
+/* Metrolist Project (C) 2026, GPL-3.0. See SOURCE for source attribution. */
 import {catalogId,parseSong,parseSongs,parseAlbum,parseArtist,parsePlaylist,previewStream} from './modules/catalog.js';
 import {decryptMediaUrl,fullSongStream,resolveSongStream} from './modules/media.js';
 import {catalogUrl,catalogHeaders,catalogRoutingIp} from './modules/request.js';

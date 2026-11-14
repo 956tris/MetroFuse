@@ -48,7 +48,7 @@ def main():
         f"examples/native-{name}.jar": root / f"plugins/native-examples/build/outputs/plugins/native-{name}.jar"
         for name in ("minimal", "audio", "settings")
     })
-    examples.update({"GETTING-STARTED.txt": root / "docs/windows-test-build.md", "METROFUSE-LICENSE.txt": root / "LICENSE"})
+    examples.update({"GETTING-STARTED.txt": root / "packaging/windows-test/README.md", "METROFUSE-LICENSE.txt": root / "LICENSE"})
     for file in (source, *examples.values()):
         if not file.is_file():
             raise FileNotFoundError(file)

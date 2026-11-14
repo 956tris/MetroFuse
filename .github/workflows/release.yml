@@ -57,7 +57,7 @@ jobs:
           APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          bash .github/scripts/parse_changelog.sh "$APP_VERSION" docs/changelog.md > "$RUNNER_TEMP/release-notes.md"
+          bash .github/scripts/parse_changelog.sh "$APP_VERSION" docs/changelog > "$RUNNER_TEMP/release-notes.md"
           version_code="$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' androidApp/build.gradle.kts)"
           [[ "$version_code" =~ ^[0-9]+$ ]] || {
             echo "Could not read Android versionCode from androidApp/build.gradle.kts" >&2
@@ -210,7 +210,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             .github/scripts/parse_changelog.sh
-            docs/changelog.md
+            docs/changelog
             scripts/generate_altstore_source.py
           sparse-checkout-cone-mode: false
 
@@ -273,7 +273,7 @@ jobs:
           APP_VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
-          bash .github/scripts/parse_changelog.sh "$APP_VERSION" docs/changelog.md > "$RUNNER_TEMP/release-notes.md"
+          bash .github/scripts/parse_changelog.sh "$APP_VERSION" docs/changelog > "$RUNNER_TEMP/release-notes.md"
           files=(release-assets/*)
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             is_draft="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"

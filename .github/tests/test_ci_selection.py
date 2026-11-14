@@ -207,7 +207,7 @@ class ReleaseGateTest(unittest.TestCase):
             (root / "gradle.properties").write_text("appVersion=1.0.1\norg.gradle.caching=true\n")
             commit("version")
             (root / "docs").mkdir()
-            (root / "docs/changelog.md").write_text("release notes")
+            (root / "docs/changelog").write_text("release notes")
             head = commit("notes")
             with chdir(directory):
                 self.assertEqual(release.source_commit(head), source)

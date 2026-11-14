@@ -34,7 +34,7 @@ tasks.register<Jar>("packagePluginJar") {
             .output.allOutputs,
     )
     from(layout.projectDirectory.file("manifest.json"))
-    from(layout.projectDirectory.file("SOURCE.md"))
+    from(layout.projectDirectory.file("SOURCE"))
     from(rootProject.file("LICENSE"))
 }
 
@@ -44,7 +44,7 @@ val preparePluginApk =
     tasks.register<Sync>("preparePluginApk") {
         into(preparedAndroid)
         from(layout.projectDirectory.file("manifest.json")) { into("assets/metrofuse") }
-        from(listOf(rootProject.file("LICENSE"), layout.projectDirectory.file("SOURCE.md"))) { into("assets") }
+        from(listOf(rootProject.file("LICENSE"), layout.projectDirectory.file("SOURCE"))) { into("assets") }
     }
 val androidCode =
     tasks.register<Jar>("packageAndroidPluginClasses") {

@@ -23,4 +23,4 @@ translations.
 KMP-specific translations are project contributions, not part of the upstream import. All translations live in
 `shared/src/commonMain/composeResources/values-*/strings.xml` and are maintained through the
 [Metrolist KMP Weblate project](https://translate.metrolist.cc/projects/metrolist-kmp/metrolist-kmp/).
-See [strings.md](strings.md) for the catalog workflow.
+See [strings.md](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/strings.md) for the catalog workflow.

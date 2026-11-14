@@ -3,7 +3,7 @@
 set -euo pipefail
 
 VERSION="${1:-}"
-CHANGELOG_FILE="${2:-docs/changelog.md}"
+CHANGELOG_FILE="${2:-docs/changelog}"
 
 if [ -z "$VERSION" ]; then
     echo "Error: version argument required" >&2

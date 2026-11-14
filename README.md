@@ -19,9 +19,9 @@ The core Home switcher lists Offline first, followed by enabled plugins declarin
 
 The core account button appears only when the selected source declares `login`. MetroFuse renders the login form and observes account status. Native plugins can implement `LoginPlugin`; JavaScript plugins register `host.login(callbacks)` and publish changes with `host.loginState(state)`. The host passes submitted credentials only to that plugin's callback and stores them encrypted under its ID. Windows uses user-bound DPAPI; Android uses Keystore AES-GCM. Plugin credential persistence is currently unavailable on Linux and macOS. Native plugins run trusted code in the host process; cooperative cancellation cannot forcibly stop arbitrary blocking native code.
 
-See the [offline player guide](docs/offline-player.md). Optional YouTube Music packages are built separately in `dist/youtube-music-plugin/`; import the native package for your platform or the universal JavaScript `.mfp` from Plugins. These packages are not included or installed in the app by default.
+See the [plugin authoring guide](https://github.com/956tris/MetroFuse-Plugin-Docs) for MFP, JAR and APK development, Home sources and login. Optional YouTube Music packages are built separately in `dist/youtube-music-plugin/`; import the native package for your platform or the universal JavaScript `.mfp` from Plugins. These packages are not included or installed in the app by default.
 
-MetroFuse is based on Metrolist KMP. Upstream attribution, licenses and platform documentation are retained below.
+MetroFuse is based on Metrolist KMP. Upstream attribution and licenses are retained below. Earlier platform guides remain available through links to their source revision.
 
 <div style="display: flex; gap: 0.5rem; align-items: center;">
   <a href="https://www.blacksmith.sh"><img src="assets/blacksmith-powered.svg" alt="CI powered by Blacksmith" height="32" /></a>
@@ -87,7 +87,7 @@ DO NOT REMOVE THIS SECTION, I WANT TO ADD IT LATER!!!
 
 <h1><a id="download-now"></a>Download now</h1>
 
-<p>Install Metrolist KMP: <a href="docs/install/android.md">Android</a>, <a href="docs/install/ios.md">iOS</a>, <a href="docs/install/windows.md">Windows</a>, <a href="docs/install/macos.md">macOS</a> or <a href="docs/install/linux.md">Linux</a>. Check <a href="docs/install/README.md#get-the-package">KMP download availability</a> before choosing a package.</p>
+<p>Install Metrolist KMP: <a href="https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/android.md">Android</a>, <a href="https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/ios.md">iOS</a>, <a href="https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/windows.md">Windows</a>, <a href="https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/macos.md">macOS</a> or <a href="https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/linux.md">Linux</a>. Check <a href="docs/install/README.md#get-the-package">KMP download availability</a> before choosing a package.</p>
 
 <p>
   <a href="https://github.com/MetrolistGroup/Metrolist/releases/latest">Choose a KMP release for your device</a>
