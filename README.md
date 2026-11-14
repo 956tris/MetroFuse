@@ -3,7 +3,7 @@
 <img src="fastlane/metadata/android/en-US/images/icon.png" alt="MetroFuse app icon" width="180" />
 
 # MetroFuse
-
+#kmp soon.
 ### A fused Android music client for streaming, discovery, playlists, lyrics, and provider fallback.
 
 <br/>
