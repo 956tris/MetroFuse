@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -32,10 +33,28 @@ import com.metrolist.shared.generated.resources.plugin_login_failed
 import com.metrolist.shared.generated.resources.try_again
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.icons.MetrolistIcons
+import com.metrolist.shared.ui.settings.SettingsNavigationRow
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
-fun PluginAccountButton(modifier: Modifier = Modifier) {
+fun PluginAccountMenuSection(focusModifier: @Composable (Shape) -> Modifier = { Modifier }) {
+    PluginAccountButton { label, onClick ->
+        SettingsNavigationRow(
+            title = label,
+            icon = MetrolistIcons.Outlined.AccountCircle,
+            first = true,
+            last = true,
+            onClick = onClick,
+            focusModifier = focusModifier,
+        )
+    }
+}
+
+@Composable
+fun PluginAccountButton(
+    modifier: Modifier = Modifier,
+    content: (@Composable (String, () -> Unit) -> Unit)? = null,
+) {
     if (!MetroFuseHost.isConfigured) return
     val runtime = MetroFuseHost.runtime
     val plugins by runtime.plugins.collectAsState()
@@ -52,11 +71,16 @@ fun PluginAccountButton(modifier: Modifier = Modifier) {
         onDispose { runtime.logins.dismiss(owner) }
     }
     val label = stringResource(if (state.account.loggedIn) Res.string.account else Res.string.login)
-    IconButton(modifier = modifier, onClick = {
+    val openAccount = {
         expanded = true
         if (!state.account.loggedIn) runtime.logins.request(owner)
-    }) {
-        Icon(MetrolistIcons.Outlined.AccountCircle, label)
+    }
+    if (content != null) {
+        content(label, openAccount)
+    } else {
+        IconButton(modifier = modifier, onClick = openAccount) {
+            Icon(MetrolistIcons.Outlined.AccountCircle, label)
+        }
     }
     if (expanded) {
         val dismiss = {

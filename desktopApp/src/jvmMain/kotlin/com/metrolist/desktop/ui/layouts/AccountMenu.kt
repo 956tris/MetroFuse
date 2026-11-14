@@ -42,6 +42,7 @@ import com.metrolist.shared.generated.resources.account_logout_webview_failed
 import com.metrolist.shared.generated.resources.account_retry_cleanup
 import com.metrolist.shared.generated.resources.account_update_available
 import com.metrolist.shared.generated.resources.account_webview_remove_failed
+import com.metrolist.shared.plugins.PluginAccountMenuSection
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTubeRepository
 import com.metrolist.shared.ui.components.ContainedLoadingIndicator
@@ -109,6 +110,7 @@ fun AccountMenu(onDismiss: () -> Unit) {
         onLogout = performLogout,
         isLoggingOut = isLoggingOut,
         menuMaxWidth = 432.dp,
+        accountContent = { PluginAccountMenuSection() },
         afterMenuContent = { dismiss ->
             if (Settings.shared.credentialsPending) {
                 Row(

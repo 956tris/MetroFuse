@@ -46,6 +46,7 @@ fun AccountPopupDialog(
     showIntegrations: Boolean = true,
     initialFocusRequester: FocusRequester? = null,
     focusModifier: @Composable (Shape) -> Modifier = { Modifier },
+    accountContent: (@Composable () -> Unit)? = null,
     afterMenuContent: (@Composable ColumnScope.((() -> Unit) -> Unit) -> Unit)? = null,
 ) {
     if (LocalUseDesktopUi.current) {
@@ -68,6 +69,7 @@ fun AccountPopupDialog(
             showIntegrations = showIntegrations,
             initialFocusRequester = initialFocusRequester,
             focusModifier = focusModifier,
+            accountContent = accountContent,
             afterMenuContent = afterMenuContent,
             alignToAnchorEnd = true,
         )
@@ -128,6 +130,7 @@ fun AccountPopupDialog(
                                 modifier = Modifier.padding(14.dp),
                                 initialFocusRequester = initialFocusRequester,
                                 focusModifier = focusModifier,
+                                accountContent = accountContent,
                                 afterMenuContent = afterMenuContent,
                             )
                         }

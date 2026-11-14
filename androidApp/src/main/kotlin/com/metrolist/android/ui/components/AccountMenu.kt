@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
 import com.metrolist.shared.auth.AuthManager
+import com.metrolist.shared.plugins.PluginAccountMenuSection
 import com.metrolist.shared.ui.components.AccountPopupDialog
 import com.metrolist.shared.ui.tv.RequestTvFocus
 import com.metrolist.shared.ui.tv.tvFocusHighlight
@@ -56,5 +57,8 @@ fun AccountMenu(
         },
         initialFocusRequester = initialFocusRequester,
         focusModifier = { shape -> Modifier.tvFocusHighlight(shape) },
+        accountContent = {
+            PluginAccountMenuSection(focusModifier = { shape -> Modifier.tvFocusHighlight(shape) })
+        },
     )
 }

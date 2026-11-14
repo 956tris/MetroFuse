@@ -184,6 +184,7 @@ import com.metrolist.android.ui.component.MenuState
 import com.metrolist.android.ui.component.TabTopBarHeight
 import com.metrolist.android.ui.component.TopBarIconButton
 import com.metrolist.android.ui.component.floatingBarCircle
+import com.metrolist.android.ui.components.AccountMenu
 import com.metrolist.android.ui.components.DesktopCaptionBar
 import com.metrolist.android.ui.components.DesktopMiniPlayerHeight
 import com.metrolist.android.ui.components.MiniPlayer
@@ -297,7 +298,6 @@ import com.metrolist.shared.playlistimport.PlaylistImportProgressCard
 import com.metrolist.shared.playlistimport.PlaylistImportStatusManager
 import com.metrolist.shared.plugins.MetroFuseHost
 import com.metrolist.shared.plugins.MusicFrontendSelector
-import com.metrolist.shared.plugins.PluginAccountButton
 import com.metrolist.shared.plugins.PluginDestinationScreen
 import com.metrolist.shared.settings.MiniPlayerType
 import com.metrolist.shared.settings.Settings
@@ -908,7 +908,66 @@ fun MetrolistApp(
             LocalPlaylistAdder provides addToPlaylist,
         ) {
             val appAccountButton: @Composable (Modifier) -> Unit = { buttonModifier ->
-                PluginAccountButton(buttonModifier)
+                val accountName = authManager.accountName
+                val accountThumbnail = authManager.accountThumbnail
+                var showAccountMenu by remember { mutableStateOf(false) }
+                val updatePending = stringResource(Res.string.update_pending)
+                Box {
+                    IconButton(
+                        onClick = { showAccountMenu = true },
+                        modifier =
+                            (
+                                if (hasPendingUpdate) {
+                                    buttonModifier.semantics { stateDescription = updatePending }
+                                } else {
+                                    buttonModifier
+                                }
+                            ).tvFocusHighlight(
+                                CircleShape,
+                                scale = 1.08f,
+                                bringIntoView = false,
+                            ).navigationPopupSource(),
+                        shapes = IconButtonDefaults.shapes(),
+                    ) {
+                        TopBarProfileAvatar(
+                            accountName = accountName,
+                            accountThumbnail = accountThumbnail,
+                            hasPendingUpdate = hasPendingUpdate,
+                        )
+                    }
+                    if (showAccountMenu) {
+                        AccountMenu(
+                            onClose = { showAccountMenu = false },
+                            onNavigateToLogin = { navigator.navigate(Screen.Login) },
+                            onNavigateToTokenLogin = { navigator.navigate(Screen.TokenLogin) },
+                            onNavigateToSwitchChannel = {
+                                navigator.navigate(Screen.SwitchChannel)
+                            },
+                            onNavigateToHistory =
+                                if (navigationState.topLevelRoute == Screen.Library) {
+                                    { navigator.navigate(Screen.History) }
+                                } else {
+                                    null
+                                },
+                            onNavigateToStatistics = { navigator.navigate(Screen.Statistics) },
+                            onNavigateToIntegrations = { navigator.navigate(Screen.Integrations) },
+                            onNavigateToSettings = { navigator.navigate(Screen.Settings) },
+                            onLogout = {
+                                coroutineScope.launch {
+                                    authManager.clearAllCredentials()
+                                    context.packageManager
+                                        .getLaunchIntentForPackage(context.packageName)
+                                        ?.apply {
+                                            addFlags(
+                                                Intent.FLAG_ACTIVITY_NEW_TASK or
+                                                    Intent.FLAG_ACTIVITY_CLEAR_TASK,
+                                            )
+                                        }?.let(context::startActivitySafely)
+                                }
+                            },
+                        )
+                    }
+                }
             }
             Column(
                 Modifier

@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -117,6 +118,7 @@ fun AccountMenu(
     menuMaxWidth: Dp = 360.dp,
     initialFocusRequester: FocusRequester? = null,
     focusModifier: @Composable (Shape) -> Modifier = { Modifier },
+    accountContent: (@Composable () -> Unit)? = null,
     afterMenuContent: (@Composable ColumnScope.((() -> Unit) -> Unit) -> Unit)? = null,
 ) {
     val dismissal = remember { AccountMenuDismissal() }
@@ -194,6 +196,7 @@ fun AccountMenu(
                 modifier = Modifier.padding(14.dp),
                 initialFocusRequester = initialFocusRequester,
                 focusModifier = focusModifier,
+                accountContent = accountContent,
                 afterMenuContent = afterMenuContent,
             )
         }
@@ -232,6 +235,7 @@ internal fun AccountMenuContent(
     modifier: Modifier = Modifier,
     initialFocusRequester: FocusRequester? = null,
     focusModifier: @Composable (Shape) -> Modifier = { Modifier },
+    accountContent: (@Composable () -> Unit)? = null,
     afterMenuContent: (@Composable ColumnScope.((() -> Unit) -> Unit) -> Unit)? = null,
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -240,56 +244,69 @@ internal fun AccountMenuContent(
     val statisticsVisible = showStatistics && onNavigateToStatistics != null
 
     Column(
-        modifier = Modifier.verticalScrollWithDrag(rememberScrollState()).then(modifier),
+        modifier =
+            Modifier
+                .then(
+                    if (accountContent != null && initialFocusRequester != null) {
+                        Modifier.focusRequester(initialFocusRequester).focusGroup()
+                    } else {
+                        Modifier
+                    },
+                ).verticalScrollWithDrag(rememberScrollState())
+                .then(modifier),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        AccountMenuGroup(Modifier.expressiveEntrance(0)) {
-            AccountMenuHero(
-                isSignedIn = isSignedIn,
-                accountName = accountName,
-                accountSubtitle = accountSubtitle,
-                accountImageUrl = accountImageUrl,
-                onClick = {
-                    onDismiss(if (isSignedIn) onNavigateToSettings else onSignIn)
-                },
-                onAvatarClick = {
-                    onDismiss(if (isSignedIn) onSwitchChannel else onSignIn)
-                },
-                onLogout = { showLogoutDialog = true },
-                isLoggingOut = isLoggingOut,
-                initialFocusRequester = initialFocusRequester,
-                focusModifier = focusModifier,
-            )
-            val tokenInteraction = remember { MutableInteractionSource() }
-            val tokenPressed by tokenInteraction.collectIsPressedAsState()
-            val tokenShape = segmentedGroupShape(isFirst = false, isLast = true, pressed = tokenPressed)
-            Row(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp)
-                        .then(focusModifier(tokenShape))
-                        .clip(tokenShape)
-                        .background(colorScheme.surfaceContainer)
-                        .clickable(interactionSource = tokenInteraction, indication = ripple(), role = Role.Button) {
-                            onDismiss(onTokenLogin)
-                        }.padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    MetrolistIcons.Outlined.Token,
-                    contentDescription = null,
-                    tint = colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp),
+        if (accountContent != null) {
+            accountContent()
+        } else {
+            AccountMenuGroup(Modifier.expressiveEntrance(0)) {
+                AccountMenuHero(
+                    isSignedIn = isSignedIn,
+                    accountName = accountName,
+                    accountSubtitle = accountSubtitle,
+                    accountImageUrl = accountImageUrl,
+                    onClick = {
+                        onDismiss(if (isSignedIn) onNavigateToSettings else onSignIn)
+                    },
+                    onAvatarClick = {
+                        onDismiss(if (isSignedIn) onSwitchChannel else onSignIn)
+                    },
+                    onLogout = { showLogoutDialog = true },
+                    isLoggingOut = isLoggingOut,
+                    initialFocusRequester = initialFocusRequester,
+                    focusModifier = focusModifier,
                 )
-                Text(
-                    stringResource(
-                        if (isSignedIn) Res.string.account_login_with_token_hint else Res.string.account_login_with_token,
-                    ),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colorScheme.onSurfaceVariant,
-                )
+                val tokenInteraction = remember { MutableInteractionSource() }
+                val tokenPressed by tokenInteraction.collectIsPressedAsState()
+                val tokenShape = segmentedGroupShape(isFirst = false, isLast = true, pressed = tokenPressed)
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .then(focusModifier(tokenShape))
+                            .clip(tokenShape)
+                            .background(colorScheme.surfaceContainer)
+                            .clickable(interactionSource = tokenInteraction, indication = ripple(), role = Role.Button) {
+                                onDismiss(onTokenLogin)
+                            }.padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        MetrolistIcons.Outlined.Token,
+                        contentDescription = null,
+                        tint = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                    Text(
+                        stringResource(
+                            if (isSignedIn) Res.string.account_login_with_token_hint else Res.string.account_login_with_token,
+                        ),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
 
