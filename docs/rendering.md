@@ -44,6 +44,8 @@ Player expansion clips both content layers to the moving container. Check revers
 
 Animated artwork and lyrics run only while their content is visible. Hidden players must release frame work while keeping playback. Check resumption at the current position after backgrounding, minimizing or switching workspaces. Hyprland window handling is in [desktop rendering](desktop.md#hyprland-rendering).
 
+Desktop Canvas, music videos and animated covers share FFmpeg's planar scaler. Its source and destination stride arrays each need four native integer slots, including the unused fourth plane. Use the allocation overload `IntPointer(4L)`; `IntPointer(4)` creates a single integer with value four. Run `VideoPointerRenderingTest` and `VideoDisposalTest` when changing this storage or its lifecycle.
+
 Desktop seek bars update their progress value once per pixel of travel, based on duration, measured width and playback speed, within 16 to 250 ms. Time labels update when the displayed second changes. WAVY and SQUIGGLY tracks keep their playing animation; lyrics have their own frame rate. Bottom-bar titles and artists scroll once per track, like the mobile mini-players; the expanded player title scrolls continuously. Each marquee frame repaints the whole window.
 
 The expressive mini-player title and artist stay on one line and show an ellipsis when space runs out, before and after their marquee pass, including with custom fonts.
