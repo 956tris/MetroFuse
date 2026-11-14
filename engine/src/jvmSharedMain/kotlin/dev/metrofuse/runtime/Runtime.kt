@@ -78,6 +78,20 @@ class Runtime(
         } catch(e: Exception) { logs.update { (it+"[host] Log persistence failed: ${e::class.simpleName}").takeLast(200) } }
     }
     init {
+        scope.launch {
+            val completedAccounts = mutableMapOf<String, PluginLoginState>()
+            logins.states.collect { states ->
+                completedAccounts.keys.retainAll(states.keys)
+                // Refresh after the callback finishes so logout cannot reuse the previous session.
+                states.filterValues { !it.busy }.forEach { (owner, state) ->
+                    val previous = completedAccounts.put(owner, state.account)
+                    if (previous != state.account && (previous != null || state.account.loggedIn)) {
+                        pipelines.invalidateCaches()
+                        homes.invalidate(owner)
+                    }
+                }
+            }
+        }
         host.audioFallback?.let { registry.audioSource("builtin", it) }
         registry.service("builtin", "catalog.match/v1", object : JsonService {
             override suspend fun call(request: JsonObject): JsonObject {
@@ -575,6 +589,15 @@ class Runtime(
                             provider?.logout()
                         }
                         Unit
+                    }
+                },
+                webRequest = {
+                    owned {
+                        if (js != null) {
+                            codec.decodeFromString<WebLoginRequest?>(evaluate("JSON.stringify(await globalThis.__login?.web?.() ?? null)"))
+                        } else {
+                            (provider as? WebLoginPlugin)?.webLoginRequest()
+                        }
                     }
                 },
             )

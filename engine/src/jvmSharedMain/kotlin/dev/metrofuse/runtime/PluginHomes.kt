@@ -56,6 +56,17 @@ class PluginHomes(
     }
 
     @Synchronized
+    fun invalidate(owner: String) {
+        val binding = bindings[owner] ?: return
+        val request = binding.request
+        binding.job?.cancel()
+        val revision = binding.revision.incrementAndGet()
+        binding.request = null
+        update(owner, binding, revision) { PluginHomeState() }
+        if (request != null) refresh(owner, request, force = true)
+    }
+
+    @Synchronized
     fun refresh(
         owner: String,
         request: HomeRequest,

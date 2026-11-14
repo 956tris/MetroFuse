@@ -7,5 +7,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../LoginCompletion.cs" Link="LoginCompletion.cs" />
+    <Compile Include="../CookieLoginConfig.cs" Link="CookieLoginConfig.cs" />
   </ItemGroup>
 </Project>

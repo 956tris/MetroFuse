@@ -16,6 +16,8 @@ namespace MetroWv2Helper
         private static string? _outputPath;
         private static string _provider = "youtube";
         private static string? _loginUrl;
+        private static CookieLoginConfig? _cookieLogin;
+        private static string? _title;
 
         [STAThread]
         static void Main(string[] args)
@@ -38,11 +40,20 @@ namespace MetroWv2Helper
                 {
                     _provider = args[i + 1].ToLowerInvariant();
                 }
+                else if (args[i] == "--cookie-config" && i + 1 < args.Length)
+                {
+                    _cookieLogin = JsonSerializer.Deserialize<CookieLoginConfig>(args[i + 1]) ?? throw new ArgumentException("Missing login request");
+                    _cookieLogin.Validate();
+                }
+                else if (args[i] == "--title" && i + 1 < args.Length)
+                {
+                    _title = args[i + 1];
+                }
             }
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new LoginForm(_outputPath, _provider, _loginUrl));
+            Application.Run(new LoginForm(_outputPath, _provider, _loginUrl, _cookieLogin, _title));
         }
     }
 
@@ -52,17 +63,19 @@ namespace MetroWv2Helper
         private readonly string? _outputPath;
         private string _provider;
         private readonly string? _loginUrl;
+        private readonly CookieLoginConfig? _cookieLogin;
         private readonly LoginCompletion _completion = new();
         private readonly Timer _extractionTimer = new() { Interval = 500 };
         private bool _extracting;
         private string? _userDataFolder;
 
-        public LoginForm(string? outputPath, string provider, string? loginUrl)
+        public LoginForm(string? outputPath, string provider, string? loginUrl, CookieLoginConfig? cookieLogin = null, string? title = null)
         {
             _outputPath = outputPath;
             _provider = provider;
             _loginUrl = loginUrl;
-            Text = provider == "spotify" ? "Metrolist login for Spotify" : "Metrolist login for YouTube Music";
+            _cookieLogin = cookieLogin;
+            Text = title ?? (provider == "spotify" ? "Metrolist login for Spotify" : "Metrolist login for YouTube Music");
             Size = new System.Drawing.Size(800, 800);
             StartPosition = FormStartPosition.CenterScreen;
 
@@ -87,11 +100,20 @@ namespace MetroWv2Helper
                 await _webView.EnsureCoreWebView2Async(env, controllerOptions);
 
                 _webView.CoreWebView2.SourceChanged += OnSourceChanged;
+                if (_cookieLogin != null)
+                {
+                    _webView.CoreWebView2.NavigationStarting += (_, args) => args.Cancel = !_cookieLogin.AcceptsNavigation(args.Uri);
+                    _webView.CoreWebView2.NewWindowRequested += (_, args) =>
+                    {
+                        args.Handled = true;
+                        if (_cookieLogin.AcceptsNavigation(args.Uri)) _webView.CoreWebView2.Navigate(args.Uri);
+                    };
+                }
                 _extractionTimer.Tick += async (_, _) => await ExtractForCurrentSourceAsync();
                 _extractionTimer.Start();
-                string loginUrl = _provider == "spotify"
+                string loginUrl = _cookieLogin?.url ?? (_provider == "spotify"
                     ? "https://accounts.spotify.com/login?continue=https%3A%2F%2Fopen.spotify.com%2F"
-                    : _loginUrl ?? "https://accounts.google.com/ServiceLogin?continue=https://music.youtube.com";
+                    : _loginUrl ?? "https://accounts.google.com/ServiceLogin?continue=https://music.youtube.com");
                 _webView.CoreWebView2.Navigate(loginUrl);
             }
             catch (Exception ex)
@@ -137,7 +159,11 @@ namespace MetroWv2Helper
             {
                 var uri = new Uri(_webView.CoreWebView2.Source);
                 if (uri.Scheme != "https") return;
-                if (_provider == "spotify" && uri.Host == "open.spotify.com") await TryExtractSpotifyAsync();
+                if (_cookieLogin != null)
+                {
+                    if (uri.Host == new Uri(_cookieLogin.cookieUrl).Host) await TryExtractCookieLoginAsync();
+                }
+                else if (_provider == "spotify" && uri.Host == "open.spotify.com") await TryExtractSpotifyAsync();
                 else if (_provider != "spotify" && uri.Host == "music.youtube.com") await TryExtractAsync();
             }
             finally
@@ -164,6 +190,25 @@ namespace MetroWv2Helper
             catch (Exception ex)
             {
                 Console.Error.WriteLine("Spotify extraction failed: " + ex.Message);
+            }
+        }
+
+        private async Task TryExtractCookieLoginAsync()
+        {
+            try
+            {
+                var config = _cookieLogin!;
+                var cookies = await _webView.CoreWebView2.CookieManager.GetCookiesAsync(config.cookieUrl);
+                var values = config.Capture(cookies.GroupBy(cookie => cookie.Name).ToDictionary(group => group.Key, group => group.Last().Value));
+                if (values != null && WriteResult(new { values }))
+                {
+                    _webView.CoreWebView2.CookieManager.DeleteAllCookies();
+                    Close();
+                }
+            }
+            catch
+            {
+                // Browser state and cookies must never appear in diagnostics.
             }
         }
 

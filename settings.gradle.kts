@@ -69,7 +69,3 @@ include(":plugin-native-examples")
 project(":plugin-native-examples").projectDir = file("plugins/native-examples")
 include(":plugin-jiosaavn-native")
 project(":plugin-jiosaavn-native").projectDir = file("plugins/providers/jiosaavn-native")
-if (providers.gradleProperty("buildYoutubeMusicPlugin").orNull == "true") {
-    include(":plugin-youtube-music")
-    project(":plugin-youtube-music").projectDir = file("plugins/providers/youtube-music")
-}

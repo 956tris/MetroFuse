@@ -143,7 +143,10 @@ object MetroFuseHost : PluginServices {
                 pluginHomeSources(plugins).map { MusicFrontend(it.owner, it.title, it.icon) }
             }.collect { frontends ->
                 PluginServicesStore.frontends.value = frontends
-                val selection = Settings.shared.musicFrontendOwner.toHomeSelection().available(frontends)
+                val selection =
+                    Settings.shared.musicFrontendOwner
+                        .toHomeSelection()
+                        .available(frontends)
                 if (Settings.shared.musicFrontendOwner != selection.persisted) Settings.shared.musicFrontendOwner = selection.persisted
             }
         }
@@ -314,9 +317,18 @@ object MetroFuseHost : PluginServices {
         val descriptor = result.stream ?: return null
         if (effectiveMusicFrontendOwner().isEmpty()) return null
         val provider = descriptor.attributes["providerId"] ?: error("Audio provider identity missing")
-        require(descriptor.transport in setOf(StreamTransport.DIRECT, StreamTransport.RANGE_HTTP, StreamTransport.HLS)) {
+        require(
+            descriptor.transport in
+                setOf(
+                    StreamTransport.DIRECT,
+                    StreamTransport.RANGE_HTTP,
+                    StreamTransport.HLS,
+                    StreamTransport.SABR_UMP,
+                ),
+        ) {
             "Unsupported plugin stream transport"
         }
+        val sabr = pluginSabrBootstrap(descriptor, identity.identifiers["youtube"] ?: identity.canonicalId)
         // FFmpeg's Windows file protocol does not accept Java's file:/C:/ URI form.
         val playbackLocator =
             if (platform == "desktop" && descriptor.locator.startsWith("file:", ignoreCase = true)) {
@@ -330,17 +342,19 @@ object MetroFuseHost : PluginServices {
             headers = descriptor.headers,
             loudnessDb = null,
             expiresAt = descriptor.expiresAtMillis?.let(Instant::fromEpochMilliseconds),
-            contentLengthBytes = descriptor.contentLength,
+            contentLengthBytes = descriptor.contentLength ?: sabr?.contentLengthBytes,
             mimeType =
-                descriptor.mimeType ?: if (descriptor.transport == StreamTransport.HLS) "application/vnd.apple.mpegurl" else null,
+                sabr?.mimeType ?: descriptor.mimeType
+                    ?: if (descriptor.transport == StreamTransport.HLS) "application/vnd.apple.mpegurl" else null,
             codecs = descriptor.codec,
             bitrate = descriptor.bitrate,
             sampleRate = descriptor.sampleRate,
-            durationSeconds = descriptor.durationSeconds ?: song?.duration,
+            durationSeconds = descriptor.durationSeconds ?: sabr?.durationMs?.div(1000) ?: song?.duration,
             clientName = provider,
             profileId = provider,
             requireBoundedRange = descriptor.transport == StreamTransport.RANGE_HTTP,
             useRangeChunks = descriptor.transport == StreamTransport.RANGE_HTTP,
+            sabrBootstrap = sabr,
         )
     }
 

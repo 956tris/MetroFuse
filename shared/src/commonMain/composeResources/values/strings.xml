@@ -5023,6 +5023,8 @@
 <string name="playlist_cover_removed">Custom cover removed</string>
 <string name="login">Login</string>
     <string name="plugin_login_failed">Plugin login could not finish. Check your details and try again.</string>
+    <string name="plugin_login_browser_hint">Sign in in the browser window. MetroFuse will finish automatically.</string>
+    <string name="plugin_login_browser_unavailable">Browser sign-in is unavailable on this device.</string>
 <string name="app_version">App version</string>
 <string name="yeah">Yeah!</string>
 <string name="navigation">Navigation</string>

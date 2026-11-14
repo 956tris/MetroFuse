@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
+import java.util.concurrent.atomic.AtomicLong
 
 object MetadataMapping {
     fun fromTrack(
@@ -117,8 +118,10 @@ class ProviderPipelines(
     val diagnostics = MutableStateFlow<List<ProviderDiagnostic>>(emptyList())
     private val metadataCache = BoundedCache<MetadataContribution>()
     private val audioCache = BoundedCache<AudioResult>()
+    private val cacheRevision = AtomicLong()
 
     fun invalidateCaches() {
+        cacheRevision.incrementAndGet()
         metadataCache.clear()
         audioCache.clear()
     }
@@ -168,7 +171,7 @@ class ProviderPipelines(
                         },
                         policy.configurations[entry.id] ?: JsonObject(emptyMap()),
                     )
-                val cacheKey = "${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
+                val cacheKey = "${cacheRevision.get()}:${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
                 val start = System.nanoTime()
                 val contribution =
                     try {
@@ -292,7 +295,7 @@ class ProviderPipelines(
                     continue
                 }
                 val request = query.copy(configuration = policy.configurations[entry.id] ?: query.configuration)
-                val cacheKey = "${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
+                val cacheKey = "${cacheRevision.get()}:${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
                 audioCache.get(cacheKey, now())?.let { return@withContext it }
                 for (attempt in 0..policy.retries.coerceIn(0, 2)) {
                     currentCoroutineContext().ensureActive()

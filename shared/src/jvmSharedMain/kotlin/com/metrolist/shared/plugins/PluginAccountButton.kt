@@ -29,16 +29,22 @@ import com.metrolist.shared.generated.resources.account
 import com.metrolist.shared.generated.resources.cancel
 import com.metrolist.shared.generated.resources.login
 import com.metrolist.shared.generated.resources.logout
+import com.metrolist.shared.generated.resources.plugin_login_browser_unavailable
 import com.metrolist.shared.generated.resources.plugin_login_failed
 import com.metrolist.shared.generated.resources.try_again
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.settings.SettingsNavigationRow
+import dev.metrofuse.runtime.PluginAccountState
+import dev.metrofuse.runtime.PluginLoginPrompt
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
-fun PluginAccountMenuSection(focusModifier: @Composable (Shape) -> Modifier = { Modifier }) {
-    PluginAccountButton { label, onClick ->
+fun PluginAccountMenuSection(
+    focusModifier: @Composable (Shape) -> Modifier = { Modifier },
+    webLoginContent: PluginWebLoginContent? = null,
+) {
+    PluginAccountButton(webLoginContent = webLoginContent) { label, onClick ->
         SettingsNavigationRow(
             title = label,
             icon = MetrolistIcons.Outlined.AccountCircle,
@@ -50,9 +56,12 @@ fun PluginAccountMenuSection(focusModifier: @Composable (Shape) -> Modifier = { 
     }
 }
 
+typealias PluginWebLoginContent = @Composable (PluginLoginPrompt, PluginAccountState, (Map<String, String>) -> Unit, () -> Unit) -> Unit
+
 @Composable
 fun PluginAccountButton(
     modifier: Modifier = Modifier,
+    webLoginContent: PluginWebLoginContent? = null,
     content: (@Composable (String, () -> Unit) -> Unit)? = null,
 ) {
     if (!MetroFuseHost.isConfigured) return
@@ -87,55 +96,65 @@ fun PluginAccountButton(
             expanded = false
             runtime.logins.dismiss(owner)
         }
-        AlertDialog(
-            onDismissRequest = dismiss,
-            title = { Text(plugin.manifest.name) },
-            text = {
-                Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
-                    state.account.accountName?.let { Text(it) }
-                    if (state.busy) CircularProgressIndicator()
-                    if (state.error != null) Text(stringResource(Res.string.plugin_login_failed))
-                    if (!state.account.loggedIn && currentPrompt != null) {
-                        if (currentPrompt.request.instructions.isNotBlank()) Text(currentPrompt.request.instructions)
-                        currentPrompt.request.fields.forEach { field ->
-                            OutlinedTextField(
-                                value = values[field.id].orEmpty(),
-                                onValueChange = { values[field.id] = it.take(16384) },
-                                label = { Text(field.label) },
-                                singleLine = true,
-                                enabled = !state.busy,
-                                visualTransformation = if (field.secret) PasswordVisualTransformation() else VisualTransformation.None,
-                            )
+        val browserPrompt = currentPrompt?.takeIf { it.web != null && !state.account.loggedIn }
+        if (browserPrompt != null && webLoginContent != null) {
+            webLoginContent(browserPrompt, state, { runtime.logins.submitWeb(owner, browserPrompt.token, it) }, dismiss)
+        } else {
+            AlertDialog(
+                onDismissRequest = dismiss,
+                title = { Text(plugin.manifest.name) },
+                text = {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        state.account.accountName?.let { Text(it) }
+                        if (state.busy) CircularProgressIndicator()
+                        if (state.error != null) Text(stringResource(Res.string.plugin_login_failed))
+                        if (browserPrompt != null) Text(stringResource(Res.string.plugin_login_browser_unavailable))
+                        if (!state.account.loggedIn && currentPrompt != null && browserPrompt == null) {
+                            if (currentPrompt.request.instructions.isNotBlank()) Text(currentPrompt.request.instructions)
+                            currentPrompt.request.fields.forEach { field ->
+                                OutlinedTextField(
+                                    value = values[field.id].orEmpty(),
+                                    onValueChange = { values[field.id] = it.take(16384) },
+                                    label = { Text(field.label) },
+                                    singleLine = true,
+                                    enabled = !state.busy,
+                                    visualTransformation = if (field.secret) PasswordVisualTransformation() else VisualTransformation.None,
+                                )
+                            }
                         }
                     }
-                }
-            },
-            confirmButton = {
-                when {
-                    state.account.loggedIn -> {
-                        TextButton(
-                            enabled = !state.busy,
-                            onClick = { runtime.logins.logout(owner) },
-                        ) { Text(stringResource(Res.string.logout)) }
-                    }
+                },
+                confirmButton = {
+                    when {
+                        browserPrompt != null -> {
+                            Unit
+                        }
 
-                    currentPrompt != null -> {
-                        TextButton(
-                            enabled =
-                                !state.busy && currentPrompt.request.fields.all { !values[it.id].isNullOrBlank() },
-                            onClick = { runtime.logins.submit(owner, values.toMap()) },
-                        ) { Text(stringResource(Res.string.login)) }
-                    }
+                        state.account.loggedIn -> {
+                            TextButton(
+                                enabled = !state.busy,
+                                onClick = { runtime.logins.logout(owner) },
+                            ) { Text(stringResource(Res.string.logout)) }
+                        }
 
-                    else -> {
-                        TextButton(
-                            enabled = !state.busy,
-                            onClick = { runtime.logins.request(owner) },
-                        ) { Text(stringResource(Res.string.try_again)) }
+                        currentPrompt != null -> {
+                            TextButton(
+                                enabled =
+                                    !state.busy && currentPrompt.request.fields.all { !values[it.id].isNullOrBlank() },
+                                onClick = { runtime.logins.submit(owner, values.toMap()) },
+                            ) { Text(stringResource(Res.string.login)) }
+                        }
+
+                        else -> {
+                            TextButton(
+                                enabled = !state.busy,
+                                onClick = { runtime.logins.request(owner) },
+                            ) { Text(stringResource(Res.string.try_again)) }
+                        }
                     }
-                }
-            },
-            dismissButton = { TextButton(onClick = dismiss) { Text(stringResource(Res.string.cancel)) } },
-        )
+                },
+                dismissButton = { TextButton(onClick = dismiss) { Text(stringResource(Res.string.cancel)) } },
+            )
+        }
     }
 }

@@ -3,6 +3,7 @@ package dev.metrofuse.runtime
 import dev.metrofuse.api.LoginCredentials
 import dev.metrofuse.api.LoginRequest
 import dev.metrofuse.api.PluginLoginState
+import dev.metrofuse.api.WebLoginRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -30,6 +31,7 @@ data class PluginLoginPrompt(
     val owner: String,
     val token: String,
     val request: LoginRequest,
+    val web: WebLoginRequest? = null,
 )
 
 /** Host-only coordinator. Plugins receive credentials only through their own bound callback. */
@@ -48,6 +50,7 @@ class PluginLogins(
         val request: suspend () -> LoginRequest?,
         val login: suspend (LoginCredentials) -> PluginLoginState,
         val logout: suspend () -> Unit,
+        val webRequest: suspend () -> WebLoginRequest?,
     ) {
         val gate = Mutex()
         var operation: Job? = null
@@ -60,10 +63,18 @@ class PluginLogins(
         request: suspend () -> LoginRequest?,
         login: suspend (LoginCredentials) -> PluginLoginState,
         logout: suspend () -> Unit,
+        webRequest: suspend () -> WebLoginRequest? = { null },
     ) {
         unbind(owner)
         val binding =
-            Binding(token, CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])), request, login, logout)
+            Binding(
+                token,
+                CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])),
+                request,
+                login,
+                logout,
+                webRequest,
+            )
         bindings[owner] = binding
         update(owner, binding) { PluginAccountState(account = state.value.validated()) }
         binding.scope.launch {
@@ -109,14 +120,26 @@ class PluginLogins(
                     .size == request.fields.size,
             )
             require(request.fields.all { it.id.matches(Regex("[A-Za-z0-9._-]{1,64}")) && it.label.length in 1..128 })
-            if (bindings[owner] === binding) prompt.value = PluginLoginPrompt(owner, binding.token, request)
+            val web = withTimeout(timeoutMs) { binding.webRequest() }?.also { it.validate(request) }
+            if (bindings[owner] === binding) prompt.value = PluginLoginPrompt(owner, binding.token, request, web)
         }
+
+    fun submitWeb(
+        owner: String,
+        token: String,
+        values: Map<String, String>,
+    ) {
+        val current = prompt.value ?: return
+        if (current.owner != owner || current.token != token || current.web == null) return
+        submit(owner, values, token)
+    }
 
     fun submit(
         owner: String,
         values: Map<String, String>,
+        token: String? = null,
     ) {
-        val current = prompt.value?.takeIf { it.owner == owner } ?: return
+        val current = prompt.value?.takeIf { it.owner == owner && (token == null || it.token == token) } ?: return
         operation(owner, LoginFailure.AUTHENTICATION) { binding ->
             require(current.token == binding.token && current === prompt.value)
             require(

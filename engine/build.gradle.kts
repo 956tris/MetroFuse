@@ -45,6 +45,8 @@ kotlin {
             implementation(libs.junit4)
             implementation(libs.kotlinx.coroutines.test)
             implementation(libs.ktor.client.cio)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.json)
         }
         getByName("androidDeviceTest").dependencies {
             implementation(libs.androidx.test.runner)
@@ -56,13 +58,13 @@ kotlin {
 tasks.withType<Test>().configureEach {
     jvmArgs("--enable-native-access=ALL-UNNAMED")
     systemProperty("metrofuse.root", rootProject.projectDir.absolutePath)
+    systemProperty("metrofuse.ytm.native", providers.gradleProperty("metrofuseYtmJar").orNull ?: "")
+    systemProperty("metrofuse.ytm.mfp", providers.gradleProperty("metrofuseYtmMfp").orNull ?: "")
+    systemProperty("metrofuse.ytm.source", providers.gradleProperty("metrofuseYtmSource").orNull ?: "")
 }
 
 tasks.named<Test>("desktopTest") {
     dependsOn(":plugin-jiosaavn-native:packagePluginJar")
-    if (providers.gradleProperty("buildYoutubeMusicPlugin").orNull == "true") {
-        dependsOn(":plugin-youtube-music:packagePluginJar")
-    }
 }
 
 val prepareNativeDeviceFixture by tasks.registering(Copy::class) {

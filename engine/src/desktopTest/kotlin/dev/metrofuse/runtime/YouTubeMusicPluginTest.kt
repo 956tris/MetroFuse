@@ -4,13 +4,13 @@ import dev.metrofuse.api.AudioPolicy
 import dev.metrofuse.api.AudioQuery
 import dev.metrofuse.api.COMPOSE_ABI
 import dev.metrofuse.api.SearchRequest
+import dev.metrofuse.api.StreamTransport
 import dev.metrofuse.api.TrackIdentity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -22,8 +22,6 @@ import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URI
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -34,13 +32,15 @@ import kotlin.test.assertTrue
 
 class YouTubeMusicPluginTest {
     private val root get() = File(requireNotNull(System.getProperty("metrofuse.root")))
-    private val nativeJar get() = root.resolve("plugins/providers/youtube-music/build/outputs/plugins/youtube-music.jar")
-    private val universalMfp get() = root.resolve("dist/youtube-music-plugin/MetroFuse-YouTube-Music.mfp")
+    private val nativeJar get() = File(System.getProperty("metrofuse.ytm.native").orEmpty())
+    private val universalMfp get() = File(System.getProperty("metrofuse.ytm.mfp").orEmpty())
+    private val sourceRoot get() = File(System.getProperty("metrofuse.ytm.source").orEmpty())
+    private val javascriptSource get() = sourceRoot.resolve("universal")
 
     @Test
     fun optionalNativeArtifactImportsDisabledAndUsesPublicRegistryAcrossReloadAndRestart() =
         runBlocking {
-            assumeTrue("Build the optional module with -PbuildYoutubeMusicPlugin=true", nativeJar.isFile)
+            assumeTrue("Provide the standalone provider with -PmetrofuseYtmJar", nativeJar.isFile)
             val data = Files.createTempDirectory("metrofuse-youtube-native-").toFile()
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             var runtime = Runtime(data, "desktop", scope, EngineTestHost())
@@ -116,6 +116,7 @@ class YouTubeMusicPluginTest {
     @Test
     fun standaloneMfpContainsOnlyJavaScriptAndActivatesWithoutNativeDependencies() =
         runBlocking {
+            assumeTrue("Provide -PmetrofuseYtmMfp or -PmetrofuseYtmSource", universalMfp.isFile || javascriptSource.isDirectory)
             val data = Files.createTempDirectory("metrofuse-youtube-mfp-").toFile()
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val runtime = Runtime(data, "desktop", scope, EngineTestHost())
@@ -156,8 +157,9 @@ class YouTubeMusicPluginTest {
     @Test
     fun productionQuickJsCallbacksSearchBrowseResolveAndRejectUnsupportedTransforms() =
         runBlocking {
-            val source = root.resolve("plugins/providers/youtube-music-js")
-            val fixture = root.resolve("plugins/providers/youtube-music/src/desktopTest/resources/youtube-search.json").readText()
+            assumeTrue("Provide the standalone source with -PmetrofuseYtmSource", javascriptSource.isDirectory)
+            val source = javascriptSource
+            val fixture = sourceRoot.resolve("native/src/desktopTest/resources/youtube-search.json").readText()
             val hook =
                 """
                 const fixture=$fixture;
@@ -246,13 +248,13 @@ class YouTubeMusicPluginTest {
         }
 
     @Test
-    fun guestNativeCatalogAndAudioCdnLive() =
+    fun guestNativeCatalogAndStreamDescriptorLive() =
         runBlocking {
             assumeTrue(
-                "Set METROFUSE_YOUTUBE_MUSIC_LIVE=1 to validate guest catalog and audio",
+                "Set METROFUSE_YOUTUBE_MUSIC_LIVE=1 to validate guest catalog and stream descriptors",
                 System.getenv("METROFUSE_YOUTUBE_MUSIC_LIVE") == "1",
             )
-            assertTrue(nativeJar.isFile, "Build the optional native provider before live validation")
+            assertTrue(nativeJar.isFile, "Provide -PmetrofuseYtmJar before live validation")
             val data = Files.createTempDirectory("metrofuse-youtube-live-").toFile()
             val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val runtime = Runtime(data, "desktop", scope, EngineTestHost())
@@ -291,25 +293,14 @@ class YouTubeMusicPluginTest {
                         includeBuiltin = false,
                     )
                 val stream = assertNotNull(audio.stream, "Guest audio failed: ${audio.error?.code}; ${runtime.pipelines.diagnostics.value}")
-                val byteCount =
-                    withContext(Dispatchers.IO) {
-                        val connection = URI(stream.locator).toURL().openConnection() as HttpURLConnection
-                        try {
-                            connection.connectTimeout = 10000
-                            connection.readTimeout = 10000
-                            stream.headers.forEach(connection::setRequestProperty)
-                            connection.setRequestProperty("Range", "bytes=0-65535")
-                            assertTrue(connection.responseCode in setOf(200, 206), "Audio CDN returned HTTP ${connection.responseCode}")
-                            connection.inputStream.use { input ->
-                                val bytes = input.readNBytes(65536)
-                                assertTrue(bytes.size > 2048, "Audio CDN did not supply a playable media prefix")
-                                root.resolve("build/youtube-music-live-media-prefix.bin").writeBytes(bytes)
-                                bytes.size
-                            }
-                        } finally {
-                            connection.disconnect()
-                        }
-                    }
+                assertTrue(stream.locator.startsWith("https://"))
+                assertTrue(
+                    stream.transport in
+                        setOf(StreamTransport.DIRECT, StreamTransport.RANGE_HTTP, StreamTransport.HLS, StreamTransport.SABR_UMP),
+                )
+                if (stream.transport == StreamTransport.SABR_UMP) {
+                    assertNotNull(stream.attributes["metrofuse.sabr.v1"])
+                }
                 root.resolve("build/youtube-music-live-verification.json").writeText(
                     buildJsonObject {
                         put("title", track.title)
@@ -317,7 +308,7 @@ class YouTubeMusicPluginTest {
                         put("mimeType", stream.mimeType)
                         put("codec", stream.codec)
                         put("transport", stream.transport.name)
-                        put("cdnBytesRead", byteCount)
+                        put("mediaDeliveryVerified", false)
                         put("decoderVerified", false)
                     }.toString(),
                 )
@@ -336,7 +327,7 @@ class YouTubeMusicPluginTest {
     }
 
     private fun packJavascriptSource(): ByteArray {
-        val source = root.resolve("plugins/providers/youtube-music-js")
+        val source = javascriptSource
         return ByteArrayOutputStream().use { output ->
             ZipOutputStream(output).use { zip ->
                 source.walkTopDown().filter { it.isFile }.forEach { file ->

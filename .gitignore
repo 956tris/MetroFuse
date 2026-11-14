@@ -82,6 +82,8 @@ stuff/*
 skills
 dist/
 tools/
+plugins/providers/youtube-music/
+plugins/providers/youtube-music-js/
 scripts/.fonts/
 __pycache__/
 /linter/

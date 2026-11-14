@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
+import com.metrolist.android.ui.screens.PluginWebLoginScreen
 import com.metrolist.shared.auth.AuthManager
 import com.metrolist.shared.plugins.PluginAccountMenuSection
 import com.metrolist.shared.ui.components.AccountPopupDialog
@@ -58,7 +59,10 @@ fun AccountMenu(
         initialFocusRequester = initialFocusRequester,
         focusModifier = { shape -> Modifier.tvFocusHighlight(shape) },
         accountContent = {
-            PluginAccountMenuSection(focusModifier = { shape -> Modifier.tvFocusHighlight(shape) })
+            PluginAccountMenuSection(
+                focusModifier = { shape -> Modifier.tvFocusHighlight(shape) },
+                webLoginContent = { prompt, state, submit, dismiss -> PluginWebLoginScreen(prompt, state, submit, dismiss) },
+            )
         },
     )
 }
