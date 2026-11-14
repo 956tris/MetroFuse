@@ -12,6 +12,7 @@ import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.request.allowHardware
 import coil3.toBitmap
+import com.metrolist.android.R
 import com.metrolist.android.ui.player.CanvasCache
 import com.metrolist.android.ui.player.canvasCacheIdentity
 import com.metrolist.android.ui.player.prepareCanvasClips
@@ -85,7 +86,7 @@ class AndroidPlayerPlatformServices(
 
     override fun copyText(text: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-        clipboard.setPrimaryClip(ClipData.newPlainText("Metrolist", text))
+        clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.app_name), text))
     }
 
     override suspend fun spotifyCanvas(

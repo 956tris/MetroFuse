@@ -66,6 +66,7 @@ import com.metrolist.desktop.state.content.PlaylistAlbumState
 import com.metrolist.desktop.state.playback.ListenTogetherState
 import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.desktop.state.playback.PlayerState
+import com.metrolist.shared.plugins.PluginUiSlot
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.cd_playback_position
 import com.metrolist.shared.generated.resources.more
@@ -327,28 +328,30 @@ fun PlayerCoreContent(
                             modifier = Modifier.widthIn(max = 340.dp),
                         )
                     } else {
-                        PlayerPrimaryControls(
-                            isPlaying = isPlaying,
-                            isLoading = PlayerState.isPlaybackLoading,
-                            playText = stringResource(Res.string.play),
-                            pauseText = stringResource(Res.string.pause),
-                            onSkipPrevious =
-                                if (PlayerState.canSkipPrevious) {
-                                    { PlayerState.skipPrevious() }
-                                } else {
-                                    null
-                                },
-                            onTogglePlay = { PlayerState.togglePlay() },
-                            onSkipNext = { PlayerState.skipNext() },
-                            buttonHeight = (65.dp * scale).coerceAtLeast(52.dp),
-                            showLabels = true,
-                            sideButtonContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                            sideButtonContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            centerButtonContainerColor = MaterialTheme.colorScheme.primary,
-                            centerButtonContentColor = MaterialTheme.colorScheme.onPrimary,
-                            useRoundedRect = Settings.shared.useRoundedRectPlayButton,
-                            modifier = Modifier.width(298.dp * scale.coerceAtLeast(0.8f)),
-                        )
+                        PluginUiSlot("ui.controls") {
+                            PlayerPrimaryControls(
+                                isPlaying = isPlaying,
+                                isLoading = PlayerState.isPlaybackLoading,
+                                playText = stringResource(Res.string.play),
+                                pauseText = stringResource(Res.string.pause),
+                                onSkipPrevious =
+                                    if (PlayerState.canSkipPrevious) {
+                                        { PlayerState.skipPrevious() }
+                                    } else {
+                                        null
+                                    },
+                                onTogglePlay = { PlayerState.togglePlay() },
+                                onSkipNext = { PlayerState.skipNext() },
+                                buttonHeight = (65.dp * scale).coerceAtLeast(52.dp),
+                                showLabels = true,
+                                sideButtonContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                sideButtonContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                                centerButtonContainerColor = MaterialTheme.colorScheme.primary,
+                                centerButtonContentColor = MaterialTheme.colorScheme.onPrimary,
+                                useRoundedRect = Settings.shared.useRoundedRectPlayButton,
+                                modifier = Modifier.width(298.dp * scale.coerceAtLeast(0.8f)),
+                            )
+                        }
                     }
                 }
             }

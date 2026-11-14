@@ -27,6 +27,8 @@ import com.metrolist.shared.model.parseDisplayCount
 import com.metrolist.shared.playlist.LibraryBookmarkMutations
 import com.metrolist.shared.playlist.LibraryBookmarkSnapshot
 import com.metrolist.shared.playlist.LibraryDeletionTracker
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTubeRepository
 import com.metrolist.shared.state.PodcastLibrary
@@ -146,6 +148,7 @@ class LibraryViewModel(
     private val database: MusicDatabase? = null,
     private val downloadedSongIds: Flow<Set<String>>? = null,
     private val repository: YouTubeRepository = GlobalYouTubeRepository.instance,
+    private val useUpstreamLibrary: Boolean = true,
 ) {
     private val _uiState = MutableStateFlow(LibraryUiState(isLoading = database != null))
     private var downloadedKeys: Set<String> = emptySet()
@@ -214,6 +217,7 @@ class LibraryViewModel(
                                 request.query,
                                 offset = _contentMatchedSongs.value.size,
                                 descending = request.descending,
+                                offlineOnly = !useUpstreamLibrary && effectiveMusicFrontendOwner().isEmpty(),
                             )
                         }.orEmpty()
                 if (loadedSearchRequest == request && searchRequest.value == request) {
@@ -254,11 +258,21 @@ class LibraryViewModel(
 
     init {
         scope.launch {
+            musicFrontendOwnerChanges().drop(1).collect {
+                updateSearchRequest(searchRequest.value.copy(revision = searchRequest.value.revision + 1L))
+                refresh(force = false)
+            }
+        }
+        scope.launch {
             localActive.collectLatest { active ->
                 if (active) observeLocal()
             }
         }
         scope.launch {
+            if (!useUpstreamLibrary) {
+                loadLocal()
+                return@launch
+            }
             val accountKey = currentLibraryAccountKey()
             val cachedAccount = Settings.shared.lastLibraryRefreshAccount
             val accountChanged = cachedAccount.isNotBlank() && cachedAccount != accountKey
@@ -318,7 +332,16 @@ class LibraryViewModel(
                     .debounce(LIBRARY_SEARCH_DEBOUNCE_MILLIS.milliseconds)
                     .distinctUntilChanged()
                     .collectLatest { request ->
-                        val page = database?.let { contentMatchedSongs(it, request.query, descending = request.descending) }.orEmpty()
+                        val page =
+                            database
+                                ?.let {
+                                    contentMatchedSongs(
+                                        it,
+                                        request.query,
+                                        descending = request.descending,
+                                        offlineOnly = !useUpstreamLibrary && effectiveMusicFrontendOwner().isEmpty(),
+                                    )
+                                }.orEmpty()
                         if (searchRequest.value == request) {
                             loadedSearchRequest = request
                             _contentMatchedSongs.value = page
@@ -330,6 +353,10 @@ class LibraryViewModel(
         }
 
     fun refresh(force: Boolean = true) {
+        if (!useUpstreamLibrary) {
+            if (localActive.value) localReloads.trySend(Unit) else scope.launch { loadLocal() }
+            return
+        }
         val accountKey = currentLibraryAccountKey()
         val accountChanged =
             observedAccountKey != accountKey ||
@@ -673,43 +700,51 @@ class LibraryViewModel(
                 )
             }
         val artists =
-            dao.artistsBookmarkedByCreateDateAsc().first().map {
-                ArtistItem(
-                    id = it.artist.id,
-                    title = it.artist.name,
-                    channelId = it.artist.channelId,
-                    thumbnail = it.artist.thumbnailUrl,
-                    isSubscribed = true,
-                    songCount = it.songCount,
-                    playtime = it.timeListened,
-                    libraryAddedAt = it.artist.bookmarkedAt.toEpochMilliseconds(),
-                    libraryUpdatedAt = it.artist.lastUpdateTime.toEpochMilliseconds(),
-                )
-            }
+            (dao.artistsBookmarkedByCreateDateAsc().first() + dao.artistsByCreateDateAsc().first().filter { it.artist.isLocal })
+                .distinctBy { it.artist.id }
+                .map {
+                    ArtistItem(
+                        id = it.artist.id,
+                        title = it.artist.name,
+                        channelId = it.artist.channelId,
+                        thumbnail = it.artist.thumbnailUrl,
+                        isSubscribed = it.artist.bookmarkedAt != null,
+                        songCount = it.songCount,
+                        playtime = it.timeListened,
+                        libraryAddedAt = it.artist.bookmarkedAt.toEpochMilliseconds(),
+                        libraryUpdatedAt = it.artist.lastUpdateTime.toEpochMilliseconds(),
+                    )
+                }
         val albums =
-            dao.albumsLikedByCreateDateAsc().first().map {
-                AlbumItem(
-                    id = it.album.id,
-                    isDownloaded = "album:${it.album.id}" in downloadedKeys,
-                    title = it.album.title,
-                    thumbnail = it.album.thumbnailUrl,
-                    artists =
-                        it.artists.map { artist ->
-                            ArtistTiny(artist.id.takeUnless { artist.isLocal }, artist.name, artist.thumbnailUrl)
-                        },
-                    year = it.album.year?.toString(),
-                    playlistId = it.album.playlistId,
-                    isExplicit = it.album.explicit,
-                    songCount = it.album.songCount.takeIf { count -> count > 0 },
-                    duration =
-                        it.album.duration
-                            .takeIf { duration -> duration > 0 }
-                            ?.toLong(),
-                    playtime = it.timeListened,
-                    libraryAddedAt = it.album.bookmarkedAt.toEpochMilliseconds(),
-                    libraryUpdatedAt = it.album.lastUpdateTime.toEpochMilliseconds(),
-                )
-            }
+            (dao.albumsLikedByCreateDateAsc().first() + dao.albumsByCreateDateAsc().first().filter { it.album.isLocal })
+                .distinctBy { it.album.id }
+                .map {
+                    AlbumItem(
+                        id = it.album.id,
+                        isDownloaded = "album:${it.album.id}" in downloadedKeys,
+                        title = it.album.title,
+                        thumbnail = it.album.thumbnailUrl,
+                        artists =
+                            it.artists.map { artist ->
+                                ArtistTiny(
+                                    artist.id.takeUnless { artist.isLocal && !artist.id.startsWith("LA:scanned:") },
+                                    artist.name,
+                                    artist.thumbnailUrl,
+                                )
+                            },
+                        year = it.album.year?.toString(),
+                        playlistId = it.album.playlistId,
+                        isExplicit = it.album.explicit,
+                        songCount = it.album.songCount.takeIf { count -> count > 0 },
+                        duration =
+                            it.album.duration
+                                .takeIf { duration -> duration > 0 }
+                                ?.toLong(),
+                        playtime = it.timeListened,
+                        libraryAddedAt = it.album.bookmarkedAt.toEpochMilliseconds(),
+                        libraryUpdatedAt = it.album.lastUpdateTime.toEpochMilliseconds(),
+                    )
+                }
         val podcasts =
             dao.subscribedPodcasts().first().map {
                 PodcastItem(
@@ -722,7 +757,22 @@ class LibraryViewModel(
                     libraryUpdatedAt = it.lastUpdateTime.toEpochMilliseconds(),
                 )
             }
-        return (playlists + songs + episodes + artists + albums + podcasts).distinctBy(::libraryItemKey)
+        val items = (playlists + songs + episodes + artists + albums + podcasts).distinctBy(::libraryItemKey)
+        if (useUpstreamLibrary || effectiveMusicFrontendOwner().isNotEmpty()) return items
+        val availableSongs = dao.allSongs().first().filter { it.song.isLocal || it.song.isDownloaded || it.song.isCached }
+        val songIds = availableSongs.mapTo(mutableSetOf()) { it.id }
+        val albumIds = availableSongs.mapNotNullTo(mutableSetOf()) { it.song.albumId }
+        val artistIds = availableSongs.flatMap { it.orderedArtists }.mapTo(mutableSetOf()) { it.id }
+        return items.filter { item ->
+            when (item) {
+                is SongItem -> item.id in songIds
+                is EpisodeItem -> item.id in songIds
+                is AlbumItem -> item.id in albumIds
+                is ArtistItem -> item.id in artistIds
+                is PlaylistItem -> item.isLocal || dao.playlistSongs(item.id.removePrefix("VL")).first().any { it.song.id in songIds }
+                else -> false
+            }
+        }
     }
 
     internal suspend fun synchronizeRemote(
@@ -928,9 +978,10 @@ internal suspend fun contentMatchedSongs(
     query: String,
     offset: Int = 0,
     descending: Boolean = false,
+    offlineOnly: Boolean = false,
 ): List<SongItem> =
     withContext(Dispatchers.Default) {
         val term = query.trim()
         if (term.length < 2) return@withContext emptyList()
-        database.dao().contentMatchedSongs(term, LIBRARY_SEARCH_PAGE_SIZE, offset, descending).map { it.toSongItem() }
+        database.dao().contentMatchedSongs(term, LIBRARY_SEARCH_PAGE_SIZE, offset, descending, offlineOnly).map { it.toSongItem() }
     }

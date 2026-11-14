@@ -333,7 +333,6 @@ class MainActivity : ComponentActivity() {
                                         incomingIntentState.value =
                                             when (destination) {
                                                 OnboardingDestination.HOME -> incomingIntentState.value
-                                                OnboardingDestination.LOGIN -> Intent(ACTION_LOGIN)
                                                 OnboardingDestination.BACKUP_RESTORE -> Intent(ACTION_BACKUP_RESTORE)
                                             }
                                         prepareIncomingPlayback()

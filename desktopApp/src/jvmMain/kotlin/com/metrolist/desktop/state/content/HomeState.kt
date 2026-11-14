@@ -39,8 +39,8 @@ object HomeState {
     private const val MAX_SCROLL_STATES = 32
     private val database: MusicDatabase by lazy { GlobalContext.get().get() }
     private val musicVideoResolver: MusicVideoResolver by lazy { GlobalContext.get().get() }
-    private val homeViewModel = HomeViewModel(database, AppState.scope, likedSongsName = "Liked Songs")
-    var uiState by mutableStateOf(homeViewModel.uiState.value.forDesktopDiscovery())
+    private val homeViewModel = HomeViewModel(database, AppState.scope, likedSongsName = "Liked Songs", useUpstreamDiscovery = false)
+    var uiState by mutableStateOf(homeViewModel.uiState.value)
         private set
     var isHomeLoading by mutableStateOf(false)
     var isLoadingMore by mutableStateOf(false)
@@ -53,7 +53,7 @@ object HomeState {
     init {
         AppState.scope.launch {
             homeViewModel.uiState.collect { state ->
-                uiState = state.forDesktopDiscovery()
+                uiState = state
                 homePageData =
                     HomePageData(
                         chips = uiState.chips,

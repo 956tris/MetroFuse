@@ -172,7 +172,9 @@ import com.metrolist.shared.ui.menu.MediaContextMenu
 import com.metrolist.shared.ui.menu.MediaDownloadState
 import com.metrolist.shared.ui.menu.MediaMenuModel
 import com.metrolist.shared.ui.menu.MediaMenuPlaybackActions
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.ui.menu.albumMediaMenuModel
+import dev.metrofuse.api.UiTarget
 import com.metrolist.shared.ui.menu.artistMediaMenuModel
 import com.metrolist.shared.ui.menu.cursorContextMenu
 import com.metrolist.shared.ui.menu.loadMediaItemSongs
@@ -229,6 +231,7 @@ fun SongContextMenu(
             onDismiss()
         })
     }
+    val pluginActions = if (expanded) pluginMenuActions("track.actions", onDismiss, UiTarget(song.id, song.title, "track")) else emptyList()
     MediaContextMenu(expanded = expanded && !showEditDialog && !showDetails, offset = offset, onDismiss = onDismiss) {
         val playback = LocalPlaybackController.current
         val isLiked = PlayerState.isLiked(song.id)
@@ -293,7 +296,7 @@ fun SongContextMenu(
                         }
                     }
                 },
-            additionalActions = additionalActions,
+            additionalActions = additionalActions + pluginActions,
         )
     }
 }
@@ -311,6 +314,7 @@ fun AlbumContextMenu(
     pinnedId: String? = null,
     additionalActions: List<PlayerMenuAction> = emptyList(),
 ) {
+    val pluginActions = if (expanded) pluginMenuActions("album.actions", onDismiss, UiTarget(album.id, album.title, "album")) else emptyList()
     MediaContextMenu(expanded = expanded, offset = offset, onDismiss = onDismiss) {
         val playback = LocalPlaybackController.current
         val isPinned = album.id in HomeState.uiState.speedDialPinnedIds
@@ -338,7 +342,7 @@ fun AlbumContextMenu(
             onDownload = { withMediaSongs(album, songs) { loaded -> loaded.forEach(DownloadManager::download) } },
             onHideFromLibrary = onHideFromLibrary,
             onGoToArtist = ArtistState::fetchArtistData,
-            additionalActions = additionalActions,
+            additionalActions = additionalActions + pluginActions,
         )
     }
 }
@@ -355,6 +359,7 @@ fun ArtistContextMenu(
     onToggleSubscription: (() -> Unit)? = null,
     additionalActions: List<PlayerMenuAction> = emptyList(),
 ) {
+    val pluginActions = if (expanded) pluginMenuActions("artist.actions", onDismiss, UiTarget(artist.id, artist.title, "artist")) else emptyList()
     MediaContextMenu(expanded = expanded, offset = offset, onDismiss = onDismiss) {
         val playback = LocalPlaybackController.current
         val isPinned = artist.id in HomeState.uiState.speedDialPinnedIds
@@ -388,7 +393,7 @@ fun ArtistContextMenu(
             },
             onToggleSubscription = onToggleSubscription,
             onHideFromLibrary = onHideFromLibrary,
-            additionalActions = additionalActions,
+            additionalActions = additionalActions + pluginActions,
         )
     }
 }
@@ -417,6 +422,7 @@ fun PlaylistContextMenu(
     val isDownloadedCollection = playlist.id == "auto:downloaded"
     val actionSongs =
         if (isDownloadedCollection && songs.isEmpty()) LibraryState.downloadedFiles.map { it.toSongItem() } else songs
+    val pluginActions = if (expanded) pluginMenuActions("playlist.actions", onDismiss, UiTarget(playlist.id, playlist.title, "playlist")) else emptyList()
     MediaContextMenu(expanded = expanded, offset = offset, onDismiss = onDismiss) {
         val playback = LocalPlaybackController.current
         val isPinned = HomeState.uiState.speedDialPinnedIds.any { speedDialItemId(it) == speedDialItemId(playlist.id) }
@@ -429,7 +435,7 @@ fun PlaylistContextMenu(
                 onTogglePin = {
                     if (isPinned) HomeState.unpinSpeedDialItem(playlist.id) else HomeState.pinSpeedDialItem(playlist)
                 },
-                additionalActions = additionalActions,
+                additionalActions = additionalActions + pluginActions,
             )
         }
         val isAuto = playlist.id.startsWith("auto:")
@@ -511,7 +517,7 @@ fun PlaylistContextMenu(
             onSelect = onSelect,
             onRename = onRename,
             onDelete = onDelete,
-            additionalActions = additionalActions,
+            additionalActions = additionalActions + pluginActions,
         )
     }
     PopupContent(removal.pendingIds) { ids ->

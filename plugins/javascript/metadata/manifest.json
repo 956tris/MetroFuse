@@ -1,0 +1,1 @@
+{"id":"example.metadata","name":"Fixture metadata","version":"1.0.0","author":"MetroFuse contributors","api":"1.1.0","runtime":"javascript","platforms":["desktop","android"],"script":"index.js","capabilities":["metadata","search"],"description":"Deterministic local metadata and search fixture."}

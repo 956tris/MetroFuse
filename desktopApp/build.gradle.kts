@@ -93,6 +93,8 @@ configurations.matching { it.name.startsWith("jvm") }.configureEach {
 
 group = "com.metrolist"
 val appVersion = providers.gradleProperty("appVersion").get()
+val appName = rootProject.extra["appName"] as String
+val appArtifactName = rootProject.extra["appArtifactName"] as String
 version = appVersion
 
 val desktopMemoryJvmArgs =
@@ -733,7 +735,7 @@ compose.desktop {
                 "mac" -> targetFormats(TargetFormat.Dmg)
                 else -> targetFormats(TargetFormat.Deb, TargetFormat.Rpm, TargetFormat.AppImage)
             }
-            packageName = "Metrolist"
+            packageName = appName
             val versionMatch =
                 Regex("""^(\d+)\.(\d+)\.(\d+)(?:-[A-Za-z0-9][A-Za-z0-9._-]*)?$""").matchEntire(appVersion)
                     ?: throw GradleException("appVersion must use MAJOR.MINOR.PATCH with an optional alphanumeric suffix: $appVersion")
@@ -755,7 +757,7 @@ compose.desktop {
                 } else {
                     versionComponents.joinToString(".")
                 }
-            description = "Metrolist music player"
+            description = "$appName music player"
             copyright = "© 2026 Metrolist"
             vendor = "MetrolistGroup"
 
@@ -799,6 +801,7 @@ compose.desktop {
                 iconFile.set(project.file("src/desktopMain/resources/logo.ico"))
             }
             linux {
+                packageName = appArtifactName.lowercase()
                 iconFile.set(project.file("src/desktopMain/resources/logo.png"))
                 jvmArgs += listOf("-Djava.locale.providers=CLDR,SPI", "-Dwebkit.disable.dmabuf.renderer=1")
             }
@@ -808,7 +811,7 @@ compose.desktop {
                     extraKeysRawXml =
                         """
                         <key>NSLocalNetworkUsageDescription</key>
-                        <string>Metrolist uses the local network to find and control casting devices.</string>
+                        <string>$appName uses the local network to find and control casting devices.</string>
                         <key>NSBonjourServices</key>
                         <array>
                             <string>_fcast._tcp</string>
@@ -818,7 +821,7 @@ compose.desktop {
                         <array>
                             <dict>
                                 <key>CFBundleURLName</key>
-                                <string>Metrolist URL</string>
+                                <string>$appName URL</string>
                                 <key>CFBundleURLSchemes</key>
                                 <array>
                                     <string>metrolist</string>
@@ -830,7 +833,7 @@ compose.desktop {
                 }
                 iconFile.set(project.file("src/desktopMain/resources/logo.icns"))
                 dmgPackageVersion = packageVersion
-                dockName = "Metrolist"
+                dockName = appName
             }
         }
     }

@@ -48,6 +48,7 @@ import com.metrolist.shared.constants.CollectionCoversKey
 import com.metrolist.shared.constants.DefaultOpenTabKey
 import com.metrolist.shared.constants.DeletedPlaylistIdsJsonKey
 import com.metrolist.shared.constants.DensityScaleKey
+import com.metrolist.shared.constants.DesktopMusicFoldersKey
 import com.metrolist.shared.constants.DesktopRenderBackendKey
 import com.metrolist.shared.constants.DesktopStoppedDownloadIdsJsonKey
 import com.metrolist.shared.constants.DesktopWindowPlacementKey
@@ -119,6 +120,7 @@ import com.metrolist.shared.constants.LyricsPlusLighterKey
 import com.metrolist.shared.constants.LyricsProgressiveBlurKey
 import com.metrolist.shared.constants.LyricsShareImageStyleKey
 import com.metrolist.shared.constants.MinimumSongDurationSecondsKey
+import com.metrolist.shared.constants.MusicFrontendOwnerKey
 import com.metrolist.shared.constants.MusicVideoCacheJsonKey
 import com.metrolist.shared.constants.MusicVideoPlaybackEnabledKey
 import com.metrolist.shared.constants.MusicVideoQualityKey
@@ -137,6 +139,7 @@ import com.metrolist.shared.constants.PlaylistCollectionSortingsKey
 import com.metrolist.shared.constants.PlaylistPickerSortDirectionKey
 import com.metrolist.shared.constants.PlaylistPickerSortKey
 import com.metrolist.shared.constants.PlaylistSongSortingsKey
+import com.metrolist.shared.constants.PluginMarketplaceUrlKey
 import com.metrolist.shared.constants.PreferWordSyncedLyricsKey
 import com.metrolist.shared.constants.PromptContinuePlaybackKey
 import com.metrolist.shared.constants.QueuedYouTubeHistoryJsonKey
@@ -265,6 +268,7 @@ class Settings(
     val artistNameAliases: Map<String, String> by derivedStateOf { ArtistNameAliases.deserialize(artistNameAliasesJson) }
 
     var tokenLoginWarningDismissed by preference(TokenLoginWarningDismissedKey, false)
+    var pluginMarketplaceUrl by preference(PluginMarketplaceUrlKey, "")
     var visitorData by preference("")
     var dataSyncId by preference("")
     var innerTubeAuthUser by preference("0")
@@ -539,6 +543,8 @@ class Settings(
     var queuedYouTubeHistoryJson by preference(QueuedYouTubeHistoryJsonKey, "")
     var downloadQueueJson by preference(DownloadQueueJsonKey, "")
     var defaultOpenTab by preference(DefaultOpenTabKey, "HOME")
+    var desktopMusicFolders by preference(DesktopMusicFoldersKey, "")
+    var musicFrontendOwner by preference(MusicFrontendOwnerKey, "")
     var showBottomNavHome by preference(ShowBottomNavHomeKey, true)
     var showBottomNavSearch by preference(ShowBottomNavSearchKey, true)
     var showBottomNavLibrary by preference(ShowBottomNavLibraryKey, true)

@@ -8,6 +8,7 @@ import com.metrolist.shared.api.YouTubeRepository
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.OfflineSongAvailability
 import com.metrolist.shared.network.createHttpClient
+import com.metrolist.shared.plugins.platformUsesProviderCatalog
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.utils.Logger
 import com.metrolist.shared.youtube.logging.MetrolistInnerTubeLogger
@@ -35,6 +36,7 @@ object GlobalYouTube {
             ::currentStreamResolver,
             databaseProvider = { KoinPlatform.getKoinOrNull()?.getOrNull<MusicDatabase>() },
             offlineSongAvailabilityProvider = { KoinPlatform.getKoinOrNull()?.getOrNull<OfflineSongAvailability>() },
+            usePluginCatalog = { platformUsesProviderCatalog },
         )
     private val playbackSessionGenerationCounter = atomic(0L)
     val playbackSessionGeneration: Long get() = playbackSessionGenerationCounter.value

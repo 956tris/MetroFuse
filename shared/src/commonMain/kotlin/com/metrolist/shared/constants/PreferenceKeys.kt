@@ -5,6 +5,7 @@
 
 package com.metrolist.shared.constants
 
+val PluginMarketplaceUrlKey = "pluginMarketplaceUrl"
 val ListenTogetherEnabledKey = "listenTogetherEnabled"
 val ListenTogetherServerMetadataKey = "listenTogetherServerMetadata"
 val TokenLoginWarningDismissedKey = "tokenLoginWarningDismissed"
@@ -100,6 +101,8 @@ val AiSlopBlocklistUpdatedAtKey = "aiSlopBlocklistUpdatedAt"
 val KnownUploadIdsJsonKey = "knownUploadIdsJson"
 val HasNewUploadsKey = "hasNewUploads"
 val DefaultOpenTabKey = "defaultOpenTab"
+val DesktopMusicFoldersKey = "desktopMusicFolders"
+val MusicFrontendOwnerKey = "musicFrontendOwner"
 val ShowBottomNavHomeKey = "showBottomNavHome"
 val ShowBottomNavSearchKey = "showBottomNavSearch"
 val ShowBottomNavLibraryKey = "showBottomNavLibrary"

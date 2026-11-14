@@ -47,6 +47,7 @@ import com.metrolist.android.ui.component.AdaptiveModalBottomSheet
 import com.metrolist.android.ui.download.rememberDownloadPermissionGate
 import com.metrolist.android.ui.screens.PlayerDeviceConnectSheet
 import com.metrolist.android.utils.shareImage
+import com.metrolist.shared.plugins.PluginUiSlot
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.api.artwork.YouTubeCanvasClip
 import com.metrolist.shared.api.lyrics.LyricsUtils
@@ -280,6 +281,11 @@ class AndroidPlayerPlatform(
         onReadyChanged = onReadyChanged,
         onFrame = onFrame,
     )
+
+    @Composable
+    override fun RenderExtension(point: String, fallback: @Composable () -> Unit) {
+        PluginUiSlot(point, fallback)
+    }
 
     @Composable
     override fun PlayerMenu(

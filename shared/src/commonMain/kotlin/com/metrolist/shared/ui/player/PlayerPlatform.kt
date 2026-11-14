@@ -26,6 +26,11 @@ interface PlayerPlatform {
     val supportsVideoPlayback: Boolean
     val supportsCasting: Boolean
 
+    @Composable
+    fun RenderExtension(point: String, fallback: @Composable () -> Unit) {
+        fallback()
+    }
+
     fun canvasCacheKey(
         songId: String,
         source: CanvasContentSource,

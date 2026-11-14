@@ -10,6 +10,8 @@ Gradle derives bundled language tags from resource directories. Hinglish uses `v
 
 Content-language and country preferences use the selected code or system locale. UI resource fallback does not authorize a hardcoded content-language default.
 
+The non-translatable `app_name` entry is also the native desktop package name. Android app and launcher-alias labels reference it directly. Keep product references in localized screen text consistent with **Metrofuse Alpha**, preserving upstream credits and legacy-migration descriptions.
+
 ## Escapes
 
 Use plain apostrophes and single percent signs in shared text. Compose displays Android-only `\'` and `%%` literally. For formatting plus a literal percent sign, pass the percent sign as a separate indexed string argument.

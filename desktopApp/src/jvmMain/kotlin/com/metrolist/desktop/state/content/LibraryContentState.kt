@@ -66,6 +66,7 @@ object LibraryContentState {
             AppState.scope,
             database,
             DownloadManager.downloadStates.map { states -> states.filterValues { it == DownloadState.DOWNLOADED }.keys },
+            useUpstreamLibrary = false,
         )
     var librarySections by mutableStateOf<Map<String, List<YTItem>>>(emptyMap())
         private set
@@ -84,7 +85,6 @@ object LibraryContentState {
     private var playlistRefreshGeneration = 0L
 
     init {
-        refreshUserPlaylists()
         AppState.scope.launch {
             libraryViewModel.uiState.collect { state ->
                 unfilteredLibraryItems = state.items
@@ -138,31 +138,14 @@ object LibraryContentState {
         onResult: (Result<String>) -> Unit,
     ) {
         AppState.scope.launch {
-            val local = !GlobalYouTubeRepository.instance.canManagePlaylists()
             val result =
                 withTimeoutOrNull(CREATE_PLAYLIST_TIMEOUT) {
                     withContext(Dispatchers.IO) {
-                        if (local) {
-                            createStoredLocalPlaylist(database, name).map { it.id }
-                        } else {
-                            GlobalYouTubeRepository.instance.createPlaylist(name)
-                        }
+                        createStoredLocalPlaylist(database, name).map { it.id }
                     }
                 } ?: Result.failure(IllegalStateException("Creating the playlist timed out"))
-            result.onSuccess { playlistId ->
-                if (!local) {
-                    withContext(Dispatchers.IO) {
-                        database.dao().insert(
-                            PlaylistEntity(
-                                name = name.trim(),
-                                browseId = playlistId.removePrefix("VL"),
-                                isEditable = true,
-                                isAutoSync = true,
-                            ),
-                        )
-                    }
-                }
-                fetchLibraryData(force = true)
+            if (result.isSuccess) {
+                libraryViewModel.refresh(force = true)
             }
             onResult(result)
         }

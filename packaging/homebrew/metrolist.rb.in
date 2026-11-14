@@ -6,7 +6,7 @@ cask "metrolist" do
          intel: "@MACOS_X64_SHA256@"
 
   url "https://github.com/MetrolistGroup/Metrolist/releases/download/v#{version}/metrolist-desktop-macos-#{arch}-#{version}.dmg"
-  name "Metrolist"
+  name "Metrofuse Alpha"
   desc "YouTube Music desktop client"
   homepage "https://github.com/MetrolistGroup/Metrolist"
 
@@ -15,5 +15,5 @@ cask "metrolist" do
     strategy :github_latest
   end
 
-  app "Metrolist.app"
+  app "Metrofuse Alpha.app"
 end

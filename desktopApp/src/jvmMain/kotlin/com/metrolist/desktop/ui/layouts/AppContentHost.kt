@@ -64,6 +64,7 @@ import com.metrolist.desktop.ui.screens.PlaylistScreen
 import com.metrolist.desktop.ui.screens.PodcastScreen
 import com.metrolist.desktop.ui.screens.SearchResultsList
 import com.metrolist.desktop.ui.screens.StatsScreen
+import com.metrolist.desktop.ui.screens.settings.PluginsSettingsScreen
 import com.metrolist.shared.db.isHistoryPlaylistId
 import com.metrolist.shared.deviceconnect.DeviceConnectPairingHost
 import com.metrolist.shared.generated.resources.Res
@@ -82,6 +83,7 @@ import com.metrolist.shared.ui.listentogether.ListenTogetherGlobalEvents
 import com.metrolist.shared.ui.menu.HiddenHomeItemsSnackbar
 import com.metrolist.shared.ui.navigation.LocalNavigator
 import com.metrolist.shared.ui.navigation.NavigationTransition
+import com.metrolist.shared.plugins.PluginDestinationScreen
 import com.metrolist.shared.ui.navigation.Screen
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -215,6 +217,14 @@ fun AppContentHost(
 
                     Screen.History -> {
                         HistoryScreen()
+                    }
+
+                    Screen.Plugins -> {
+                        PluginsSettingsScreen()
+                    }
+
+                    is Screen.PluginDestination -> {
+                        PluginDestinationScreen(destination)
                     }
 
                     else -> {

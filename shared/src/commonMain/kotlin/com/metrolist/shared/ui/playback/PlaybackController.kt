@@ -86,6 +86,15 @@ interface PlaybackController {
 
     fun togglePlayPause()
 
+    val supportsVolume: Boolean get() = false
+
+    fun setVolume(volume: Float) { throw UnsupportedOperationException("Volume control is unavailable") }
+
+    fun stop() {
+        if (state.value.isPlaying) togglePlayPause()
+        seekTo(0)
+    }
+
     fun seekTo(positionMs: Long)
 
     fun seekTo(

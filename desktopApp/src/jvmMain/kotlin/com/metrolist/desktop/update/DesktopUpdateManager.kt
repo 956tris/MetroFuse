@@ -235,7 +235,11 @@ object DesktopUpdateManager {
             check(marker.schema == 1 && marker.appId == "com.metrolist.desktop" && marker.version == registeredVersion) {
                 "Metrolist installation metadata is invalid"
             }
-            check(Files.isRegularFile(root.resolve("app/Metrolist.exe"))) { "Metrolist installation is incomplete" }
+            check(
+                listOf("${BuildConfig.APP_NAME}.exe", "Metrolist.exe").any {
+                    Files.isRegularFile(root.resolve("app/$it"))
+                },
+            ) { "Metrolist installation is incomplete" }
             check(
                 isRunningRegisteredDesktop(
                     root,
@@ -311,7 +315,11 @@ private data class DesktopInstallation(
 internal fun isRunningRegisteredDesktop(
     root: Path,
     command: String?,
-): Boolean = command != null && runCatching { Files.isSameFile(root.resolve("app/Metrolist.exe"), Path.of(command)) }.getOrDefault(false)
+): Boolean =
+    command != null &&
+        listOf("${BuildConfig.APP_NAME}.exe", "Metrolist.exe").any { launcher ->
+            runCatching { Files.isSameFile(root.resolve("app/$launcher"), Path.of(command)) }.getOrDefault(false)
+        }
 
 internal suspend fun copyVerifiedUpdate(
     input: InputStream,

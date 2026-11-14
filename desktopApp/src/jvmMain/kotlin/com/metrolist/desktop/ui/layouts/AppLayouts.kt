@@ -98,7 +98,9 @@ import com.metrolist.shared.generated.resources.edit_sidebar
 import com.metrolist.shared.generated.resources.filter_library
 import com.metrolist.shared.generated.resources.home
 import com.metrolist.shared.generated.resources.menu_history
+import com.metrolist.shared.generated.resources.plugins_title
 import com.metrolist.shared.generated.resources.statistics
+import com.metrolist.shared.plugins.MusicFrontendSelector
 import com.metrolist.shared.settings.NavItem
 import com.metrolist.shared.settings.NavigationId
 import com.metrolist.shared.settings.Settings
@@ -168,6 +170,7 @@ private fun navIcons(navId: String): Pair<ImageVector, ImageVector> =
         NavigationId.HISTORY -> MetrolistIcons.Outlined.MusicHistory to MetrolistIcons.Filled.MusicHistory
         NavigationId.STATISTICS -> MetrolistIcons.Outlined.SsidChart to MetrolistIcons.Filled.SsidChart
         NavigationId.LISTEN_TOGETHER -> MetrolistIcons.Outlined.Group to MetrolistIcons.Filled.Groups
+        NavigationId.PLUGINS -> MetrolistIcons.Outlined.Extension to MetrolistIcons.Outlined.Extension
         else -> MetrolistIcons.Default.QuestionMark to MetrolistIcons.Default.QuestionMark
     }
 
@@ -203,6 +206,7 @@ private fun DesktopNavigationScaffold(
                     NavigationId.HISTORY -> Res.string.menu_history
                     NavigationId.STATISTICS -> Res.string.statistics
                     NavigationId.LISTEN_TOGETHER -> Res.string.desktop_navigation_together
+                    NavigationId.PLUGINS -> Res.string.plugins_title
                     else -> return@mapNotNull null
                 }
             AdaptiveNavigationItem(
@@ -380,6 +384,7 @@ private fun WindowScope.AdaptiveDesktopLayout(
     val routeNavigationId = route.navigationId
     val currentNavIndex = currentSelectedNavIndex(visibleItems, routeNavigationId ?: selectedNavId)
     val currentTitle by LayoutUtils.rememberCurrentTitle(route, visibleItems, currentNavIndex)
+    val homeTitle: (@Composable () -> Unit)? = if (route == Screen.Home) ({ MusicFrontendSelector() }) else null
     val adaptiveLayout = currentAdaptiveLayout(AdaptiveFormFactor.DESKTOP, Settings.shared.forceBottomNavBar)
 
     LaunchedEffect(route) {
@@ -416,6 +421,7 @@ private fun WindowScope.AdaptiveDesktopLayout(
                 toggleWindowFullscreen = toggleWindowFullscreen,
                 showSearchInTopBar = true,
                 onRefresh = refreshActionFor(route),
+                titleContent = homeTitle,
             )
         } else {
             CustomTitleBar(
@@ -429,6 +435,7 @@ private fun WindowScope.AdaptiveDesktopLayout(
                 selectedNavIndex = layoutState.selectedNavIndex,
                 hideSearch = adaptiveLayout.widthBreakpoint < AdaptiveWidthBreakpoint.MEDIUM,
                 onRefresh = refreshActionFor(route),
+                titleContent = homeTitle,
             )
         }
 

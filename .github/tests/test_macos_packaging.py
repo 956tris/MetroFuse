@@ -24,7 +24,7 @@ class MacosArchitectureTest(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.app = Path(temporary.name) / 'Metrolist with spaces.app'
-        self.launcher = self.app / 'Contents/MacOS/Metrolist'
+        self.launcher = self.app / 'Contents/MacOS/Metrofuse Alpha'
         self.runtime = self.app / 'Contents/runtime/Contents/Home/lib/server/libjvm.dylib'
         self.library = self.app / 'Contents/app/resources/libsidecar.dylib'
         for path in (self.launcher, self.runtime, self.library):
@@ -55,7 +55,7 @@ class MacosArchitectureTest(unittest.TestCase):
     def test_checks_launcher_runtime_sidecars_and_jar_libraries(self):
         tool, output = self.verify()
         self.assertEqual(8, tool.call_count)
-        self.assertIn('Contents/MacOS/Metrolist', output)
+        self.assertIn('Contents/MacOS/Metrofuse Alpha', output)
         self.assertIn('libjvm.dylib', output)
         self.assertIn('ffmpeg.jar!/org/bytedeco/ffmpeg/macosx-x86_64/libavcodec.dylib', output)
 
@@ -220,7 +220,7 @@ class MacosBuildTest(unittest.TestCase):
                     self.assertEqual(['attach', 'detach'], log)
                     continue
                 self.assertEqual('.github/scripts/verify_macos_arch.py', log[1])
-                self.assertTrue(log[2].endswith('/Metrolist.app'))
+                self.assertTrue(log[2].endswith('/Metrofuse Alpha.app'))
                 self.assertEqual(['x86_64', 'detach'], log[3:])
 
     def test_x64_uses_native_gradle_and_a_separate_packaging_jdk(self):

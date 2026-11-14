@@ -15,9 +15,11 @@ import com.metrolist.shared.generated.resources.home_load_item_failed
 import com.metrolist.shared.model.AlbumItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.ui.menu.MediaDownloadState
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.ui.menu.MediaMenuSheetContent
 import com.metrolist.shared.ui.menu.albumMediaMenuModel
 import com.metrolist.shared.ui.menu.loadMediaItemSongs
+import dev.metrofuse.api.UiTarget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.getString
@@ -96,8 +98,9 @@ fun AlbumMenu(
             onExport = onExport,
             onGoToArtist = onGoToArtist,
         )
+    val pluginActions = pluginMenuActions("album.actions", onDismiss, UiTarget(album.id, album.title, "album"))
     MediaMenuBottomSheet(model = model, onDismissRequest = onDismiss, canDismiss = { !loadingPlaylistSongs && !download.isConfirming() }) {
-        MediaMenuSheetContent(model)
+        MediaMenuSheetContent(model.copy(actionGroups = model.actionGroups + listOf(pluginActions)))
     }
     download.confirmationDialog(onDismiss)
 }

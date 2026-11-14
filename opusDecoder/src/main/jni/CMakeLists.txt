@@ -16,9 +16,11 @@ set(OPUS_INSTALL_PKG_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 set(OPUS_INSTALL_CMAKE_CONFIG_MODULE OFF CACHE BOOL "" FORCE)
 
 # libopus' hardening asserts embed __FILE__; map the checkout path away so builds are reproducible.
-set(opus_common_flags "-ffunction-sections -fdata-sections -ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.")
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${opus_common_flags}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${opus_common_flags}")
+add_compile_options(
+    -ffunction-sections
+    -fdata-sections
+    "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=."
+)
 
 add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/libopus" EXCLUDE_FROM_ALL)
 

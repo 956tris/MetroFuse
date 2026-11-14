@@ -120,6 +120,12 @@ sealed class Screen : NavKey {
     data object ListenTogether : Screen()
 
     @Serializable
+    data object Plugins : Screen()
+
+    @Serializable
+    data class PluginDestination(val owner: String, val point: String) : Screen()
+
+    @Serializable
     data object ListenTogetherSettings : Screen()
 
     @Serializable
@@ -178,6 +184,7 @@ val Screen.navigationId: String?
             Screen.History -> NavigationId.HISTORY
             Screen.Statistics -> NavigationId.STATISTICS
             Screen.ListenTogether -> NavigationId.LISTEN_TOGETHER
+            Screen.Plugins -> NavigationId.PLUGINS
             else -> null
         }
 
@@ -188,6 +195,7 @@ fun screenForNavigationId(id: String): Screen? =
         NavigationId.HISTORY -> Screen.History
         NavigationId.STATISTICS -> Screen.Statistics
         NavigationId.LISTEN_TOGETHER -> Screen.ListenTogether
+        NavigationId.PLUGINS -> Screen.Plugins
         else -> null
     }
 

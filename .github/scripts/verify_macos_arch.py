@@ -30,7 +30,7 @@ def has_x64_counterpart(name, names):
 
 
 def verify_app(app, architecture):
-    launcher = app / 'Contents/MacOS/Metrolist'
+    launcher = app / 'Contents/MacOS/Metrofuse Alpha'
     if not launcher.is_file():
         raise ValueError(f'Missing launcher: {launcher}')
     app_directory = app / 'Contents/app'

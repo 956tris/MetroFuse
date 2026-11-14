@@ -20,6 +20,7 @@ import com.metrolist.shared.api.lyrics.LyricsTranslationClient
 import com.metrolist.shared.api.lyrics.YouTubeLyricsApi
 import com.metrolist.shared.api.musicvideo.MusicVideoResolver
 import com.metrolist.shared.repository.LyricsRepository
+import com.metrolist.shared.plugins.PluginStreamResolver
 import com.metrolist.shared.state.GlobalYouTube
 import com.metrolist.shared.youtube.logging.MetrolistInnerTubeLogger
 import com.metrolist.shared.youtube.lyrics.InnerTubeLyricsApi
@@ -32,7 +33,9 @@ import com.metrolist.shared.youtube.strategy.ClientHealthTracker
 import kotlinx.serialization.json.Json
 import org.koin.dsl.module
 
-val sharedModule =
+val sharedModule = sharedModule(useProviderPlugins = false)
+
+fun sharedModule(useProviderPlugins: Boolean) =
     module {
         single {
             Json {
@@ -72,15 +75,19 @@ val sharedModule =
         }
 
         single<StreamResolver> {
-            DefaultStreamResolver(
-                extractor = get(),
-                innerTube = get(),
-                tokenProvider = getOrNull(),
-                clientHealthTracker = get(),
-                playerConfigRefresh = { get<YouTubeCipherService>().refreshAfterStreamRejection() },
-                musicVideoResolver = get(),
-                localAudioSource = getOrNull<LocalAudioSource>(),
-            )
+            if (useProviderPlugins) {
+                PluginStreamResolver(getOrNull<LocalAudioSource>())
+            } else {
+                DefaultStreamResolver(
+                    extractor = get(),
+                    innerTube = get(),
+                    tokenProvider = getOrNull(),
+                    clientHealthTracker = get(),
+                    playerConfigRefresh = { get<YouTubeCipherService>().refreshAfterStreamRejection() },
+                    musicVideoResolver = get(),
+                    localAudioSource = getOrNull<LocalAudioSource>(),
+                )
+            }
         }
 
         single<MusicVideoResolver> { MusicVideoResolver() }
@@ -90,7 +97,7 @@ val sharedModule =
         single {
             LyricsClient(
                 httpClient = get(),
-                youtubeLyricsApi = get(),
+                youtubeLyricsApi = if (useProviderPlugins) null else get(),
                 lyprioLyricsProvider =
                     LyprioLyricsProvider.createOrNull(
                         httpClient = get(),
@@ -109,7 +116,7 @@ val sharedModule =
                 lyricsTranslationClient = get(),
                 aiModelCatalog = get(),
                 databaseDao = getOrNull(),
-                youtubeLyricsApi = get(),
+                youtubeLyricsApi = if (useProviderPlugins) null else get(),
             )
         }
     }

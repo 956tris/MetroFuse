@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -42,7 +41,6 @@ import com.metrolist.android.ui.component.Material3SettingsGroup
 import com.metrolist.android.ui.component.Material3SettingsItem
 import com.metrolist.shared.api.lastfm.LastFM
 import com.metrolist.shared.generated.resources.Res
-import com.metrolist.shared.generated.resources.action_login
 import com.metrolist.shared.generated.resources.migrated
 import com.metrolist.shared.generated.resources.onboarding_account_picture
 import com.metrolist.shared.generated.resources.onboarding_no_saved_accounts
@@ -66,7 +64,6 @@ internal fun OnboardingContent(
     content: OnboardingPageContent,
     preferences: @Composable (OnboardingPage) -> Unit,
     accounts: List<OnboardingAccount>,
-    onLogin: () -> Unit,
     onRestore: () -> Unit,
     previousContent: OnboardingPageContent? = null,
 ) {
@@ -102,7 +99,7 @@ internal fun OnboardingContent(
         },
         featureContent = { page ->
             if (page == OnboardingPage.LANGUAGE_LYRICS || page == OnboardingPage.PLAYBACK) preferences(page)
-            EditorialFeature(page, accounts, onLogin, onRestore)
+            EditorialFeature(page, accounts, onRestore)
             if (content.isWorking) {
                 ContainedLoadingIndicator(Modifier.padding(top = 28.dp).size(48.dp))
             }
@@ -114,7 +111,6 @@ internal fun OnboardingContent(
 private fun EditorialFeature(
     page: OnboardingPage,
     accounts: List<OnboardingAccount>,
-    onLogin: () -> Unit,
     onRestore: () -> Unit,
 ) {
     when (page) {
@@ -125,7 +121,7 @@ private fun EditorialFeature(
         }
 
         OnboardingPage.FINISH -> {
-            FinishActions(onLogin, onRestore)
+            FinishActions(onRestore)
         }
 
         OnboardingPage.LANGUAGE_LYRICS,
@@ -140,21 +136,12 @@ private fun EditorialFeature(
 
 @Composable
 private fun FinishActions(
-    onLogin: () -> Unit,
     onRestore: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        FilledTonalButton(
-            onClick = onLogin,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-            shapes = ButtonDefaults.shapes(),
-        ) {
-            Icon(MetrolistIcons.AutoMirrored.Filled.Login, contentDescription = null)
-            Text(stringResource(Res.string.action_login), modifier = Modifier.padding(start = 10.dp))
-        }
         OutlinedButton(
             onClick = onRestore,
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),

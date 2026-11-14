@@ -3,12 +3,12 @@
   <id>com.metrolist.desktop</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>Metrolist</name>
+  <name>Metrofuse Alpha</name>
   <summary>Stream and manage your YouTube Music library</summary>
 
   <description>
     <p>
-      Metrolist is a YouTube Music client for Linux. Browse, search and play
+      Metrofuse Alpha is a YouTube Music client for Linux. Browse, search and play
       your YouTube Music library, manage playlists and play music in the
       background.
     </p>

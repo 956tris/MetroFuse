@@ -100,14 +100,8 @@ object AuthState {
             useLoginForBrowse = cookies.isNotBlank(),
         )
 
-        if (isSignedIn) {
-            profilePicUrl = Settings.shared.accountThumbnail
-            fetchAccountInfo()
-            LibraryContentState.fetchLibraryData(force = true)
-        }
-
-        PlayerState.refreshHistory()
-        HomeState.fetchHomeData()
+        profilePicUrl = Settings.shared.accountThumbnail.takeIf { isSignedIn }
+        PlayerState.refreshHistory(syncRemote = false)
     }
 
     fun fetchAccountInfo() {

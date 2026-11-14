@@ -38,6 +38,7 @@ fun IntegrationsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToListenTogether: () -> Unit,
     initialPage: SettingsPageId? = null,
+    onNavigateToPlugins: (() -> Unit)? = null,
 ) {
     val copiedMessage = stringResource(Res.string.copied)
     val context = LocalContext.current
@@ -89,6 +90,7 @@ fun IntegrationsScreen(
                 },
                 deviceConnect = rememberDeviceConnectSettingsHost(),
                 onOpenListenTogether = onNavigateToListenTogether,
+                onOpenPlugins = onNavigateToPlugins,
                 onOpenUrl = { url -> runCatching { context.openDiscordUrl(url) } },
                 onCopyText = { label, text -> context.copyToClipboard(label, text, copiedMessage) },
                 onMessage = { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() },

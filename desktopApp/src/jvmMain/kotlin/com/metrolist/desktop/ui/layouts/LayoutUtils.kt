@@ -31,6 +31,7 @@ import com.metrolist.shared.generated.resources.filter_library
 import com.metrolist.shared.generated.resources.history
 import com.metrolist.shared.generated.resources.home
 import com.metrolist.shared.generated.resources.listen_together
+import com.metrolist.shared.generated.resources.plugins_title
 import com.metrolist.shared.generated.resources.podcast
 import com.metrolist.shared.generated.resources.statistics
 import com.metrolist.shared.generated.resources.top_playlist_title
@@ -116,6 +117,7 @@ object LayoutUtils {
                 NavigationId.HISTORY -> stringResource(Res.string.history)
                 NavigationId.STATISTICS -> stringResource(Res.string.statistics)
                 NavigationId.LISTEN_TOGETHER -> stringResource(Res.string.listen_together)
+                NavigationId.PLUGINS -> stringResource(Res.string.plugins_title)
                 else -> appName
             }
         val autoPlaylistTitle =

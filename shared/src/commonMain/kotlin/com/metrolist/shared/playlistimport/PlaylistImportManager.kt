@@ -145,12 +145,17 @@ class PlaylistImportManager(
     ): Result<Triple<String, List<SongItem>, String?>> =
         try {
             val playlistId = parsePlaylistId(input) ?: error("Enter a valid YouTube or YouTube Music playlist URL")
-            val sections = repository.getPlaylist(playlistId, applyContentFilters = false)
-            val items = sections.values.flatten()
-            val title =
-                items.filterIsInstance<PlaylistItem>().firstOrNull()?.title ?: fallbackTitle ?: getString(Res.string.imported_playlist)
-            val coverUrl = items.filterIsInstance<PlaylistItem>().firstOrNull()?.thumbnail
-            val songs = sections.playlistSongOccurrences()
+            var playlist: PlaylistItem? = null
+            val songs = buildList {
+                repository.getYouTubePlaylistPages(playlistId).collect { page ->
+                    if (playlist == null) {
+                        playlist = page.sections.values.asSequence().flatten().filterIsInstance<PlaylistItem>().firstOrNull()
+                    }
+                    addAll(page.sections.playlistSongOccurrences())
+                }
+            }
+            val title = playlist?.title ?: fallbackTitle ?: getString(Res.string.imported_playlist)
+            val coverUrl = playlist?.thumbnail
             check(songs.isNotEmpty()) { "The playlist has no importable songs" }
             Result.success(Triple(title, songs.take(MAX_PLAYLIST_TRACKS), coverUrl))
         } catch (error: CancellationException) {
@@ -329,7 +334,7 @@ class PlaylistImportManager(
                 if (sourceYouTubePlaylistId != null && selectedIds.none { it in remoteCounts }) {
                     val sourceSongs = mutableListOf<SongItem>()
                     try {
-                        repository.getPlaylistPages(sourceYouTubePlaylistId, applyContentFilters = false).collect { page ->
+                        repository.getYouTubePlaylistPages(sourceYouTubePlaylistId).collect { page ->
                             sourceSongs.addAll(page.sections.playlistSongOccurrences())
                         }
                     } catch (error: CancellationException) {
@@ -428,7 +433,7 @@ class PlaylistImportManager(
         val searchQuery = resolutionSearchQuery(track) ?: return null
         repeat(RESOLVE_RETRIES) { attempt ->
             try {
-                return track.videoId?.let { repository.getSongMetadata(it) }
+                return track.videoId?.let { repository.getYouTubeSongsMetadata(listOf(it)).firstOrNull() }
                     ?: bestTrackMatch(
                         track,
                         repository
@@ -451,7 +456,7 @@ class PlaylistImportManager(
 
     private suspend fun remoteSongCounts(playlistId: String): Map<String, Int> {
         val counts = mutableMapOf<String, Int>()
-        repository.getPlaylistPages(playlistId, applyContentFilters = false).collect { page ->
+        repository.getYouTubePlaylistPages(playlistId).collect { page ->
             page.sections.playlistSongOccurrences().forEach { song -> counts[song.id] = counts.getOrElse(song.id) { 0 } + 1 }
         }
         return counts

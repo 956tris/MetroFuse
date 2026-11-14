@@ -23,6 +23,7 @@ import com.metrolist.android.playback.PlayerConnection
 import com.metrolist.android.utils.startActivitySafely
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.generated.resources.Res
+import com.metrolist.shared.generated.resources.app_name
 import com.metrolist.shared.generated.resources.blocked_artists_count
 import com.metrolist.shared.generated.resources.disliked_song
 import com.metrolist.shared.generated.resources.refetch
@@ -35,6 +36,7 @@ import com.metrolist.shared.listentogether.ListenTogetherRoomRole
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.editSongMetadata
 import com.metrolist.shared.model.resetSongMetadata
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.state.SongLikeState
 import com.metrolist.shared.state.SongMetadataState
@@ -49,6 +51,7 @@ import com.metrolist.shared.ui.menu.MediaMenuSheetContent
 import com.metrolist.shared.ui.menu.rememberDeleteUploadAction
 import com.metrolist.shared.ui.menu.songMediaMenuModel
 import com.metrolist.shared.utils.ShareUrls
+import dev.metrofuse.api.UiTarget
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -89,6 +92,7 @@ fun SongMenu(
     val dislikedText = stringResource(Res.string.disliked_song)
     val removedDislikeText = stringResource(Res.string.removed_dislike)
     val context = LocalContext.current
+    val clipboardLabel = stringResource(Res.string.app_name)
     val shareSongText = stringResource(Res.string.share_song)
     val database: MusicDatabase = koinInject()
     val playerConnection: PlayerConnection = koinInject()
@@ -168,7 +172,7 @@ fun SongMenu(
             onAltShare =
                 onAltShare ?: {
                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                    clipboard?.setPrimaryClip(ClipData.newPlainText("Metrolist", ShareUrls.song(song.id)))
+                    clipboard?.setPrimaryClip(ClipData.newPlainText(clipboardLabel, ShareUrls.song(song.id)))
                     Unit
                 },
             onSuggestToHost = {
@@ -212,7 +216,7 @@ fun SongMenu(
                             onDismiss()
                         }
                     },
-                ),
+                ) + pluginMenuActions("track.actions", onDismiss, UiTarget(song.id, song.title, "track")),
         )
     if (showDetails) {
         SongDetailsSheet(song = song, onDismiss = onDismiss)

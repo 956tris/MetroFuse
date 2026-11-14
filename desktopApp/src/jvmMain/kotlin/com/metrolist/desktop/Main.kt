@@ -102,6 +102,7 @@ import com.metrolist.desktop.state.playback.DesktopPlaybackController
 import com.metrolist.desktop.state.playback.ListenTogetherState
 import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.desktop.state.playback.PlayerState
+import com.metrolist.desktop.storage.DesktopLocalMusicLibrary
 import com.metrolist.desktop.storage.DownloadManager
 import com.metrolist.desktop.storage.DownloadState
 import com.metrolist.desktop.storage.SongCacheManager
@@ -170,9 +171,12 @@ import com.metrolist.shared.generated.resources.desktop_platform_unsupported
 import com.metrolist.shared.generated.resources.liked_songs
 import com.metrolist.shared.generated.resources.ok
 import com.metrolist.shared.generated.resources.playback_error
+import com.metrolist.shared.generated.resources.startup_error_title
+import com.metrolist.shared.generated.resources.startup_native_runtime_error
 import com.metrolist.shared.generated.resources.technical_information
 import com.metrolist.shared.generated.resources.youtube_session_expired_message
 import com.metrolist.shared.generated.resources.youtube_session_expired_title
+import com.metrolist.shared.plugins.MetroFuseHost
 import com.metrolist.shared.scrobble.ScrobbleSessions
 import com.metrolist.shared.settings.AppLayout
 import com.metrolist.shared.settings.LibraryFilterType
@@ -185,7 +189,6 @@ import com.metrolist.shared.settings.flushDesktopCredentialWarnings
 import com.metrolist.shared.settings.flushDesktopSettings
 import com.metrolist.shared.settings.recoverDesktopCredentials
 import com.metrolist.shared.settings.refreshRecoveredDesktopCredentials
-import com.metrolist.shared.state.GlobalInnerTube
 import com.metrolist.shared.state.GlobalYouTube
 import com.metrolist.shared.state.GlobalYouTubeRepository
 import com.metrolist.shared.state.SongLikeState
@@ -257,6 +260,11 @@ fun WindowScope.App(
     isLinux: Boolean = false,
 ) {
     val playbackController = remember { DesktopPlaybackController(AppState.scope) }
+    DisposableEffect(playbackController, navigator) {
+        MetroFuseHost.attachController(playbackController)
+        val unbind = MetroFuseHost.bindNavigator(navigator)
+        onDispose { unbind() }
+    }
     val downloadStates = LibraryState.downloadStates
     val downloadedSongIds = remember(downloadStates) { downloadStates.filterValues { it == DownloadState.DOWNLOADED }.keys }
     NavigationContentProvider(
@@ -295,17 +303,13 @@ private fun WindowScope.AppContent(
         )
         var onboardingComplete by remember { mutableStateOf(Settings.shared.desktopOnboardingComplete) }
         if (!onboardingComplete) {
-            DesktopOnboarding { sendCrashReports, openLogin ->
+            DesktopOnboarding { sendCrashReports ->
                 if (Settings.shared.desktopPendingOnboardingSentryConsent.isNotBlank()) {
                     Settings.shared.desktopPendingOnboardingSentryConsent = sendCrashReports.toString()
                 }
                 Settings.shared.sentryEnabled = sendCrashReports
                 Settings.shared.desktopOnboardingComplete = true
                 applicationScope.launch(Dispatchers.IO) { SentryManager.initialize() }
-                if (openLogin) {
-                    UiState.showSignIn = true
-                    UiState.showSwitchChannel = false
-                }
                 onboardingComplete = true
             }
             return@MetrolistTheme
@@ -617,10 +621,9 @@ private fun startupRuntimeAvailable(): Boolean {
         if (error !is Exception && error !is LinkageError) throw error
         val location = System.getProperty("java.io.tmpdir")
         val message =
-            "Metrolist cannot initialize its native runtime or temporary storage.\n\n" +
-                "Location: $location\n" +
-                "Error: ${error.message ?: error::class.simpleName}\n\n" +
-                "Free disk space or adjust the temporary directory, then restart Metrolist."
+            runBlocking {
+                getString(Res.string.startup_native_runtime_error, location, error.message ?: error::class.simpleName.orEmpty())
+            }
         System.err.println(message)
         error.printStackTrace(System.err)
         if (!GraphicsEnvironment.isHeadless()) {
@@ -628,7 +631,7 @@ private fun startupRuntimeAvailable(): Boolean {
                 JOptionPane.showMessageDialog(
                     null,
                     message,
-                    "Metrolist startup error",
+                    runBlocking { getString(Res.string.startup_error_title) },
                     JOptionPane.ERROR_MESSAGE,
                 )
             }
@@ -641,12 +644,12 @@ private fun startupRuntimeAvailable(): Boolean {
 
 private fun configureLinuxWindowIdentity() {
     if (!OsUtil.isLinux) return
-    System.setProperty("awt.app.id", "Metrolist")
+    System.setProperty("awt.app.id", BuildConfig.APP_NAME)
     runCatching {
         val xToolkit = Class.forName("sun.awt.X11.XToolkit")
         xToolkit.getDeclaredField("awtAppClassName").apply {
             isAccessible = true
-            set(null, "Metrolist")
+            set(null, BuildConfig.APP_NAME)
         }
     }
 }
@@ -661,6 +664,7 @@ private fun shutdownApp(onComplete: () -> Unit) {
                 uiDisposed.await()
             }
             startupJob?.cancelAndJoin()
+            runCatching { MetroFuseHost.close() }
             runCatching { applicationScope.coroutineContext[Job]?.cancelAndJoin() }
             if (startup.initialized) {
                 val deviceConnectRelease = launch { runCatching { DesktopDeviceConnect.manager.release() } }
@@ -822,7 +826,7 @@ private fun runDesktopApp(args: Array<String>) {
     flushDesktopCredentialWarnings()
     startup.trace("settings")
 
-    AppLogger.info("Main", "Metrolist starting up")
+    AppLogger.info("Main", "${BuildConfig.APP_NAME} starting up")
     AppLogger.info("Main", "OS: ${OsUtil.name}")
     val javaVersion = Runtime.version()
     AppLogger.info(
@@ -879,7 +883,7 @@ private fun runDesktopApp(args: Array<String>) {
             startKoin {
                 modules(
                     coreModule,
-                    sharedModule,
+                    sharedModule(useProviderPlugins = true),
                     composeStateModule,
                 )
             }
@@ -894,6 +898,8 @@ private fun runDesktopApp(args: Array<String>) {
                 }
             startup.trace("database")
             SongMetadataState.bind(database, applicationScope)
+            MetroFuseHost.configure(File(XdgUtils.getXdgDataHome(), "metrofuse/plugins"), "desktop", applicationScope)
+            DesktopLocalMusicLibrary.initialize(database, applicationScope)
 
             LastFM.initialize(
                 apiKey = BuildConfig.LASTFM_API_KEY,
@@ -925,35 +931,6 @@ private fun runDesktopApp(args: Array<String>) {
             }
         }
 
-        fun fetchAnonymousVisitorData() {
-            applicationScope.launchVisitorDataFetch(
-                shouldFetch = !settings.credentialsPending && settings.innerTubeCookie.isBlank() && settings.visitorData.isBlank(),
-                fetch = {
-                    AppLogger.info("Main", "Fetching visitor data for unauthenticated user...")
-                    GlobalInnerTube.instance.fetchFreshVisitorData()
-                },
-                save = saveVisitorData@{
-                    if (settings.credentialsPending || settings.innerTubeCookie.isNotBlank() ||
-                        settings.visitorData.isNotBlank()
-                    ) {
-                        return@saveVisitorData
-                    }
-                    settings.visitorData = it
-                    GlobalYouTube.updateSession(
-                        cookie = settings.innerTubeCookie,
-                        visitorData = it,
-                        dataSyncId = settings.dataSyncId,
-                        authUser = settings.innerTubeAuthUser,
-                        useLoginForBrowse = false,
-                    )
-                    AppLogger.info("Main", "Visitor data fetched")
-                },
-                onBlank = { AppLogger.warning("Main", "Visitor data fetch returned null/blank") },
-                onFailure = { AppLogger.warning("Main", "Visitor data fetch failed", it) },
-            )
-        }
-        fetchAnonymousVisitorData()
-
         AuthState.loadSession()
         if (isLinux || OsUtil.isMac) {
             applicationScope.launch(Dispatchers.IO) {
@@ -979,7 +956,6 @@ private fun runDesktopApp(args: Array<String>) {
                                     systemLocale = systemJvmLocale,
                                 )
                                 AuthState.loadSession()
-                                fetchAnonymousVisitorData()
                             }
                             applicationScope.launch(Dispatchers.Default) { DesktopDeviceConnect.manager.restoreIfEnabled(Unit) }
                             retryDelayMs = 1_000L
@@ -1175,6 +1151,7 @@ private fun runDesktopApp(args: Array<String>) {
                     Screen.History,
                     Screen.Statistics,
                     Screen.ListenTogether,
+                    Screen.Plugins,
                 )
             }
         val navigationState =
@@ -1193,7 +1170,7 @@ private fun runDesktopApp(args: Array<String>) {
             onCloseRequest = {
                 shutdownApp { exitProcess(0) }
             },
-            title = if (BuildConfig.DEBUG) "Metrolist Debug" else "Metrolist",
+            title = stringResource(Res.string.app_name),
             state = windowState,
             undecorated = isLinux && !useSystemWindowFrame,
             transparent = false,

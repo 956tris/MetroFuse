@@ -70,6 +70,12 @@ class AndroidPlaybackController(
 
     override fun togglePlayPause() = connection.togglePlayPause()
 
+    override val supportsVolume: Boolean get() = true
+
+    override fun setVolume(volume: Float) = connection.setVolume(volume)
+
+    override fun stop() = connection.stop()
+
     override fun seekTo(positionMs: Long) = connection.seekTo(positionMs)
 
     override fun seekTo(

@@ -103,7 +103,7 @@ internal class DesktopPlaybackLibrary(
     var topSongs by mutableStateOf<List<HistoryStat>>(emptyList())
         private set
 
-    fun refreshHistory(): Job =
+    fun refreshHistory(syncRemote: Boolean = true): Job =
         scope.launch {
             suspend fun publishLocal() {
                 val (recent, top) = withContext(Dispatchers.IO) { readRecentHistory() to readTopSongs() }
@@ -111,6 +111,7 @@ internal class DesktopPlaybackLibrary(
                 topSongs = top
             }
             publishLocal()
+            if (!syncRemote) return@launch
             try {
                 if (withContext(Dispatchers.IO) { syncHistory() }) publishLocal()
             } catch (cancelled: CancellationException) {

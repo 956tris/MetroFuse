@@ -303,6 +303,12 @@ interface SongDao {
     @Query("SELECT * FROM song_artist_map WHERE songId = :songId")
     suspend fun songArtistMap(songId: String): List<SongArtistMap>
 
+    @Query("DELETE FROM song_artist_map WHERE songId = :songId AND EXISTS (SELECT 1 FROM song WHERE id = :songId AND isLocal = 1)")
+    suspend fun clearLocalSongArtists(songId: String)
+
+    @Query("DELETE FROM song_album_map WHERE songId = :songId AND EXISTS (SELECT 1 FROM song WHERE id = :songId AND isLocal = 1)")
+    suspend fun clearLocalSongAlbums(songId: String)
+
     @Transaction
     @Query("SELECT * FROM song")
     fun allSongs(): Flow<List<Song>>
@@ -482,6 +488,7 @@ interface SongDao {
         """
         SELECT song.* FROM song
         WHERE song.inLibrary IS NOT NULL
+          AND (:offlineOnly = 0 OR song.isLocal = 1 OR song.isDownloaded = 1 OR song.isCached = 1)
           AND (
               song.title LIKE '%' || :query || '%'
               OR song.customTitle LIKE '%' || :query || '%'
@@ -504,6 +511,7 @@ interface SongDao {
         limit: Int,
         offset: Int,
         descending: Boolean,
+        offlineOnly: Boolean = false,
     ): List<Song>
 
     fun downloadedSongs(

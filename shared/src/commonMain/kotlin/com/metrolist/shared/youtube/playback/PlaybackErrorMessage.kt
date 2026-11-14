@@ -14,14 +14,14 @@ import com.metrolist.shared.generated.resources.playback_error_sabr_attestation
 import com.metrolist.shared.generated.resources.playback_error_track_unavailable
 import com.metrolist.shared.generated.resources.playback_error_unknown
 import com.metrolist.shared.generated.resources.playback_error_unknown_resolution
+import com.metrolist.shared.playback.NoPlayableSourceException
 import org.jetbrains.compose.resources.StringResource
 
 fun Throwable.playbackErrorResource(signedIn: Boolean): StringResource {
     if (findSabrProtocolException()?.kind == SabrFailureKind.ATTESTATION_REQUIRED) return Res.string.playback_error_sabr_attestation
-    val failure =
-        generateSequence(this) { it.cause?.takeUnless { cause -> cause === it } }
-            .filterIsInstance<StreamResolveException>()
-            .firstOrNull()
+    val causes = generateSequence(this) { it.cause?.takeUnless { cause -> cause === it } }
+    if (causes.any { it is NoPlayableSourceException }) return Res.string.playback_error_no_playable_stream
+    val failure = causes.filterIsInstance<StreamResolveException>().firstOrNull()
     return when (failure?.reason) {
         StreamResolveException.Reason.EXPLICIT_UNSUPPORTED -> {
             if (signedIn) Res.string.playback_error_explicit_signed_in else Res.string.playback_error_explicit_sign_in

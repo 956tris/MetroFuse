@@ -2,6 +2,7 @@ package com.metrolist.shared.viewmodels
 
 import androidx.compose.runtime.snapshots.Snapshot
 import com.metrolist.shared.auth.AuthManager
+import com.metrolist.shared.db.entities.SpeedDialItem
 import com.metrolist.shared.db.getDesktopDatabaseBuilder
 import com.metrolist.shared.model.ArtistItem
 import com.metrolist.shared.model.ArtistTiny
@@ -14,6 +15,7 @@ import com.metrolist.shared.state.GlobalYouTube
 import com.metrolist.shared.youtube.playback.PlaybackNetworkState
 import com.metrolist.shared.youtube.playback.PlaybackNetworkStateStore
 import com.russhwolf.settings.MapSettings
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
@@ -23,6 +25,8 @@ import kotlinx.coroutines.withTimeout
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class HomeHiddenItemsTest {
     @Test
@@ -87,6 +91,50 @@ class HomeHiddenItemsTest {
                     previousSession.authUser,
                     previousSession.useLoginForBrowse,
                 )
+                Settings.replaceSharedForTest(null)
+            }
+        }
+
+    @Test
+    fun offlineHomeHidesUnavailablePinnedTracksWithoutRestoringTheUpstreamFeed() =
+        runBlocking<Unit> {
+            Settings.replaceSharedForTest(Settings(MapSettings()))
+            val path = Files.createTempFile("home-provider-test", ".db")
+            Files.delete(path)
+            val database = getDesktopDatabaseBuilder(path.toFile()).build()
+            val job = Job()
+            try {
+                val track = SongItem("metrofuse:example:track", "Pinned track", null, emptyList(), null)
+                database.speedDialDao().pin(SpeedDialItem.fromYTItem(track))
+                val locale = GlobalYouTube.innerTube.locale
+                val cached =
+                    HomeViewModel.HomeUiState(
+                        contentLocaleSignature = "${locale.hl}:${locale.gl}",
+                        sessionKey = GlobalYouTube.innerTube.sessionSnapshot().homeCacheSessionKey(),
+                        sections = listOf(HomeSection("Legacy feed", listOf(track.copy(id = "legacy")))),
+                    )
+                val legacyCache = homeCacheJson.encodeToString(cached)
+                Settings.shared.lastHomePageJson = legacyCache
+
+                val model =
+                    HomeViewModel(
+                        database,
+                        CoroutineScope(coroutineContext + job),
+                        likedSongsName = "Liked songs",
+                        useUpstreamDiscovery = false,
+                    )
+                val state = withTimeout(30_000) { model.uiState.first { !it.isRestoringCache } }
+                assertTrue(state.speedDialItems.isEmpty())
+                assertTrue(state.sections.isEmpty())
+                assertFalse(state.showLoadingPlaceholder)
+                val refreshed = CompletableDeferred<Unit>()
+                model.refresh { refreshed.complete(Unit) }
+                withTimeout(30_000) { refreshed.await() }
+                assertEquals(legacyCache, Settings.shared.lastHomePageJson)
+            } finally {
+                job.cancelAndJoin()
+                database.close()
+                Files.deleteIfExists(path)
                 Settings.replaceSharedForTest(null)
             }
         }

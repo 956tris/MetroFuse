@@ -5,7 +5,7 @@ PackageLocale: en-US
 Publisher: MetrolistGroup
 PublisherUrl: https://github.com/MetrolistGroup
 PublisherSupportUrl: https://github.com/MetrolistGroup/Metrolist/issues
-PackageName: Metrolist Desktop
+PackageName: Metrofuse Alpha
 PackageUrl: https://github.com/MetrolistGroup/Metrolist
 License: GPL-3.0
 LicenseUrl: https://github.com/MetrolistGroup/Metrolist/blob/v@VERSION@/LICENSE

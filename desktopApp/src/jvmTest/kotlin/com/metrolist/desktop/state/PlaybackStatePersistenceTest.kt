@@ -7,6 +7,7 @@ import com.metrolist.desktop.state.playback.PlaybackStateWriteQueue
 import com.metrolist.desktop.state.playback.localPlaybackResource
 import com.metrolist.desktop.state.playback.validatedLocalMediaUrl
 import com.metrolist.innertubex.InnerTube
+import com.metrolist.innertubex.extraction.ContentHints
 import com.metrolist.shared.api.YouTubeRepository
 import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.db.getDatabaseBuilder
@@ -84,7 +85,7 @@ class PlaybackStatePersistenceTest {
 
                 assertTrue(restored.isLocal)
                 assertEquals(media.toRealPath().toUri().toString(), restored.endpointParams)
-                assertEquals(media.toRealPath().toUri().toString(), resource?.url)
+                assertEquals(media.toRealPath().toString(), resource?.url)
                 assertEquals("device-file", resource?.profileId)
             } finally {
                 client.close()
@@ -96,7 +97,7 @@ class PlaybackStatePersistenceTest {
     @Test
     fun restoredLocalMediaMustResolveToAnExistingLocalFile() {
         val directory = Files.createTempDirectory("metrolist local media")
-        val file = Files.createFile(directory.resolve("song with spaces.audio"))
+        val file = Files.createFile(directory.resolve("Café 100% #1.audio"))
         try {
             val expected = file.toRealPath().toUri().toString()
             val nativePath = file.toString()
@@ -104,6 +105,9 @@ class PlaybackStatePersistenceTest {
             assertEquals(expected, validatedLocalMediaUrl(nativePath))
             assertEquals(expected, validatedLocalMediaUrl(file.toUri().toString()))
             assertEquals(expected, validatedLocalMediaUrl(file.fileName.toString(), file.parent))
+            val resource = localPlaybackResource(expected, ContentHints(isLocal = true, endpointParams = expected))
+            assertEquals(file.toRealPath().toString(), resource?.url)
+            assertFalse(resource?.requireBoundedRange ?: true)
 
             val parsed =
                 UniversalPlaylistParser.parse("#EXTM3U\n#EXTINF:-1,Artist - Song\n$nativePath") { reference ->

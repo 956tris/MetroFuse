@@ -22,6 +22,21 @@ tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
 
+val appName =
+    providers
+        .fileContents(layout.projectDirectory.file("shared/src/commonMain/composeResources/values/strings.xml"))
+        .asText
+        .map { catalog ->
+            Regex("""<string\s+name="app_name"[^>]*>([^<]+)</string>""")
+                .find(catalog)
+                ?.groupValues
+                ?.get(1)
+                ?: error("The shared catalog must define app_name")
+        }.get()
+require(appName.matches(Regex("[A-Za-z][A-Za-z0-9 ]*"))) { "app_name must be a valid native application name" }
+extra["appName"] = appName
+extra["appArtifactName"] = appName.replace(' ', '-')
+
 subprojects {
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
 

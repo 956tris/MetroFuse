@@ -7,6 +7,8 @@ package com.metrolist.android.di
 
 import coil3.ImageLoader
 import coil3.imageLoader
+import com.metrolist.android.local.AndroidLocalMusicScanner
+import com.metrolist.android.local.localPlaybackResource
 import com.metrolist.android.playback.AudioCacheManager
 import com.metrolist.android.playback.ExoPlaybackBenchmarkPlayer
 import com.metrolist.android.playback.PlayerConnection
@@ -26,6 +28,7 @@ import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.daos.DatabaseDao
 import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.db.getDatabaseBuilder
+import com.metrolist.shared.local.LocalLibraryImporter
 import com.metrolist.shared.youtube.benchmark.PlaybackBenchmarkEnvironment
 import com.metrolist.shared.youtube.benchmark.PlaybackBenchmarkRunner
 import com.metrolist.shared.youtube.logging.MetrolistInnerTubeLogger
@@ -53,6 +56,10 @@ val appModule =
             get<MusicDatabase>().dao()
         }
 
+        single<AndroidLocalMusicScanner> {
+            AndroidLocalMusicScanner(androidContext(), LocalLibraryImporter(get()))
+        }
+
         single<AudioCacheManager> {
             AudioCacheManager(
                 context = androidContext(),
@@ -63,7 +70,8 @@ val appModule =
         single<LocalAudioSource> {
             LocalAudioSource { id, song ->
                 val storedSong = song ?: get<MusicDatabase>().dao().getSongById(id)?.toSongItem()
-                storedSong?.let { get<AudioCacheManager>().getCachedPlaybackResource(it) }
+                localPlaybackResource(androidContext(), id, storedSong?.duration)
+                    ?: storedSong?.let { get<AudioCacheManager>().getCachedPlaybackResource(it) }
             }
         }
 

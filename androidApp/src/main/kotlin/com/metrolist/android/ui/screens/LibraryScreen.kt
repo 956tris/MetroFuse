@@ -73,11 +73,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.metrolist.android.LocalMiniPlayerBottomInset
 import com.metrolist.android.extensions.isInternetConnected
+import com.metrolist.android.local.LocalMusicScanStatus
 import com.metrolist.android.playback.LocalPlayerConnection
 import com.metrolist.android.ui.component.AdaptiveModalBottomSheet
 import com.metrolist.android.ui.component.SwipeGestureHandler
 import com.metrolist.android.ui.component.tabContentTopPadding
 import com.metrolist.android.ui.components.handleItemClick
+import com.metrolist.android.ui.local.LocalMusicScanCard
+import com.metrolist.android.ui.local.rememberLocalMusicScanControl
 import com.metrolist.android.ui.menu.AlbumMenu
 import com.metrolist.android.ui.menu.ArtistMenu
 import com.metrolist.android.ui.menu.CollectionExportDialog
@@ -191,6 +194,7 @@ fun LibraryScreen(
     val context = LocalContext.current
     val database: MusicDatabase = koinInject()
     val scope = rememberCoroutineScope()
+    val localMusicScan = rememberLocalMusicScanControl { viewModel.refresh(force = true) }
     var searchQuery by remember { mutableStateOf("") }
     val libraryGridState = rememberLazyGridState()
     val activeLibraryGridState = rememberLibrarySearchScrollState(searchQuery, libraryGridState)
@@ -467,92 +471,102 @@ fun LibraryScreen(
                 )
             }
         } else {
-            LibraryContent(
-                presentation = viewModel.presentation,
-                text = libraryContentText(),
-                items = uiState.items,
-                autoPlaylists = autoPlaylists,
-                hiddenItemKeys = hiddenItemKeys,
-                isLoading = uiState.isLoading,
-                error = uiState.error,
-                onRetry = { viewModel.refresh() },
-                isGridView = isGridView,
-                selectedFilter = selectedFilter,
-                manualOrder = manualOrder,
-                topPadding = topPadding,
-                compactGrid = !isLandscape,
-                onFilterChange = onFilterChange,
-                onGridViewChange = {
-                    isGridView = it
-                    Settings.shared.libraryGridView = it
-                },
-                onManualOrderChange = {
-                    manualOrder = it
-                    Settings.shared.libraryManualOrder = it
-                },
-                onItemClick = { item ->
-                    handleItemClick(
-                        item,
-                        onNavigateToAlbum,
-                        onNavigateToArtist,
-                        onNavigateToPlaylist,
-                        onNavigateToPodcast,
-                        playerConnection,
-                        scope,
+            val showLocalMusicScan = !localMusicScan.hasPermission || uiState.items.none { it is SongItem && it.isLocal }
+            Column(Modifier.fillMaxSize()) {
+                if (showLocalMusicScan) {
+                    LocalMusicScanCard(
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = topPadding, bottom = 12.dp),
+                        control = localMusicScan,
                     )
-                },
-                onPlaySongs = { songs, index -> playerConnection?.playQueue(songs, index) },
-                currentSongId = currentSong?.id,
-                isPlaying = isPlaying,
-                onAutoPlaylistClick = {
-                    if (it == "uploaded") UploadNotificationState.markSeen()
-                    onNavigateToAutoPlaylist?.invoke(it)
-                },
-                onPlayAlbum = { album ->
-                    withSongs(album) { songs ->
-                        playerConnection?.playQueue(songs, queueTitle = album.title, finite = true)
-                    }
-                },
-                searchQuery = searchQuery,
-                isSearchOpen = isSearchOpen,
-                onSearchQueryChange = {
-                    searchQuery = it
-                    viewModel.setSearchQuery(it)
-                },
-                onSearchToggle = { isSearchOpen = !isSearchOpen },
-                contentMatchedSongs = contentMatchedSongs,
-                contentSearchHasMore = contentSearchHasMore,
-                onLoadMoreContentMatches = viewModel::loadMoreContentMatches,
-                onSearchDescendingChange = viewModel::setSearchDescending,
-                itemContainer = { hiddenItem, item, isGridView, onClick, itemContent ->
-                    val content: @Composable () -> Unit = {
-                        LibraryItemContainer(
-                            isGridView = isGridView,
-                            onMenuClick = { menuItem = hiddenItem to item },
-                            modifier =
-                                Modifier.combinedClickable(
-                                    onClick = onClick,
-                                    onLongClickLabel = moreOptionsLabel,
-                                    onLongClick = { menuItem = hiddenItem to item },
-                                ),
-                            content = itemContent,
+                }
+                LibraryContent(
+                    modifier = Modifier.weight(1f),
+                    presentation = viewModel.presentation,
+                    text = libraryContentText(),
+                    items = uiState.items,
+                    autoPlaylists = autoPlaylists,
+                    hiddenItemKeys = hiddenItemKeys,
+                    isLoading = uiState.isLoading,
+                    error = uiState.error,
+                    onRetry = { viewModel.refresh() },
+                    isGridView = isGridView,
+                    selectedFilter = selectedFilter,
+                    manualOrder = manualOrder,
+                    topPadding = if (showLocalMusicScan) 0.dp else topPadding,
+                    compactGrid = !isLandscape,
+                    onFilterChange = onFilterChange,
+                    onGridViewChange = {
+                        isGridView = it
+                        Settings.shared.libraryGridView = it
+                    },
+                    onManualOrderChange = {
+                        manualOrder = it
+                        Settings.shared.libraryManualOrder = it
+                    },
+                    onItemClick = { item ->
+                        handleItemClick(
+                            item,
+                            onNavigateToAlbum,
+                            onNavigateToArtist,
+                            onNavigateToPlaylist,
+                            onNavigateToPodcast,
+                            playerConnection,
+                            scope,
                         )
-                    }
-                    if (item is SongItem || item is AlbumItem || item is ArtistItem || item is PlaylistItem) {
-                        SwipeGestureHandler(
-                            onSwipeLeft = { queue(item, playNext = false) },
-                            onSwipeRight = { queue(item, playNext = true) },
-                            enabled = playerConnection != null && Settings.shared.swipeToSong && searchQuery.isNotBlank(),
-                            content = content,
-                        )
-                    } else {
-                        content()
-                    }
-                },
-                bottomPadding = miniPlayerInset,
-                extraBottomPadding = 0.dp,
-                scrollState = activeLibraryGridState,
-            )
+                    },
+                    onPlaySongs = { songs, index -> playerConnection?.playQueue(songs, index) },
+                    currentSongId = currentSong?.id,
+                    isPlaying = isPlaying,
+                    onAutoPlaylistClick = {
+                        if (it == "uploaded") UploadNotificationState.markSeen()
+                        onNavigateToAutoPlaylist?.invoke(it)
+                    },
+                    onPlayAlbum = { album ->
+                        withSongs(album) { songs ->
+                            playerConnection?.playQueue(songs, queueTitle = album.title, finite = true)
+                        }
+                    },
+                    searchQuery = searchQuery,
+                    isSearchOpen = isSearchOpen,
+                    onSearchQueryChange = {
+                        searchQuery = it
+                        viewModel.setSearchQuery(it)
+                    },
+                    onSearchToggle = { isSearchOpen = !isSearchOpen },
+                    contentMatchedSongs = contentMatchedSongs,
+                    contentSearchHasMore = contentSearchHasMore,
+                    onLoadMoreContentMatches = viewModel::loadMoreContentMatches,
+                    onSearchDescendingChange = viewModel::setSearchDescending,
+                    itemContainer = { hiddenItem, item, isGridView, onClick, itemContent ->
+                        val content: @Composable () -> Unit = {
+                            LibraryItemContainer(
+                                isGridView = isGridView,
+                                onMenuClick = { menuItem = hiddenItem to item },
+                                modifier =
+                                    Modifier.combinedClickable(
+                                        onClick = onClick,
+                                        onLongClickLabel = moreOptionsLabel,
+                                        onLongClick = { menuItem = hiddenItem to item },
+                                    ),
+                                content = itemContent,
+                            )
+                        }
+                        if (item is SongItem || item is AlbumItem || item is ArtistItem || item is PlaylistItem) {
+                            SwipeGestureHandler(
+                                onSwipeLeft = { queue(item, playNext = false) },
+                                onSwipeRight = { queue(item, playNext = true) },
+                                enabled = playerConnection != null && Settings.shared.swipeToSong && searchQuery.isNotBlank(),
+                                content = content,
+                            )
+                        } else {
+                            content()
+                        }
+                    },
+                    bottomPadding = miniPlayerInset,
+                    extraBottomPadding = 0.dp,
+                    scrollState = activeLibraryGridState,
+                )
+            }
         }
     }
 
@@ -785,6 +799,15 @@ fun LibraryScreen(
                 onDismissRequest = { showNewPlaylistMenu = false },
             ) {
                 DropdownMenuGroup(shapes = MenuDefaults.groupShape(0, 1)) {
+                    DropdownMenuItem(
+                        modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)),
+                        text = { Text(localMusicScan.label) },
+                        enabled = localMusicScan.state.status != LocalMusicScanStatus.SCANNING,
+                        onClick = {
+                            showNewPlaylistMenu = false
+                            localMusicScan.onClick()
+                        },
+                    )
                     DropdownMenuItem(
                         modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)).navigationPopupSource(),
                         text = { Text(stringResource(Res.string.create_playlist)) },

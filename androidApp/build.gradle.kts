@@ -197,6 +197,10 @@ android {
     }
     ndkVersion = libs.versions.androidNdk.get()
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     bundle {
         language {
             enableSplit = false
@@ -245,7 +249,6 @@ android {
             isShrinkResources = true
             ndk.debugSymbolLevel = "FULL"
             optimization.keepRules { ignoreFrom("com.materialkolor:material-kolor-android:5.0.1") }
-            manifestPlaceholders["appLabel"] = "Metrolist"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -262,7 +265,6 @@ android {
         }
         debug {
             applicationIdSuffix = ".debug"
-            manifestPlaceholders["appLabel"] = "Metrolist KMP Debug"
         }
     }
 

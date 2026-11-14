@@ -193,12 +193,14 @@ internal fun localPlaybackResource(
     val uri = validatedLocalMediaUrl(hints.endpointParams ?: videoId.takeIf { it.startsWith("file:") }) ?: return null
     return PlaybackResource(
         videoId = videoId,
-        url = uri,
+        // FFmpeg's file protocol does not decode URI path escapes.
+        url = Path.of(URI(uri)).toString(),
         headers = emptyMap(),
         loudnessDb = null,
         expiresAt = null,
         clientName = "local",
         profileId = "device-file",
+        requireBoundedRange = false,
     )
 }
 
@@ -3457,7 +3459,7 @@ object PlayerState {
         applySleepTimerGain(1f)
     }
 
-    fun refreshHistory() = library.refreshHistory()
+    fun refreshHistory(syncRemote: Boolean = true) = library.refreshHistory(syncRemote)
 
     fun fetchRelated(videoId: String) = related.fetch(videoId)
 

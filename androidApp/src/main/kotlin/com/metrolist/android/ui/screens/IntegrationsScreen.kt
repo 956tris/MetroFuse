@@ -12,6 +12,11 @@ import com.metrolist.android.ui.screens.settings.IntegrationsScreen as SettingsI
 fun IntegrationsScreen(
     onNavigateBack: () -> Unit,
     onNavigateToListenTogether: () -> Unit,
+    onNavigateToPlugins: () -> Unit,
 ) {
-    SettingsIntegrationsScreen(onNavigateBack = onNavigateBack, onNavigateToListenTogether = onNavigateToListenTogether)
+    SettingsIntegrationsScreen(
+        onNavigateBack = onNavigateBack,
+        onNavigateToListenTogether = onNavigateToListenTogether,
+        onNavigateToPlugins = onNavigateToPlugins,
+    )
 }

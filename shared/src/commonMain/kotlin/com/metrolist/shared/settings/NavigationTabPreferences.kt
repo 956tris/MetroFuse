@@ -67,21 +67,28 @@ fun Settings.updateDefaultOpenTab(tab: String) {
     }
 }
 
-fun Settings.desktopSidebarNavItems(): List<NavItem> =
-    try {
-        sidebarNavItems.split(",").map { item ->
-            val parts = item.split(":")
-            NavItem(parts[0], parts[1].toBoolean())
+fun Settings.desktopSidebarNavItems(): List<NavItem> {
+    val items =
+        try {
+            sidebarNavItems.split(",").map { item ->
+                val parts = item.split(":")
+                NavItem(parts[0], parts[1].toBoolean())
+            }
+        } catch (_: Exception) {
+            listOf(
+                NavItem(NavigationId.HOME),
+                NavItem(NavigationId.LIBRARY),
+                NavItem(NavigationId.HISTORY),
+                NavItem(NavigationId.STATISTICS),
+                NavItem(NavigationId.LISTEN_TOGETHER),
+            )
         }
-    } catch (_: Exception) {
-        listOf(
-            NavItem(NavigationId.HOME),
-            NavItem(NavigationId.LIBRARY),
-            NavItem(NavigationId.HISTORY),
-            NavItem(NavigationId.STATISTICS),
-            NavItem(NavigationId.LISTEN_TOGETHER),
-        )
+    if (items.any { it.id == NavigationId.PLUGINS }) return items
+    return items.toMutableList().apply {
+        val togetherIndex = indexOfFirst { it.id == NavigationId.LISTEN_TOGETHER }
+        add(if (togetherIndex >= 0) togetherIndex + 1 else size, NavItem(NavigationId.PLUGINS))
     }
+}
 
 fun Settings.desktopDefaultOpenTabs(): List<String> {
     val visibleIds = desktopSidebarNavItems().filter { it.visible }.map { it.id }

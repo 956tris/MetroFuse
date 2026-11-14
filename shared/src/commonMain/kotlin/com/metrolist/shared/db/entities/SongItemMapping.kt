@@ -9,7 +9,7 @@ fun Song.toSongItem(): SongItem {
     val canonicalArtists =
         orderedArtists.map { artist ->
             ArtistTiny(
-                id = if (artist.isLocal) null else artist.id.withoutHistoryArtistPlaceholder(),
+                id = if (artist.isLocal && !artist.id.startsWith("LA:scanned:")) null else artist.id.withoutHistoryArtistPlaceholder(),
                 name = artist.name,
                 thumbnail = artist.thumbnailUrl,
             )
@@ -30,7 +30,7 @@ fun Song.toSongItem(): SongItem {
         duration = song.duration.takeIf { it > 0 }?.toLong(),
         isExplicit = song.explicit,
         isUnavailable = song.isUnavailable,
-        endpointParams = song.id.takeIf { song.isLocal && it.startsWith("file:") },
+        endpointParams = song.id.takeIf { song.isLocal && (it.startsWith("file:") || it.startsWith("content:")) },
         libraryAddToken = song.libraryAddToken,
         libraryRemoveToken = song.libraryRemoveToken,
         isUploaded = song.isUploaded,

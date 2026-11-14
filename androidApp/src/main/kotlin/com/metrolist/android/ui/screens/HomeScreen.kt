@@ -74,6 +74,8 @@ import com.metrolist.android.ui.component.AdaptiveModalBottomSheet
 import com.metrolist.android.ui.component.tabContentTopPadding
 import com.metrolist.android.ui.components.ErrorBox
 import com.metrolist.android.ui.components.handleItemClick
+import com.metrolist.android.ui.local.LocalMusicScanCard
+import com.metrolist.android.ui.local.rememberLocalMusicScanControl
 import com.metrolist.android.ui.utils.playSong
 import com.metrolist.android.viewmodels.HomeViewModel
 import com.metrolist.shared.auth.AuthManager
@@ -82,9 +84,11 @@ import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.error_occurred
 import com.metrolist.shared.generated.resources.home_load_failed
 import com.metrolist.shared.generated.resources.home_offline_empty
+import com.metrolist.shared.generated.resources.home_provider_empty
 import com.metrolist.shared.generated.resources.no_playable_items
 import com.metrolist.shared.generated.resources.pin_to_speed_dial
 import com.metrolist.shared.generated.resources.player_not_ready
+import com.metrolist.shared.generated.resources.plugins_title
 import com.metrolist.shared.generated.resources.recognize_music
 import com.metrolist.shared.generated.resources.refresh
 import com.metrolist.shared.generated.resources.refreshing
@@ -95,7 +99,10 @@ import com.metrolist.shared.model.BrowseItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.model.isAvailableOffline
+import com.metrolist.shared.plugins.PluginServicesStore
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
 import com.metrolist.shared.settings.LibraryFilterType
+import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.LocalIsTv
 import com.metrolist.shared.ui.components.ChipShelf
 import com.metrolist.shared.ui.components.HomeLoadingPlaceholder
@@ -129,6 +136,7 @@ fun HomeScreen(
     onNavigateToPlaylist: (String, String?) -> Unit = { _, _ -> },
     onNavigateToPodcast: (String) -> Unit = {},
     onNavigateToRecognition: () -> Unit = {},
+    onNavigateToPlugins: () -> Unit = {},
     onNavigateToBrowse: (String, String?, String) -> Unit = { _, _, _ -> },
     onNavigateToVideoBrowse: (String, String?, String) -> Unit = onNavigateToBrowse,
     onNavigateToHomeSection: (HomeShelf) -> Unit = {},
@@ -151,6 +159,10 @@ fun HomeScreen(
     val isPlaying = playerConnection?.isPlaying?.collectAsStateWithLifecycle() ?: remember { mutableStateOf(false) }
     val database: MusicDatabase = koinInject()
     val scope = rememberCoroutineScope()
+    val localMusicScan = rememberLocalMusicScanControl { viewModel.shared.refresh {} }
+    val frontends by PluginServicesStore.frontends.collectAsStateWithLifecycle()
+    val frontendOwner = remember(Settings.shared.musicFrontendOwner, frontends) { effectiveMusicFrontendOwner() }
+    val isOfflineFrontend = frontendOwner.isEmpty()
     val networkState by PlaybackNetworkStateStore.state.collectAsStateWithLifecycle()
     val cachedSongIds by remember(database) {
         database
@@ -159,7 +171,7 @@ fun HomeScreen(
             .map { it.toSet() }
             .distinctUntilChanged()
     }.collectAsStateWithLifecycle(initialValue = emptySet())
-    val isOffline = !networkState.connected
+    val isOffline = isOfflineFrontend || !networkState.connected
     val isHomeItemEnabled: (YTItem) -> Boolean = { item ->
         !isOffline || item.isAvailableOffline(cachedSongIds)
     }
@@ -283,6 +295,11 @@ fun HomeScreen(
                     }.focusGroup()
                     .focusRestorer(),
             header = {
+                if (isOfflineFrontend && (uiState.loadedHomeSongs().isEmpty() || !localMusicScan.hasPermission)) {
+                    item(key = "home_local_scan") {
+                        LocalMusicScanCard(Modifier.padding(horizontal = 16.dp, vertical = 12.dp), localMusicScan)
+                    }
+                }
                 if (isTv) {
                     item(key = "tv_refresh") {
                         Button(
@@ -309,6 +326,10 @@ fun HomeScreen(
                         }
                     }
 
+                    isOfflineFrontend && uiState.hasNoHomeContent() -> {
+                        Unit
+                    }
+
                     isOffline && uiState.hasNoHomeContent() -> {
                         item(key = "home_offline") {
                             Text(stringResource(Res.string.home_offline_empty), modifier = Modifier.padding(24.dp))
@@ -324,6 +345,17 @@ fun HomeScreen(
                                 ErrorBox(stringResource(Res.string.home_load_failed))
                                 TextButton(onClick = { viewModel.shared.refresh {} }, shapes = ButtonDefaults.shapes()) {
                                     Text(stringResource(Res.string.try_again))
+                                }
+                            }
+                        }
+                    }
+
+                    uiState.hasNoHomeContent() -> {
+                        item(key = "home_empty") {
+                            Column(Modifier.padding(24.dp)) {
+                                Text(stringResource(Res.string.home_provider_empty))
+                                TextButton(onClick = onNavigateToPlugins, shapes = ButtonDefaults.shapes()) {
+                                    Text(stringResource(Res.string.plugins_title))
                                 }
                             }
                         }

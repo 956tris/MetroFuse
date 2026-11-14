@@ -2,6 +2,8 @@ import org.gradle.api.Action
 import org.gradle.api.Task
 import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.file.RegularFileProperty
+import org.gradle.api.provider.Property
+import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.InputFile
 import org.gradle.api.tasks.PathSensitive
@@ -16,6 +18,8 @@ import java.util.zip.ZipFile
 
 // Packaging and integrity tasks stay in applied scripts, not buildSrc: its ephemeral
 // CI outputs otherwise invalidate the configuration cache between builds.
+val appName = rootProject.extra["appName"] as String
+
 val currentOperatingSystem =
     org.gradle.internal.os.OperatingSystem
         .current()
@@ -44,6 +48,9 @@ val sqliteNativePath =
     }
 
 abstract class PatchDmgAppearanceTask : DefaultTask() {
+    @get:Input
+    abstract val applicationName: Property<String>
+
     @get:InputFile
     @get:PathSensitive(PathSensitivity.NONE)
     abstract val backgroundFile: RegularFileProperty
@@ -113,6 +120,7 @@ abstract class PatchDmgAppearanceTask : DefaultTask() {
 
                 val mountPath = mountDir.absolutePath
                 val bgTiffPath = bgTiff.absolutePath
+                val appName = applicationName.get()
                 val appleScript =
                     """
                     tell application "Finder"
@@ -133,7 +141,7 @@ abstract class PatchDmgAppearanceTask : DefaultTask() {
                       set icon size of theViewOptions to 128
                       set background picture of theViewOptions to POSIX file "$bgTiffPath"
                       -- Positions match the artwork blob centres (left app, right Applications).
-                      set position of item "Metrolist.app" of targetDisk to {163, 200}
+                      set position of item "$appName.app" of targetDisk to {163, 200}
                       set position of item "Applications" of targetDisk to {497, 189}
                       update targetDisk without registering applications
                       delay 5
@@ -187,6 +195,7 @@ if (platform == "mac") {
     listOf("" to "main", "Release" to "main-release").forEach { (variant, directory) ->
         val patchAppearance =
             tasks.register<PatchDmgAppearanceTask>("patchPackage${variant}DmgAppearance") {
+                applicationName.set(appName)
                 backgroundFile.set(layout.projectDirectory.file("src/desktopMain/resources/installer_background.tiff"))
                 iconFile.set(layout.projectDirectory.file("src/desktopMain/resources/logo.icns"))
                 dmgDirectory.set(layout.buildDirectory.dir("compose/binaries/$directory/dmg"))
@@ -214,6 +223,7 @@ tasks
 
 private class VerifyReleaseDistributableAction(
     private val appDirectory: File,
+    private val appName: String,
     private val desktopClasses: File,
     private val sharedClasses: File,
     private val expectedSqlitePrefix: String,
@@ -237,7 +247,7 @@ private class VerifyReleaseDistributableAction(
         check(listOf(baseArchive, windowsBaseArchive).any { it.isFile && it.length() > 0 }) {
             "Release distributable must contain a base CDS archive"
         }
-        val launcherConfig = root.walkTopDown().single { it.name == "Metrolist.cfg" }.readText()
+        val launcherConfig = root.walkTopDown().single { it.name == "$appName.cfg" }.readText()
         listOf(
             "-Xshare:auto",
             "-XX:+VerifySharedSpaces",
@@ -250,9 +260,6 @@ private class VerifyReleaseDistributableAction(
         val jars = root.walkTopDown().filter { it.isFile && it.extension.equals("jar", ignoreCase = true) }.toList()
         if (jars.isEmpty()) throw GradleException("Release distributable contains no JARs at ${root.absolutePath}")
 
-        check(jars.none { it.name.contains("quickjs", ignoreCase = true) }) {
-            "Release distributable must not contain QuickJS JARs"
-        }
         check(jars.none { it.name.startsWith("kotlin-reflect-") }) {
             "Release distributable must not contain kotlin-reflect"
         }
@@ -281,8 +288,13 @@ private class VerifyReleaseDistributableAction(
                 }
             }
         }
-        check(packagedEntries.none { it.contains("quickjs", ignoreCase = true) }) {
-            "Release distributable must not contain QuickJS classes or natives"
+        check("com/dokar/quickjs/QuickJs.class" in packagedEntries) {
+            "MetroFuse universal plugins require the QuickJS runtime"
+        }
+        if (System.getProperty("os.name").startsWith("Windows") && System.getProperty("os.arch") == "amd64") {
+            check("jni/windows_x64/libquickjs.dll" in packagedEntries) {
+                "MetroFuse universal plugins require the Windows QuickJS library"
+            }
         }
         check("kotlin/reflect/jvm/internal/ReflectionFactoryImpl.class" !in packagedEntries) {
             "Release distributable must not contain repackaged kotlin-reflect classes"
@@ -411,6 +423,7 @@ val verifyReleaseDistributableJars =
         doLast(
             VerifyReleaseDistributableAction(
                 appDirectory = appDirectory.get().asFile,
+                appName = appName,
                 desktopClasses = desktopClasses.get().asFile,
                 sharedClasses = sharedClasses.get().asFile,
                 expectedSqlitePrefix = expectedSqlitePrefix,

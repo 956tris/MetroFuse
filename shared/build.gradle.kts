@@ -509,6 +509,7 @@ kotlin {
                 dependsOn(getByName("commonMain"))
                 dependencies {
                     implementation(project(":listenTogetherProto"))
+                    api(project(":engine"))
                     implementation(libs.ktor.client.logging)
                     implementation(libs.ktor.client.cio)
                     implementation(libs.okhttp)
@@ -724,6 +725,7 @@ val generateBuildConfig =
                 .orElse("")
                 .get()
         inputs.property("appVersion", appVersion)
+        inputs.property("appName", rootProject.extra["appName"])
         inputs.property("sourceRevision", sourceRevision)
         inputs.property("bundledLanguageTags", bundledLanguageTags.joinToString(","))
 
@@ -750,6 +752,7 @@ val generateBuildConfig =
                     const val LYPRIO_BASE_URL = "${inputs.properties["lyprioBaseUrl"]}"
                     const val LYPRIO_HMAC_KEY = "${inputs.properties["lyprioHmacKey"]}"
                     const val APP_VERSION = "${inputs.properties["appVersion"]}"
+                    const val APP_NAME = "${inputs.properties["appName"]}"
                     const val SOURCE_REVISION = "${inputs.properties["sourceRevision"]}"
                     const val BUNDLED_LANGUAGE_TAGS = "${inputs.properties["bundledLanguageTags"]}"
                     const val DEBUG = ${inputs.properties["debug"]}
@@ -780,7 +783,11 @@ class RoomSchemaArgProvider(
     @get:PathSensitive(PathSensitivity.RELATIVE)
     val schemaDirectory: File,
 ) : CommandLineArgumentProvider {
-    override fun asArguments(): Iterable<String> = listOf("room.schemaLocation=${schemaDirectory.path}")
+    override fun asArguments(): Iterable<String> {
+        // Room resolves relative paths against the process directory; KSP rejects whitespace in options.
+        val path = schemaDirectory.relativeTo(File(System.getProperty("user.dir"))).invariantSeparatorsPath
+        return listOf("room.schemaLocation=$path")
+    }
 }
 
 ksp {

@@ -101,6 +101,7 @@ import com.metrolist.shared.settings.displayName
 import com.metrolist.shared.settings.targetHeight
 import com.metrolist.shared.state.SongLikeState
 import com.metrolist.shared.ui.LocalIsTv
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.ui.components.PlayerMenuAction
 import com.metrolist.shared.ui.components.PlayerMenuActionGroup
 import com.metrolist.shared.ui.components.PlayerMenuPrimaryActions
@@ -121,6 +122,7 @@ import com.metrolist.shared.ui.menu.rememberDeleteUploadAction
 import com.metrolist.shared.ui.menu.songPrimaryActions
 import com.metrolist.shared.ui.menu.suggestToHostMenuAction
 import com.metrolist.shared.ui.menu.tempoPitchMenuAction
+import dev.metrofuse.api.UiTarget
 import com.metrolist.shared.ui.navigation.NavigationBackHandler
 import com.metrolist.shared.ui.navigation.acceptsInput
 import com.metrolist.shared.ui.navigation.blockInput
@@ -157,6 +159,9 @@ fun PlayerMenu(
 
     val uiState by playerViewModel.uiState.collectAsState()
     val currentSong = uiState.currentSong
+    val target = currentSong?.let { UiTarget(it.id, it.title, "track") }
+    val pluginActions = pluginMenuActions("player.actions", onDismiss, target) +
+        pluginMenuActions("track.actions", onDismiss, target)
     val songTitle = currentSong?.title ?: stringResource(Res.string.unknown)
     val artistName = currentSong?.artists?.joinToString(", ") { it.displayName } ?: stringResource(Res.string.unknown_artist)
     val thumbnail = currentSong?.displayThumbnail
@@ -399,6 +404,10 @@ fun PlayerMenu(
                                             ),
                                     )
                                 }
+                            }
+
+                            if (pluginActions.isNotEmpty()) {
+                                item { PlayerMenuActionGroup(actions = pluginActions) }
                             }
 
                             deleteUploadAction?.let { action ->

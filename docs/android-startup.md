@@ -6,6 +6,8 @@
 
 Backup restore finishes before infrastructure and database readers initialize. Keep legacy migration recovery and SQLite identity checks synchronous until a replacement preserves service binding. An onboarding flag cannot detect a database replaced by a legacy installation.
 
+`App` initializes the native Android plugin platform with its application context before configuring `MetroFuseHost`. Host configuration immediately starts runtime initialization, which can reactivate installed native APK plugins. Initializing the platform only when opening plugin settings is too late for this startup restoration path.
+
 `App.infrastructureReady` permits platform/session objects after DI, locale, migration checks and notification channels. `App.startup.await()` also waits for liked songs, saved accounts and database-dependent setup. Controllers, browsing, downloads, widgets and activity content must wait for completion.
 
 Saved account restoration runs on I/O. Apply its result only while the originating credentials and visitor data still match. Login, logout and account changes invalidate pending work.

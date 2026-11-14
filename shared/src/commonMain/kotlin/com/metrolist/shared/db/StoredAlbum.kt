@@ -25,7 +25,11 @@ suspend fun MusicDatabase.loadStoredAlbum(albumId: String): AlbumPage? {
                 thumbnail = album?.thumbnailUrl ?: songs.first().thumbnailUrl,
                 artists =
                     (stored?.artists?.takeIf { it.isNotEmpty() } ?: songs.first().orderedArtists).map { artist ->
-                        ArtistTiny(artist.id.takeUnless { artist.isLocal }, artist.name, artist.thumbnailUrl)
+                        ArtistTiny(
+                            artist.id.takeUnless { artist.isLocal && !artist.id.startsWith("LA:scanned:") },
+                            artist.name,
+                            artist.thumbnailUrl,
+                        )
                     },
                 year = album?.year?.toString(),
                 playlistId = album?.playlistId,

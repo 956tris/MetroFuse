@@ -5,12 +5,23 @@ import androidx.compose.runtime.snapshotFlow
 import com.metrolist.innertubex.InnerTube
 import com.metrolist.shared.auth.AuthManager
 import com.metrolist.shared.db.MusicDatabase
+import com.metrolist.shared.db.entities.Album
+import com.metrolist.shared.db.entities.EventWithSong
+import com.metrolist.shared.db.entities.PlaylistEntity
 import com.metrolist.shared.db.entities.Song
 import com.metrolist.shared.db.entities.SpeedDialItem
 import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.db.entities.withoutHistoryArtistPlaceholder
+import com.metrolist.shared.db.loadOfflineAlbumHeader
+import com.metrolist.shared.db.loadStoredAlbum
 import com.metrolist.shared.db.refreshSpeedDialArtwork
 import com.metrolist.shared.deviceconnect.DeviceCrypto
+import com.metrolist.shared.generated.resources.Res
+import com.metrolist.shared.generated.resources.albums
+import com.metrolist.shared.generated.resources.history
+import com.metrolist.shared.generated.resources.liked_songs
+import com.metrolist.shared.generated.resources.playlists
+import com.metrolist.shared.generated.resources.quick_picks
 import com.metrolist.shared.model.AlbumItem
 import com.metrolist.shared.model.ArtistItem
 import com.metrolist.shared.model.ArtistTiny
@@ -35,6 +46,7 @@ import com.metrolist.shared.model.isPodcastChip
 import com.metrolist.shared.model.mergeAndDeduplicateHomeSections
 import com.metrolist.shared.model.toSongItem
 import com.metrolist.shared.model.withoutRegionalCharts
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.settings.AiSlopBlocklist
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.settings.HiddenHomeItems
@@ -53,6 +65,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -64,6 +77,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -73,6 +88,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
+import org.jetbrains.compose.resources.getString
 import kotlin.concurrent.Volatile
 import kotlin.io.encoding.Base64
 import kotlin.time.TimeSource
@@ -196,12 +212,17 @@ class HomeViewModel(
     private val scope: CoroutineScope,
     private val httpClient: HttpClient = GlobalYouTube.client,
     var likedSongsName: String,
+    private val useUpstreamDiscovery: Boolean = true,
 ) {
     val shelfCache = HomeShelfCache()
 
     private val _uiState =
         MutableStateFlow(
-            HomeUiState(isLoading = true, isRestoringCache = true, speedDialSurprisePinned = Settings.shared.speedDialSurprisePinned),
+            HomeUiState(
+                isLoading = useUpstreamDiscovery,
+                isRestoringCache = true,
+                speedDialSurprisePinned = Settings.shared.speedDialSurprisePinned,
+            ),
         )
     val uiState: StateFlow<HomeUiState> =
         combine(
@@ -232,7 +253,7 @@ class HomeViewModel(
     private var chipUpdatedAt: Map<HomeChipKey, Long> = emptyMap()
 
     @Volatile private var lastKnownLocaleSignature: String =
-        GlobalYouTube.innerTube.locale.let { "${it.hl}:${it.gl}" }
+        if (useUpstreamDiscovery) GlobalYouTube.innerTube.locale.let { "${it.hl}:${it.gl}" } else ""
 
     @Volatile private var speedDialRecommendationItems: List<YTItem> = emptyList()
     private var paginationJob: Job? = null
@@ -247,6 +268,7 @@ class HomeViewModel(
     private val initialSpeedDialPins = CompletableDeferred<Unit>()
 
     private val paginationInProgress = MutableStateFlow(false)
+    private val libraryHomeRefresh = MutableStateFlow(0L)
     private val chipFeedPager =
         HomeChipFeedPager(
             loadFirst = { chip ->
@@ -265,11 +287,13 @@ class HomeViewModel(
         )
 
     init {
-        AuthManager().restorePersistedSession()
+        if (!useUpstreamDiscovery) observeLibraryHome()
+        if (useUpstreamDiscovery) AuthManager().restorePersistedSession()
         val restoreGeneration = contentLoadGeneration
         scope.launch {
+            if (!useUpstreamDiscovery) return@launch
             val cacheStart = TimeSource.Monotonic.markNow()
-            val restoredState = withContext(Dispatchers.Default) { loadLastHomePage() }
+            val restoredState = if (useUpstreamDiscovery) withContext(Dispatchers.Default) { loadLastHomePage() } else null
             if (restoredState != null && restoreGeneration == contentLoadGeneration &&
                 restoredState.sessionKey == GlobalYouTube.innerTube.sessionSnapshot().homeCacheSessionKey()
             ) {
@@ -415,7 +439,7 @@ class HomeViewModel(
                             }.toMap()
                     initialSpeedDialPins.await()
                     database.refreshSpeedDialArtwork(known, artworkRefreshTimes) { id ->
-                        if (attemptedArtwork.add(id)) {
+                        if ((useUpstreamDiscovery || id.startsWith("metrofuse:")) && attemptedArtwork.add(id)) {
                             GlobalYouTubeRepository.instance
                                 .getPlaylistPages(id)
                                 .first()
@@ -472,6 +496,7 @@ class HomeViewModel(
                 }
             }
 
+            if (!useUpstreamDiscovery) return@launch
             scope.launch {
                 var previousSession: HomeSessionIdentity? = null
                 GlobalYouTube.innerTube.sessionFlow
@@ -539,6 +564,15 @@ class HomeViewModel(
         isRefresh: Boolean = false,
         onComplete: () -> Unit = {},
     ) {
+        if (!useUpstreamDiscovery) {
+            val refresh = libraryHomeRefresh.value + 1
+            libraryHomeRefresh.value = refresh
+            scope.launch {
+                uiState.first { it.libraryRefreshGeneration >= refresh }
+                onComplete()
+            }
+            return
+        }
         val generation = ++contentLoadGeneration
         val sessionKey = GlobalYouTube.innerTube.sessionSnapshot().homeCacheSessionKey()
         cancelPagination()
@@ -799,7 +833,175 @@ class HomeViewModel(
             }
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private fun observeLibraryHome() {
+        val dao = database.dao()
+        val playlists =
+            dao.allPlaylists().flatMapLatest { entries ->
+                if (entries.isEmpty()) {
+                    flowOf(emptyList())
+                } else {
+                    combine(
+                        entries.map { playlist ->
+                            dao.playlistSongs(playlist.id).map { songs ->
+                                LibraryHomePlaylist(playlist, songs.mapTo(mutableSetOf()) { it.song.id })
+                            }
+                        },
+                    ) { it.toList() }
+                }
+            }
+        val library =
+            combine(dao.allSongs(), dao.events(), playlists, dao.albumsByNameAsc(includeBookmarked = true)) {
+                songs,
+                events,
+                savedPlaylists,
+                albums,
+                ->
+                LibraryHomeSnapshot(songs, events, savedPlaylists, albums)
+            }
+        scope.launch(Dispatchers.Default) {
+            combine(
+                library,
+                musicFrontendOwnerChanges(),
+                database.speedDialDao().getAll(),
+                libraryHomeRefresh,
+                BlockedContent.version,
+            ) { snapshot, owner, pins, refresh, _ ->
+                LibraryHomeRequest(snapshot, owner, pins, refresh)
+            }.collectLatest { request ->
+                try {
+                    val state = buildLibraryHome(request).withoutBlockedContent()
+                    cachedAllContent = state
+                    _uiState.value = state
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    Logger.e(HOME_LOG_TAG, "Could not load saved music", error)
+                    _uiState.value = HomeUiState(error = error.message, libraryRefreshGeneration = request.refresh)
+                }
+            }
+        }
+    }
+
+    private suspend fun buildLibraryHome(request: LibraryHomeRequest): HomeUiState {
+        val snapshot = request.snapshot
+        val owner = request.owner
+        val songs =
+            snapshot.songs
+                .filter {
+                    !it.song.isUnavailable && !it.song.isEpisode && !it.song.isVideo &&
+                        if (owner.isEmpty()) {
+                            it.song.isLocal || it.song.isDownloaded || it.song.isCached
+                        } else {
+                            it.id.startsWith("metrofuse:$owner:")
+                        }
+                }.sortedWith(
+                    compareByDescending<Song> {
+                        it.song.liked
+                    }.thenByDescending { it.song.totalPlayTime }.thenByDescending { it.song.inLibrary },
+                )
+        val items = BlockedContent.filterSongs(songs.map(Song::toSongItem))
+        val byId = items.associateBy { it.id }
+        val availableIds = byId.keys
+        val recent =
+            snapshot.events
+                .sortedByDescending { it.event.timestamp }
+                .mapNotNull { byId[it.event.songId] }
+                .distinctBy { it.id }
+                .take(HOME_SNAPSHOT_ITEMS)
+        val recentIds = recent.mapTo(mutableSetOf()) { it.id }
+        val picks = items.filterNot { it.id in recentIds }.take(HOME_SNAPSHOT_ITEMS)
+        val availableAlbumIds = songs.mapNotNullTo(linkedSetOf()) { it.song.albumId ?: it.album?.id }
+        val pinnedAlbumIds = request.pins.filter { it.type == "ALBUM" && it.id in availableAlbumIds }.map { it.id }
+        val albumIds =
+            pinnedAlbumIds +
+                (snapshot.albums.map { it.id } + availableAlbumIds)
+                    .distinct()
+                    .filter { it in availableAlbumIds && it !in pinnedAlbumIds }
+                    .take(HOME_SNAPSHOT_ITEMS)
+        val albumItems =
+            albumIds.mapNotNull { id ->
+                if (owner.isEmpty()) database.loadOfflineAlbumHeader(id, availableIds) else database.loadStoredAlbum(id)?.album
+            }
+        val playlistItems =
+            snapshot.playlists
+                .filter { it.songIds.any(availableIds::contains) }
+                .map { saved ->
+                    val playlist = saved.playlist
+                    PlaylistItem(
+                        id = playlist.browseId ?: playlist.id,
+                        title = playlist.name,
+                        thumbnail = playlist.customThumbnailUrl ?: playlist.thumbnailUrl,
+                        songCount = saved.songIds.count(availableIds::contains).toString(),
+                        isEditable = playlist.isEditable,
+                        isLocal = playlist.isLocal,
+                        description = playlist.description,
+                    )
+                }.distinctBy { it.id }
+        val liked = songs.count { it.song.liked && it.id in availableIds }
+        val likedPlaylist =
+            if (liked > 0) {
+                PlaylistItem(
+                    "liked",
+                    getString(Res.string.liked_songs),
+                    AUTO_PLAYLIST_ICON_LIKED,
+                    songCount = liked.toString(),
+                    isLocal = true,
+                )
+            } else {
+                null
+            }
+        val collections = listOfNotNull(likedPlaylist) + playlistItems
+        val metadata = (items + albumItems + collections).associateBy { it.id }
+        latestSpeedDialItemMetadata = metadata
+        latestSpeedDialPins = request.pins
+        val artistIds = items.flatMap { it.artists }.mapNotNullTo(mutableSetOf()) { it.id }
+        val pins = request.pins.filter { it.id in metadata || (it.type == "ARTIST" && it.id in artistIds) }
+        val sections =
+            buildList {
+                if (recent.isNotEmpty()) add(HomeSection(getString(Res.string.history), recent))
+                if (picks.isNotEmpty()) add(HomeSection(getString(Res.string.quick_picks), picks))
+                if (albumItems.isNotEmpty()) add(HomeSection(getString(Res.string.albums), albumItems))
+                if (collections.isNotEmpty()) add(HomeSection(getString(Res.string.playlists), collections))
+            }
+        return HomeUiState(
+            libraryRefreshGeneration = request.refresh,
+            data = sections,
+            sections = sections,
+            quickPicks = picks,
+            keepListening = recent,
+            recentlyPlayed = recent,
+            speedDialItems = buildSpeedDialItems(pins, emptyList()),
+            speedDialPinnedIds = pins.map { it.id },
+            speedDialSurprisePinned = Settings.shared.speedDialSurprisePinned,
+            userPlaylists =
+                collections.map {
+                    UserPlaylist(it.id, it.title, it.thumbnail, it.songCount?.toIntOrNull(), isAutoPlaylist = it.id == "liked")
+                },
+        )
+    }
+
+    private data class LibraryHomePlaylist(
+        val playlist: PlaylistEntity,
+        val songIds: Set<String>,
+    )
+
+    private data class LibraryHomeSnapshot(
+        val songs: List<Song>,
+        val events: List<EventWithSong>,
+        val playlists: List<LibraryHomePlaylist>,
+        val albums: List<Album>,
+    )
+
+    private data class LibraryHomeRequest(
+        val snapshot: LibraryHomeSnapshot,
+        val owner: String,
+        val pins: List<SpeedDialItem>,
+        val refresh: Long,
+    )
+
     fun loadMoreSections() {
+        if (!useUpstreamDiscovery) return
         val continuation = _uiState.value.continuation
         if (!paginationInProgress.compareAndSet(false, true)) return
         if (continuation == null) {
@@ -1129,6 +1331,7 @@ class HomeViewModel(
     }
 
     fun invalidateCacheForLocaleChange() {
+        if (!useUpstreamDiscovery) return
         val locale = GlobalYouTube.innerTube.locale
         lastKnownLocaleSignature = "${locale.hl}:${locale.gl}"
         cachedAllContent = null
@@ -1185,6 +1388,7 @@ class HomeViewModel(
     }
 
     fun toggleChip(chip: Chip?) {
+        if (!useUpstreamDiscovery) return
         if (chip?.isPodcastChip == true && Settings.shared.hidePodcasts) return
         val currentState = _uiState.value
         val currentChip = currentState.selectedChip
@@ -1447,6 +1651,7 @@ class HomeViewModel(
 
     @Serializable
     data class HomeUiState(
+        @Transient val libraryRefreshGeneration: Long = 0L,
         @Transient val isRestoringCache: Boolean = false,
         val data: List<HomeSection>? = null,
         val discoverySections: List<HomeSection> = emptyList(),

@@ -373,7 +373,6 @@ internal fun OnboardingScreen(
                 } else {
                     emptyList()
                 },
-            onLogin = { onComplete(sendCrashReports, OnboardingDestination.LOGIN) },
             onRestore = { onComplete(sendCrashReports, OnboardingDestination.BACKUP_RESTORE) },
         )
     }

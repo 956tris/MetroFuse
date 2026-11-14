@@ -8,6 +8,7 @@ package com.metrolist.desktop.di
 import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.desktop.storage.DownloadManager
 import com.metrolist.desktop.storage.SongCacheManager
+import com.metrolist.desktop.storage.desktopLocalPlaybackResource
 import com.metrolist.desktop.storage.desktopSongOfflineAvailability
 import com.metrolist.desktop.youtube.DesktopPageBoundTokenRuntime
 import com.metrolist.innertubex.extraction.TokenProvider
@@ -24,7 +25,8 @@ val composeStateModule =
         single<MusicDatabase> { getDatabaseBuilder().build() }
         single<LocalAudioSource> {
             LocalAudioSource { id, song ->
-                DownloadManager.getLocalPlaybackResource(id, song) ?: SongCacheManager.getCachedPlaybackResource(id, song)
+                desktopLocalPlaybackResource(id, song) ?: DownloadManager.getLocalPlaybackResource(id, song)
+                    ?: SongCacheManager.getCachedPlaybackResource(id, song)
             }
         }
         single<DatabaseDao> { get<MusicDatabase>().dao() }

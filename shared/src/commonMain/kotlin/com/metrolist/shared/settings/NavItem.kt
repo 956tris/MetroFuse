@@ -13,6 +13,7 @@ object NavigationId {
     const val HISTORY = "history"
     const val STATISTICS = "stats"
     const val LISTEN_TOGETHER = "together"
+    const val PLUGINS = "plugins"
 }
 
 @Serializable

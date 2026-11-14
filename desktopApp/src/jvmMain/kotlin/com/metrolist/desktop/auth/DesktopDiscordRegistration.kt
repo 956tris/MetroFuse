@@ -2,6 +2,7 @@ package com.metrolist.desktop.auth
 
 import com.metrolist.desktop.utils.AppLogger
 import com.metrolist.desktop.utils.registerWindowsUriHandler
+import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.utils.OsUtil
 import com.metrolist.shared.utils.XdgUtils
 import com.sun.jna.platform.win32.Advapi32Util
@@ -35,7 +36,14 @@ internal fun registerDesktopDiscordCallback(displayName: String): Boolean =
                 if (!System.getenv("FLATPAK_ID").isNullOrBlank()) return@runCatching true
                 val query = listOf("xdg-mime", "query", "default", DISCORD_MIME_TYPE)
                 val packagedHandler = runRegistrationCommand(query)?.trim()
-                if (packagedHandler in setOf("metrolist.desktop", "Metrolist.desktop", "com.metrolist.desktop.desktop")) {
+                if (packagedHandler in
+                    setOf(
+                        "metrolist.desktop",
+                        "Metrolist.desktop",
+                        "com.metrolist.desktop.desktop",
+                        "${BuildConfig.APP_NAME.replace(' ', '-')}.desktop",
+                    )
+                ) {
                     return@runCatching true
                 }
                 val executable = linuxDiscordLauncher(System.getenv("APPIMAGE"), launcher) ?: return@runCatching false
@@ -62,8 +70,8 @@ internal fun linuxDiscordLauncher(
     ) {
         return null
     }
-    val wrapper = File(executable.parentFile, "Metrolist")
-    return if (appImage.isNullOrBlank() && executable.name == "Metrolist.bin" && wrapper.canExecute()) wrapper else executable
+    val wrapper = File(executable.parentFile, executable.name.removeSuffix(".bin"))
+    return if (appImage.isNullOrBlank() && executable.name.endsWith(".bin") && wrapper.canExecute()) wrapper else executable
 }
 
 internal fun linuxDiscordDesktopEntry(

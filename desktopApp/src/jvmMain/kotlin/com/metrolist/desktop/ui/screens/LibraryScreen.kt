@@ -66,6 +66,7 @@ import com.metrolist.desktop.ui.components.LibraryItemContextMenu
 import com.metrolist.desktop.ui.components.PlaylistContextMenu
 import com.metrolist.desktop.ui.components.PodcastContextMenu
 import com.metrolist.desktop.ui.components.SongContextMenu
+import com.metrolist.desktop.ui.screens.settings.LocalMusicLibraryActions
 import com.metrolist.shared.db.isHistoryPlaylistId
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.action_cannot_be_undone
@@ -186,6 +187,7 @@ fun LibraryScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
+            LocalMusicLibraryActions()
             LibraryContent(
                 presentation = LibraryContentState.presentation,
                 text = libraryContentText(),

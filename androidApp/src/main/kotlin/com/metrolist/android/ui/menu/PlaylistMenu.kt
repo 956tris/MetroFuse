@@ -6,8 +6,10 @@ import com.metrolist.shared.model.PlaylistItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.ui.components.localizedBuiltinPlaylist
 import com.metrolist.shared.ui.menu.MediaDownloadState
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.ui.menu.MediaMenuSheetContent
 import com.metrolist.shared.ui.menu.loadMediaItemSongs
+import dev.metrofuse.api.UiTarget
 import com.metrolist.shared.ui.menu.playlistMediaMenuModel
 
 @Composable
@@ -57,8 +59,9 @@ fun PlaylistMenu(
             onRename = onRename,
             onDelete = onDelete,
         )
+    val pluginActions = pluginMenuActions("playlist.actions", onDismiss, UiTarget(playlist.id, playlist.title, "playlist"))
     MediaMenuBottomSheet(model = model, onDismissRequest = onDismiss, canDismiss = { !download.isConfirming() }) {
-        MediaMenuSheetContent(model)
+        MediaMenuSheetContent(model.copy(actionGroups = model.actionGroups + listOf(pluginActions)))
     }
     download.confirmationDialog(onDismiss)
 }

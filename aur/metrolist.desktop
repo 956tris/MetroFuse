@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=Metrolist
+Name=Metrofuse Alpha
 Comment=YouTube Music desktop client
 Exec=metrolist %u
 Icon=metrolist

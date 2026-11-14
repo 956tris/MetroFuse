@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.ButtonDefaults
@@ -41,9 +42,12 @@ import com.metrolist.desktop.ui.components.PlaylistContextMenu
 import com.metrolist.desktop.ui.components.PodcastContextMenu
 import com.metrolist.desktop.ui.components.RetryableError
 import com.metrolist.desktop.ui.components.SongContextMenu
+import com.metrolist.desktop.ui.screens.settings.LocalMusicLibraryActions
 import com.metrolist.shared.generated.resources.Res
+import com.metrolist.shared.generated.resources.home_provider_empty
 import com.metrolist.shared.generated.resources.home_unavailable
 import com.metrolist.shared.generated.resources.pin_to_speed_dial
+import com.metrolist.shared.generated.resources.plugins_title
 import com.metrolist.shared.generated.resources.refetch
 import com.metrolist.shared.generated.resources.refetch_desc
 import com.metrolist.shared.generated.resources.shuffle
@@ -58,6 +62,7 @@ import com.metrolist.shared.model.PodcastItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.model.toSongItem
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
 import com.metrolist.shared.ui.components.ChipShelf
 import com.metrolist.shared.ui.components.DesktopHorizontalScrollControls
 import com.metrolist.shared.ui.components.HomeLoadingPlaceholder
@@ -91,6 +96,22 @@ fun HomeScreen() {
 
     if (uiState.error != null && uiState.hasNoHomeContent()) {
         RetryableError(stringResource(Res.string.home_unavailable), HomeState::refresh)
+        return
+    }
+
+    if (uiState.hasNoHomeContent()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                if (effectiveMusicFrontendOwner().isEmpty()) {
+                    Box(Modifier.widthIn(max = 640.dp)) { LocalMusicLibraryActions() }
+                } else {
+                    Text(stringResource(Res.string.home_provider_empty))
+                    TextButton(onClick = { DesktopNavigation.navigate(Screen.Plugins) }, shapes = ButtonDefaults.shapes()) {
+                        Text(stringResource(Res.string.plugins_title))
+                    }
+                }
+            }
+        }
         return
     }
 

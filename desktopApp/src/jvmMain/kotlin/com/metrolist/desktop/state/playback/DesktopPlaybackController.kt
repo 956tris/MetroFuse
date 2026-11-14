@@ -67,6 +67,12 @@ class DesktopPlaybackController(
 
     override fun togglePlayPause() = PlayerState.togglePlay()
 
+    override val supportsVolume: Boolean get() = true
+
+    override fun setVolume(volume: Float) = PlayerState.setVolumeLevel(volume)
+
+    override fun stop() = PlayerState.stop()
+
     override fun seekTo(positionMs: Long) = PlayerState.seekToPosition(positionMs)
 
     override fun skipToNext() {

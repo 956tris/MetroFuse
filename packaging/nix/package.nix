@@ -12,10 +12,10 @@ appimageTools.wrapType2 {
     gtk3 webkitgtk_4_1 libsecret dbus alsa-plugins
   ];
   extraInstallCommands = ''
-    install -Dm644 ${contents}/Metrolist.desktop $out/share/applications/metrolist.desktop
+    install -Dm644 ${contents}/Metrofuse-Alpha.desktop $out/share/applications/metrolist.desktop
     substituteInPlace $out/share/applications/metrolist.desktop \
-      --replace-fail 'Exec=bin/Metrolist' 'Exec=metrolist'
-    install -Dm644 ${contents}/Metrolist.png $out/share/icons/hicolor/512x512/apps/Metrolist.png
+      --replace-fail 'Exec="bin/Metrofuse Alpha"' 'Exec=metrolist'
+    install -Dm644 ${contents}/Metrofuse-Alpha.png $out/share/icons/hicolor/512x512/apps/Metrofuse-Alpha.png
   '';
   meta = {
     description = "YouTube Music desktop client";

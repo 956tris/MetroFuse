@@ -13,6 +13,7 @@ Read these when working on the corresponding feature. They are not prerequisites
 | Area | Reference |
 | --- | --- |
 | Desktop packaging, login, logs and runtime | [Desktop](desktop.md) |
+| Built-in local music scanning and offline playback | [Offline player](offline-player.md) |
 | Desktop Native Image experiment and measurements | [Native Image experiment](desktop-native-image.md) |
 | Package-manager recipes and distribution automation | [Distribution](distribution.md) |
 | Artwork, animated covers and system colors | [Rendering](rendering.md) |

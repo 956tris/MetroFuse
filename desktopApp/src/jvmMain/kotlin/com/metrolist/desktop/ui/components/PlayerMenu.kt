@@ -50,6 +50,8 @@ import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.db.MusicDatabase
+import dev.metrofuse.api.UiTarget
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.add_romanization_below_lyrics
 import com.metrolist.shared.generated.resources.ai_translation
@@ -479,6 +481,7 @@ fun PlayerMenuPanel(
     isFullscreen: Boolean = false,
 ) {
     val currentTrack = PlayerState.currentTrack
+    val target = currentTrack?.let { UiTarget(it.id, it.title, "track") }
     val playback = LocalPlaybackController.current
     var editingSong by remember { mutableStateOf<SongItem?>(null) }
     editingSong?.let { song ->
@@ -697,7 +700,7 @@ fun PlayerMenuPanel(
                         }
                     },
                 ),
-            ),
+            ) + listOf(pluginMenuActions("player.actions", onDismiss, target), pluginMenuActions("track.actions", onDismiss, target)),
     )
 }
 

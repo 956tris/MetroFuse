@@ -223,6 +223,7 @@ import com.metrolist.android.ui.screens.settings.ListenTogetherServerScreen
 import com.metrolist.android.ui.screens.settings.ListenTogetherSettingsScreen
 import com.metrolist.android.ui.screens.settings.PlaybackBenchmarkSettingsScreen
 import com.metrolist.android.ui.screens.settings.PlaylistImportScreen
+import com.metrolist.android.ui.screens.settings.PluginsScreen
 import com.metrolist.android.ui.screens.settings.ReleaseNotesSheet
 import com.metrolist.android.ui.screens.settings.StatsDetailScreen
 import com.metrolist.android.ui.screens.settings.StatsScreen
@@ -295,13 +296,15 @@ import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.playback.LocalPlayerSession
 import com.metrolist.shared.playlistimport.PlaylistImportProgressCard
 import com.metrolist.shared.playlistimport.PlaylistImportStatusManager
+import com.metrolist.shared.plugins.MetroFuseHost
+import com.metrolist.shared.plugins.MusicFrontendSelector
+import com.metrolist.shared.plugins.PluginDestinationScreen
 import com.metrolist.shared.settings.MiniPlayerType
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.settings.defaultOpenTabRoot
 import com.metrolist.shared.settings.defaultOpenTabScreen
 import com.metrolist.shared.state.GlobalYouTube
 import com.metrolist.shared.state.GlobalYouTubeRepository
-import com.metrolist.shared.state.UploadNotificationState
 import com.metrolist.shared.state.applyContentRegion
 import com.metrolist.shared.ui.LocalIsInPipMode
 import com.metrolist.shared.ui.LocalIsTv
@@ -417,17 +420,6 @@ fun MetrolistApp(
     val pureBlack = Settings.shared.isPureBlackTheme(darkTheme)
 
     val coroutineScope = rememberCoroutineScope()
-    LaunchedEffect(authManager) {
-        authManager.restorePersistedSession()
-        authManager.restoreSession()
-    }
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            runCatching { UploadNotificationState.refreshOnAppOpen(GlobalYouTubeRepository.instance) }
-        }
-    }
-
     val systemJvmLocale = AppLocale.systemLocale(context)
 
     GlobalYouTube.applyContentRegion(
@@ -487,6 +479,10 @@ fun MetrolistApp(
         val startupPresentation = LocalStartupPresentation.current
         SideEffect { startupPresentation?.homeRequired = currentRoute == Screen.Home }
         val navigator = remember(navigationState) { Navigator(navigationState) }
+        DisposableEffect(navigator) {
+            val unbind = MetroFuseHost.bindNavigator(navigator)
+            onDispose { unbind() }
+        }
         val homeScrollToTopEvents =
             remember {
                 MutableSharedFlow<Long>(
@@ -1409,7 +1405,7 @@ fun MetrolistApp(
                                                         title =
                                                             when (navigationState.topLevelRoute) {
                                                                 Screen.Home -> {
-                                                                    stringResource(Res.string.home)
+                                                                    ""
                                                                 }
 
                                                                 Screen.Library -> {
@@ -1425,6 +1421,12 @@ fun MetrolistApp(
                                                                 }
                                                             },
                                                         showWarning = hasPendingUpdate && navigationState.topLevelRoute == Screen.Home,
+                                                        titleContent =
+                                                            if (navigationState.topLevelRoute == Screen.Home) {
+                                                                { MusicFrontendSelector() }
+                                                            } else {
+                                                                null
+                                                            },
                                                     )
                                                 }
                                                 val topBarSubtitle: @Composable () -> Unit = {
@@ -2115,12 +2117,17 @@ private fun TopBarProfileAvatar(
 private fun AppTitleWithUpdateWarning(
     title: String,
     showWarning: Boolean,
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLargeEmphasized,
-        )
+        if (titleContent != null) {
+            titleContent()
+        } else {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLargeEmphasized,
+            )
+        }
         if (showWarning) {
             Text(
                 text = stringResource(Res.string.updates_pending_parenthetical),
@@ -2392,6 +2399,7 @@ fun getEntryProvider(
                 onNavigateToPlaylist = { id, thumbnail -> navigator.navigate(Screen.Playlist(id, thumbnailHint = thumbnail)) },
                 onNavigateToPodcast = { podcastId -> navigator.navigate(Screen.Podcast(podcastId)) },
                 onNavigateToRecognition = { navigator.navigate(Screen.Recognition) },
+                onNavigateToPlugins = { navigator.navigate(Screen.Plugins) },
                 onNavigateToLibrary = { filter ->
                     filter?.let { Settings.shared.libraryFilter = it }
                     navigator.navigate(Screen.Library)
@@ -2571,7 +2579,16 @@ fun getEntryProvider(
             IntegrationsScreen(
                 onNavigateBack = { navigator.goBack() },
                 onNavigateToListenTogether = { navigator.navigate(Screen.ListenTogetherSettings) },
+                onNavigateToPlugins = { navigator.navigate(Screen.Plugins) },
             )
+        }
+
+        entry<Screen.Plugins>(metadata = navTabMetadata) {
+            PluginsScreen(onBack = { navigator.goBack() })
+        }
+
+        entry<Screen.PluginDestination>(metadata = navTabMetadata) { route ->
+            PluginDestinationScreen(route, onBack = { navigator.goBack() })
         }
 
         entry<Screen.Discord>(metadata = navTabMetadata) {

@@ -124,6 +124,7 @@ fun SettingsOverlay(colorScheme: ColorScheme) {
             add(SettingsPageId.STORAGE)
             add(SettingsPageId.BACKUP_RESTORE)
             add(SettingsPageId.UPDATES)
+            add(SettingsPageId.PLUGINS)
             add(SettingsPageId.ABOUT)
             if (devtoolsUnlocked) add(SettingsPageId.DEVTOOLS)
         }
@@ -504,6 +505,9 @@ fun SettingsOverlay(colorScheme: ColorScheme) {
 
                                 SettingsPageId.UPDATES -> {
                                     UpdatesSettingsScreen(colorScheme)
+                                }
+                                SettingsPageId.PLUGINS -> {
+                                    PluginsSettingsScreen()
                                 }
 
                                 SettingsPageId.DEVTOOLS -> {

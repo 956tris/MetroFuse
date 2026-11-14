@@ -15,6 +15,7 @@ import com.metrolist.desktop.state.app.UiState
 import com.metrolist.desktop.state.playback.ListenTogetherState
 import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.shared.generated.resources.Res
+import com.metrolist.shared.generated.resources.app_name
 import com.metrolist.shared.generated.resources.tray_by
 import com.metrolist.shared.generated.resources.tray_hide_window
 import com.metrolist.shared.generated.resources.tray_next_track
@@ -171,7 +172,7 @@ object ComposeTrayManager {
                 } else {
                     stringResource(Res.string.tray_tooltip_paused, title, artistStr)
                 }
-            } ?: "Metrolist"
+            } ?: stringResource(Res.string.app_name)
 
         Tray(
             icon = icon,

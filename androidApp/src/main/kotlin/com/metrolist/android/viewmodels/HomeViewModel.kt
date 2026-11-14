@@ -9,5 +9,5 @@ class HomeViewModel(
     database: MusicDatabase,
     likedSongsName: String,
 ) : ViewModel() {
-    val shared = SharedHomeViewModel(database, viewModelScope, likedSongsName = likedSongsName)
+    val shared = SharedHomeViewModel(database, viewModelScope, likedSongsName = likedSongsName, useUpstreamDiscovery = false)
 }

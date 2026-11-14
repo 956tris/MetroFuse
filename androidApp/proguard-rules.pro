@@ -6,6 +6,25 @@
 # without the private R8 mapping. Shrinking and optimization stay enabled.
 -dontobfuscate
 
+# Dynamically loaded APKs are compiled separately against this binary API.
+-keep,includedescriptorclasses class dev.metrofuse.api.** { *; }
+
+# Host-provided compileOnly SDK dependencies must retain plugin-only calls too.
+-keep,includedescriptorclasses class kotlin.** { public *; protected *; }
+-keep,includedescriptorclasses class kotlinx.coroutines.** { public *; protected *; }
+-keep,includedescriptorclasses class kotlinx.serialization.** { public *; protected *; }
+-keep,includedescriptorclasses class androidx.compose.** { public *; protected *; }
+
+# JNI calls private QuickJS callbacks and creates these objects directly.
+# These supplement its Android consumer rules with a stable, unoptimized JNI ABI.
+-keep class com.dokar.quickjs.QuickJs { *; }
+-keep class com.dokar.quickjs.QuickJsException { *; }
+-keep class com.dokar.quickjs.MemoryUsage { *; }
+-keep class com.dokar.quickjs.binding.JsProperty { *; }
+-keep class com.dokar.quickjs.binding.JsFunction { *; }
+-keep class com.dokar.quickjs.binding.JsObject { *; }
+-keep class kotlin.UByteArray { *; }
+
 # Ktor's optional IntelliJ debugger detector references desktop-only JMX APIs.
 -dontwarn java.lang.management.ManagementFactory
 -dontwarn java.lang.management.RuntimeMXBean

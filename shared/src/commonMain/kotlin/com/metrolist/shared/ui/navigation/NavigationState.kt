@@ -71,6 +71,8 @@ internal val navigationSavedStateConfiguration =
                     subclass(Screen.LastFm::class, Screen.LastFm.serializer())
                     subclass(Screen.ListenBrainz::class, Screen.ListenBrainz.serializer())
                     subclass(Screen.ListenTogether::class, Screen.ListenTogether.serializer())
+                    subclass(Screen.Plugins::class, Screen.Plugins.serializer())
+                    subclass(Screen.PluginDestination::class, Screen.PluginDestination.serializer())
                     subclass(Screen.ListenTogetherSettings::class, Screen.ListenTogetherSettings.serializer())
                     subclass(Screen.ListenTogetherServer::class, Screen.ListenTogetherServer.serializer())
                     subclass(Screen.ListenTogetherBlockedUsers::class, Screen.ListenTogetherBlockedUsers.serializer())

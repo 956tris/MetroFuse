@@ -9,6 +9,8 @@ import com.metrolist.shared.model.SearchSummaryPage
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.model.filterAvailableSearchFilters
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTubeRepository
@@ -54,13 +56,32 @@ class SearchViewModel(
     private var historySession = repository.sessionSnapshot()
 
     init {
+        scope.launch {
+            musicFrontendOwnerChanges().drop(1).collect {
+                suggestionsJob?.cancel()
+                searchJob?.cancel()
+                filterJob?.cancel()
+                cancelLoadMore()
+                _uiState.update {
+                    it.copy(
+                        searchSuggestions = null,
+                        searchSummary = null,
+                        unfilteredSearchSummary = null,
+                        filteredResults = null,
+                        unfilteredResults = null,
+                        recentSearchItems = visibleRecentSearchItems(),
+                    )
+                }
+                if (_uiState.value.isQuerySubmitted) search(recordSearchHistory = false)
+            }
+        }
         sessionJob =
             scope.launch {
                 repository.sessionFlow.collect { resetRemoteHistoryIfSessionChanged() }
             }
         scope.launch {
             BlockedContent.version.drop(1).collect {
-                _uiState.update { it.copy(recentSearchItems = BlockedContent.filterItems(unfilteredRecentSearchItems)) }
+                _uiState.update { it.copy(recentSearchItems = visibleRecentSearchItems()) }
                 val state = _uiState.value
                 val updatedState =
                     state.clearUnavailableSearchFilter(
@@ -90,7 +111,7 @@ class SearchViewModel(
         }
         if (saved.isNotBlank() && !SearchHistoryCodec.isJson(saved)) persistSearchHistory(history)
         unfilteredRecentSearchItems = loadRecentPlayedSearchSongs().orEmpty()
-        _uiState.update { it.copy(recentSearchItems = BlockedContent.filterItems(unfilteredRecentSearchItems)) }
+        _uiState.update { it.copy(recentSearchItems = visibleRecentSearchItems()) }
     }
 
     private fun persistSearchHistory(history: List<String>) {
@@ -341,6 +362,7 @@ class SearchViewModel(
     }
 
     fun refreshSearchHistory() {
+        if (repository.usesProviderCatalog) return
         resetRemoteHistoryIfSessionChanged()
         historySyncJob?.cancel()
         val session = repository.sessionSnapshot()
@@ -386,7 +408,7 @@ class SearchViewModel(
         resetRemoteHistoryIfSessionChanged()
         historySyncJob?.cancel()
         val feedbackToken = _uiState.value.remoteSearchHistoryFeedbackTokens[query]
-        if (feedbackToken == null && !repository.canManagePlaylists()) {
+        if (repository.usesProviderCatalog || (feedbackToken == null && !repository.canManagePlaylists())) {
             removeLocalSearchHistory(setOf(query))
         } else {
             removeRemoteSearchHistory(mapOf(query to feedbackToken))
@@ -394,6 +416,10 @@ class SearchViewModel(
     }
 
     fun clearSearchHistory() {
+        if (repository.usesProviderCatalog) {
+            removeLocalSearchHistory((localSearchHistory + _uiState.value.searchHistory).toSet())
+            return
+        }
         resetRemoteHistoryIfSessionChanged()
         historySyncJob?.cancel()
         val session = repository.sessionSnapshot()
@@ -496,7 +522,17 @@ class SearchViewModel(
     private fun updateRecentPlayedSearchSongs(items: List<YTItem>) {
         unfilteredRecentSearchItems = items
         saveRecentPlayedSearchSongs(items)
-        _uiState.update { it.copy(recentSearchItems = BlockedContent.filterItems(items)) }
+        _uiState.update { it.copy(recentSearchItems = visibleRecentSearchItems()) }
+    }
+
+    private fun visibleRecentSearchItems(): List<YTItem> {
+        val owner = effectiveMusicFrontendOwner()
+        return BlockedContent.filterItems(
+            unfilteredRecentSearchItems.filter {
+                !repository.usesProviderCatalog ||
+                    if (owner.isEmpty()) it is SongItem && it.isLocal else it.id.startsWith("metrofuse:$owner:")
+            },
+        )
     }
 
     private fun loadRecentPlayedSearchSongs(): List<YTItem>? {

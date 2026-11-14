@@ -1,8 +1,8 @@
 <div style="display: flex; gap: 1rem;">
   <img src="fastlane/metadata/android/en-US/images/icon.png" alt="Metrolist app icon" width="200" height="200" />
   <div>
-      <h1>Metrolist [KMP]</h1>
-      <h3>A Material Design YouTube Music client for Android, iOS and desktop</h3>
+      <h1>MetroFuse [KMP]</h1>
+      <h3>An offline music player for Android and desktop, with optional provider plugins</h3>
       <div style="display: flex; gap: 1rem;">
         <a href="https://github.com/MetrolistGroup/Metrolist/releases"><img src="https://img.shields.io/github/v/release/MetrolistGroup/Metrolist?style=for-the-badge&labelColor=0d1117" alt="Latest release" /></a>
         <a href="https://github.com/MetrolistGroup/Metrolist/blob/main/LICENSE"><img src="https://img.shields.io/github/license/MetrolistGroup/metrolist?style=for-the-badge&labelColor=0d1117" alt="License" /></a>
@@ -12,6 +12,12 @@
 </div>
 
 <br>
+
+MetroFuse plays local music out of the box, with no account, internet connection or installed plugins required. New installations open Offline Home. Home, Search and Library use local music by default. Click the Home title to choose an enabled plugin frontend; selecting Offline restricts playback to local or downloaded audio. Audio provider priority remains in the playback menus. On Windows, the app scans your Music folder and lets you add other folders. On Android, use **Library → Add → Scan local music** or **Settings → Storage → Local music**, then allow audio access. Songs, albums, artists, playlists, likes and listening history stay on the device.
+
+See the [offline player guide](docs/offline-player.md). Optional YouTube Music packages are built separately in `dist/youtube-music-plugin/`; import the native package for your platform or the universal JavaScript `.mfp` from Plugins. These packages are not included or installed in the app by default.
+
+MetroFuse is based on Metrolist KMP. Upstream attribution, licenses and platform documentation are retained below.
 
 <div style="display: flex; gap: 0.5rem; align-items: center;">
   <a href="https://www.blacksmith.sh"><img src="assets/blacksmith-powered.svg" alt="CI powered by Blacksmith" height="32" /></a>

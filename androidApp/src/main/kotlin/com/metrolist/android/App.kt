@@ -24,13 +24,16 @@ import coil3.SingletonImageLoader
 import com.metrolist.android.backup.BackupRestoreManager
 import com.metrolist.android.deviceconnect.AndroidDeviceConnect
 import com.metrolist.android.di.appModule
+import com.metrolist.android.local.AndroidLocalMusicScanner
 import com.metrolist.android.locale.AppLocale
 import com.metrolist.android.onboarding.LegacyInstallMigration
 import com.metrolist.android.onboarding.OnboardingManager
 import com.metrolist.android.onboarding.shouldApplyTvContinuePlaybackDefault
+import com.metrolist.android.playback.AndroidPlaybackController
 import com.metrolist.android.playback.AudioCacheManager
 import com.metrolist.android.playback.DownloadService
 import com.metrolist.android.playback.MusicService
+import com.metrolist.android.playback.PlayerConnection
 import com.metrolist.android.playback.SongDownloadManager
 import com.metrolist.android.playlistimport.AndroidPlaylistImportNotifier
 import com.metrolist.android.quicksettings.MusicRecognizerTileService
@@ -57,6 +60,7 @@ import com.metrolist.shared.discord.DiscordTokenStore
 import com.metrolist.shared.discord.observeDiscordInitialization
 import com.metrolist.shared.equalizer.EqualizerProfiles
 import com.metrolist.shared.listentogether.network.isAllowedListenTogetherServerUrl
+import com.metrolist.shared.plugins.MetroFuseHost
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTube
@@ -66,6 +70,7 @@ import com.metrolist.shared.state.coreModule
 import com.metrolist.shared.youtube.di.sharedModule
 import com.metrolist.shared.youtube.playback.AndroidContextProvider
 import com.metrolist.shared.youtube.playback.PlaybackNetworkStateStore
+import dev.metrofuse.runtime.initializeNativePlatform
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -243,9 +248,12 @@ class App :
         val koinStart = SystemClock.elapsedRealtime()
         startKoin {
             androidContext(this@App)
-            modules(coreModule, sharedModule, appModule)
+            modules(coreModule, sharedModule(useProviderPlugins = true), appModule)
         }
         Timber.tag(TAG).d("Koin init complete elapsed=%dms", SystemClock.elapsedRealtime() - koinStart)
+        initializeNativePlatform(applicationContext)
+        MetroFuseHost.configure(File(filesDir, "plugins"), "android", get<CoroutineScope>())
+        MetroFuseHost.attachController(AndroidPlaybackController(get<PlayerConnection>(), get<CoroutineScope>()))
 
         get<CoroutineScope>().launch(Dispatchers.Main.immediate) {
             observeDiscordInitialization {
@@ -356,6 +364,10 @@ class App :
     }
 
     private fun startDatabaseDependentServices() {
+        get<CoroutineScope>().launch {
+            val scanner = get<AndroidLocalMusicScanner>()
+            if (scanner.hasPermission()) scanner.scan()
+        }
         get<CoroutineScope>().launch {
             MusicRecognitionService.status.collect {
                 TileService.requestListeningState(this@App, ComponentName(this@App, MusicRecognizerTileService::class.java))

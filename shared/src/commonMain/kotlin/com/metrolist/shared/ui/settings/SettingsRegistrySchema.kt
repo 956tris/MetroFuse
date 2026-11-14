@@ -52,6 +52,7 @@ enum class SettingsPageId {
     STORAGE,
     BACKUP_RESTORE,
     UPDATES,
+    PLUGINS,
     UPDATE_DETAILS,
     ABOUT,
     DEVTOOLS,

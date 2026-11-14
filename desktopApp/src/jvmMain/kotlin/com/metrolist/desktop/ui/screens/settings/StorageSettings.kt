@@ -311,6 +311,7 @@ fun StorageSettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 28.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            LocalMusicSettingsSection()
             if (busy) LinearWavyProgressIndicator(Modifier.fillMaxWidth())
             StorageSummary(
                 usedBytes = usage?.let { it.songs + it.images + it.animatedArtwork } ?: 0L,

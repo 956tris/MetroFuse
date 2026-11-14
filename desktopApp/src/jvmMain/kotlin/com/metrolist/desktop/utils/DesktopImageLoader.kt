@@ -32,6 +32,7 @@ import okio.Path.Companion.toPath
 import okio.buffer
 import java.io.File
 import java.io.IOException
+import java.net.URI
 import okhttp3.Interceptor as OkHttpInterceptor
 
 private const val MAX_REMOTE_ARTWORK_BYTES = 12L * 1024 * 1024
@@ -108,6 +109,17 @@ internal class ArtworkSizingInterceptor(
     override suspend fun intercept(chain: Interceptor.Chain): ImageResult {
         val request = chain.request
         val url = request.data as? String ?: return chain.proceed()
+        // Coil's desktop URI fetcher treats escaped URI paths as native file paths.
+        localArtworkFile(url)?.let { file ->
+            return chain
+                .withRequest(
+                    request
+                        .newBuilder()
+                        .data(file)
+                        .memoryCacheKey(request.memoryCacheKey ?: url)
+                        .build(),
+                ).proceed()
+        }
         val width = (chain.size.width as? Dimension.Pixels)?.px
         val height = (chain.size.height as? Dimension.Pixels)?.px
         val resolvedSize = maxOf(width ?: 0, height ?: 0)
@@ -139,6 +151,15 @@ internal class ArtworkSizingInterceptor(
         val sizedChain = if (sizedUrl == url) chain else chain.withRequest(request.newBuilder().data(sizedUrl).build())
         return sizedChain.withVideoArtworkFallback(sizedChain.proceed())
     }
+}
+
+internal fun localArtworkFile(url: String): File? {
+    if (!url.startsWith("file:", ignoreCase = true)) return null
+    return runCatching {
+        val uri = URI(url)
+        if (!uri.authority.isNullOrEmpty()) return null
+        File(URI(uri.scheme, uri.authority, uri.path, null, null)).canonicalFile
+    }.getOrNull()
 }
 
 private object ResponseSizeLimitInterceptor : OkHttpInterceptor {

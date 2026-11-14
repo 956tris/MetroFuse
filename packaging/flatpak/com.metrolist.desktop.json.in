@@ -22,7 +22,7 @@
       "build-commands": [
         "chmod +x Metrolist.AppImage",
         "./Metrolist.AppImage --appimage-extract",
-        "test -x squashfs-root/bin/Metrolist",
+        "test -x \"squashfs-root/bin/Metrofuse Alpha\"",
         "test -f squashfs-root/lib/runtime/lib/server/libjvm.so",
         "mkdir -p /app/metrolist /app/bin",
         "cp -a squashfs-root/. /app/metrolist/",

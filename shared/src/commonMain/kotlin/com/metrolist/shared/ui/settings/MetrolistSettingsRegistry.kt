@@ -195,6 +195,13 @@ fun rememberMetrolistSettingsRegistry(
         SettingsTone.NEUTRAL,
     )
     customPage(
+        SettingsPageId.PLUGINS,
+        stringResource(Res.string.plugins_title),
+        stringResource(Res.string.plugins_summary),
+        MetrolistIcons.Outlined.Settings,
+        SettingsTone.PURPLE,
+    )
+    customPage(
         SettingsPageId.DEVTOOLS,
         stringResource(Res.string.devtools_title),
         stringResource(Res.string.settings_devtools_overview),

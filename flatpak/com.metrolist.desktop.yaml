@@ -60,7 +60,7 @@ modules:
     build-commands:
       - ./gradlew clean :desktopApp:verifyReleaseDistributableJars --no-daemon --no-build-cache --no-configuration-cache
       - mkdir -p /app
-      - cp -r desktopApp/build/compose/binaries/main-release/app/Metrolist/* /app/
+      - cp -r desktopApp/build/compose/binaries/main-release/app/Metrofuse\ Alpha/* /app/
       - |
         cat > /app/bin/com.metrolist.desktop <<'LAUNCHER'
         #!/bin/sh
@@ -72,7 +72,7 @@ modules:
         export WEBKIT_DISABLE_COMPOSITING_MODE=1
         export LC_NUMERIC=C
         DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
-        exec "$DIR/Metrolist" "$@"
+        exec "$DIR/Metrofuse Alpha" "$@"
         LAUNCHER
       - chmod +x /app/bin/com.metrolist.desktop
       - mkdir -p /app/share/metainfo

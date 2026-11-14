@@ -21,6 +21,8 @@ enum class PlaybackFailureCategory {
     UNKNOWN,
 }
 
+class NoPlayableSourceException : Exception()
+
 class PlaybackNetworkChangedException : Exception()
 
 class PlaybackProgressTimeoutException : Exception()
@@ -63,6 +65,8 @@ object PlaybackFailureClassifier {
         generateSequence(error) { it.cause?.takeUnless { cause -> cause === it } }.forEach { current ->
             val name = current::class.simpleName.orEmpty()
             when {
+                current is NoPlayableSourceException -> return PlaybackFailureCategory.UNAVAILABLE
+
                 current is StreamResolveException -> {
                     return current.playbackFailureCategory()
                 }

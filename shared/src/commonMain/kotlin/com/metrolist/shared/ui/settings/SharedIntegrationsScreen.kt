@@ -112,6 +112,7 @@ data class SharedIntegrationsHost(
     val deviceConnect: DeviceConnectSettingsHost? = null,
     val listenTogetherManager: ListenTogetherManager? = null,
     val onOpenListenTogether: (() -> Unit)? = null,
+    val onOpenPlugins: (() -> Unit)? = null,
     val onOpenUrl: (String) -> Unit = {},
     val onCopyText: (String, String) -> Unit = { _, _ -> },
     val onShareText: ((String) -> Unit)? = null,
@@ -182,10 +183,15 @@ fun SharedIntegrationsScreen(
             bottomContentPadding = host.bottomContentPadding,
             initialPage = host.initialPage?.takeUnless { it == SettingsPageId.LISTEN_TOGETHER },
             singlePane = true,
-            externalPages = setOf(SettingsPageId.LISTEN_TOGETHER),
+            externalPages =
+                buildSet {
+                    add(SettingsPageId.LISTEN_TOGETHER)
+                    if (host.onOpenPlugins != null) add(SettingsPageId.PLUGINS)
+                },
             onOpenPage = { page ->
                 when (page) {
                     SettingsPageId.LISTEN_TOGETHER -> host.onOpenListenTogether?.invoke() ?: run { showListenTogether = true }
+                    SettingsPageId.PLUGINS -> host.onOpenPlugins?.invoke()
                     else -> Unit
                 }
             },
@@ -498,7 +504,16 @@ private fun buildIntegrationsRegistry(
                     notifyDiscordChanged()
                 }
                 if (settings.discordButton2Enabled || showAllDiscordSettings) {
-                    text("discordButton2Text", stringResource(Res.string.discord_button2_label), value = settings.discordButton2Text) {
+                    text(
+                        "discordButton2Text",
+                        stringResource(Res.string.discord_button2_label),
+                        value =
+                            resolveDiscordButtonLabel(
+                                settings.discordButton2Text,
+                                DiscordDefaults.BUTTON2_LABEL,
+                                stringResource(Res.string.discord_button2_text_default),
+                            ),
+                    ) {
                         settings.discordButton2Text = it
                         notifyDiscordChanged()
                     }
@@ -670,6 +685,15 @@ private fun buildIntegrationsRegistry(
     }
 
     host.deviceConnect?.let { builder.deviceConnectPage(it) }
+    if (host.onOpenPlugins != null) {
+        builder.customPage(
+            SettingsPageId.PLUGINS,
+            stringResource(Res.string.plugins_title),
+            stringResource(Res.string.plugins_summary),
+            MetrolistIcons.Outlined.Extension,
+            SettingsTone.PURPLE,
+        )
+    }
     if (host.listenTogetherManager != null || host.onOpenListenTogether != null) {
         builder.customPage(
             SettingsPageId.LISTEN_TOGETHER,
@@ -701,6 +725,7 @@ private fun buildIntegrationsRegistry(
             SettingsPageId.LISTEN_BRAINZ,
             SettingsPageId.DEVICE_CONNECT.takeIf { host.deviceConnect != null },
             SettingsPageId.LISTEN_TOGETHER.takeIf { host.listenTogetherManager != null || host.onOpenListenTogether != null },
+            SettingsPageId.PLUGINS.takeIf { host.onOpenPlugins != null },
         ).toTypedArray(),
     )
     return builder.build()

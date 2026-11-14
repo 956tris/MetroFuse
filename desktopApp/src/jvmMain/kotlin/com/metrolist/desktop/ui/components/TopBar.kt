@@ -210,6 +210,7 @@ fun WindowScope.CustomTitleBar(
     selectedNavIndex: Int = 0,
     hideSearch: Boolean = false,
     onRefresh: (() -> Unit)? = null,
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     var showAccountPanel by remember { mutableStateOf(false) }
 
@@ -251,6 +252,7 @@ fun WindowScope.CustomTitleBar(
                     onDismissAccountMenu = { showAccountPanel = false },
                     colorScheme = colorScheme,
                 )
+                titleContent?.invoke()
                 navItems()
                 DevtoolsButton(colorScheme)
             }
@@ -319,6 +321,7 @@ fun WindowScope.TopBarWithPlayer(
     toggleWindowFullscreen: () -> Unit,
     showSearchInTopBar: Boolean = true,
     onRefresh: (() -> Unit)? = null,
+    titleContent: (@Composable () -> Unit)? = null,
 ) {
     val currentTrack = PlayerState.currentTrack
     val isPlaying = PlayerState.isPlaying
@@ -372,6 +375,7 @@ fun WindowScope.TopBarWithPlayer(
                     onDismissAccountMenu = { showAccountPanel = false },
                     colorScheme = colorScheme,
                 )
+                titleContent?.invoke()
                 navItems()
                 DevtoolsButton(colorScheme)
             }

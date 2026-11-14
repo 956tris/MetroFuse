@@ -1,5 +1,6 @@
 package com.metrolist.shared.discord
 
+import com.metrolist.shared.BuildConfig
 import java.util.Locale
 
 private val osName = checkNotNull(System.getProperty("os.name")) { "JVM operating system name is unavailable" }
@@ -19,7 +20,7 @@ actual val platformBrowser: String =
         "Mac OS X" -> "Discord Mac"
         else -> "Discord Linux"
     }
-actual val platformDevice: String = "Metrolist Desktop"
+actual val platformDevice: String = BuildConfig.APP_NAME
 actual val platformOsVersion: String = checkNotNull(System.getProperty("os.version")) { "JVM operating system version is unavailable" }
 actual val platformOsSdkVersion: String = platformOsVersion
 actual val platformUserAgent: String =

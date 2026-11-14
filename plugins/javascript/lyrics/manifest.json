@@ -1,0 +1,1 @@
+{"id":"example.lyrics","name":"Fixture lyrics","version":"1.0.0","author":"MetroFuse contributors","api":"1.1.0","runtime":"javascript","platforms":["desktop","android"],"script":"index.js","capabilities":["lyrics"],"description":"Deterministic synchronized lyrics fixture."}

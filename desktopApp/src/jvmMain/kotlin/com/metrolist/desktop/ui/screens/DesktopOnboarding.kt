@@ -22,7 +22,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -57,7 +56,6 @@ import com.metrolist.shared.generated.resources.app_name
 import com.metrolist.shared.generated.resources.back
 import com.metrolist.shared.generated.resources.continue_action
 import com.metrolist.shared.generated.resources.finish
-import com.metrolist.shared.generated.resources.log_in
 import com.metrolist.shared.generated.resources.logo
 import com.metrolist.shared.generated.resources.no
 import com.metrolist.shared.generated.resources.onboarding_backup_picker_error
@@ -108,7 +106,7 @@ import org.jetbrains.compose.resources.painterResource
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
-fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean, openLogin: Boolean) -> Unit) {
+fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean) -> Unit) {
     val pages =
         remember {
             listOf(
@@ -133,7 +131,7 @@ fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean, openLogin: Boolean
         if (pageIndex < pages.lastIndex) {
             pageIndex++
         } else {
-            onComplete(sendCrashReports, false)
+            onComplete(sendCrashReports)
         }
     }
 
@@ -274,7 +272,6 @@ fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean, openLogin: Boolean
         }
         if (targetPage == OnboardingPage.FINISH) {
             FinishActions(
-                onLogin = { onComplete(sendCrashReports, true) },
                 onRestore = ::restoreBackup,
                 enabled = !isWorking,
             )
@@ -450,7 +447,6 @@ private fun SentryDetails() {
 
 @Composable
 private fun FinishActions(
-    onLogin: () -> Unit,
     onRestore: () -> Unit,
     enabled: Boolean,
 ) {
@@ -458,15 +454,6 @@ private fun FinishActions(
         modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        FilledTonalButton(
-            onClick = onLogin,
-            enabled = enabled,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-            shapes = ButtonDefaults.shapes(),
-        ) {
-            Icon(MetrolistIcons.AutoMirrored.Filled.Login, contentDescription = null)
-            Text(stringResource(Res.string.log_in), modifier = Modifier.padding(start = 10.dp))
-        }
         OutlinedButton(
             onClick = onRestore,
             enabled = enabled,

@@ -14,8 +14,10 @@ import com.metrolist.shared.generated.resources.unblock
 import com.metrolist.shared.model.ArtistItem
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.state.GlobalYouTubeRepository
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.ui.menu.MediaMenuSheetContent
 import com.metrolist.shared.ui.menu.artistMediaMenuModel
+import dev.metrofuse.api.UiTarget
 import kotlinx.coroutines.CancellationException
 import org.jetbrains.compose.resources.pluralStringResource
 import org.jetbrains.compose.resources.stringResource
@@ -91,7 +93,8 @@ fun ArtistMenu(
             },
             onHideFromLibrary = onHideFromLibrary,
         )
+    val pluginActions = pluginMenuActions("artist.actions", onDismiss, UiTarget(artist.id, artist.title, "artist"))
     MediaMenuBottomSheet(model = model, onDismissRequest = onDismiss) {
-        MediaMenuSheetContent(model)
+        MediaMenuSheetContent(model.copy(actionGroups = model.actionGroups + listOf(pluginActions)))
     }
 }

@@ -14,7 +14,7 @@ UpgradeBehavior: install
 Protocols:
   - metrolist
 AppsAndFeaturesEntries:
-  - DisplayName: Metrolist Desktop
+  - DisplayName: Metrofuse Alpha
     Publisher: MetrolistGroup
     ProductCode: Metrolist
 Installers:

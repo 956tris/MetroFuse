@@ -1,0 +1,47 @@
+{
+  "header": {
+    "musicDetailHeaderRenderer": {
+      "title": {"runs":[{"text":"Fixture playlist"}]},
+      "subtitle": {"runs":[{"text":"Fixture artist","navigationEndpoint":{"browseEndpoint":{"browseId":"UCfixture","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ARTIST"}}}}}]}
+    }
+  },
+  "contents": {
+    "sectionListRenderer": {
+      "contents": [
+        {"musicResponsiveListItemRenderer": {
+          "playlistItemData":{"videoId":"abcdefghijk"},
+          "flexColumns":[
+            {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[{"text":"Fixture track","navigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}}]}}},
+            {"musicResponsiveListItemFlexColumnRenderer":{"text":{"runs":[
+              {"text":"Fixture artist","navigationEndpoint":{"browseEndpoint":{"browseId":"UCfixture","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ARTIST"}}}}},
+              {"text":" • "},
+              {"text":"Fixture album","navigationEndpoint":{"browseEndpoint":{"browseId":"MPREfixture","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ALBUM"}}}}}
+            ]}}}
+          ],
+          "fixedColumns":[{"musicResponsiveListItemFixedColumnRenderer":{"text":{"simpleText":"4:01"}}}],
+          "thumbnail":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://example.org/small.jpg"},{"url":"https://example.org/large.jpg"}]}}}
+        }},
+        {"musicTwoRowItemRenderer": {
+          "title":{"runs":[{"text":"Fixture track"}]},
+          "navigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}},
+          "subtitle":{"runs":[{"text":"Fixture artist","navigationEndpoint":{"browseEndpoint":{"browseId":"UCfixture"}}},{"text":"4:01"}]}
+        }},
+        {"musicTwoRowItemRenderer": {
+          "title":{"runs":[{"text":"Fixture album"}]},
+          "navigationEndpoint":{"browseEndpoint":{"browseId":"MPREfixture","browseEndpointContextSupportedConfigs":{"browseEndpointContextMusicConfig":{"pageType":"MUSIC_PAGE_TYPE_ALBUM"}}}},
+          "subtitle":{"runs":[{"text":"Fixture artist","navigationEndpoint":{"browseEndpoint":{"browseId":"UCfixture"}}}]}
+        }},
+        {"musicTwoRowItemRenderer": {
+          "title":{"runs":[{"text":"Fixture artist"}]},
+          "navigationEndpoint":{"browseEndpoint":{"browseId":"UCfixture"}}
+        }},
+        {"musicTwoRowItemRenderer": {
+          "title":{"runs":[{"text":"Fixture playlist"}]},
+          "navigationEndpoint":{"browseEndpoint":{"browseId":"VLPLfixture"}},
+          "subtitle":{"runs":[{"text":"Fixture artist","navigationEndpoint":{"browseEndpoint":{"browseId":"UCfixture"}}}]}
+        }},
+        {"musicResponsiveListItemRenderer": {"playlistItemData":{"videoId":"invalid-id"},"title":{"simpleText":"Unavailable"}}}
+      ]
+    }
+  }
+}

@@ -9,6 +9,39 @@ import kotlin.test.assertTrue
 
 class NavigationTabPreferencesTest {
     @Test
+    fun legacyDesktopSidebarAddsPluginsAfterTogetherAndKeepsCustomization() {
+        val settings = Settings(MapSettings())
+        settings.sidebarNavItems = "history:false,together:true,home:true,library:false"
+
+        assertEquals(
+            listOf(
+                NavItem(NavigationId.HISTORY, false),
+                NavItem(NavigationId.LISTEN_TOGETHER),
+                NavItem(NavigationId.PLUGINS),
+                NavItem(NavigationId.HOME),
+                NavItem(NavigationId.LIBRARY, false),
+            ),
+            settings.desktopSidebarNavItems(),
+        )
+    }
+
+    @Test
+    fun savedPluginsPositionAndVisibilitySurviveSidebarReload() {
+        val backing = MapSettings()
+        val settings = Settings(backing)
+        settings.sidebarNavItems = "plugins:false,home:true,together:false"
+
+        assertEquals(
+            listOf(
+                NavItem(NavigationId.PLUGINS, false),
+                NavItem(NavigationId.HOME),
+                NavItem(NavigationId.LISTEN_TOGETHER, false),
+            ),
+            Settings(backing).desktopSidebarNavItems(),
+        )
+    }
+
+    @Test
     fun floatingNavigationBarIsOffByDefault() {
         assertFalse(Settings(MapSettings()).floatingNavBar)
     }
@@ -23,6 +56,7 @@ class NavigationTabPreferencesTest {
         val backing = MapSettings()
         val settings = Settings(backing)
         assertEquals("HOME", settings.defaultOpenTab)
+        assertEquals("", settings.musicFrontendOwner)
         settings.libraryFilter = LibraryFilterType.ALBUMS
         settings.updateDefaultOpenTab("TRACKS")
         val restored = Settings(backing)

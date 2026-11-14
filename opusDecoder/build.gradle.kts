@@ -76,6 +76,8 @@ abstract class BuildOpusJni
             val cmakeBin = sdk.resolve("cmake/${cmakeVersion.get()}/bin")
             val executableSuffix = if (System.getProperty("os.name").startsWith("Windows")) ".exe" else ""
             if (!ndk.isDirectory || !cmakeBin.isDirectory) installToolchain(sdk)
+            require(ndk.resolve("build/cmake/android.toolchain.cmake").isFile) { "Pinned NDK ${ndkVersion.get()} was not installed" }
+            require(cmakeBin.resolve("cmake$executableSuffix").isFile && cmakeBin.resolve("ninja$executableSuffix").isFile) { "Pinned CMake ${cmakeVersion.get()} was not installed" }
 
             fs.delete { delete(outputDirectory) }
             for (abi in abis.get()) {
@@ -108,12 +110,18 @@ abstract class BuildOpusJni
 
         private fun installToolchain(sdk: File) {
             val isWindows = System.getProperty("os.name").startsWith("Windows")
+            val toolDirectories = sdk.resolve("cmdline-tools").listFiles().orEmpty().sortedByDescending { it.name == "latest" }
+            val androidCliName = if (isWindows) "android.exe" else "android"
+            val androidCli = toolDirectories.map { it.resolve("bin/$androidCliName") }.firstOrNull { it.isFile && (isWindows || it.canExecute()) }
+            if (androidCli != null) {
+                exec.exec {
+                    commandLine(androidCli, "--no-metrics", "--sdk=${sdk.absolutePath}", "sdk", "install", "ndk/${ndkVersion.get()}", "cmake/${cmakeVersion.get()}")
+                }
+                return
+            }
             val sdkManagerName = if (isWindows) "sdkmanager.bat" else "sdkmanager"
             val sdkManager =
-                sdk
-                    .resolve("cmdline-tools")
-                    .listFiles()
-                    .orEmpty()
+                toolDirectories
                     .map { it.resolve("bin/$sdkManagerName") }
                     .firstOrNull { it.isFile && (isWindows || it.canExecute()) }
                     ?: error("Install NDK ${ndkVersion.get()} and CMake ${cmakeVersion.get()}, or the SDK command-line tools")

@@ -78,12 +78,16 @@ import com.metrolist.shared.model.SearchSummaryPage
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.model.isEditablePlaylistId
+import com.metrolist.shared.model.isLive
 import com.metrolist.shared.model.isPodcast
-import com.metrolist.shared.model.isVideoSong
 import com.metrolist.shared.model.parseDisplayCount
 import com.metrolist.shared.model.toSongItem
 import com.metrolist.shared.playlist.LibraryDeletionTracker
 import com.metrolist.shared.playlist.PlaylistChanges
+import com.metrolist.shared.plugins.PluginServices
+import com.metrolist.shared.plugins.PluginServicesStore
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.pluginSearchMatches
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.state.SongLikeState
 import com.metrolist.shared.utils.Logger
@@ -300,6 +304,7 @@ class YouTubeRepository(
     private val databaseProvider: () -> MusicDatabase? = { null },
     private val offlineSongAvailabilityProvider: () -> OfflineSongAvailability? = { null },
     private val nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    private val usePluginCatalog: () -> Boolean = { PluginServicesStore.current != null },
 ) {
     companion object {
         private const val TAG = "YouTubeRepository"
@@ -811,7 +816,14 @@ class YouTubeRepository(
             ?.let(BlockedContent::filterArtistPage) ?: ArtistPageResult(emptyMap())
 
     suspend fun getArtist(channelId: String): ArtistPageResult {
-        if (!PlaybackNetworkStateStore.current.connected) return offlineArtist(channelId)
+        if (channelId.startsWith("metrofuse:")) {
+            return providerCatalogLookup { it.artist(channelId) }?.let(BlockedContent::filterArtistPage) ?: offlineArtist(channelId)
+        }
+        if (channelId.startsWith("LA:scanned:") || usesProviderCatalog ||
+            !PlaybackNetworkStateStore.current.connected
+        ) {
+            return offlineArtist(channelId)
+        }
         var failureStage = "artist_browse"
         var httpStatus: Int? = null
         return try {
@@ -881,6 +893,31 @@ class YouTubeRepository(
         playlistId: String,
         applyContentFilters: Boolean = true,
     ): PlaylistPage {
+        val pluginId = playlistId.startsWith("metrofuse:")
+        if (!pluginId && !usesProviderCatalog) return getYouTubePlaylistPage(playlistId, applyContentFilters)
+
+        val providerSections = if (pluginId) providerCatalogLookup { it.playlist(playlistId) } else null
+        val sections =
+            providerSections ?: databaseProvider()?.loadOfflinePlaylist(playlistId, offlineSongAvailabilityProvider()?.songIds())
+        checkNotNull(sections) { "Playlist is unavailable from installed providers or local storage" }
+        return PlaylistPage(
+            sections = if (applyContentFilters) BlockedContent.filterItemSections(sections) else sections,
+            pending = emptyList(),
+            seen = emptySet(),
+            session = innerTube.sessionSnapshot(),
+            isOffline = providerSections == null,
+        )
+    }
+
+    internal fun getYouTubePlaylistPages(playlistId: String): Flow<PlaylistPage> =
+        flow {
+            emitAll(playlistPages(getYouTubePlaylistPage(playlistId, applyContentFilters = false), applyContentFilters = false))
+        }
+
+    private suspend fun getYouTubePlaylistPage(
+        playlistId: String,
+        applyContentFilters: Boolean,
+    ): PlaylistPage {
         val id = playlistId.toPlaylistBrowseId()
         val voteRevision = SongLikeState.voteObservationRevision()
         val requestSession = innerTube.sessionSnapshot()
@@ -890,10 +927,10 @@ class YouTubeRepository(
                 ?.loadOfflinePlaylist(playlistId, offlineSongAvailabilityProvider()?.songIds())
                 ?.let { sections ->
                     return PlaylistPage(
-                        if (applyContentFilters) BlockedContent.filterItemSections(sections) else sections,
-                        emptyList(),
-                        emptySet(),
-                        requestSession,
+                        sections = if (applyContentFilters) BlockedContent.filterItemSections(sections) else sections,
+                        pending = emptyList(),
+                        seen = emptySet(),
+                        session = requestSession,
                         isOffline = true,
                     )
                 }
@@ -1393,7 +1430,12 @@ class YouTubeRepository(
             database
                 ?.loadOfflineAlbum(albumId, offlineSongAvailabilityProvider()?.songIds())
                 ?.let { if (applyContentFilters) BlockedContent.filterAlbumPage(it) else it }
-        if (!PlaybackNetworkStateStore.current.connected) return loadLocal()
+        if (albumId.startsWith("metrofuse:")) {
+            return providerCatalogLookup { it.album(albumId) }
+                ?.let { if (applyContentFilters) BlockedContent.filterAlbumPage(it) else it }
+                ?: loadLocal()
+        }
+        if (albumId.startsWith("LAL:scanned:") || usesProviderCatalog || !PlaybackNetworkStateStore.current.connected) return loadLocal()
         var stage = "browse"
         return try {
             val requestSession = innerTube.sessionSnapshot()
@@ -1516,13 +1558,32 @@ class YouTubeRepository(
     }
 
     private val searchOperations = YouTubeSearchOperations(innerTube)
+    internal val usesProviderCatalog: Boolean get() = usePluginCatalog()
 
     suspend fun search(
         query: String,
         recordSearchHistory: Boolean = false,
     ): List<YTItem> {
+        if (usesProviderCatalog) return searchProviderCatalog(query)
         if (!PlaybackNetworkStateStore.current.connected) return searchOffline(query)
         return searchOperations.search(query, recordSearchHistory) ?: searchOffline(query)
+    }
+
+    private suspend fun <T> providerCatalogLookup(request: suspend (PluginServices) -> T): T? {
+        if (usesProviderCatalog && effectiveMusicFrontendOwner().isEmpty()) return null
+        if (!PlaybackNetworkStateStore.current.connected) return null
+        val services = PluginServicesStore.current ?: return null
+        return request(services)
+    }
+
+    private suspend fun searchProviderCatalog(
+        query: String,
+        includeLocal: Boolean = true,
+    ): List<YTItem> {
+        if (query.isBlank()) return emptyList()
+        val pluginItems = providerCatalogLookup { it.search(query) }.orEmpty()
+        val localItems = if (includeLocal) searchOffline(query) else emptyList()
+        return BlockedContent.filterItems((pluginItems + localItems).distinctBy { it.id })
     }
 
     private suspend fun searchOffline(query: String): List<YTItem> {
@@ -1539,30 +1600,29 @@ class YouTubeRepository(
         query: String,
         recordSearchHistory: Boolean = false,
     ): SearchSummaryPage {
-        val wasConnected = PlaybackNetworkStateStore.current.connected
-        val remote =
-            if (wasConnected) {
-                searchOperations.getSearchSummary(
-                    query,
-                    recordSearchHistory,
-                )
-            } else {
-                null
-            }
-        if (remote != null) return remote
-        val local = searchOffline(query)
+        val connected = PlaybackNetworkStateStore.current.connected
+        if (!usesProviderCatalog && connected) {
+            searchOperations.getSearchSummary(query, recordSearchHistory)?.let { return it }
+        }
+        val items = if (usesProviderCatalog) searchProviderCatalog(query) else searchOffline(query)
         return SearchSummaryPage(
-            listOf(
-                SearchSummary(getString(Res.string.songs), local.filterIsInstance<SongItem>()),
-                SearchSummary(getString(Res.string.albums), local.filterIsInstance<AlbumItem>()),
-                SearchSummary(getString(Res.string.artists), local.filterIsInstance<ArtistItem>()),
-                SearchSummary(getString(Res.string.playlists), local.filterIsInstance<PlaylistItem>()),
-            ).filter { it.items.isNotEmpty() },
-            onlineSearchFailed = wasConnected,
+            summaries =
+                listOf(
+                    SearchSummary(getString(Res.string.songs), items.filterIsInstance<SongItem>()),
+                    SearchSummary(getString(Res.string.albums), items.filterIsInstance<AlbumItem>()),
+                    SearchSummary(getString(Res.string.artists), items.filterIsInstance<ArtistItem>()),
+                    SearchSummary(getString(Res.string.playlists), items.filterIsInstance<PlaylistItem>()),
+                ).filter { it.items.isNotEmpty() },
+            onlineSearchFailed = !usesProviderCatalog && connected,
         )
     }
 
-    suspend fun getSearchSuggestions(query: String): SearchSuggestions? = searchOperations.getSearchSuggestions(query)
+    suspend fun getSearchSuggestions(query: String): SearchSuggestions? =
+        if (usesProviderCatalog) {
+            searchOffline(query).take(8).takeIf { it.isNotEmpty() }?.let { SearchSuggestions(emptyList(), it) }
+        } else {
+            searchOperations.getSearchSuggestions(query)
+        }
 
     internal val sessionFlow get() = innerTube.sessionFlow
 
@@ -1604,35 +1664,29 @@ class YouTubeRepository(
         recordSearchHistory: Boolean = false,
         allowOfflineFallback: Boolean = true,
     ): SearchResultPage {
-        check(allowOfflineFallback || PlaybackNetworkStateStore.current.connected) { "Network unavailable for track resolution" }
-        val wasConnected = PlaybackNetworkStateStore.current.connected
-        val remote =
-            if (wasConnected) {
-                searchOperations.searchFiltered(
+        val connected = PlaybackNetworkStateStore.current.connected
+        check(allowOfflineFallback || connected) { "Network unavailable for track resolution" }
+        if (usesProviderCatalog) {
+            check(continuation == null) { "No further provider search results are available" }
+            return SearchResultPage(
+                items = searchProviderCatalog(query, includeLocal = allowOfflineFallback).filter { pluginSearchMatches(it, filter) },
+            )
+        }
+        if (connected) {
+            searchOperations
+                .searchFiltered(
                     query,
                     filter,
                     continuation,
                     recordSearchHistory,
                     throwOnFailure = !allowOfflineFallback,
-                )
-            } else {
-                null
-            }
-        if (remote != null) return remote
+                )?.let { return it }
+        }
         check(continuation == null) { "Search continuation failed" }
-        val local =
-            searchOffline(query).filter {
-                when (filter) {
-                    SearchFilter.SONG -> it is SongItem && !it.isPodcast && !it.isVideoSong
-                    SearchFilter.VIDEO -> it is SongItem && it.isVideoSong
-                    SearchFilter.EPISODE -> it is SongItem && it.isPodcast
-                    SearchFilter.ALBUM -> it is AlbumItem
-                    SearchFilter.ARTIST -> it is ArtistItem
-                    SearchFilter.FEATURED_PLAYLIST, SearchFilter.COMMUNITY_PLAYLIST -> it is PlaylistItem
-                    SearchFilter.PODCAST, SearchFilter.PROFILE -> false
-                }
-            }
-        return SearchResultPage(local, onlineSearchFailed = wasConnected)
+        return SearchResultPage(
+            items = searchOffline(query).filter { pluginSearchMatches(it, filter) },
+            onlineSearchFailed = connected,
+        )
     }
 
     suspend fun getNewPodcastEpisodes(): List<SongItem> =
@@ -1684,6 +1738,22 @@ class YouTubeRepository(
     }
 
     suspend fun getSongPlayerInformation(videoId: String): SongPlayerInformation? =
+        if (videoId.startsWith("metrofuse:")) {
+            getSongMetadata(videoId)?.let { song ->
+                SongPlayerInformation(
+                    title = song.title,
+                    artist = song.artists.joinToString(", ") { it.name },
+                    thumbnail = song.thumbnail,
+                    durationSeconds = song.duration,
+                    musicVideoType = song.musicVideoType,
+                    isLive = song.isLive,
+                )
+            }
+        } else {
+            getYouTubeSongPlayerInformation(videoId)
+        }
+
+    private suspend fun getYouTubeSongPlayerInformation(videoId: String): SongPlayerInformation? =
         try {
             // WEB can omit live-video details; ANDROID exposes isLiveContent for those responses.
             val webResponse =
@@ -1959,7 +2029,7 @@ class YouTubeRepository(
         playbackSession: PlaybackTrackingSession,
     ): PlaybackTrackingData? = playbackTracking.getPlaybackTracking(videoId, clientPlaybackNonce, playbackSession)
 
-    internal fun isPlaybackReportingEnabled(): Boolean = playbackTracking.isPlaybackReportingEnabled()
+    internal fun isPlaybackReportingEnabled(): Boolean = !usesProviderCatalog && playbackTracking.isPlaybackReportingEnabled()
 
     internal suspend fun registerPlayback(
         playbackTrackingUrl: String,
@@ -2406,11 +2476,13 @@ class YouTubeRepository(
         playlistId: String = "RDAMVM$videoId",
         params: String? = null,
     ): RadioQueuePage {
+        if (usesProviderCatalog || videoId.startsWith("metrofuse:")) return RadioQueuePage(emptyList(), emptyList())
         val page = parseRadioQueueResponse(nextResponse(videoId, playlistId, params))
         return page.copy(songs = BlockedContent.filterSongs(page.songs))
     }
 
     suspend fun continueRadioQueue(continuation: String): RadioQueuePage {
+        if (usesProviderCatalog) return RadioQueuePage(emptyList(), emptyList())
         val page = parseRadioQueueResponse(nextResponse(continuation = continuation))
         return page.copy(songs = BlockedContent.filterSongs(page.songs))
     }
@@ -2419,6 +2491,7 @@ class YouTubeRepository(
         videoId: String,
         params: String? = null,
     ): MusicVideoCounterpart? {
+        if (usesProviderCatalog || videoId.startsWith("metrofuse:")) return null
         val response = nextResponse(videoId = videoId, params = params)
         return parseMusicVideoCounterpart(response, videoId).also { counterpart ->
             if (counterpart == null) {
@@ -2428,6 +2501,7 @@ class YouTubeRepository(
     }
 
     suspend fun startArtistRadio(channelId: String): List<SongItem> {
+        if (usesProviderCatalog || channelId.startsWith("metrofuse:")) return getArtistSongs(channelId)
         return try {
             val session = innerTube.sessionSnapshot()
             val artistResponse =
@@ -2455,6 +2529,31 @@ class YouTubeRepository(
     suspend fun getSongMetadata(videoId: String): SongItem? = getSongsMetadata(listOf(videoId)).firstOrNull()
 
     suspend fun getSongsMetadata(videoIds: List<String>): List<SongItem> {
+        if (videoIds.isEmpty()) return emptyList()
+        val pluginIds = videoIds.filter { it.startsWith("metrofuse:") }.distinct()
+        if (usesProviderCatalog || pluginIds.isNotEmpty()) {
+            val provided = pluginIds.mapNotNull { id -> providerCatalogLookup { it.metadata(id) } }
+            val providedIds = provided.mapTo(mutableSetOf()) { it.id }
+            val unresolvedIds = videoIds.filterNot(providedIds::contains)
+            val local =
+                if (usesProviderCatalog) {
+                    databaseProvider()
+                        ?.dao()
+                        ?.getSongsByIds(unresolvedIds)
+                        .orEmpty()
+                        .map { it.toSongItem() }
+                } else {
+                    getYouTubeSongsMetadata(unresolvedIds.filterNot { it.startsWith("metrofuse:") }) +
+                        offlineSongMetadata(unresolvedIds.filter { it.startsWith("metrofuse:") })
+                }
+            val byId = (provided + local).associateBy { it.id }
+            return videoIds.mapNotNull(byId::get)
+        }
+        return getYouTubeSongsMetadata(videoIds)
+    }
+
+    internal suspend fun getYouTubeSongsMetadata(videoIds: List<String>): List<SongItem> {
+        if (videoIds.isEmpty()) return emptyList()
         if (!PlaybackNetworkStateStore.current.connected) return offlineSongMetadata(videoIds)
         val session = innerTube.sessionSnapshot()
         return videoIds.distinct().chunked(50).flatMap { ids ->
@@ -2494,7 +2593,11 @@ class YouTubeRepository(
     }
 
     suspend fun resolveSongAlbum(song: SongItem): AlbumTiny? {
-        if (song.isLocal || song.isUploaded || song.isPodcast || song.album?.id.isAlbumBrowseId()) return song.album
+        if (usesProviderCatalog || song.id.startsWith("metrofuse:") || song.isLocal || song.isUploaded ||
+            song.isPodcast || song.album?.id.isAlbumBrowseId()
+        ) {
+            return song.album
+        }
         val resolved =
             getSongAlbum(song.id)?.takeIf { it.id.isAlbumBrowseId() }
                 ?: getSongMetadata(song.id)?.album?.takeIf { it.id.isAlbumBrowseId() }
@@ -2504,6 +2607,7 @@ class YouTubeRepository(
     }
 
     suspend fun getSongAlbum(videoId: String): AlbumTiny? {
+        if (usesProviderCatalog || videoId.startsWith("metrofuse:")) return getSongMetadata(videoId)?.album
         return try {
             val response = nextResponse(videoId = videoId)
 

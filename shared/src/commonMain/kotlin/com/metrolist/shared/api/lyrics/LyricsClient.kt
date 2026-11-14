@@ -38,7 +38,7 @@ interface LyricsFetcher {
 
 class LyricsClient(
     httpClient: HttpClient,
-    youtubeLyricsApi: YouTubeLyricsApi,
+    youtubeLyricsApi: YouTubeLyricsApi?,
     private val lyprioLyricsProvider: LyprioLyricsProvider?,
 ) : LyricsFetcher {
     private val betterLyricsProvider = BetterLyricsProvider(httpClient)
@@ -48,8 +48,8 @@ class LyricsClient(
     private val simpMusicProvider = SimpMusicLyricsProvider(httpClient)
     private val kuGouLyricsProvider = KuGouLyricsProvider(httpClient)
     private val paxsenixLyricsProvider = PaxsenixLyricsProvider(httpClient)
-    private val youtubeLyricsProvider = YouTubeLyricsProvider(youtubeLyricsApi)
-    private val youtubeSubtitleLyricsProvider = YouTubeSubtitleLyricsProvider(youtubeLyricsApi)
+    private val youtubeLyricsProvider = youtubeLyricsApi?.let(::YouTubeLyricsProvider)
+    private val youtubeSubtitleLyricsProvider = youtubeLyricsApi?.let(::YouTubeSubtitleLyricsProvider)
 
     // Lyrics sources fail for many outside reasons; their errors and timeouts are not worth logging.
     override suspend fun getLyrics(
@@ -113,11 +113,11 @@ class LyricsClient(
             }
 
             LyricsProvider.YOUTUBESUBTITLE -> {
-                result("YouTube Subtitle") { videoId?.let { youtubeSubtitleLyricsProvider.getLyricsOrNull(it) } }
+                result("YouTube Subtitle") { videoId?.let { youtubeSubtitleLyricsProvider?.getLyricsOrNull(it) } }
             }
 
             LyricsProvider.YOUTUBE -> {
-                result("YouTube Music") { videoId?.let { youtubeLyricsProvider.getLyrics(it) } }
+                result("YouTube Music") { videoId?.let { youtubeLyricsProvider?.getLyrics(it) } }
             }
 
             LyricsProvider.AUTO -> {

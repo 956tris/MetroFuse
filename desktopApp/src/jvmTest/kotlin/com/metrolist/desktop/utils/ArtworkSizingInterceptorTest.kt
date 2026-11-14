@@ -13,11 +13,52 @@ import okhttp3.ResponseBody.Companion.toResponseBody
 import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.EncodedImageFormat
 import org.jetbrains.skia.Image
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 
 class ArtworkSizingInterceptorTest {
+    @Test
+    fun extractedLocalArtworkDecodesThroughTheDesktopLoaderWithEscapedPathsAndRefreshFragments() =
+        runBlocking<Unit> {
+            val directory = Files.createTempDirectory("metrofuse artwork ")
+            val file = directory.resolve("Café 100% #1.png").toFile()
+            val png = Image.makeFromBitmap(Bitmap().apply { allocN32Pixels(8, 8) }).encodeToData(EncodedImageFormat.PNG)!!.bytes
+            file.writeBytes(png)
+            var loader: ImageLoader? = null
+            try {
+                loader = DesktopImageLoader.build(PlatformContext.INSTANCE, directory.resolve("cache").toFile())
+                val url = file.toURI().toASCIIString()
+                assertEquals(file.canonicalFile, localArtworkFile(url))
+                assertEquals(file.canonicalFile, localArtworkFile("$url#metrolist-refresh=1"))
+                assertNull(localArtworkFile("file://remote.invalid/cover.png"))
+                val result =
+                    loader.execute(
+                        ImageRequest
+                            .Builder(PlatformContext.INSTANCE)
+                            .data(url)
+                            .size(64)
+                            .build(),
+                    )
+                assertIs<SuccessResult>(result)
+                val refreshed =
+                    loader.execute(
+                        ImageRequest
+                            .Builder(PlatformContext.INSTANCE)
+                            .data("$url#metrolist-refresh=1")
+                            .size(64)
+                            .build(),
+                    )
+                assertIs<SuccessResult>(refreshed)
+            } finally {
+                loader?.shutdown()
+                loader?.diskCache?.shutdown()
+                directory.toFile().deleteRecursively()
+            }
+        }
+
     @Test
     fun originalVideoUrlsSelectTheirRenditionAfterResolvingTheRequestSize() {
         val small = "https://i.ytimg.com/vi/video/mqdefault.jpg"

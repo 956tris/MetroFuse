@@ -53,6 +53,7 @@ import coil3.imageLoader
 import com.metrolist.android.R
 import com.metrolist.android.playback.AudioCacheManager
 import com.metrolist.android.playback.SongDownloadManager
+import com.metrolist.android.ui.local.LocalMusicScanCard
 import com.metrolist.android.ui.player.CanvasCache
 import com.metrolist.shared.api.artwork.AnimatedArtworkService
 import com.metrolist.shared.api.musicvideo.MusicVideoResolver
@@ -624,6 +625,7 @@ fun StorageSettingsScreen(
             modifier = Modifier.fillMaxWidth().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 640.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            LocalMusicScanCard(Modifier.padding(horizontal = 16.dp))
             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 StorageSummary(
                     usedBytes = songCacheSize + imageCacheSize + animatedCoverCacheSize,

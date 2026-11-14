@@ -104,6 +104,7 @@ import com.metrolist.shared.ui.settings.SettingsHostChoice
 import com.metrolist.shared.ui.settings.SettingsPageId
 import com.metrolist.shared.ui.settings.SettingsPlatform
 import com.metrolist.shared.ui.settings.SharedSettingsHost
+import com.metrolist.android.ui.screens.settings.PluginsScreen
 import com.metrolist.shared.ui.settings.SharedSettingsScreen
 import com.metrolist.shared.ui.utils.rememberFileSizeFormatter
 import com.metrolist.shared.viewmodels.PlayerViewModel
@@ -340,6 +341,7 @@ fun SettingsScreen(
             add(SettingsPageId.STORAGE)
             add(SettingsPageId.BACKUP_RESTORE)
             add(SettingsPageId.UPDATES)
+            add(SettingsPageId.PLUGINS)
             add(SettingsPageId.UPDATE_DETAILS)
             add(SettingsPageId.ABOUT)
             add(SettingsPageId.SUPPORTED_LINKS)
@@ -503,6 +505,9 @@ fun SettingsScreen(
 
                                 SettingsPageId.UPDATES -> {
                                     UpdatesScreen(onBack) { onNavigate(SettingsPageId.UPDATE_DETAILS) }
+                                }
+                                SettingsPageId.PLUGINS -> {
+                                    PluginsScreen(onBack)
                                 }
 
                                 SettingsPageId.UPDATE_DETAILS -> {

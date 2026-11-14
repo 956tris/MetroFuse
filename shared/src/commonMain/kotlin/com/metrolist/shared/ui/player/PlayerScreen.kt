@@ -2148,37 +2148,39 @@ fun PlayerScreen(
                                                 }
 
                                                 PlayerType.MODERN -> {
-                                                    PlayerPrimaryControls(
-                                                        isPlaying = isPlaying,
-                                                        isLoading = isPlaybackLoading && contentActive,
-                                                        showLoadingIndicator = !hasVisibleVideoTransitionIndicator,
-                                                        playText = stringResource(Res.string.play),
-                                                        pauseText = stringResource(Res.string.pause),
-                                                        onSkipPrevious = {
-                                                            Logger.d("Haptics", "Trigger PlayerScreen previous click")
-                                                            hapticManager.perform(HapticEvent.PRESS)
-                                                            viewModel.previous()
-                                                        },
-                                                        onTogglePlay = {
-                                                            Logger.d(
-                                                                "Haptics",
-                                                                "Trigger PlayerScreen play pause click isPlaying=$isPlaying",
-                                                            )
-                                                            viewModel.togglePlayPause()
-                                                        },
-                                                        onSkipNext = {
-                                                            Logger.d("Haptics", "Trigger PlayerScreen next click")
-                                                            hapticManager.perform(HapticEvent.PRESS)
-                                                            viewModel.next()
-                                                        },
-                                                        showLabels = true,
-                                                        sideButtonContainerColor = sideButtonContainerColor,
-                                                        sideButtonContentColor = sideButtonContentColor,
-                                                        useRoundedRect = Settings.shared.useRoundedRectPlayButton,
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        buttonHeight = primaryControlSize,
-                                                        playPauseFocusRequester = playPauseFocusRequester,
-                                                    )
+                                                    platform.RenderExtension("ui.controls") {
+                                                        PlayerPrimaryControls(
+                                                            isPlaying = isPlaying,
+                                                            isLoading = isPlaybackLoading && contentActive,
+                                                            showLoadingIndicator = !hasVisibleVideoTransitionIndicator,
+                                                            playText = stringResource(Res.string.play),
+                                                            pauseText = stringResource(Res.string.pause),
+                                                            onSkipPrevious = {
+                                                                Logger.d("Haptics", "Trigger PlayerScreen previous click")
+                                                                hapticManager.perform(HapticEvent.PRESS)
+                                                                viewModel.previous()
+                                                            },
+                                                            onTogglePlay = {
+                                                                Logger.d(
+                                                                    "Haptics",
+                                                                    "Trigger PlayerScreen play pause click isPlaying=$isPlaying",
+                                                                )
+                                                                viewModel.togglePlayPause()
+                                                            },
+                                                            onSkipNext = {
+                                                                Logger.d("Haptics", "Trigger PlayerScreen next click")
+                                                                hapticManager.perform(HapticEvent.PRESS)
+                                                                viewModel.next()
+                                                            },
+                                                            showLabels = true,
+                                                            sideButtonContainerColor = sideButtonContainerColor,
+                                                            sideButtonContentColor = sideButtonContentColor,
+                                                            useRoundedRect = Settings.shared.useRoundedRectPlayButton,
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            buttonHeight = primaryControlSize,
+                                                            playPauseFocusRequester = playPauseFocusRequester,
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }

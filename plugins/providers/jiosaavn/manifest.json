@@ -1,0 +1,35 @@
+{
+  "id": "metrofuse.jiosaavn",
+  "name": "JioSaavn",
+  "version": "1.2.0",
+  "author": "MetroFuse contributors; original Metrolist Project contributors",
+  "api": "1.1.0",
+  "runtime": "javascript",
+  "platforms": [
+    "desktop",
+    "android"
+  ],
+  "script": "index.js",
+  "capabilities": [
+    "search",
+    "metadata",
+    "catalog",
+    "audio",
+    "settings"
+  ],
+  "description": "JioSaavn search and album, artist and playlist navigation with full-song audio where available. Optional public JioTune previews when a full stream is unavailable.",
+  "settings": [
+    {
+      "key": "previewEnabled",
+      "title": "Allow public previews when full audio is unavailable",
+      "type": "BOOLEAN",
+      "default": true
+    },
+    {
+      "key": "regionalCatalog",
+      "title": "Use JioSaavn's India catalog",
+      "type": "BOOLEAN",
+      "default": true
+    }
+  ]
+}
