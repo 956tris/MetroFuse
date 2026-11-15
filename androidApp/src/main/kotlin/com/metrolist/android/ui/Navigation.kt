@@ -1,5 +1,6 @@
 package com.metrolist.android.ui
 
+import com.metrolist.shared.plugins.PluginNavigationLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -186,68 +187,70 @@ fun MetrolistNavigationScaffold(
             Modifier
         }
 
-    AdaptiveNavigationScaffold(
-        layout = adaptiveLayout,
-        items = items,
-        selectedKey = selectedScreen,
-        onSelect = { screen ->
-            if (screen == Screen.Search && suppressSearchClick) {
-                suppressSearchClick = false
-            } else {
-                hapticManager.perform(HapticEvent.PRESS)
-                val shouldScrollToTop =
-                    navigationState.topLevelRoute == screen &&
-                        (screen == Screen.Home || screen == Screen.Library)
-                navigator.navigate(screen)
-                if (shouldScrollToTop) onScrollToTop(screen)
-            }
-        },
-        modifier = modifier.background(containerColor),
-        navigationVisible = navigationVisible,
-        floatingNavigation = useFloatingNavigation,
-        onFloatingNavigationOccupiedHeightChanged = onFloatingNavigationOccupiedHeightChanged,
-        floatingSeparateKey = Screen.Search.takeIf { it in screens },
-        navigationSuiteType = navigationSuiteType,
-        navigationSuiteColors =
-            NavigationSuiteDefaults.colors(
-                navigationBarContainerColor = Color.Transparent,
-                navigationRailContainerColor = Color.Transparent,
-            ),
-        containerColor = Color.Transparent,
-        isSidebarExpanded = false,
-        isSidebarExpandable = false,
-        navigationItemVerticalArrangement = Arrangement.Center,
-        itemModifier = { screen ->
-            val index = screens.indexOf(screen)
-            searchLongPressModifier(screen)
-                .focusProperties { canFocus = navigationVisible }
-                .tvFocusHighlight(
-                    shape = RoundedCornerShape(16.dp),
-                    scale = 1.04f,
-                    bringIntoView = false,
-                ).then(
-                    if (usesNavigationRail && isTv) {
-                        Modifier.focusRequester(itemFocusRequesters[index]).focusProperties {
-                            up = itemFocusRequesters.getOrNull(index - 1) ?: FocusRequester.Cancel
-                            down = itemFocusRequesters.getOrNull(index + 1) ?: bottomExitFocusRequester
-                            left = if (layoutDirection == LayoutDirection.Ltr) FocusRequester.Cancel else contentFocusRequester
-                            right = if (layoutDirection == LayoutDirection.Ltr) contentFocusRequester else FocusRequester.Cancel
-                        }
-                    } else if (usesNavigationRail && index == screens.lastIndex) {
-                        Modifier.focusProperties { down = bottomExitFocusRequester }
-                    } else {
-                        Modifier
-                    },
-                ).then(
-                    if (usesNavigationRail && selectedScreen == screen) {
-                        Modifier.focusRequester(selectedItemFocusRequester)
-                    } else {
-                        Modifier
-                    },
-                )
-        },
-        content = { content() },
-    )
+    PluginNavigationLayout(content = content) {
+        AdaptiveNavigationScaffold(
+            layout = adaptiveLayout,
+            items = items,
+            selectedKey = selectedScreen,
+            onSelect = { screen ->
+                if (screen == Screen.Search && suppressSearchClick) {
+                    suppressSearchClick = false
+                } else {
+                    hapticManager.perform(HapticEvent.PRESS)
+                    val shouldScrollToTop =
+                        navigationState.topLevelRoute == screen &&
+                            (screen == Screen.Home || screen == Screen.Library)
+                    navigator.navigate(screen)
+                    if (shouldScrollToTop) onScrollToTop(screen)
+                }
+            },
+            modifier = modifier.background(containerColor),
+            navigationVisible = navigationVisible,
+            floatingNavigation = useFloatingNavigation,
+            onFloatingNavigationOccupiedHeightChanged = onFloatingNavigationOccupiedHeightChanged,
+            floatingSeparateKey = Screen.Search.takeIf { it in screens },
+            navigationSuiteType = navigationSuiteType,
+            navigationSuiteColors =
+                NavigationSuiteDefaults.colors(
+                    navigationBarContainerColor = Color.Transparent,
+                    navigationRailContainerColor = Color.Transparent,
+                ),
+            containerColor = Color.Transparent,
+            isSidebarExpanded = false,
+            isSidebarExpandable = false,
+            navigationItemVerticalArrangement = Arrangement.Center,
+            itemModifier = { screen ->
+                val index = screens.indexOf(screen)
+                searchLongPressModifier(screen)
+                    .focusProperties { canFocus = navigationVisible }
+                    .tvFocusHighlight(
+                        shape = RoundedCornerShape(16.dp),
+                        scale = 1.04f,
+                        bringIntoView = false,
+                    ).then(
+                        if (usesNavigationRail && isTv) {
+                            Modifier.focusRequester(itemFocusRequesters[index]).focusProperties {
+                                up = itemFocusRequesters.getOrNull(index - 1) ?: FocusRequester.Cancel
+                                down = itemFocusRequesters.getOrNull(index + 1) ?: bottomExitFocusRequester
+                                left = if (layoutDirection == LayoutDirection.Ltr) FocusRequester.Cancel else contentFocusRequester
+                                right = if (layoutDirection == LayoutDirection.Ltr) contentFocusRequester else FocusRequester.Cancel
+                            }
+                        } else if (usesNavigationRail && index == screens.lastIndex) {
+                            Modifier.focusProperties { down = bottomExitFocusRequester }
+                        } else {
+                            Modifier
+                        },
+                    ).then(
+                        if (usesNavigationRail && selectedScreen == screen) {
+                            Modifier.focusRequester(selectedItemFocusRequester)
+                        } else {
+                            Modifier
+                        },
+                    )
+            },
+            content = { content() },
+        )
+    }
 }
 
 private fun floatingNavigationItems(): List<Screen> =

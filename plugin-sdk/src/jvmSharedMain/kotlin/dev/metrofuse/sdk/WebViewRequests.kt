@@ -28,6 +28,11 @@ fun WebLoginRequest.acceptsBrowserNavigation(value: String): Boolean {
     return uri.scheme == "https" && (uri.port == -1 || uri.port == 443) && uri.userInfo == null && uri.host in allowedHosts
 }
 
+internal fun WebLoginRequest.blocksBrowserNavigation(
+    value: String,
+    isMainFrame: Boolean,
+): Boolean = isMainFrame && !acceptsBrowserNavigation(value)
+
 fun WebLoginRequest.captureBrowserCookies(header: String): Map<String, String>? {
     if (header.isBlank() || header.length > 16384 || '\r' in header || '\n' in header) return null
     val cookies =

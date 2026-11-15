@@ -122,7 +122,7 @@ actual fun WebViewLoginDialog(
                                 override fun shouldOverrideUrlLoading(
                                     view: WebView,
                                     navigation: WebResourceRequest,
-                                ) = !request.acceptsBrowserNavigation(navigation.url.toString())
+                                ) = request.blocksBrowserNavigation(navigation.url.toString(), navigation.isForMainFrame)
 
                                 override fun onPageStarted(
                                     view: WebView,

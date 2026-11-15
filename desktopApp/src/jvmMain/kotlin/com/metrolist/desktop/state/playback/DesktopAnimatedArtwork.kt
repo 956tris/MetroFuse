@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import com.metrolist.desktop.state.app.AppState
+import com.metrolist.desktop.state.app.UiState
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.artworkExplicitness
@@ -25,12 +26,25 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+internal fun desktopAnimatedArtworkEnabled(
+    animatedCoversEnabled: Boolean,
+    expanded: Boolean,
+    canvasEnabled: Boolean,
+): Boolean = animatedCoversEnabled || (expanded && canvasEnabled)
+
 internal class DesktopAnimatedArtwork(
     private val scope: CoroutineScope,
 ) {
     private val directCanvasProvider get() = AppState.directCanvasProvider
     private var currentTrack: SongItem? = null
     private var _animatedCoverUrl: String? by mutableStateOf(null)
+    private val artworkEnabled: Boolean
+        get() =
+            desktopAnimatedArtworkEnabled(
+                Settings.shared.enableAnimatedCovers,
+                UiState.playerPresentation.isExpanded,
+                UiState.playerPresentation.canvasEnabled,
+            )
     var animatedCoverSongId: String? by mutableStateOf(null)
         private set
     val animatedCoverUrl: String?
@@ -41,7 +55,7 @@ internal class DesktopAnimatedArtwork(
         scope.launch {
             snapshotFlow {
                 Triple(
-                    Settings.shared.enableAnimatedCovers,
+                    artworkEnabled,
                     Settings.shared.animatedCoverResolution,
                     Settings.shared.canvasContentOrder,
                 ) to Settings.shared.canvasEnabledSources
@@ -70,10 +84,12 @@ internal class DesktopAnimatedArtwork(
                 previousAlbumId = previousTrack?.album?.id,
                 nextAlbumId = effectiveTrack?.album?.id,
                 animatedCoverUrl = _animatedCoverUrl,
-                animatedCoversEnabled = Settings.shared.enableAnimatedCovers,
+                animatedCoversEnabled = artworkEnabled,
             )
 
-        if (retainedCoverUrl == null) animatedCoverFetchJob?.cancel()
+        if (retainedCoverUrl == null) {
+            animatedCoverFetchJob?.cancel()
+        }
 
         currentTrack = effectiveTrack
         _animatedCoverUrl = retainedCoverUrl
@@ -83,7 +99,7 @@ internal class DesktopAnimatedArtwork(
     }
 
     private fun fetchAnimatedCover(song: SongItem) {
-        if (!Settings.shared.enableAnimatedCovers) return
+        if (!artworkEnabled) return
         val enabledSources = CanvasContentSource.parseEnabled(Settings.shared.canvasEnabledSources)
         if (CanvasContentSource.SPOTIFY_CANVAS !in enabledSources && CanvasContentSource.APPLE_MUSIC !in enabledSources) {
             animatedCoverFetchJob?.cancel()
@@ -132,7 +148,7 @@ internal class DesktopAnimatedArtwork(
                     } catch (_: Exception) {
                         null
                     }
-                if (Settings.shared.enableAnimatedCovers && currentTrack?.id == songId) {
+                if (artworkEnabled && currentTrack?.id == songId) {
                     _animatedCoverUrl =
                         result?.let { (spotify, appleMusic) ->
                             CanvasContentSource

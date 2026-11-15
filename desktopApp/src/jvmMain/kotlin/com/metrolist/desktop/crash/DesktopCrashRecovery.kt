@@ -25,6 +25,7 @@ import com.metrolist.shared.generated.resources.crash_updates_error
 import com.metrolist.shared.generated.resources.crash_updates_no_updates
 import com.metrolist.shared.utils.XdgUtils
 import com.metrolist.shared.utils.openUrl
+import com.metrolist.shared.plugins.MetroFuseHost
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.getString
@@ -58,6 +59,9 @@ object DesktopCrashRecovery {
             }
         Thread.setDefaultUncaughtExceptionHandler(
             FatalCrashHandler(fallback) { thread, error ->
+                if (MetroFuseHost.isConfigured) {
+                    runCatching { runBlocking { MetroFuseHost.runtime.reportUiCrash(error) } }
+                }
                 val report =
                     CrashReport.create(
                         BuildConfig.APP_VERSION,

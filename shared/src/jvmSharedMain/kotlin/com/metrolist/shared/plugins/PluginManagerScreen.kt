@@ -51,6 +51,7 @@ import com.metrolist.shared.ui.components.ExpressiveSwitch
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.settings.LocalSettingsPageBottomPadding
 import com.metrolist.shared.ui.settings.SettingsNavigationRow
+import dev.metrofuse.api.Layer
 import dev.metrofuse.api.PluginSettings
 import dev.metrofuse.api.SearchRequest
 import dev.metrofuse.api.SettingDefinition
@@ -79,6 +80,8 @@ fun PluginManagerScreen(
     val plugins by runtime.plugins.collectAsState()
     val registry by runtime.registry.state.collectAsState()
     val recovery by runtime.recovery.collectAsState()
+    val safeMode by runtime.uiSafeMode.collectAsState()
+    val replacements = remember(registry) { registry.ui.filter { it.point == "ui.app" && it.layer == Layer.REPLACE } }
     val logs by runtime.logs.collectAsState()
     val scope = rememberCoroutineScope()
     var operationInProgress by remember { mutableStateOf(false) }
@@ -141,6 +144,31 @@ fun PluginManagerScreen(
                     item { PluginNotice(message, isError = true) }
                 }
                 if (recovery) item { PluginNotice(stringResource(Res.string.plugins_recovery), isError = true) }
+                if (section == 0 && (safeMode || replacements.isNotEmpty())) {
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(stringResource(Res.string.plugins_app_interface), style = MaterialTheme.typography.titleMedium)
+                            TextButton(onClick = { operation { runtime.setUiSafeMode(!safeMode) } }, enabled = !busy) {
+                                Text(stringResource(if (safeMode) Res.string.plugins_enable_custom_ui else Res.string.plugins_use_original_ui))
+                            }
+                            if (replacements.size > 1) {
+                                Text(stringResource(Res.string.plugins_ui_conflict))
+                            }
+                            replacements.forEach { candidate ->
+                                val name = plugins.firstOrNull { it.manifest.id == candidate.owner }?.manifest?.name ?: candidate.owner
+                                TextButton(
+                                    enabled = !busy && !recovery,
+                                    onClick = {
+                                        operation {
+                                            runtime.registry.select("ui.app", candidate.owner)
+                                            runtime.setUiSafeMode(false)
+                                        }
+                                    },
+                                ) { Text(name) }
+                            }
+                        }
+                    }
+                }
                 when (section) {
                     0 -> {
                         item {

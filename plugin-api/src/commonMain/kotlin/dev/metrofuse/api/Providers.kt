@@ -54,9 +54,12 @@ interface AudioSource {
     val capabilities: AudioCapabilities
     suspend fun resolve(request: AudioQuery): AudioResult
 }
+
 @Serializable data class AudioPolicy(
-    val timeoutMillis: Long = 1000, val retries: Int = 0,
-    val manualSourceFallback: Boolean = false, val cacheTtlMillis: Long = 30_000,
+    val timeoutMillis: Long = 30_000,
+    val retries: Int = 0,
+    val manualSourceFallback: Boolean = false,
+    val cacheTtlMillis: Long = 30_000,
     val configurations: Map<String, JsonObject> = emptyMap(),
     val preferredSource: String? = null,
 )

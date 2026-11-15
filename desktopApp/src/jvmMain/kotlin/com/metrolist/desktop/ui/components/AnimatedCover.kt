@@ -29,6 +29,7 @@ fun AnimatedCover(
     contentScale: ContentScale = ContentScale.Crop,
     active: Boolean = true,
     onFrameAvailabilityChanged: (Boolean) -> Unit = {},
+    backgroundModifier: Modifier? = null,
 ) {
     val visible = LocalVisualWorkActive.current
     val latestActive by rememberUpdatedState(active)
@@ -82,6 +83,14 @@ fun AnimatedCover(
         }
     }
 
+    // Both layers use the same decoded frame and one muted, looping player.
+    backgroundModifier?.let {
+        VideoRenderer(
+            modifier = it,
+            contentScale = ContentScale.Crop,
+            frameProvider = { frame },
+        )
+    }
     VideoRenderer(
         modifier = modifier,
         contentScale = contentScale,

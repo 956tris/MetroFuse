@@ -254,8 +254,9 @@ fun LyricsView(
     isCasting: Boolean = false,
     isVisible: Boolean = true,
     isLiquidBackground: Boolean = Settings.shared.playerBackgroundStyle == PlayerBackgroundStyle.LIQUID,
+    immersive: Boolean = false,
 ) {
-    val textColor = resolveLyricsTextColor(textColor)
+    val textColor = if (immersive) textColor else resolveLyricsTextColor(textColor)
     val translationShimmer = rememberTranslationShimmer(translationProgress.isTranslating && isVisible)
     val shimmerColor = MaterialTheme.colorScheme.primary
     val globalOffsetMs = Settings.shared.globalLyricsOffsetMs
@@ -1172,7 +1173,7 @@ fun LyricsView(
                                     bottomEndFraction = 1f,
                                     maxRadius = LYRICS_PROGRESSIVE_BLUR_MAX_DP.dp,
                                     enabled =
-                                        Settings.shared.lyricsProgressiveBlur &&
+                                        (immersive || Settings.shared.lyricsProgressiveBlur) &&
                                             isAutoScrollEnabled &&
                                             !isManualScrolling.value &&
                                             !isSelectionMode,

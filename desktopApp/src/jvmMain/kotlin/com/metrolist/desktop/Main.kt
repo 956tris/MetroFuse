@@ -14,6 +14,8 @@
 
 package com.metrolist.desktop
 
+import com.metrolist.shared.plugins.PluginAppShell
+import com.metrolist.shared.plugins.PluginUiSlot
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -505,6 +507,7 @@ private fun WindowScope.AppContent(
                 onRefresh = { LayoutUtils.refreshCurrentPage(navigator.state.currentRoute) },
                 toggleWindowFullscreen = toggleWindowFullscreen,
             ) {
+                val originalUi: @Composable () -> Unit = {
                 Box(
                     modifier =
                         Modifier
@@ -526,7 +529,7 @@ private fun WindowScope.AppContent(
                                     ),
                         ) {
                             key(UiState.appRefreshKey) {
-                                when (Settings.shared.appLayout) {
+                                    when (Settings.shared.appLayout) {
                                     AppLayout.COMFORTABLE,
                                     AppLayout.EXPRESS,
                                     -> ExpressLayout(onMaximized, toggleWindowFullscreen) { rootFocusRequester.requestFocus() }
@@ -540,15 +543,19 @@ private fun WindowScope.AppContent(
                     }
                 }
                 DesktopPlayerVisibility(visible = isExpandedPlayerVisible) {
-                    FullscreenPlayerView(
-                        seedColor = UiState.seedColor,
-                        toggleFullscreen = { toggleWindowFullscreen() },
-                        onBackgroundFocusChanged = { isPlayerBackgroundFocused = it },
-                        onFocus = {
-                            window.requestFocus()
-                        },
-                    )
+                    PluginUiSlot("ui.fullscreen") {
+                        FullscreenPlayerView(
+                            seedColor = UiState.seedColor,
+                            toggleFullscreen = { toggleWindowFullscreen() },
+                            onBackgroundFocusChanged = { isPlayerBackgroundFocused = it },
+                            onFocus = {
+                                window.requestFocus()
+                            },
+                        )
+                    }
                 }
+                }
+                PluginAppShell(originalUi)
             }
             VideoFullscreenOverlay(colorScheme, toggleWindowFullscreen)
             if (UiState.isRefreshingApp) {
@@ -560,7 +567,7 @@ private fun WindowScope.AppContent(
                 }
             }
             PopupVisibility(visible = UiState.showSettings) {
-                SettingsOverlay(colorScheme)
+                PluginUiSlot("ui.settings") { SettingsOverlay(colorScheme) }
             }
             YouTubeSyncSnackbar(AppState.snackbarHostState)
             SnackbarHost(AppState.snackbarHostState, modifier = Modifier.align(Alignment.BottomCenter))
@@ -905,6 +912,8 @@ private fun runDesktopApp(args: Array<String>) {
                 applicationScope,
                 desktopCredentialStore(File(XdgUtils.getXdgDataHome(), "metrofuse/plugin-credentials")),
             )
+            if ("--original-ui" in args) MetroFuseHost.runtime.forceOriginalUi()
+            MetroFuseHost.attachLibrary(database)
             DesktopLocalMusicLibrary.initialize(database, applicationScope)
 
             LastFM.initialize(

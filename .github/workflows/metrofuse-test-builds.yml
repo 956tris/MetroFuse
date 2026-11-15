@@ -1,0 +1,75 @@
+name: MetroFuse test builds
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [KMP]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metrofuse-test-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: metrofuse-test-windows
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          persist-configuration-cache: 'false'
+      - uses: ./.github/actions/generate-icons
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: metro-wv2-helper/global.json
+      - name: Build legacy Windows sign-in helper
+        shell: pwsh
+        run: |
+          dotnet publish metro-wv2-helper/metro-wv2-helper.csproj -c Release -r win-x64 --self-contained true -o desktopApp/src/desktopMain/resources/windows -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+      - name: Build Windows portable ZIP
+        shell: pwsh
+        run: .\gradlew.bat :desktopApp:assembleWindowsDebug -Pmetrolist.desktop.arch=x86_64 --no-daemon --no-configuration-cache
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: metrofuse-windows-x64
+          path: dist/Metrofuse-Alpha-Desktop-Windows-Debug.zip
+          if-no-files-found: error
+      - name: Verify desktop login and provider runtime
+        shell: pwsh
+        run: .\gradlew.bat :plugin-sdk:desktopTest :engine:desktopTest --no-daemon --no-configuration-cache
+
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: metrofuse-test-android
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          persist-configuration-cache: 'false'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+      - name: Build Android debug APK
+        run: ./gradlew :androidApp:assembleDebug --no-daemon --no-configuration-cache
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: metrofuse-android-debug
+          path: androidApp/build/outputs/apk/debug/**/*.apk
+          if-no-files-found: error
+      - name: Verify Android host
+        run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --no-configuration-cache
+
+

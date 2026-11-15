@@ -1,5 +1,11 @@
 package com.metrolist.shared.plugins
 
+import com.metrolist.shared.db.MusicDatabase
+import com.metrolist.shared.db.entities.toSongItem
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.snapshotFlow
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.BuildConfig
@@ -35,6 +41,7 @@ import dev.metrofuse.api.HomeRequest
 import dev.metrofuse.api.HostLogger
 import dev.metrofuse.api.HostNavigation
 import dev.metrofuse.api.HostServices
+import dev.metrofuse.api.UiLibraryHost
 import dev.metrofuse.api.HostSettings
 import dev.metrofuse.api.LyricsRequest
 import dev.metrofuse.api.PlaybackState
@@ -86,6 +93,17 @@ object MetroFuseHost : PluginServices {
     private val artists = ConcurrentHashMap<String, CatalogArtist>()
     private val playlists = ConcurrentHashMap<String, CatalogPlaylist>()
     private var platform = "desktop"
+    private var libraryDatabase: MusicDatabase? = null
+
+    fun attachLibrary(database: MusicDatabase) {
+        libraryDatabase = database
+    }
+
+    internal fun library(offset: Int, limit: Int): Flow<List<Track>> =
+        libraryDatabase?.dao()?.songsByNameAsc(limit.coerceIn(1, 200), offset.coerceAtLeast(0))
+            ?.map { songs -> songs.map { it.toSongItem().toPluginTrack() } }
+            ?.flowOn(Dispatchers.Default) ?: flowOf(emptyList())
+
 
     val runtime: Runtime get() = checkNotNull(engine) { "Plugin host has not been configured" }
     val isConfigured: Boolean get() = engine != null
@@ -106,7 +124,9 @@ object MetroFuseHost : PluginServices {
         val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]))
         hostScope = scope
         val services =
-            object : HostServices {
+            object : HostServices, UiLibraryHost {
+                override fun library(offset: Int, limit: Int) = MetroFuseHost.library(offset, limit)
+
                 override val playback = playbackAdapter
                 override val navigation = MetroFuseHost.navigation
                 override val catalog =
@@ -328,7 +348,16 @@ object MetroFuseHost : PluginServices {
         ) {
             "Unsupported plugin stream transport"
         }
-        val sabr = pluginSabrBootstrap(descriptor, identity.identifiers["youtube"] ?: identity.canonicalId)
+        val sabr =
+            try {
+                pluginSabrBootstrap(descriptor, descriptor.attributes.getValue("resolvedMediaId"))
+            } catch (error: IllegalArgumentException) {
+                runtime.log("host", "Rejected audio descriptor from $provider: ${error::class.simpleName}")
+                return null
+            } catch (error: IllegalStateException) {
+                runtime.log("host", "Rejected audio descriptor from $provider: ${error::class.simpleName}")
+                return null
+            }
         // FFmpeg's Windows file protocol does not accept Java's file:/C:/ URI form.
         val playbackLocator =
             if (platform == "desktop" && descriptor.locator.startsWith("file:", ignoreCase = true)) {
@@ -557,22 +586,29 @@ private class ControllerPlayer(
         commandScope = scope
         observer =
             scope.launch {
+                var lastQueue: List<SongItem>? = null
+                var pluginQueue = emptyList<Track>()
+                var lastSong: SongItem? = null
+                var pluginSong = Track("", "", "", "")
                 controller.state.collect { value ->
-                    value.queue.forEach(remember)
-                    value.currentSong?.let(remember)
+                    if (lastQueue !== value.queue) {
+                        val queue = value.queue
+                        if (lastQueue != queue) {
+                            queue.forEach(remember)
+                            pluginQueue = queue.map(SongItem::toPluginTrack)
+                        }
+                        lastQueue = queue
+                    }
+                    if (lastSong != value.currentSong) {
+                        lastSong = value.currentSong
+                        pluginSong = value.currentSong?.also(remember)?.toPluginTrack() ?: Track("", "", "", "")
+                    }
                     state.value =
                         PlaybackState(
-                            value.currentSong?.toPluginTrack() ?: Track(
-                                "",
-                                "",
-                                "",
-                                "",
-                            ),
+                            pluginSong,
                             value.isPlaying,
                             value.positionMs,
-                            value.queue.map {
-                                it.toPluginTrack()
-                            },
+                            pluginQueue,
                         )
                 }
             }
