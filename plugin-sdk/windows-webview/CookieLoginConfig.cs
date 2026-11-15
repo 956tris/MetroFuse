@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace MetroFuse.PluginSdk;
@@ -5,6 +6,16 @@ namespace MetroFuse.PluginSdk;
 public sealed record CookieLoginConfig(string url, string cookieUrl, string cookieField,
     List<string> requiredCookies, List<string> allowedHosts)
 {
+    public static CookieLoginConfig ReadFromFile(string path)
+    {
+        using var input = File.OpenRead(path);
+        if (input.Length > 65536) throw new ArgumentException("Browser login request exceeded the size limit");
+        var request = JsonSerializer.Deserialize<CookieLoginConfig>(input)
+            ?? throw new ArgumentException("Missing browser login request");
+        request.Validate();
+        return request;
+    }
+
     public bool AcceptsNavigation(string value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
         && uri.Scheme == "https" && uri.Port == 443 && uri.UserInfo.Length == 0
         && allowedHosts.Contains(uri.Host, StringComparer.Ordinal);

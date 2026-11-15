@@ -1,5 +1,6 @@
 package dev.metrofuse.api
 
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
 /** Host-owned resources outlive plugin activations and are never constructed by the engine. */
@@ -23,6 +24,11 @@ interface HostServices {
     val settings: HostSettings
     val logger: HostLogger
     val audioFallback: AudioSource? get() = null
+}
+
+/** Optional application library for a UI host. The runtime does not own storage. */
+interface UiLibraryHost {
+    fun library(offset: Int, limit: Int): Flow<List<Track>>
 }
 
 @kotlinx.serialization.Serializable

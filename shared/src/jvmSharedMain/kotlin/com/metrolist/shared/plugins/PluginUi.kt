@@ -1,9 +1,19 @@
 package com.metrolist.shared.plugins
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -11,32 +21,50 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.back
 import com.metrolist.shared.generated.resources.close
 import com.metrolist.shared.generated.resources.plugins_apply
 import com.metrolist.shared.generated.resources.plugins_screen_unavailable
 import com.metrolist.shared.generated.resources.plugins_title
+import com.metrolist.shared.generated.resources.plugins_use_original_ui
 import com.metrolist.shared.generated.resources.plugins_unsupported_ui
 import com.metrolist.shared.ui.navigation.Screen
 import dev.metrofuse.api.Layer
+import dev.metrofuse.api.Track
 import dev.metrofuse.api.UiContext
 import dev.metrofuse.api.UiContribution
 import dev.metrofuse.api.UiNode
+import dev.metrofuse.api.UiEnvironment
+import dev.metrofuse.api.UiPluginState
 import dev.metrofuse.api.UiTarget
 import dev.metrofuse.runtime.Runtime
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
 import org.jetbrains.compose.resources.stringResource
 
 internal const val PLUGIN_SCREEN_PREFIX = "plugin:"
@@ -62,7 +90,9 @@ fun PluginDestinationScreen(
     val runtime = MetroFuseHost.runtime
     val registry by runtime.registry.state.collectAsState()
     val plugins by runtime.plugins.collectAsState()
-    val contributions = registry.ui.filter { it.owner == route.owner && it.point == route.point }
+    val recovery by runtime.recovery.collectAsState()
+    val safeMode by runtime.uiSafeMode.collectAsState()
+    val contributions = if (recovery || safeMode) emptyList() else registry.ui.filter { it.owner == route.owner && it.point == route.point }
     val pluginName = plugins.firstOrNull { it.manifest.id == route.owner }?.manifest?.name
         ?: stringResource(Res.string.plugins_title)
 
@@ -76,7 +106,7 @@ fun PluginDestinationScreen(
         } else {
             Column(Modifier.weight(1f)) {
                 contributions.sortedBy { if (it.layer == Layer.BEFORE) -1 else it.layer.ordinal }.forEach { contribution ->
-                    if (contribution.tree != null) {
+                    if (contribution.tree?.type in setOf("Column", "Section", "List")) {
                         Column(Modifier.verticalScroll(rememberScrollState())) {
                             PluginContributionContent(contribution, runtime)
                         }
@@ -90,38 +120,149 @@ fun PluginDestinationScreen(
 }
 
 @Composable
-fun PluginUiSlot(point: String, fallback: @Composable () -> Unit = {}) {
+fun PluginAppShell(original: @Composable () -> Unit) {
     if (!MetroFuseHost.isConfigured) {
-        fallback()
+        original()
         return
     }
     val runtime = MetroFuseHost.runtime
     val registry by runtime.registry.state.collectAsState()
-    val contributions = registry.ui.filter { it.point == point }
-    if (contributions.isEmpty()) {
+    val safeMode by runtime.uiSafeMode.collectAsState()
+    val recovery by runtime.recovery.collectAsState()
+    val customShell = remember(registry, safeMode, recovery) {
+        !safeMode && !recovery && runtime.registry.layers("ui.app").any { it.layer == Layer.REPLACE }
+    }
+    val overlays = pluginLayers("ui.overlay")
+    if (!customShell && overlays.isEmpty()) {
+        PluginUiSlot("ui.app", original)
+        return
+    }
+    val scope = rememberCoroutineScope()
+    Box(Modifier.fillMaxSize()) {
+        PluginUiSlot("ui.app", original)
+        overlays.forEach { PluginContributionContent(it, runtime) }
+        if (customShell) {
+            Surface(modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
+                TextButton(onClick = { scope.launch { runtime.setUiSafeMode(true) } }) {
+                    Text(stringResource(Res.string.plugins_use_original_ui))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PluginNavigationLayout(
+    content: @Composable () -> Unit,
+    original: @Composable () -> Unit,
+) {
+    val layers = pluginLayers("ui.navigation")
+    if (layers.isEmpty()) {
+        original()
+        return
+    }
+    val runtime = MetroFuseHost.runtime
+    Column(Modifier.fillMaxSize()) {
+        layers.filter { it.layer == Layer.BEFORE }.forEach { PluginContributionContent(it, runtime) }
+        val replacement = layers.firstOrNull { it.layer == Layer.REPLACE }
+        Box(Modifier.weight(1f).fillMaxWidth()) {
+            if (replacement == null) original() else content()
+        }
+        replacement?.let { PluginContributionContent(it, runtime) }
+        layers.filter { it.layer == Layer.AFTER }.forEach { PluginContributionContent(it, runtime) }
+    }
+}
+
+@Composable
+private fun pluginLayers(point: String): List<UiContribution> {
+    if (!MetroFuseHost.isConfigured) return emptyList()
+    val runtime = MetroFuseHost.runtime
+    val state by runtime.registry.state.collectAsState()
+    val recovery by runtime.recovery.collectAsState()
+    val safeMode by runtime.uiSafeMode.collectAsState()
+    return remember(state, point, recovery, safeMode) {
+        if (recovery || safeMode) emptyList() else runtime.registry.layers(point)
+    }
+}
+
+@Composable
+fun PluginUiSlot(point: String, fallback: @Composable () -> Unit = {}) {
+    val layers = pluginLayers(point)
+    if (layers.isEmpty()) {
         fallback()
         return
     }
-    val owners = runtime.registry.order(point, contributions.map(UiContribution::owner))
-    val ordered = owners.flatMap { owner -> contributions.filter { it.owner == owner } }
-    ordered.filter { it.layer == Layer.BEFORE }.forEach { PluginContributionContent(it, runtime) }
-    val replacement = ordered.firstOrNull { it.layer == Layer.REPLACE }
+    val runtime = MetroFuseHost.runtime
+    layers.filter { it.layer == Layer.BEFORE }.forEach { PluginContributionContent(it, runtime) }
+    val replacement = layers.firstOrNull { it.layer == Layer.REPLACE }
     if (replacement == null) fallback() else PluginContributionContent(replacement, runtime)
-    ordered.filter { it.layer == Layer.AFTER }.forEach { PluginContributionContent(it, runtime) }
+    layers.filter { it.layer == Layer.AFTER }.forEach { PluginContributionContent(it, runtime) }
 }
 
 @Composable
 internal fun PluginContributionContent(contribution: UiContribution, runtime: Runtime, target: UiTarget? = null) {
     key(contribution.owner, contribution.point, contribution.layer, runtime.sessionToken(contribution.owner), target) {
-        contribution.native?.Content(UiContext(runtime.player, runtime.metadata, runtime.host.navigation::navigate, target = target))
-        contribution.tree?.let { PluginNode(it, contribution.owner, runtime, target) }
+        if (contribution.native != null || contribution.tree != null) {
+            DisposableEffect(runtime, contribution.owner) {
+                val release = runtime.watchUi(contribution.owner)
+                onDispose { release() }
+            }
+        }
+        val extensions = remember {
+            object : UiEnvironment {
+                override val destination = runtime.host.navigation.destination
+                override val pluginStates = runtime.plugins.map { plugins ->
+                    plugins.map { UiPluginState(it.manifest.id, it.manifest.name, it.state) }
+                }
+                override fun library(offset: Int, limit: Int) = MetroFuseHost.library(offset, limit)
+
+                @Composable
+                override fun Render(point: String, fallback: @Composable () -> Unit) {
+                    require(point.startsWith("component.")) { "Use a component.* slot inside a plugin UI" }
+                    PluginUiSlot(point, fallback)
+                }
+            }
+        }
+        val scope = rememberCoroutineScope()
+        var failed by remember { mutableStateOf(false) }
+        if (!failed) {
+            SubcomposeLayout { constraints ->
+                try {
+                    val children = subcompose(Unit) {
+                        contribution.native?.Content(
+                            UiContext(runtime.player, runtime.metadata, runtime.host.navigation::navigate, extensions, target),
+                        )
+                        contribution.tree?.let {
+                            val track by runtime.metadata.collectAsState()
+                            PluginNode(it, contribution.owner, runtime, target, track)
+                        }
+                    }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
+                    val width = (children.maxOfOrNull { it.width } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
+                    val height = (children.maxOfOrNull { it.height } ?: 0).coerceIn(constraints.minHeight, constraints.maxHeight)
+                    layout(width, height) { children.forEach { it.placeRelative(0, 0) } }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    scope.launch {
+                        failed = true
+                        runtime.failUi(contribution.owner, error)
+                    }
+                    layout(constraints.minWidth, constraints.minHeight) {}
+                } catch (error: LinkageError) {
+                    scope.launch {
+                        failed = true
+                        runtime.failUi(contribution.owner, error)
+                    }
+                    layout(constraints.minWidth, constraints.minHeight) {}
+                }
+            }
+        }
     }
 }
 
 @Composable
-private fun PluginNode(node: UiNode, owner: String, runtime: Runtime, target: UiTarget?) {
+private fun PluginNode(node: UiNode, owner: String, runtime: Runtime, target: UiTarget?, track: Track) {
     val token = runtime.sessionToken(owner)
-    val track by runtime.metadata.collectAsState()
     fun text(name: String): String = when (val value = node.props[name].orEmpty()) {
         "$" + "title" -> track.title
         "$" + "artist" -> track.artist
@@ -135,11 +276,52 @@ private fun PluginNode(node: UiNode, owner: String, runtime: Runtime, target: Ui
         val name = node.props["action"] ?: return
         runtime.action(owner, name, value, token, target)
     }
+    val spacing = (node.props["spacing"]?.toIntOrNull()?.coerceIn(0, 64) ?: 8).dp
+    val modifier = Modifier
+        .then(if (node.props["fillWidth"] == "true") Modifier.fillMaxWidth() else Modifier)
+        .then(if (node.props["fillSize"] == "true") Modifier.fillMaxSize() else Modifier)
+        .then(node.props["width"]?.toIntOrNull()?.coerceIn(1, 1200)?.let { Modifier.width(it.dp) } ?: Modifier)
+        .then(node.props["height"]?.toIntOrNull()?.coerceIn(1, 1200)?.let { Modifier.height(it.dp) } ?: Modifier)
+        .then(node.props["background"]?.let(::pluginColor)?.let { Modifier.background(it) } ?: Modifier)
+        .padding((node.props["padding"]?.toIntOrNull()?.coerceIn(0, 96) ?: 0).dp)
+    val children: @Composable () -> Unit = {
+        node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target, track) } }
+    }
     when (node.type) {
-        "Text" -> Text(text("text"))
-        "Column", "List", "Section" -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) { node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target) } } }
-        "Row" -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target) } } }
-        "Button" -> Button(onClick = { action() }) { Text(text("text").ifEmpty { text("label") }) }
+        "Text" -> Text(
+            text("text"),
+            modifier = modifier,
+            color = node.props["color"]?.let(::pluginColor) ?: Color.Unspecified,
+            fontSize = node.props["fontSize"]?.toIntOrNull()?.coerceIn(8, 96)?.sp ?: TextUnit.Unspecified,
+        )
+        "Box" -> Box(modifier) { children() }
+        "Spacer" -> Spacer(modifier)
+        "AnimatedVisibility" -> AnimatedVisibility(visible = node.props["visible"] != "false", modifier = modifier) { children() }
+        "LazyColumn" -> LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(spacing)) {
+            items(node.children, key = UiNode::id) { PluginNode(it, owner, runtime, target, track) }
+        }
+        "Image" -> {
+            val path = node.props["asset"].orEmpty()
+            val bitmap by produceState<ImageBitmap?>(null, owner, token, path) {
+                value = try {
+                    runtime.artwork(owner, path)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            bitmap?.let { Image(it, text("description").ifBlank { null }, modifier) }
+        }
+        "Slider" -> {
+            var value by remember(node.id, node.props["value"]) {
+                mutableStateOf(node.props["value"]?.toFloatOrNull()?.takeIf(Float::isFinite)?.coerceIn(0f, 1f) ?: 0f)
+            }
+            Slider(value, { value = it }, modifier, onValueChangeFinished = { action(value.toString()) })
+        }
+        "Column", "List", "Section" -> Column(modifier, verticalArrangement = Arrangement.spacedBy(spacing)) { children() }
+        "Row" -> Row(modifier, horizontalArrangement = Arrangement.spacedBy(spacing)) { children() }
+        "Button" -> Button(onClick = { action() }, modifier = modifier) { Text(text("text").ifEmpty { text("label") }) }
         "Dialog" -> {
             var open by remember { mutableStateOf(false) }
             Button(onClick = { open = true }) { Text(text("label")) }
@@ -149,7 +331,7 @@ private fun PluginNode(node: UiNode, owner: String, runtime: Runtime, target: Ui
                     title = { Text(text("title")) },
                     text = {
                         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target) } }
+                            node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target, track) } }
                         }
                     },
                     confirmButton = {
@@ -176,4 +358,10 @@ private fun PluginNode(node: UiNode, owner: String, runtime: Runtime, target: Ui
             else Text(stringResource(Res.string.plugins_unsupported_ui, node.type))
         }
     }
+}
+
+private fun pluginColor(value: String): Color? {
+    if (!value.startsWith('#') || value.length !in setOf(7, 9)) return null
+    val color = value.substring(1).toLongOrNull(16) ?: return null
+    return Color(if (value.length == 7) 0xff000000 or color else color)
 }

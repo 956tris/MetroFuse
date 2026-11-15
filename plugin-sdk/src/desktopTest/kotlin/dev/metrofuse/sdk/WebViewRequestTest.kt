@@ -46,4 +46,11 @@ class WebViewRequestTest {
         val header = "SECURE_AUTH=fixture; OTHER=fixture"
         assertEquals(mapOf("session" to header), request.captureBrowserCookies(header))
     }
+
+    @Test
+    fun iframeNavigationDoesNotBlockSignInWhileTopLevelOriginsRemainRestricted() {
+        assertFalse(request.blocksBrowserNavigation("https://captcha.example.net/challenge", isMainFrame = false))
+        assertTrue(request.blocksBrowserNavigation("https://captcha.example.net/challenge", isMainFrame = true))
+        assertFalse(request.blocksBrowserNavigation(request.url, isMainFrame = true))
+    }
 }

@@ -207,5 +207,5 @@ class Registry {
         fun change(n: UiNode): UiNode = if (n.id == id) n.copy(props = n.props + props) else n.copy(children = n.children.map(::change))
         state.update { it.copy(ui = it.ui.map { u -> if (u.owner == owner) u.copy(tree = u.tree?.let(::change)?.also(Runtime::validateTree)) else u }) }
     }
-    companion object { val BUILTIN_POINTS = setOf("ui.app", "ui.navigation", "ui.home", "ui.search", "ui.library", "ui.nowPlaying", "ui.miniPlayer", "ui.settings", "ui.trackRow", "ui.metadata.title", "ui.metadata.subtitle", "ui.background", "ui.lyrics", "ui.controls") }
+    companion object { val BUILTIN_POINTS = setOf("ui.app", "ui.navigation", "ui.home", "ui.search", "ui.library", "ui.nowPlaying", "ui.miniPlayer", "ui.settings", "ui.trackRow", "ui.metadata.title", "ui.metadata.subtitle", "ui.background", "ui.lyrics", "ui.controls", "ui.player", "ui.fullscreen", "ui.settings", "ui.overlay") }
 }

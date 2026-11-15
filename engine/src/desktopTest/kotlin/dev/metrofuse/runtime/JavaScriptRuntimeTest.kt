@@ -128,6 +128,72 @@ class JavaScriptRuntimeTest {
     }
 
     @Test
+    fun uiShellSelectionAndPlaybackEventsUseRealQuickJs() = runBlocking {
+        fixture { runtime ->
+            val script = """
+                globalThis.plugin = { init(host) {
+                  host.ui('ui.app', {id:'shell', type:'Text', props:{text:'Paused'}});
+                  host.ui('ui.home', {id:'home', type:'Text', props:{text:'Home'}});
+                  host.on('playback_changed', state => host.patch('shell', {text:state.playing?'Playing':'Paused'}));
+                }};
+            """.trimIndent()
+            for (id in listOf("test.shell.first", "test.shell.second")) {
+                runtime.install(ByteArrayInputStream(packageBytes(manifest(id), script)))
+                runtime.enable(id)
+            }
+            assertTrue(runtime.registry.explain("ui.app").conflict)
+            runtime.registry.select("ui.app", "test.shell.second")
+            assertEquals("test.shell.second", runtime.registry.layers("ui.app").single().owner)
+            runtime.player.toggle()
+            withTimeout(5_000) {
+                while (runtime.registry.layers("ui.app").single().tree?.props?.get("text") != "Playing") delay(25)
+            }
+            runtime.disable("test.shell.second")
+            assertEquals("test.shell.first", runtime.registry.layers("ui.app").single().owner)
+            runtime.registry.restore("ui.app")
+            assertTrue(runtime.registry.layers("ui.app").isEmpty())
+            assertEquals("test.shell.first", runtime.registry.layers("ui.home").single().owner)
+        }
+    }
+
+    @Test
+    fun repeatedUiFailurePersistsOriginalUiAndQuarantinesOwner() = runBlocking {
+        val root = Files.createTempDirectory("metrofuse-ui-recovery-").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val plugin = manifest("test.crashing.ui")
+            val script = "globalThis.plugin = {init(host) {host.ui('ui.app',{id:'shell',type:'Text'});}};"
+            val first = Runtime(root, "desktop", scope, EngineTestHost())
+            try {
+                first.initialize()
+                first.install(ByteArrayInputStream(packageBytes(plugin, script)))
+                first.enable(plugin.id)
+                first.failUi(plugin.id, IllegalStateException("first"))
+                assertTrue(first.uiSafeMode.value)
+                assertEquals("Enabled", first.plugins.value.single().state)
+            } finally {
+                first.close()
+            }
+            val second = Runtime(root, "desktop", scope, EngineTestHost())
+            try {
+                second.initialize()
+                assertTrue(second.uiSafeMode.value)
+                second.setUiSafeMode(false)
+                second.failUi(plugin.id, IllegalStateException("second"))
+                assertTrue(second.uiSafeMode.value)
+                assertEquals("Failed", second.plugins.value.single().state)
+                assertTrue(second.registry.layers("ui.app").isEmpty())
+            } finally {
+                second.close()
+            }
+        } finally {
+            scope.cancel()
+            root.deleteRecursively()
+        }
+        Unit
+    }
+
+    @Test
     fun invalidExportsPromiseRejectionsAndInfiniteLoopAreVisible() = runBlocking {
         fixture { runtime ->
             val scripts = listOf(

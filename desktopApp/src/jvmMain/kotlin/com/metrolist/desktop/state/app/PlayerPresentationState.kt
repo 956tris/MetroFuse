@@ -9,6 +9,9 @@ internal class PlayerPresentationState {
         private set
     var isFullscreen by mutableStateOf(false)
     var showVideoFullscreen by mutableStateOf(false)
+    var canvasEnabled by mutableStateOf(true)
+    var artworkOnRight by mutableStateOf(false)
+    var fullscreenLyricsEnabled by mutableStateOf(true)
 
     fun enterExpanded() {
         isExpanded = true

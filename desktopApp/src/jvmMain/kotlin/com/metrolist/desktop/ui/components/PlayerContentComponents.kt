@@ -298,61 +298,7 @@ fun PlayerCoreContent(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (Settings.shared.playerType == PlayerType.VINTAGE ||
-                        Settings.shared.playerType == PlayerType.CLASSIC
-                    ) {
-                        VintagePlayerControls(
-                            text =
-                                VintagePlayerControlsText(
-                                    previous = stringResource(Res.string.previous),
-                                    play = stringResource(Res.string.play),
-                                    pause = stringResource(Res.string.pause),
-                                    next = stringResource(Res.string.next),
-                                ),
-                            isPlaying = isPlaying,
-                            isLoading = PlayerState.isPlaybackLoading,
-                            onSkipPrevious =
-                                if (PlayerState.canSkipPrevious) {
-                                    { PlayerState.skipPrevious() }
-                                } else {
-                                    null
-                                },
-                            onTogglePlay = { PlayerState.togglePlay() },
-                            onSkipNext = { PlayerState.skipNext() },
-                            sideButtonColor = textBackgroundColor,
-                            buttonSize = 80.dp,
-                            playButtonSize = 88.dp,
-                            iconSize = 64.dp,
-                            playIconSize = 72.dp,
-                            spacing = 28.dp,
-                            modifier = Modifier.widthIn(max = 340.dp),
-                        )
-                    } else {
-                        PluginUiSlot("ui.controls") {
-                            PlayerPrimaryControls(
-                                isPlaying = isPlaying,
-                                isLoading = PlayerState.isPlaybackLoading,
-                                playText = stringResource(Res.string.play),
-                                pauseText = stringResource(Res.string.pause),
-                                onSkipPrevious =
-                                    if (PlayerState.canSkipPrevious) {
-                                        { PlayerState.skipPrevious() }
-                                    } else {
-                                        null
-                                    },
-                                onTogglePlay = { PlayerState.togglePlay() },
-                                onSkipNext = { PlayerState.skipNext() },
-                                buttonHeight = (65.dp * scale).coerceAtLeast(52.dp),
-                                showLabels = true,
-                                sideButtonContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                sideButtonContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                centerButtonContainerColor = MaterialTheme.colorScheme.primary,
-                                centerButtonContentColor = MaterialTheme.colorScheme.onPrimary,
-                                useRoundedRect = Settings.shared.useRoundedRectPlayButton,
-                                modifier = Modifier.width(298.dp * scale.coerceAtLeast(0.8f)),
-                            )
-                        }
-                    }
+                    DesktopPrimaryPlaybackControls(isPlaying, scale, textBackgroundColor)
                 }
             }
 
@@ -452,7 +398,70 @@ fun PlayerCoreContent(
 }
 
 @Composable
-fun PlayerProgressSection() {
+internal fun DesktopPrimaryPlaybackControls(
+    isPlaying: Boolean,
+    scale: Float,
+    textColor: Color,
+) {
+    if (Settings.shared.playerType == PlayerType.VINTAGE ||
+        Settings.shared.playerType == PlayerType.CLASSIC
+    ) {
+        VintagePlayerControls(
+            text =
+                VintagePlayerControlsText(
+                    previous = stringResource(Res.string.previous),
+                    play = stringResource(Res.string.play),
+                    pause = stringResource(Res.string.pause),
+                    next = stringResource(Res.string.next),
+                ),
+            isPlaying = isPlaying,
+            isLoading = PlayerState.isPlaybackLoading,
+            onSkipPrevious =
+                if (PlayerState.canSkipPrevious) {
+                    { PlayerState.skipPrevious() }
+                } else {
+                    null
+                },
+            onTogglePlay = { PlayerState.togglePlay() },
+            onSkipNext = { PlayerState.skipNext() },
+            sideButtonColor = textColor,
+            buttonSize = 80.dp,
+            playButtonSize = 88.dp,
+            iconSize = 64.dp,
+            playIconSize = 72.dp,
+            spacing = 28.dp,
+            modifier = Modifier.widthIn(max = 340.dp),
+        )
+    } else {
+        PluginUiSlot("ui.controls") {
+            PlayerPrimaryControls(
+                isPlaying = isPlaying,
+                isLoading = PlayerState.isPlaybackLoading,
+                playText = stringResource(Res.string.play),
+                pauseText = stringResource(Res.string.pause),
+                onSkipPrevious =
+                    if (PlayerState.canSkipPrevious) {
+                        { PlayerState.skipPrevious() }
+                    } else {
+                        null
+                    },
+                onTogglePlay = { PlayerState.togglePlay() },
+                onSkipNext = { PlayerState.skipNext() },
+                buttonHeight = (65.dp * scale).coerceAtLeast(52.dp),
+                showLabels = true,
+                sideButtonContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                sideButtonContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                centerButtonContainerColor = MaterialTheme.colorScheme.primary,
+                centerButtonContentColor = MaterialTheme.colorScheme.onPrimary,
+                useRoundedRect = Settings.shared.useRoundedRectPlayButton,
+                modifier = Modifier.width(298.dp * scale.coerceAtLeast(0.8f)),
+            )
+        }
+    }
+}
+
+@Composable
+fun PlayerProgressSection(immersive: Boolean = false) {
     val position = rememberPlaybackSecondPosition()
     val bufferedPosition by PlayerState.playbackBufferedPosition.collectAsSecondsState()
     val duration by PlayerState.playbackDuration.collectAsState()
@@ -494,7 +503,7 @@ fun PlayerProgressSection() {
         if (isDragging || pendingSeekTargetMs != null) (sliderValue * duration).toLong() else position.value
     }
 
-    val isSolid = Settings.shared.playerBackgroundStyle == PlayerBackgroundStyle.SOLID
+    val isSolid = !immersive && Settings.shared.playerBackgroundStyle == PlayerBackgroundStyle.SOLID
     val textSecondaryColor by animateColorAsState(
         targetValue = if (isSolid) MaterialTheme.colorScheme.onSurfaceVariant else Color.White.copy(alpha = 0.7f),
         label = "PlayerProgressDurationColor",
@@ -508,7 +517,7 @@ fun PlayerProgressSection() {
         if (isLive) {
             LiveProgressBar(
                 modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primary,
+                color = if (immersive) Color.White else MaterialTheme.colorScheme.primary,
             )
         } else {
             PlayerSlider(
@@ -540,7 +549,7 @@ fun PlayerProgressSection() {
                 },
                 style = Settings.shared.sliderStyle,
                 isPlaying = isPlaying,
-                color = MaterialTheme.colorScheme.primary,
+                color = if (immersive) Color.White else MaterialTheme.colorScheme.primary,
                 bufferedValue = bufferedProgress,
                 enabled = canSeek,
                 modifier =

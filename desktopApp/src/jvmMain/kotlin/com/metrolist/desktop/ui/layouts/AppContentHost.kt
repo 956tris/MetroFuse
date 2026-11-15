@@ -7,6 +7,7 @@
 
 package com.metrolist.desktop.ui.layouts
 
+import com.metrolist.shared.plugins.PluginUiSlot
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -176,14 +177,16 @@ fun AppContentHost(
                     }
 
                     Screen.Search -> {
-                        SearchResultsList(
-                            colorScheme = colorScheme,
-                            onBack = {
-                                SearchState.reset()
-                                onSearchChange("")
-                                navigator.goBack()
-                            },
-                        )
+                        PluginUiSlot("ui.search") {
+                            SearchResultsList(
+                                colorScheme = colorScheme,
+                                onBack = {
+                                    SearchState.reset()
+                                    onSearchChange("")
+                                    navigator.goBack()
+                                },
+                            )
+                        }
                     }
 
                     is Screen.AutoPlaylist -> {
@@ -195,12 +198,14 @@ fun AppContentHost(
                             Box(Modifier.widthIn(max = 1400.dp).fillMaxSize()) {
                                 when (destination) {
                                     Screen.Library -> {
-                                        LibraryScreen(
-                                            LibraryContentState.librarySections,
-                                            colorScheme,
-                                            libraryGridState,
-                                            onScrollStateChange = onLibraryScrollStateChange,
-                                        )
+                                        PluginUiSlot("ui.library") {
+                                            LibraryScreen(
+                                                LibraryContentState.librarySections,
+                                                colorScheme,
+                                                libraryGridState,
+                                                onScrollStateChange = onLibraryScrollStateChange,
+                                            )
+                                        }
                                     }
 
                                     Screen.Statistics -> {
@@ -228,7 +233,7 @@ fun AppContentHost(
                     }
 
                     else -> {
-                        HomeScreen()
+                        PluginUiSlot("ui.home") { HomeScreen() }
                     }
                 }
             }

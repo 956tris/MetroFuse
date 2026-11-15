@@ -259,6 +259,7 @@ class App :
             get<CoroutineScope>(),
             androidCredentialStore(File(noBackupFilesDir, "plugin-credentials")),
         )
+        MetroFuseHost.attachLibrary(get())
         MetroFuseHost.attachController(AndroidPlaybackController(get<PlayerConnection>(), get<CoroutineScope>()))
 
         get<CoroutineScope>().launch(Dispatchers.Main.immediate) {

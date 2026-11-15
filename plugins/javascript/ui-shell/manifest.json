@@ -1,0 +1,10 @@
+{
+  "id": "example.ui-shell",
+  "name": "Example UI Shell",
+  "version": "1.0.0",
+  "author": "MetroFuse",
+  "api": "1.1.0",
+  "runtime": "javascript",
+  "platforms": ["desktop", "android"],
+  "script": "index.js"
+}

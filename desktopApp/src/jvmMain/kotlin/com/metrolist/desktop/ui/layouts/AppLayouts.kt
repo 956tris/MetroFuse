@@ -13,6 +13,8 @@
 
 package com.metrolist.desktop.ui.layouts
 
+import com.metrolist.shared.plugins.PluginNavigationLayout
+import com.metrolist.shared.plugins.PluginUiSlot
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -221,125 +223,127 @@ private fun DesktopNavigationScaffold(
             )
         }
 
-    AdaptiveNavigationScaffold(
-        layout = adaptiveLayout,
-        items = allItems,
-        selectedKey = selectedNavId,
-        onSelect = { id ->
-            val destination = screenForNavigationId(id) ?: return@AdaptiveNavigationScaffold
-            val reselectLibrary =
-                destination == Screen.Library && DesktopNavigation.navigator.state.topLevelRoute == Screen.Library
-            selectedNavId = id
-            searchText = ""
-            DesktopNavigation.navigate(destination)
-            if (reselectLibrary) onLibraryReselect()
-        },
-        modifier = modifier.fillMaxSize(),
-        navigationSuiteColors =
-            NavigationSuiteDefaults.colors(
-                wideNavigationRailColors =
-                    WideNavigationRailDefaults.colors(
-                        containerColor = colorScheme.surfaceContainer,
-                    ),
-            ),
-        containerColor = colorScheme.background,
-        itemModifier = {
-            if (isNavigationRail) {
-                Modifier.fillMaxWidth().padding(horizontal = 4.dp)
-            } else {
-                Modifier
-            }
-        },
-        isSidebarExpanded = isSidebarExpanded || LibraryState.isEditingSidebar,
-        isSidebarExpandable = true,
-        onToggleSidebar = {
-            if (LibraryState.isEditingSidebar) {
-                LibraryState.isEditingSidebar = false
-            }
-            isSidebarExpanded = !isSidebarExpanded
-        },
-        navigationHeader = { type ->
-            if (type == NavigationSuiteType.WideNavigationRailExpanded) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    IconButton(
-                        onClick = {
-                            if (LibraryState.isEditingSidebar) {
-                                LibraryState.isEditingSidebar = false
-                            }
-                            isSidebarExpanded = false
-                        },
-                        modifier = Modifier.size(48.dp),
-                        shapes = IconButtonDefaults.shapes(),
+    PluginNavigationLayout(content = { content(false) }) {
+        AdaptiveNavigationScaffold(
+            layout = adaptiveLayout,
+            items = allItems,
+            selectedKey = selectedNavId,
+            onSelect = { id ->
+                val destination = screenForNavigationId(id) ?: return@AdaptiveNavigationScaffold
+                val reselectLibrary =
+                    destination == Screen.Library && DesktopNavigation.navigator.state.topLevelRoute == Screen.Library
+                selectedNavId = id
+                searchText = ""
+                DesktopNavigation.navigate(destination)
+                if (reselectLibrary) onLibraryReselect()
+            },
+            modifier = modifier.fillMaxSize(),
+            navigationSuiteColors =
+                NavigationSuiteDefaults.colors(
+                    wideNavigationRailColors =
+                        WideNavigationRailDefaults.colors(
+                            containerColor = colorScheme.surfaceContainer,
+                        ),
+                ),
+            containerColor = colorScheme.background,
+            itemModifier = {
+                if (isNavigationRail) {
+                    Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                } else {
+                    Modifier
+                }
+            },
+            isSidebarExpanded = isSidebarExpanded || LibraryState.isEditingSidebar,
+            isSidebarExpandable = true,
+            onToggleSidebar = {
+                if (LibraryState.isEditingSidebar) {
+                    LibraryState.isEditingSidebar = false
+                }
+                isSidebarExpanded = !isSidebarExpanded
+            },
+            navigationHeader = { type ->
+                if (type == NavigationSuiteType.WideNavigationRailExpanded) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Icon(
-                            imageVector = MetrolistIcons.AutoMirrored.Filled.MenuOpen,
-                            contentDescription = stringResource(Res.string.close),
-                            tint = colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
+                        IconButton(
+                            onClick = {
+                                if (LibraryState.isEditingSidebar) {
+                                    LibraryState.isEditingSidebar = false
+                                }
+                                isSidebarExpanded = false
+                            },
+                            modifier = Modifier.size(48.dp),
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(
+                                imageVector = MetrolistIcons.AutoMirrored.Filled.MenuOpen,
+                                contentDescription = stringResource(Res.string.close),
+                                tint = colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
 
-                    IconButton(
-                        onClick = { LibraryState.isEditingSidebar = !LibraryState.isEditingSidebar },
-                        modifier = Modifier.size(36.dp),
-                        shapes = IconButtonDefaults.shapes(),
+                        IconButton(
+                            onClick = { LibraryState.isEditingSidebar = !LibraryState.isEditingSidebar },
+                            modifier = Modifier.size(36.dp),
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(
+                                imageVector = if (LibraryState.isEditingSidebar) MetrolistIcons.Default.Check else MetrolistIcons.Default.Edit,
+                                contentDescription =
+                                    stringResource(
+                                        if (LibraryState.isEditingSidebar) Res.string.done else Res.string.edit_sidebar,
+                                    ),
+                                tint = if (LibraryState.isEditingSidebar) colorScheme.primary else colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Icon(
-                            imageVector = if (LibraryState.isEditingSidebar) MetrolistIcons.Default.Check else MetrolistIcons.Default.Edit,
-                            contentDescription =
-                                stringResource(
-                                    if (LibraryState.isEditingSidebar) Res.string.done else Res.string.edit_sidebar,
-                                ),
-                            tint = if (LibraryState.isEditingSidebar) colorScheme.primary else colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
+                        IconButton(
+                            onClick = {
+                                LibraryState.isEditingSidebar = !LibraryState.isEditingSidebar
+                                if (LibraryState.isEditingSidebar) {
+                                    isSidebarExpanded = true
+                                }
+                            },
+                            modifier = Modifier.size(36.dp),
+                            shapes = IconButtonDefaults.shapes(),
+                        ) {
+                            Icon(
+                                imageVector = if (LibraryState.isEditingSidebar) MetrolistIcons.Default.Check else MetrolistIcons.Default.Edit,
+                                contentDescription =
+                                    stringResource(
+                                        if (LibraryState.isEditingSidebar) Res.string.done else Res.string.edit_sidebar,
+                                    ),
+                                tint = if (LibraryState.isEditingSidebar) colorScheme.primary else colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
                     }
                 }
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    IconButton(
-                        onClick = {
-                            LibraryState.isEditingSidebar = !LibraryState.isEditingSidebar
-                            if (LibraryState.isEditingSidebar) {
-                                isSidebarExpanded = true
-                            }
-                        },
-                        modifier = Modifier.size(36.dp),
-                        shapes = IconButtonDefaults.shapes(),
-                    ) {
-                        Icon(
-                            imageVector = if (LibraryState.isEditingSidebar) MetrolistIcons.Default.Check else MetrolistIcons.Default.Edit,
-                            contentDescription =
-                                stringResource(
-                                    if (LibraryState.isEditingSidebar) Res.string.done else Res.string.edit_sidebar,
-                                ),
-                            tint = if (LibraryState.isEditingSidebar) colorScheme.primary else colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp),
-                        )
+            },
+            isEditing = LibraryState.isEditingSidebar,
+            onReorderFinished = { order ->
+                LibraryState.saveSidebarNavItems(reorderSidebarNavItems(LibraryState.sidebarNavItems, order))
+            },
+            onToggleVisibility = { id ->
+                val newList =
+                    LibraryState.sidebarNavItems.map {
+                        if (it.id == id) it.copy(visible = !it.visible) else it
                     }
-                }
-            }
-        },
-        isEditing = LibraryState.isEditingSidebar,
-        onReorderFinished = { order ->
-            LibraryState.saveSidebarNavItems(reorderSidebarNavItems(LibraryState.sidebarNavItems, order))
-        },
-        onToggleVisibility = { id ->
-            val newList =
-                LibraryState.sidebarNavItems.map {
-                    if (it.id == id) it.copy(visible = !it.visible) else it
-                }
-            LibraryState.saveSidebarNavItems(newList)
-        },
-    ) {
-        content(isNavigationRail)
+                LibraryState.saveSidebarNavItems(newList)
+            },
+        ) {
+            content(isNavigationRail)
+        }
     }
 }
 
@@ -468,7 +472,7 @@ private fun WindowScope.AdaptiveDesktopLayout(
 
         if (!playerInTopBar && PlayerState.currentTrack != null) {
             DesktopPlayerVisibility(visible = !PlayerState.isExpanded) {
-                StandardBottomPlayer(colorScheme, toggleWindowFullscreen)
+                PluginUiSlot("ui.player") { StandardBottomPlayer(colorScheme, toggleWindowFullscreen) }
             }
         }
     }
