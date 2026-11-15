@@ -42,6 +42,9 @@ jobs:
           name: metrofuse-windows-x64
           path: dist/Metrofuse-Alpha-Desktop-Windows-Debug.zip
           if-no-files-found: error
+      - name: Package JioSaavn JavaScript test fixture
+        shell: pwsh
+        run: ./tooling/pack-mfp.ps1 -Source plugins/providers/jiosaavn -Output build/plugin-examples/jiosaavn.mfp
       - name: Verify desktop login and provider runtime
         shell: pwsh
         run: .\gradlew.bat :plugin-sdk:desktopTest :engine:desktopTest --no-daemon --no-configuration-cache
@@ -71,5 +74,3 @@ jobs:
           if-no-files-found: error
       - name: Verify Android host
         run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --no-configuration-cache
-
-

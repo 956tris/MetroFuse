@@ -1,5 +1,6 @@
 package com.metrolist.android.playback
 
+import android.app.Application
 import android.content.ContextWrapper
 import android.content.res.Resources
 import androidx.media3.session.SessionError
@@ -36,7 +37,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [33])
+@Config(application = Application::class, manifest = Config.NONE, sdk = [33])
 class AutomotivePlaylistActionsTest {
     private val context by lazy {
         object : ContextWrapper(RuntimeEnvironment.getApplication()) {

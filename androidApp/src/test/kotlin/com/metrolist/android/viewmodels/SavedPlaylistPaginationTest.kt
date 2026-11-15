@@ -1,5 +1,6 @@
 package com.metrolist.android.viewmodels
 
+import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
@@ -42,7 +43,7 @@ import org.robolectric.annotation.Config
 import java.util.concurrent.CopyOnWriteArrayList
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [33])
+@Config(application = Application::class, manifest = Config.NONE, sdk = [33])
 @OptIn(ExperimentalCoroutinesApi::class, ExperimentalResourceApi::class)
 class SavedPlaylistPaginationTest {
     @Test
