@@ -1,5 +1,6 @@
 package com.metrolist.android.playback
 
+import android.app.Application
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.pm.ProviderInfo
@@ -32,15 +33,17 @@ import org.robolectric.annotation.Implementation
 import org.robolectric.annotation.Implements
 import org.robolectric.shadows.ShadowContentResolver
 import org.robolectric.shadows.ShadowParcelFileDescriptor
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [33], shadows = [UnknownSizeParcelFileDescriptor::class])
+@Config(application = Application::class, manifest = Config.NONE, sdk = [33], shadows = [UnknownSizeParcelFileDescriptor::class])
 class AudioStorageAccessTest {
     @Test
     fun unknownLengthRemainsPlayableAndRevokedAccessDoesNotDeleteTheFile() =
         runBlocking {
             val context = RuntimeEnvironment.getApplication()
-            val provider = UnknownLengthProvider()
+            val audio = File.createTempFile("unknown-length", ".audio", context.cacheDir).apply { writeBytes(ByteArray(2048)) }
+            val provider = UnknownLengthProvider(audio)
             provider.attachInfo(context, ProviderInfo().apply { authority = "audio-storage-test" })
             ShadowContentResolver.registerProviderInternal("audio-storage-test", provider)
             Settings.replaceSharedForTest(
@@ -88,10 +91,11 @@ class AudioStorageAccessTest {
             } finally {
                 database.close()
                 Settings.replaceSharedForTest(null)
+                audio.delete()
             }
         }
 
-    private class UnknownLengthProvider : ContentProvider() {
+    private class UnknownLengthProvider(private val audio: File) : ContentProvider() {
         var denied = false
         var deletions = 0
 
@@ -102,9 +106,8 @@ class AudioStorageAccessTest {
             mode: String,
         ): AssetFileDescriptor {
             if (denied) throw SecurityException("Access revoked")
-            val pipe = ParcelFileDescriptor.createPipe()
-            ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).use { it.write(ByteArray(2048)) }
-            return AssetFileDescriptor(pipe[0], 0L, AssetFileDescriptor.UNKNOWN_LENGTH)
+            val descriptor = ParcelFileDescriptor.open(audio, ParcelFileDescriptor.MODE_READ_ONLY)
+            return AssetFileDescriptor(descriptor, 0L, AssetFileDescriptor.UNKNOWN_LENGTH)
         }
 
         override fun query(

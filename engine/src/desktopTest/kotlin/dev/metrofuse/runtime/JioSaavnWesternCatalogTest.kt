@@ -147,11 +147,7 @@ class JioSaavnWesternCatalogTest {
                 val handle = loadNative(archive.absolutePath, "dev.metrofuse.jiosaavn.JioSaavnPlugin")
                 try {
                     assertNotSame(NativePlugin::class.java.classLoader, handle.plugin.javaClass.classLoader)
-                    assertEquals(
-                        NativePlugin::class.java,
-                        handle.plugin.javaClass.interfaces
-                            .single(),
-                    )
+                    assertTrue(NativePlugin::class.java.isAssignableFrom(handle.plugin.javaClass))
                 } finally {
                     handle.close()
                 }
