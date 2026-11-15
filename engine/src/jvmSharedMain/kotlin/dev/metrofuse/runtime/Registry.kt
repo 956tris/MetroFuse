@@ -202,10 +202,31 @@ class Registry {
         catalogProviders.entries.removeAll { it.value.owner == owner }
         state.update { it.copy(ui = it.ui.filterNot { u -> u.owner == owner },capabilityRevision=it.capabilityRevision+1) }
     }
-    fun patch(owner: String, id: String, props: Map<String, String>) {
-        require(props.size <= 64 && props.keys.all { it.length <= 80 } && props.values.all { it.length <= 16384 }) { "Property patch limit" }
-        fun change(n: UiNode): UiNode = if (n.id == id) n.copy(props = n.props + props) else n.copy(children = n.children.map(::change))
-        state.update { it.copy(ui = it.ui.map { u -> if (u.owner == owner) u.copy(tree = u.tree?.let(::change)?.also(Runtime::validateTree)) else u }) }
+    fun patch(owner: String, id: String, props: Map<String, String>) = patch(owner, mapOf(id to props))
+
+    fun patch(owner: String, changes: Map<String, Map<String, String>>) {
+        require(changes.size <= 64)
+        for ((id, props) in changes) {
+            require(id.length in 1..256 && props.size <= 64 &&
+                props.keys.all { it.length <= 80 } && props.values.all { it.length <= 16384 }) { "Property patch limit" }
+        }
+        fun change(node: UiNode): UiNode {
+            val children = node.children.map(::change)
+            val props = changes[node.id]?.let { node.props + it } ?: node.props
+            return if (props == node.props && children.indices.all { children[it] === node.children[it] }) node
+                else node.copy(props = props, children = children)
+        }
+        state.update { snapshot ->
+            snapshot.copy(ui = snapshot.ui.map { contribution ->
+                val previous = contribution.tree
+                if (contribution.owner != owner || previous == null) contribution
+                else {
+                    val updated = change(previous)
+                    if (updated === previous) contribution
+                    else contribution.copy(tree = updated.also(Runtime::validateTree))
+                }
+            })
+        }
     }
-    companion object { val BUILTIN_POINTS = setOf("ui.app", "ui.navigation", "ui.home", "ui.search", "ui.library", "ui.nowPlaying", "ui.miniPlayer", "ui.settings", "ui.trackRow", "ui.metadata.title", "ui.metadata.subtitle", "ui.background", "ui.lyrics", "ui.controls") }
+    companion object { val BUILTIN_POINTS = setOf("ui.app", "ui.navigation", "ui.home", "ui.search", "ui.library", "ui.nowPlaying", "ui.miniPlayer", "ui.settings", "ui.trackRow", "ui.metadata.title", "ui.metadata.subtitle", "ui.background", "ui.lyrics", "ui.controls", "ui.player", "ui.fullscreen", "ui.settings", "ui.overlay") }
 }

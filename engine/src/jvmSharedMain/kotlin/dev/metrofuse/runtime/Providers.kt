@@ -112,18 +112,21 @@ private class BoundedCache<T> {
 class ProviderPipelines(
     private val registry: Registry,
     private val now: () -> Long = System::currentTimeMillis,
+    private val trackLookup: suspend (TrackIdentity) -> Track? = { null },
 ) {
     val metadataPolicy = MutableStateFlow(MetadataPolicy())
     val audioPolicy = MutableStateFlow(AudioPolicy())
     val diagnostics = MutableStateFlow<List<ProviderDiagnostic>>(emptyList())
     private val metadataCache = BoundedCache<MetadataContribution>()
     private val audioCache = BoundedCache<AudioResult>()
+    private val matchSearch = ProviderMatchSearch(registry, now)
     private val cacheRevision = AtomicLong()
 
     fun invalidateCaches() {
         cacheRevision.incrementAndGet()
         metadataCache.clear()
         audioCache.clear()
+        matchSearch.clear()
     }
 
     private fun record(
@@ -288,15 +291,20 @@ class ProviderPipelines(
                         if (policy.manualSourceFallback) selected + entries.filterNot { it.id == source } else selected
                     } ?: entries
                 }
-            for (entry in candidates) {
+
+            suspend fun resolve(
+                entry: ProviderEntry<AudioSource>,
+                identity: TrackIdentity,
+            ): AudioResult? {
+                if (registry.audioSources().none { it.id == entry.id && it.provider === entry.provider }) return null
                 if (entry.provider.capabilities.requirements
                         .any { it.startsWith("platform:") && it != "platform:${query.platform}" }
                 ) {
-                    continue
+                    return null
                 }
-                val request = query.copy(configuration = policy.configurations[entry.id] ?: query.configuration)
+                val request = query.copy(identity = identity, configuration = policy.configurations[entry.id] ?: query.configuration)
                 val cacheKey = "${cacheRevision.get()}:${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
-                audioCache.get(cacheKey, now())?.let { return@withContext it }
+                audioCache.get(cacheKey, now())?.let { return it }
                 for (attempt in 0..policy.retries.coerceIn(0, 2)) {
                     currentCoroutineContext().ensureActive()
                     val start = System.nanoTime()
@@ -331,7 +339,14 @@ class ProviderPipelines(
                             (expires == null || expires > now() + 1000) && (maximum == null || bitrate == null || bitrate <= maximum)
                     if (valid) {
                         record("audio.resolve", entry.id, "SUCCESS", start, attempt)
-                        val ownedResult = result.copy(stream = stream!!.copy(attributes = stream.attributes + ("providerId" to entry.id)))
+                        val ownedResult = result.copy(
+                            stream = stream.copy(
+                                attributes = stream.attributes + mapOf(
+                                    "providerId" to entry.id,
+                                    "resolvedMediaId" to (identity.identifiers["youtube"] ?: identity.canonicalId),
+                                ),
+                            ),
+                        )
                         stream.expiresAtMillis?.let { expiry ->
                             if (policy.cacheTtlMillis >
                                 0
@@ -343,7 +358,7 @@ class ProviderPipelines(
                                 )
                             }
                         }
-                        return@withContext ownedResult
+                        return ownedResult
                     }
                     record(
                         "audio.resolve",
@@ -356,6 +371,39 @@ class ProviderPipelines(
                     )
                     if (result.error?.retryable != true) break
                     if (attempt < policy.retries) delay(25L * (attempt + 1))
+                }
+                return null
+            }
+            for (entry in candidates) {
+                resolve(entry, query.identity)?.let { return@withContext it }
+            }
+            val sourceTrack =
+                try {
+                    withTimeoutOrNull(8000) { trackLookup(query.identity) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+            if (sourceTrack != null) {
+                val matchingSources =
+                    candidates.filter { entry ->
+                        entry.provider.capabilities.requirements.none {
+                            it.startsWith("platform:") && it != "platform:${query.platform}"
+                        }
+                    }
+                val matches = matchSearch.search(sourceTrack, matchingSources, policy.timeoutMillis)
+                for (match in matches) {
+                    val entry = matchingSources.firstOrNull { it.id == match.provider } ?: continue
+                    val originalOwner = query.identity.identifiers["pluginOwner"] ?: query.identity.identifiers["plugin"]
+                    if (query.identity.canonicalId == match.track.id && (originalOwner == null || originalOwner == entry.owner)) continue
+                    val identity =
+                        TrackIdentity(
+                            match.track.id,
+                            match.track.extras + mapOf("pluginOwner" to entry.owner, "providerTrackId" to match.track.id),
+                            match.track.extras["isrc"],
+                        )
+                    resolve(entry, identity)?.let { return@withContext it }
                 }
             }
             AudioResult(error = ProviderError("NO_SOURCE", "No configured audio provider succeeded"))

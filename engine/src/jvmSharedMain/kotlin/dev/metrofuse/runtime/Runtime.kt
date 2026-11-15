@@ -39,7 +39,7 @@ class Runtime(
     private val runtimeJob = SupervisorJob(parentScope.coroutineContext[Job])
     val scope = CoroutineScope(parentScope.coroutineContext + runtimeJob)
     val registry = Registry()
-    val pipelines = ProviderPipelines(registry)
+    val pipelines = ProviderPipelines(registry, trackLookup = host.catalog::identify)
     val events = EngineEvents()
     val player: Player = host.playback
     val metadata = MutableStateFlow(player.state.value.track)
@@ -47,6 +47,81 @@ class Runtime(
     val plugins = MutableStateFlow<List<PluginStatus>>(emptyList())
     val logs = MutableStateFlow<List<String>>(emptyList())
     val recovery = MutableStateFlow(false)
+    val uiSafeMode = MutableStateFlow(false)
+    private val uiFailureMarker = File(storage, "ui-failure.json")
+
+    fun forceOriginalUi() {
+        uiSafeMode.value = true
+    }
+
+    suspend fun recordUiFailure(owners: Set<String>) = withContext(Dispatchers.IO) {
+        if (owners.isEmpty()) return@withContext
+        writePluginJson(uiFailureMarker, buildJsonObject {
+            put("owners", JsonArray(owners.sorted().map(::JsonPrimitive)))
+        }, 128 * 1024)
+    }
+
+    private val visibleUi = MutableStateFlow<Map<String, Int>>(emptyMap())
+
+    fun watchUi(owner: String): () -> Unit {
+        visibleUi.update { it + (owner to (it.getOrDefault(owner, 0) + 1)) }
+        return {
+            visibleUi.update {
+                val remaining = it.getOrDefault(owner, 1) - 1
+                if (remaining == 0) it - owner else it + (owner to remaining)
+            }
+        }
+    }
+
+    private fun monitorUi() {
+        scope.launch(Dispatchers.Default) {
+            visibleUi.map { it.isNotEmpty() }.distinctUntilChanged().collectLatest { active ->
+                if (!active) return@collectLatest
+                supervisorScope {
+                    while (isActive && !uiSafeMode.value) {
+                        delay(2000)
+                        val pulse = launch(Dispatchers.Main) {}
+                        if (withTimeoutOrNull(12_000) { pulse.join(); true } != true) {
+                            val owners = visibleUi.value.keys
+                            if (owners.isNotEmpty()) {
+                                recordUiFailure(owners)
+                                forceOriginalUi()
+                            }
+                            pulse.cancel()
+                            break
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    suspend fun failUi(owner: String, error: Throwable) {
+        forceOriginalUi()
+        setUiSafeMode(true)
+        withContext(Dispatchers.IO) {
+            recordFailure(owner)
+            if (failureCounts.getOrDefault(owner, 0) >= 2) quarantine(owner, IllegalStateException("UI rendering failed"))
+        }
+        log(owner, "UI rendering failed: ${error::class.simpleName}")
+    }
+
+    suspend fun reportUiCrash(error: Throwable) {
+        val activeOwners = visibleUi.value.keys
+        val frames = generateSequence(error) { it.cause }.take(8).flatMap { it.stackTrace.asSequence() }.toList()
+        val owners = plugins.value.filter { plugin ->
+            plugin.manifest.id in activeOwners && plugin.manifest.entryClass?.substringBeforeLast('.', "")
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { prefix -> frames.any { it.className.startsWith("$prefix.") } } == true
+        }.mapTo(mutableSetOf()) { it.manifest.id }
+        recordUiFailure(owners)
+    }
+
+    suspend fun setUiSafeMode(enabled: Boolean) = withContext(Dispatchers.IO) {
+        val file = File(storage, "original-ui.marker")
+        if (enabled) file.writeText("Use original UI") else Files.deleteIfExists(file.toPath())
+        uiSafeMode.value = enabled
+    }
     val logins = PluginLogins(scope, credentialStore)
     val homes = PluginHomes(scope)
     val homeSources = plugins.map(::pluginHomeSources).stateIn(scope, SharingStarted.Eagerly, emptyList())
@@ -80,6 +155,7 @@ class Runtime(
         } catch(e: Exception) { logs.update { (it+"[host] Log persistence failed: ${e::class.simpleName}").takeLast(200) } }
     }
     init {
+        monitorUi()
         scope.launch {
             val completedAccounts = mutableMapOf<String, PluginLoginState>()
             logins.states.collect { states ->
@@ -94,6 +170,7 @@ class Runtime(
                 }
             }
         }
+        registerUiCatalogServices()
         host.audioFallback?.let { registry.audioSource("builtin", it) }
         registry.service("builtin", "catalog.match/v1", object : JsonService {
             override suspend fun call(request: JsonObject): JsonObject {
@@ -128,6 +205,7 @@ class Runtime(
         if (initialized) return@withLock
         require(storage.mkdirs() || storage.isDirectory)
         recovery.value = marker.exists()
+        if (File(storage, "original-ui.marker").isFile || uiFailureMarker.isFile) forceOriginalUi()
         marker.writeText("Unclean exit: start without plugins")
         storageReady.complete(Unit)
         store.recoverInterruptedInstallations()
@@ -137,7 +215,19 @@ class Runtime(
             val config = if (configFile.exists()) codec.decodeFromString<Configuration>(configFile.readText()) else Configuration()
             failureCounts = if (failuresFile.exists()) codec.decodeFromString<Map<String, Int>>(failuresFile.readText()) else emptyMap()
             desiredEnabled = config.enabled
-            pipelines.metadataPolicy.value = config.metadataPolicy; pipelines.audioPolicy.value = config.audioPolicy
+            if (uiFailureMarker.isFile) {
+                val failedOwners = codec.parseToJsonElement(uiFailureMarker.readText()).jsonObject.getValue("owners").jsonArray
+                    .map { it.jsonPrimitive.content }
+                failedOwners.forEach(::recordFailure)
+                val quarantined = failedOwners.filterTo(mutableSetOf()) { failureCounts.getOrDefault(it, 0) >= 2 }
+                File(storage, "original-ui.marker").writeText("Use original UI")
+                Files.deleteIfExists(uiFailureMarker.toPath())
+                if (quarantined.isNotEmpty()) {
+                    desiredEnabled = desiredEnabled - quarantined
+                    log("host", "UI plugins disabled after repeated unresponsiveness: ${quarantined.sorted().joinToString()}")
+                }
+            }
+            pipelines.metadataPolicy.value = config.metadataPolicy; pipelines.audioPolicy.value = migrateAudioPolicy(config.audioPolicy)
             registry.state.value = RegistryState(priorities = config.priorities, selections = config.selections, base = config.base, globalOrder = config.globalOrder, pointOrder = config.pointOrder, pointPriorities = config.pointPriorities, serviceModes = config.serviceModes)
             File(storage, "installed").listFiles().orEmpty().filter { it.isDirectory && !it.name.startsWith('.') }.forEach { dir ->
                 try { store.verify(dir); addDirectory(dir) } catch (e: Exception) {
@@ -372,7 +462,6 @@ class Runtime(
                     desiredEnabled = desiredEnabled + id
                     saveConfiguration()
                     log(id, "Enabled external ${p.manifest.runtime} plugin")
-                    failureCounts = failureCounts - id
                     scope.launch { events.publish("plugin_enabled", buildJsonObject { put("id", id) }) }
                 } catch (e: Throwable) {
                     homes.unbind(id)
@@ -488,6 +577,7 @@ class Runtime(
             session.action(action, value, target)
         } catch (e: Exception) {
             if (e is CancellationException && e !is TimeoutCancellationException) throw e
+            withContext(Dispatchers.IO) { recordFailure(owner) }
             log(owner, "Callback failed: $e"); quarantine(owner, e)
         } }
     }
@@ -499,6 +589,7 @@ class Runtime(
         val observers = CoroutineScope(job + Dispatchers.Default)
         val jsGate = Mutex()
         private val bridgeWaiters = AtomicInteger()
+        private val uiSubscriptions = MutableStateFlow(emptySet<String>())
         /** The dependency's native timer includes pending async time on the tested builds.
          * Bound active evaluation separately, retaining a wall deadline and native cancellation. */
         private suspend fun <T> jsBudget(block: suspend () -> T): T = coroutineScope {
@@ -742,13 +833,38 @@ class Runtime(
             q.function("__ui") { args ->
                 check(alive)
                 val point = args[0] as String
-                val tree = codec.decodeFromString<UiNode>(args[1] as String)
+                val encodedTree = args[1] as String
+                require(encodedTree.length <= 512 * 1024) { "UI tree payload limit" }
+                val tree = codec.decodeFromString<UiNode>(encodedTree)
                 validateTree(tree)
                 registrations.ui(UiContribution(id, point, Layer.valueOf(args[2] as String), tree = tree)); null
             }
+            q.function("__uiSubscription") { args ->
+                val name = args[0] as String
+                if (name in UI_EVENTS) {
+                    val active = (args[1] as Number).toInt() > 0
+                    uiSubscriptions.update { if (active) it + name else it - name }
+                }
+                null
+            }
+            q.asyncFunction("__libraryPage") { args ->
+                requireActive()
+                val offset = (args[0] as Number).toInt().coerceAtLeast(0)
+                val limit = (args[1] as Number).toInt().coerceIn(1, 200)
+                codec.encodeToString((host as? UiLibraryHost)?.library(offset, limit)?.first() ?: emptyList())
+            }
+            q.function("__destination") { _ -> host.navigation.destination.value }
+            q.function("__pluginStates") { _ -> codec.encodeToString(pluginUiStates()) }
             q.function("__patch") { args ->
                 requireActive()
                 registrations.patch(id, args[0] as String, codec.decodeFromString<Map<String, String>>(args[1] as String))
+                null
+            }
+            q.function("__patchMany") { args ->
+                requireActive()
+                val encoded = args[0] as String
+                require(encoded.length <= 512 * 1024)
+                registrations.patch(id, codec.decodeFromString<Map<String, Map<String, String>>>(encoded))
                 null
             }
             q.function("__log") { args ->
@@ -775,12 +891,17 @@ class Runtime(
                         "stop" -> context.player.stop()
                         "seek" -> player.seek((args[1] as Number).toLong().coerceAtLeast(0))
                         "volume" -> player.setVolume((args[1] as Number).toFloat().coerceIn(0f, 1f))
+                        "radio" -> (player as UiPlaybackControls).startTrackRadio()
+                        "shuffle" -> (player as UiPlaybackControls).toggleShuffle()
+                        "repeat" -> (player as UiPlaybackControls).cycleRepeat()
+                        "queueIndex" -> (player as UiPlaybackControls).selectQueueIndex((args[1] as Number).toInt())
                         "playTracks" -> player.playTracks(codec.decodeFromString<List<Track>>(args[1] as String), (args[2] as Number).toInt())
                         "addToQueue" -> player.addToQueue(codec.decodeFromString<List<Track>>(args[1] as String))
                         else -> error("Unknown player command")
                     }
                 }; null } finally { bridgeWaiters.decrementAndGet() }
             }
+            q.function("__platform") { platform }
             q.function("__playerState") { codec.encodeToString(player.state.value) }
             q.function("__playerCapabilities") { codec.encodeToString(player.capabilities) }
             q.asyncFunction("__settings") { args ->
@@ -881,6 +1002,15 @@ class Runtime(
             jsBudget {
                 q.evaluate<Any?>("if (!globalThis.plugin || typeof plugin.init !== 'function') throw Error('Plugin must export globalThis.plugin.init'); if (plugin.dispose != null && typeof plugin.dispose !== 'function') throw Error('Invalid plugin.dispose'); await plugin.init(host);", asModule = true)
             }
+            @OptIn(FlowPreview::class)
+            val playbackChanges = player.state.sample(250)
+            observeUi("playback_changed", playbackChanges) { codec.encodeToString(it) }
+            observeUi("ui_home_changed", homes.pages) { "{}" }
+            observeUi("navigation_changed", host.navigation.destination) { codec.encodeToString(it) }
+            observeUi("plugins_changed", plugins.map { pluginUiStates() }.distinctUntilChanged()) { codec.encodeToString(it) }
+            (host as? UiLibraryHost)?.let { library ->
+                observeUi("library_changed", flow { emitAll(library.library(0, 100)) }) { codec.encodeToString(it) }
+            }
             events.subscribe(observers) { event ->
                     try { evaluate("JSON.stringify(await __emit(${quote(event.name)},${event.payload}))") } catch (e: Exception) {
                         if (e is CancellationException) throw e
@@ -888,6 +1018,26 @@ class Runtime(
                     }
             }
         }
+        private fun pluginUiStates() = plugins.value.map { UiPluginState(it.manifest.id, it.manifest.name, it.state) }
+
+        private fun <T> observeUi(name: String, updates: Flow<T>, encode: (T) -> String) {
+            observers.launch {
+                uiSubscriptions.map { name in it }.distinctUntilChanged().collectLatest { active ->
+                    if (!active) return@collectLatest
+                    updates.collect { state ->
+                        try {
+                            evaluate("JSON.stringify(await __emit(${quote(name)},${encode(state)}))")
+                        } catch (e: CancellationException) {
+                            if (e !is TimeoutCancellationException) throw e
+                            scope.launch { quarantine(id, e) }
+                        } catch (e: Exception) {
+                            scope.launch { quarantine(id, e) }
+                        }
+                    }
+                }
+            }
+        }
+
         suspend fun evaluate(code: String): String {
             val task = observers.async { evaluateRaw(code) }
             return try { task.await() } finally { task.cancel() }
@@ -925,6 +1075,7 @@ class Runtime(
         }
     }
     companion object {
+        private val UI_EVENTS = setOf("playback_changed", "navigation_changed", "plugins_changed", "library_changed", "ui_home_changed")
         fun quote(s: String) = JsonPrimitive(s).toString()
         fun validateTree(tree: UiNode) {
             val ids = mutableSetOf<String>(); var count = 0
@@ -938,13 +1089,26 @@ class Runtime(
             globalThis.host = Object.freeze({
               ui: (point, tree, layer='REPLACE') => __ui(point, JSON.stringify(tree), layer),
               patch: (id, props) => __patch(id, JSON.stringify(props)),
+              patchMany: changes => __patchMany(JSON.stringify(changes)),
               log: text => __log(String(text)),
-              on: (event, fn) => { (__events[event] ||= []).push(requireFunction(fn)); return () => { __events[event] = __events[event].filter(x => x !== fn); }; },
+              on: (event, fn) => {
+                (__events[event] ||= []).push(requireFunction(fn));
+                __uiSubscription(event, __events[event].length);
+                return () => {
+                  __events[event] = __events[event].filter(x => x !== fn);
+                  __uiSubscription(event, __events[event].length);
+                };
+              },
               action: (id, fn) => { __actions[id] = requireFunction(fn); },
               player: async (action, value=0) => __player(action, value),
               playTracks: async (tracks,startIndex=0) => __player('playTracks',JSON.stringify(tracks),startIndex),
               addToQueue: async tracks => __player('addToQueue',JSON.stringify(tracks)),
               playerState: () => JSON.parse(__playerState()),
+              platform: () => __platform(),
+              destination: () => __destination(),
+              navigate: destination => host.call('navigation.route/v1', {destination}),
+              pluginStates: () => JSON.parse(__pluginStates()),
+              library: async (offset=0, limit=100) => JSON.parse(await __libraryPage(offset, limit)),
               playerCapabilities: () => JSON.parse(__playerCapabilities()),
               settings: Object.freeze({get: async key => JSON.parse(await __settings('get'))[key], all: async () => JSON.parse(await __settings('get')), set: async (key,value) => JSON.parse(await __settings('set',key,JSON.stringify(value)))}),
               storage: Object.freeze({get: async key => JSON.parse(await __storage('get',key)), set: async (key,value) => JSON.parse(await __storage('set',key,JSON.stringify(value))), remove: async key => __storage('set',key,'null')}),

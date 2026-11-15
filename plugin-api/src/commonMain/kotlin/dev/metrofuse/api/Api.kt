@@ -1,7 +1,9 @@
 package dev.metrofuse.api
 
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -32,6 +34,25 @@ data class UiContribution(val owner: String, val point: String, val layer: Layer
 interface NativeScreen { @Composable fun Content(context: UiContext) }
 interface NativeComponent { @Composable fun Content(node: UiNode, context: UiContext) }
 interface UiExtensions { @Composable fun Render(point: String, fallback: @Composable () -> Unit) }
+
+/** Reactive host data exposed to native UI. Library pages are loaded only when requested. */
+interface UiEnvironment : UiExtensions {
+    val destination: StateFlow<String>
+    val pluginStates: Flow<List<UiPluginState>>
+    fun library(offset: Int = 0, limit: Int = 100): Flow<List<Track>>
+}
+
+/** Lets a native shell use the host's artwork cache on either platform. */
+interface UiArtworkEnvironment : UiEnvironment {
+    val platform: String
+    val homeShelves: Flow<List<HomeShelf>>
+
+    @Composable
+    fun Artwork(url: String, description: String?, modifier: Modifier)
+}
+
+@Serializable
+data class UiPluginState(val id: String, val name: String, val state: String)
 @Serializable
 data class UiTarget(val id: String, val title: String, val kind: String)
 

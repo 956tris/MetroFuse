@@ -2,6 +2,8 @@
 
 package com.metrolist.android.ui
 
+import com.metrolist.shared.plugins.PluginAppShell
+import com.metrolist.shared.plugins.PluginUiSlot
 import android.app.SearchManager
 import android.content.Context
 import android.content.Intent
@@ -969,6 +971,7 @@ fun MetrolistApp(
                     }
                 }
             }
+            val originalUi: @Composable () -> Unit = {
             Column(
                 Modifier
                     .fillMaxSize()
@@ -1798,83 +1801,87 @@ fun MetrolistApp(
                             morphCollapsedContainer = true,
                             collapsedContent = {
                                 if (shouldRenderMiniPlayer) {
-                                    MiniPlayer(
-                                        useDesktopLayout = useDesktopMiniPlayer,
-                                        onExpand = {
-                                            focusManager.clearFocus(force = true)
-                                            keyboardController?.hide()
-                                            focusPlayPauseOnPlayerExpand = false
-                                            playerBottomSheetState.expandSoft()
-                                        },
-                                        onDpadExpand = {
-                                            focusManager.clearFocus(force = true)
-                                            keyboardController?.hide()
-                                            focusPlayPauseOnPlayerExpand = true
-                                            playerBottomSheetState.expandSoft()
-                                        },
-                                        bottomSheetState = playerBottomSheetState,
-                                        cardFocusRequester = miniPlayerFocusRequester,
-                                        modifier =
-                                            Modifier
-                                                .windowInsetsPadding(horizontalSystemBars.only(WindowInsetsSides.Horizontal))
-                                                .semantics {
-                                                    customActions =
-                                                        listOf(
-                                                            CustomAccessibilityAction(stopPlaybackLabel) {
-                                                                playerBottomSheetState.dismiss(playerConnection.prepareDismissal())
-                                                                true
-                                                            },
-                                                        )
-                                                }.onPreviewKeyEvent { event ->
-                                                    if (isAndroidTv && event.key == Key.DirectionUp) {
-                                                        event.type == KeyEventType.KeyUp ||
-                                                            contentFocusRequester.requestFocus(FocusDirection.Up)
-                                                    } else {
-                                                        false
-                                                    }
-                                                }.layout { measurable, constraints ->
-                                                    val start = miniPlayerRailPadding().roundToPx()
-                                                    val child = measurable.measure(constraints.offset(horizontal = -start))
-                                                    layout(child.width + start, child.height) { child.placeRelative(start, 0) }
-                                                },
-                                    )
+                                    PluginUiSlot("ui.player") {
+                                        MiniPlayer(
+                                            useDesktopLayout = useDesktopMiniPlayer,
+                                            onExpand = {
+                                                focusManager.clearFocus(force = true)
+                                                keyboardController?.hide()
+                                                focusPlayPauseOnPlayerExpand = false
+                                                playerBottomSheetState.expandSoft()
+                                            },
+                                            onDpadExpand = {
+                                                focusManager.clearFocus(force = true)
+                                                keyboardController?.hide()
+                                                focusPlayPauseOnPlayerExpand = true
+                                                playerBottomSheetState.expandSoft()
+                                            },
+                                            bottomSheetState = playerBottomSheetState,
+                                            cardFocusRequester = miniPlayerFocusRequester,
+                                            modifier =
+                                                Modifier
+                                                    .windowInsetsPadding(horizontalSystemBars.only(WindowInsetsSides.Horizontal))
+                                                    .semantics {
+                                                        customActions =
+                                                            listOf(
+                                                                CustomAccessibilityAction(stopPlaybackLabel) {
+                                                                    playerBottomSheetState.dismiss(playerConnection.prepareDismissal())
+                                                                    true
+                                                                },
+                                                            )
+                                                    }.onPreviewKeyEvent { event ->
+                                                        if (isAndroidTv && event.key == Key.DirectionUp) {
+                                                            event.type == KeyEventType.KeyUp ||
+                                                                contentFocusRequester.requestFocus(FocusDirection.Up)
+                                                        } else {
+                                                            false
+                                                        }
+                                                    }.layout { measurable, constraints ->
+                                                        val start = miniPlayerRailPadding().roundToPx()
+                                                        val child = measurable.measure(constraints.offset(horizontal = -start))
+                                                        layout(child.width + start, child.height) { child.placeRelative(start, 0) }
+                                                    },
+                                        )
+                                    }
                                 }
                             },
                         ) {
                             val playerLifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
-                            PlayerScreen(
-                                isScreenVisible = playerLifecycleState.isAtLeast(Lifecycle.State.STARTED),
-                                viewModel = playerViewModel,
-                                bottomSheetState = playerBottomSheetState,
-                                requestPlayPauseFocus = focusPlayPauseOnPlayerExpand,
-                                onPlayPauseFocusRequested = { focusPlayPauseOnPlayerExpand = false },
-                                onLyricsVisibleChange = { lyricsVisible = it },
-                                onClose = {
-                                    playerBottomSheetState.collapseSoft()
-                                    if (usesDirectionalNavigation) {
-                                        coroutineScope.launch {
-                                            delay(250.milliseconds)
-                                            runCatching { miniPlayerFocusRequester.requestFocus() }
+                            PluginUiSlot("ui.fullscreen") {
+                                PlayerScreen(
+                                    isScreenVisible = playerLifecycleState.isAtLeast(Lifecycle.State.STARTED),
+                                    viewModel = playerViewModel,
+                                    bottomSheetState = playerBottomSheetState,
+                                    requestPlayPauseFocus = focusPlayPauseOnPlayerExpand,
+                                    onPlayPauseFocusRequested = { focusPlayPauseOnPlayerExpand = false },
+                                    onLyricsVisibleChange = { lyricsVisible = it },
+                                    onClose = {
+                                        playerBottomSheetState.collapseSoft()
+                                        if (usesDirectionalNavigation) {
+                                            coroutineScope.launch {
+                                                delay(250.milliseconds)
+                                                runCatching { miniPlayerFocusRequester.requestFocus() }
+                                            }
                                         }
-                                    }
-                                },
-                                onNavigateToAlbum = { albumId ->
-                                    playerBottomSheetState.collapseSoft()
-                                    navigator.navigate(Screen.Album(albumId))
-                                },
-                                onNavigateToArtist = { artistId ->
-                                    playerBottomSheetState.collapseSoft()
-                                    navigator.navigate(Screen.Artist(artistId))
-                                },
-                                onNavigateToListenTogether = {
-                                    playerBottomSheetState.collapseSoft()
-                                    navigator.navigate(Screen.ListenTogether)
-                                },
-                                onNavigateToIntegrations = {
-                                    playerBottomSheetState.collapseSoft()
-                                    navigator.navigate(Screen.Integrations)
-                                },
-                            )
+                                    },
+                                    onNavigateToAlbum = { albumId ->
+                                        playerBottomSheetState.collapseSoft()
+                                        navigator.navigate(Screen.Album(albumId))
+                                    },
+                                    onNavigateToArtist = { artistId ->
+                                        playerBottomSheetState.collapseSoft()
+                                        navigator.navigate(Screen.Artist(artistId))
+                                    },
+                                    onNavigateToListenTogether = {
+                                        playerBottomSheetState.collapseSoft()
+                                        navigator.navigate(Screen.ListenTogether)
+                                    },
+                                    onNavigateToIntegrations = {
+                                        playerBottomSheetState.collapseSoft()
+                                        navigator.navigate(Screen.Integrations)
+                                    },
+                                )
+                            }
                         }
                     }
 
@@ -1967,6 +1974,8 @@ fun MetrolistApp(
                     }
                 }
             }
+            }
+            PluginAppShell(originalUi)
         }
     }
 }
@@ -2392,29 +2401,31 @@ fun getEntryProvider(
 ): (NavKey) -> NavEntry<NavKey> =
     entryProvider<NavKey> {
         entry<Screen.Home>(metadata = navTabMetadata) {
-            HomeScreen(
-                floatingActionsBottomInset = floatingActionsBottomInset,
-                onNavigateToAlbum = { albumId -> navigator.navigate(Screen.Album(albumId)) },
-                onNavigateToArtist = { artistId -> navigator.navigate(Screen.Artist(artistId)) },
-                onNavigateToPlaylist = { id, thumbnail -> navigator.navigate(Screen.Playlist(id, thumbnailHint = thumbnail)) },
-                onNavigateToPodcast = { podcastId -> navigator.navigate(Screen.Podcast(podcastId)) },
-                onNavigateToRecognition = { navigator.navigate(Screen.Recognition) },
-                onNavigateToPlugins = { navigator.navigate(Screen.Plugins) },
-                onNavigateToLibrary = { filter ->
-                    filter?.let { Settings.shared.libraryFilter = it }
-                    navigator.navigate(Screen.Library)
-                },
-                onNavigateToBrowse = { browseId, params, title ->
-                    navigator.navigate(Screen.Browse(browseId, params, title))
-                },
-                onNavigateToVideoBrowse = { browseId, params, title ->
-                    navigator.navigate(Screen.Browse(browseId, params, title))
-                },
-                onNavigateToHomeSection = { shelf ->
-                    navigator.navigate(Screen.HomeSection(shelf.pageKey, shelf.title, shelf.toHomeSection()))
-                },
-                scrollToTopEvents = homeScrollToTopEvents,
-            )
+            PluginUiSlot("ui.home") {
+                HomeScreen(
+                    floatingActionsBottomInset = floatingActionsBottomInset,
+                    onNavigateToAlbum = { albumId -> navigator.navigate(Screen.Album(albumId)) },
+                    onNavigateToArtist = { artistId -> navigator.navigate(Screen.Artist(artistId)) },
+                    onNavigateToPlaylist = { id, thumbnail -> navigator.navigate(Screen.Playlist(id, thumbnailHint = thumbnail)) },
+                    onNavigateToPodcast = { podcastId -> navigator.navigate(Screen.Podcast(podcastId)) },
+                    onNavigateToRecognition = { navigator.navigate(Screen.Recognition) },
+                    onNavigateToPlugins = { navigator.navigate(Screen.Plugins) },
+                    onNavigateToLibrary = { filter ->
+                        filter?.let { Settings.shared.libraryFilter = it }
+                        navigator.navigate(Screen.Library)
+                    },
+                    onNavigateToBrowse = { browseId, params, title ->
+                        navigator.navigate(Screen.Browse(browseId, params, title))
+                    },
+                    onNavigateToVideoBrowse = { browseId, params, title ->
+                        navigator.navigate(Screen.Browse(browseId, params, title))
+                    },
+                    onNavigateToHomeSection = { shelf ->
+                        navigator.navigate(Screen.HomeSection(shelf.pageKey, shelf.title, shelf.toHomeSection()))
+                    },
+                    scrollToTopEvents = homeScrollToTopEvents,
+                )
+            }
         }
 
         entry<Screen.EasterEgg>(metadata = navTabMetadata) {
@@ -2457,30 +2468,34 @@ fun getEntryProvider(
         }
 
         entry<Screen.Library>(metadata = navTabMetadata) {
-            LibraryScreen(
-                viewModel = libraryViewModel,
-                floatingActionsBottomInset = floatingActionsBottomInset,
-                scrollToTopEvents = libraryScrollToTopEvents,
-                onNavigateToAlbum = { albumId -> navigator.navigate(Screen.Album(albumId)) },
-                onNavigateToArtist = { artistId -> navigator.navigate(Screen.Artist(artistId)) },
-                onNavigateToPlaylist = { id, thumbnail -> navigator.navigate(Screen.Playlist(id, thumbnailHint = thumbnail)) },
-                onNavigateToPodcast = { podcastId -> navigator.navigate(Screen.Podcast(podcastId)) },
-                onNavigateToPlaylistImport = { navigator.navigate(Screen.PlaylistImport) },
-                onNavigateToAutoPlaylist = { type ->
-                    // Keep podcast auto playlists on the Library stack so Back returns to the podcast library.
-                    navigator.navigate(Screen.Library)
-                    navigator.navigate(Screen.AutoPlaylist(type))
-                },
-            )
+            PluginUiSlot("ui.library") {
+                LibraryScreen(
+                    viewModel = libraryViewModel,
+                    floatingActionsBottomInset = floatingActionsBottomInset,
+                    scrollToTopEvents = libraryScrollToTopEvents,
+                    onNavigateToAlbum = { albumId -> navigator.navigate(Screen.Album(albumId)) },
+                    onNavigateToArtist = { artistId -> navigator.navigate(Screen.Artist(artistId)) },
+                    onNavigateToPlaylist = { id, thumbnail -> navigator.navigate(Screen.Playlist(id, thumbnailHint = thumbnail)) },
+                    onNavigateToPodcast = { podcastId -> navigator.navigate(Screen.Podcast(podcastId)) },
+                    onNavigateToPlaylistImport = { navigator.navigate(Screen.PlaylistImport) },
+                    onNavigateToAutoPlaylist = { type ->
+                        // Keep podcast auto playlists on the Library stack so Back returns to the podcast library.
+                        navigator.navigate(Screen.Library)
+                        navigator.navigate(Screen.AutoPlaylist(type))
+                    },
+                )
+            }
         }
 
         entry<Screen.Search>(metadata = navTabMetadata) {
-            SearchScreen(
-                navigator = navigator,
-                floatingActionsBottomInset = floatingActionsBottomInset,
-                initialQuery = pendingSearchQuery,
-                onSearchResultsVisible = onSearchResultsVisible,
-            )
+            PluginUiSlot("ui.search") {
+                SearchScreen(
+                    navigator = navigator,
+                    floatingActionsBottomInset = floatingActionsBottomInset,
+                    initialQuery = pendingSearchQuery,
+                    onSearchResultsVisible = onSearchResultsVisible,
+                )
+            }
         }
 
         entry<Screen.Recognition>(metadata = navTabMetadata) {
@@ -2721,16 +2736,18 @@ fun getEntryProvider(
         }
 
         entry<Screen.Settings>(metadata = navTabMetadata) {
-            SettingsScreen(
-                onNavigateBack = {
-                    val target = resolveAndPersistStartupScreen()
-                    navigator.state.startRoute = target
-                    navigator.goBack()
-                    if (!navigator.state.topLevelRoute.isVisibleNavigationScreen()) navigator.navigate(target)
-                },
-                onNavigateToDownloads = { navigator.navigate(Screen.AutoPlaylist("downloaded")) },
-                onNavigateToArtist = { artistId -> navigator.navigate(Screen.Artist(artistId)) },
-            )
+            PluginUiSlot("ui.settings") {
+                SettingsScreen(
+                    onNavigateBack = {
+                        val target = resolveAndPersistStartupScreen()
+                        navigator.state.startRoute = target
+                        navigator.goBack()
+                        if (!navigator.state.topLevelRoute.isVisibleNavigationScreen()) navigator.navigate(target)
+                    },
+                    onNavigateToDownloads = { navigator.navigate(Screen.AutoPlaylist("downloaded")) },
+                    onNavigateToArtist = { artistId -> navigator.navigate(Screen.Artist(artistId)) },
+                )
+            }
         }
 
         entry<Screen.Statistics>(metadata = navTabMetadata) {

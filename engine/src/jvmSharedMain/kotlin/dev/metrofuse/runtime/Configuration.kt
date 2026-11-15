@@ -1,9 +1,12 @@
 package dev.metrofuse.runtime
 
-import kotlinx.serialization.Serializable
-import dev.metrofuse.api.MetadataPolicy
 import dev.metrofuse.api.AudioPolicy
+import dev.metrofuse.api.MetadataPolicy
 import dev.metrofuse.api.ResolutionMode
+import kotlinx.serialization.Serializable
+
+internal fun migrateAudioPolicy(policy: AudioPolicy): AudioPolicy =
+    if (policy == AudioPolicy(timeoutMillis = 1000)) AudioPolicy() else policy
 
 @Serializable data class Configuration(
     val enabled: Set<String> = emptySet(),

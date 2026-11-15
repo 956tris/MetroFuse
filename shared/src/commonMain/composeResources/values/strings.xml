@@ -5515,6 +5515,10 @@
     <string name="plugins_failed">Failed</string>
     <string name="plugins_disabled">Disabled</string>
     <string name="plugins_loading">Loading</string>
+    <string name="plugins_app_interface">App interface</string>
+    <string name="plugins_use_original_ui">Use original interface</string>
+    <string name="plugins_enable_custom_ui">Enable custom interfaces</string>
+    <string name="plugins_ui_conflict">Multiple plugins can replace the entire interface. Choose which one to display.</string>
     <string name="plugins_recovery">Plugin recovery is active. Review diagnostics before enabling plugins.</string>
     <string name="plugins_priority">Provider priority: %1$d</string>
     <string name="plugins_priority_up">Increase priority</string>
@@ -5545,4 +5549,5 @@
     <string name="music_frontend_offline">Offline</string>
     <string name="music_frontend_switch">Choose music frontend</string>
     <string name="music_frontend_offline_summary">Only local and downloaded music can play in Offline.</string>
+    <string name="swap_artwork_lyrics_sides">Swap artwork and lyrics sides</string>
 </resources>

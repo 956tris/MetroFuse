@@ -2,6 +2,7 @@ package com.metrolist.android
 
 import android.content.Context
 import android.content.Intent
+import com.metrolist.shared.plugins.MetroFuseHost
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -271,6 +272,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showContent() {
+        if (intent.getBooleanExtra("metrofuse.original_ui", false)) {
+            MetroFuseHost.runtime.forceOriginalUi()
+        }
         if (navigationRestoration.shouldResetLibraryFilter(Settings.shared.defaultOpenTab)) {
             Settings.shared.libraryFilter = LibraryFilterType.DEFAULT
         }
