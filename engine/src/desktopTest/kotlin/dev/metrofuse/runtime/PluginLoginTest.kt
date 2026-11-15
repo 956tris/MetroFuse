@@ -1,12 +1,16 @@
 package dev.metrofuse.runtime
 
+import androidx.compose.runtime.Composable
 import dev.metrofuse.api.LoginCredentials
+import dev.metrofuse.api.LoginUiContext
 import dev.metrofuse.api.Manifest
+import dev.metrofuse.api.NativeLoginUi
 import dev.metrofuse.api.PluginLoginState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -23,9 +27,41 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFails
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class PluginLoginTest {
+    @Test
+    fun accountUiFailureAndTimeoutFinishWithSanitizedState() =
+        runBlocking<Unit> {
+            val logins = PluginLogins(this, UnavailableCredentialStore, timeoutMs = 50)
+            try {
+                for (uiFactory in listOf<suspend () -> NativeLoginUi?>(
+                    { throw AssertionError("fixture-secret") },
+                    {
+                        delay(500)
+                        null
+                    },
+                )) {
+                    logins.bind(
+                        "fixture.ui",
+                        "activation",
+                        MutableStateFlow(PluginLoginState()),
+                        request = { null },
+                        login = { PluginLoginState() },
+                        logout = {},
+                        accountUi = uiFactory,
+                    )
+                    val state = withTimeout(1000) { logins.states.first { it["fixture.ui"]?.uiFailed == true } }.getValue("fixture.ui")
+                    assertFalse(state.uiLoading)
+                    assertEquals(LoginFailure.REQUEST, state.error)
+                    assertNull(state.ui)
+                }
+            } finally {
+                logins.unbind("fixture.ui")
+            }
+        }
+
     @Test
     fun loginStatusChangedBeforeCollectionStartsIsObserved() =
         runBlocking<Unit> {
@@ -53,6 +89,11 @@ class PluginLoginTest {
                     ) {}
                 }
             val logins = PluginLogins(this, credentials)
+            val ui =
+                object : NativeLoginUi {
+                    @Composable
+                    override fun Content(context: LoginUiContext) {}
+                }
             try {
                 logins.bind(
                     "fixture.restore",
@@ -61,8 +102,23 @@ class PluginLoginTest {
                     request = { null },
                     login = { throw AssertionError("fixture-secret") },
                     logout = {},
+                    accountUi = { ui },
                 )
-                withTimeout(1000) { logins.states.first { it["fixture.restore"]?.error == LoginFailure.STORAGE } }
+                withTimeout(1000) {
+                    logins.states.first {
+                        it["fixture.restore"]?.let { state ->
+                            state.error == LoginFailure.STORAGE &&
+                                !state.uiLoading
+                        } ==
+                            true
+                    }
+                }
+                assertSame(
+                    ui,
+                    logins.states.value
+                        .getValue("fixture.restore")
+                        .ui,
+                )
                 assertFalse(
                     logins.states.value
                         .getValue("fixture.restore")
@@ -217,7 +273,9 @@ class PluginLoginTest {
     private suspend fun install(
         runtime: Runtime,
         id: String,
-        body: String = "const state={loggedIn:credentials.values.token==='fixture-secret',accountName:'Fixture'};host.loginState(state);return state;",
+        body: String =
+            "const state={loggedIn:credentials.values.token==='fixture-secret',accountName:'Fixture'};" +
+                "host.loginState(state);return state;",
     ) {
         val manifest =
             Manifest(id, "Login fixture", "1.0.0", "Tests", runtime = "javascript", script = "index.js", capabilities = listOf("login"))

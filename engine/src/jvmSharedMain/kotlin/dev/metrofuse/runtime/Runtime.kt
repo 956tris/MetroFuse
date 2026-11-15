@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import com.dokar.quickjs.*
 import com.dokar.quickjs.binding.*
 import dev.metrofuse.api.*
+import dev.metrofuse.sdk.WebViewLoginScreen
+import dev.metrofuse.sdk.WebViewLoginUi
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
@@ -597,6 +599,25 @@ class Runtime(
                             codec.decodeFromString<WebLoginRequest?>(evaluate("JSON.stringify(await globalThis.__login?.web?.() ?? null)"))
                         } else {
                             (provider as? WebLoginPlugin)?.webLoginRequest()
+                        }
+                    }
+                },
+                accountUi = {
+                    owned {
+                        if (js != null) {
+                            codec
+                                .decodeFromString<WebViewLoginUi?>(
+                                    evaluate("JSON.stringify(await globalThis.__login?.ui?.() ?? null)"),
+                                )?.let { ui ->
+                                    val form =
+                                        codec.decodeFromString<LoginRequest?>(
+                                            evaluate("JSON.stringify(await globalThis.__login?.request?.() ?? null)"),
+                                        )
+                                    ui.request.validate(requireNotNull(form))
+                                    WebViewLoginScreen(ui)
+                                }
+                        } else {
+                            provider as? NativeLoginUi
                         }
                     }
                 },

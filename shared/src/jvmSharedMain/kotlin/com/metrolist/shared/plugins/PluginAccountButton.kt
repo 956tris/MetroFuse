@@ -29,22 +29,21 @@ import com.metrolist.shared.generated.resources.account
 import com.metrolist.shared.generated.resources.cancel
 import com.metrolist.shared.generated.resources.login
 import com.metrolist.shared.generated.resources.logout
-import com.metrolist.shared.generated.resources.plugin_login_browser_unavailable
+import com.metrolist.shared.generated.resources.plugin_login_browser_hint
 import com.metrolist.shared.generated.resources.plugin_login_failed
 import com.metrolist.shared.generated.resources.try_again
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.settings.SettingsNavigationRow
-import dev.metrofuse.runtime.PluginAccountState
-import dev.metrofuse.runtime.PluginLoginPrompt
+import dev.metrofuse.api.LoginUiContext
+import dev.metrofuse.sdk.WebViewLabels
+import dev.metrofuse.sdk.WebViewLoginScreen
+import dev.metrofuse.sdk.WebViewLoginUi
 import org.jetbrains.compose.resources.stringResource
 
 @Composable
-fun PluginAccountMenuSection(
-    focusModifier: @Composable (Shape) -> Modifier = { Modifier },
-    webLoginContent: PluginWebLoginContent? = null,
-) {
-    PluginAccountButton(webLoginContent = webLoginContent) { label, onClick ->
+fun PluginAccountMenuSection(focusModifier: @Composable (Shape) -> Modifier = { Modifier }) {
+    PluginAccountButton { label, onClick ->
         SettingsNavigationRow(
             title = label,
             icon = MetrolistIcons.Outlined.AccountCircle,
@@ -56,12 +55,9 @@ fun PluginAccountMenuSection(
     }
 }
 
-typealias PluginWebLoginContent = @Composable (PluginLoginPrompt, PluginAccountState, (Map<String, String>) -> Unit, () -> Unit) -> Unit
-
 @Composable
 fun PluginAccountButton(
     modifier: Modifier = Modifier,
-    webLoginContent: PluginWebLoginContent? = null,
     content: (@Composable (String, () -> Unit) -> Unit)? = null,
 ) {
     if (!MetroFuseHost.isConfigured) return
@@ -73,16 +69,19 @@ fun PluginAccountButton(
     val states by runtime.logins.states.collectAsState()
     val prompt by runtime.logins.prompt.collectAsState()
     val state = states[owner] ?: return
-    var expanded by remember(owner) { mutableStateOf(false) }
+    val token = runtime.sessionToken(owner) ?: return
+    var expanded by remember(owner, token) { mutableStateOf(false) }
     val currentPrompt = prompt?.takeIf { it.owner == owner }
     val values = remember(currentPrompt) { mutableStateMapOf<String, String>() }
-    DisposableEffect(owner) {
-        onDispose { runtime.logins.dismiss(owner) }
+    DisposableEffect(owner, token) {
+        onDispose { if (runtime.sessionToken(owner) == token) runtime.logins.dismiss(owner) }
     }
     val label = stringResource(if (state.account.loggedIn) Res.string.account else Res.string.login)
     val openAccount = {
-        expanded = true
-        if (!state.account.loggedIn) runtime.logins.request(owner)
+        if (runtime.sessionToken(owner) == token) {
+            expanded = true
+            if (!state.account.loggedIn) runtime.logins.request(owner)
+        }
     }
     if (content != null) {
         content(label, openAccount)
@@ -97,19 +96,45 @@ fun PluginAccountButton(
             runtime.logins.dismiss(owner)
         }
         val browserPrompt = currentPrompt?.takeIf { it.web != null && !state.account.loggedIn }
-        if (browserPrompt != null && webLoginContent != null) {
-            webLoginContent(browserPrompt, state, { runtime.logins.submitWeb(owner, browserPrompt.token, it) }, dismiss)
+        val uiContext =
+            LoginUiContext(
+                account = state.account,
+                busy = state.busy,
+                failed = state.error != null,
+                ready = currentPrompt?.token == token,
+                requestLogin = { if (runtime.sessionToken(owner) == token) runtime.logins.request(owner) },
+                submit = { if (runtime.sessionToken(owner) == token) runtime.logins.submit(owner, it, token) },
+                logout = { if (runtime.sessionToken(owner) == token) runtime.logins.logout(owner) },
+                dismiss = { if (runtime.sessionToken(owner) == token) dismiss() },
+            )
+        val accountUi = state.ui
+        if (accountUi != null) {
+            accountUi.Content(uiContext)
+        } else if (browserPrompt != null) {
+            WebViewLoginScreen(
+                WebViewLoginUi(
+                    checkNotNull(browserPrompt.web),
+                    WebViewLabels(
+                        title = plugin.manifest.name,
+                        hint = stringResource(Res.string.plugin_login_browser_hint),
+                        error = stringResource(Res.string.plugin_login_failed),
+                        retry = stringResource(Res.string.try_again),
+                        cancel = stringResource(Res.string.cancel),
+                        login = stringResource(Res.string.login),
+                        logout = stringResource(Res.string.logout),
+                    ),
+                ),
+            ).Content(uiContext)
         } else {
             AlertDialog(
-                onDismissRequest = dismiss,
+                onDismissRequest = uiContext.dismiss,
                 title = { Text(plugin.manifest.name) },
                 text = {
                     Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                         state.account.accountName?.let { Text(it) }
-                        if (state.busy) CircularProgressIndicator()
+                        if (state.busy || state.uiLoading) CircularProgressIndicator()
                         if (state.error != null) Text(stringResource(Res.string.plugin_login_failed))
-                        if (browserPrompt != null) Text(stringResource(Res.string.plugin_login_browser_unavailable))
-                        if (!state.account.loggedIn && currentPrompt != null && browserPrompt == null) {
+                        if (!state.uiLoading && !state.uiFailed && !state.account.loggedIn && currentPrompt != null) {
                             if (currentPrompt.request.instructions.isNotBlank()) Text(currentPrompt.request.instructions)
                             currentPrompt.request.fields.forEach { field ->
                                 OutlinedTextField(
@@ -125,35 +150,33 @@ fun PluginAccountButton(
                     }
                 },
                 confirmButton = {
-                    when {
-                        browserPrompt != null -> {
-                            Unit
-                        }
+                    if (!state.uiLoading && !state.uiFailed) {
+                        when {
+                            state.account.loggedIn -> {
+                                TextButton(
+                                    enabled = !state.busy,
+                                    onClick = uiContext.logout,
+                                ) { Text(stringResource(Res.string.logout)) }
+                            }
 
-                        state.account.loggedIn -> {
-                            TextButton(
-                                enabled = !state.busy,
-                                onClick = { runtime.logins.logout(owner) },
-                            ) { Text(stringResource(Res.string.logout)) }
-                        }
+                            currentPrompt != null -> {
+                                TextButton(
+                                    enabled =
+                                        !state.busy && currentPrompt.request.fields.all { !values[it.id].isNullOrBlank() },
+                                    onClick = { uiContext.submit(values.toMap()) },
+                                ) { Text(stringResource(Res.string.login)) }
+                            }
 
-                        currentPrompt != null -> {
-                            TextButton(
-                                enabled =
-                                    !state.busy && currentPrompt.request.fields.all { !values[it.id].isNullOrBlank() },
-                                onClick = { runtime.logins.submit(owner, values.toMap()) },
-                            ) { Text(stringResource(Res.string.login)) }
-                        }
-
-                        else -> {
-                            TextButton(
-                                enabled = !state.busy,
-                                onClick = { runtime.logins.request(owner) },
-                            ) { Text(stringResource(Res.string.try_again)) }
+                            else -> {
+                                TextButton(
+                                    enabled = !state.busy,
+                                    onClick = uiContext.requestLogin,
+                                ) { Text(stringResource(Res.string.try_again)) }
+                            }
                         }
                     }
                 },
-                dismissButton = { TextButton(onClick = dismiss) { Text(stringResource(Res.string.cancel)) } },
+                dismissButton = { TextButton(onClick = uiContext.dismiss) { Text(stringResource(Res.string.cancel)) } },
             )
         }
     }

@@ -14,7 +14,7 @@ private var nativeApplication: Context? = null
 
 private class NativePluginDexClassLoader(path: String, cache: String, libraries: String?) : DexClassLoader(path, cache, libraries, NativePlugin::class.java.classLoader) {
     override fun loadClass(name: String, resolve: Boolean): Class<*> = synchronized(this) {
-        val shared = listOf("java.", "javax.", "android.", "dalvik.", "kotlin.", "kotlinx.coroutines.", "kotlinx.serialization.", "androidx.compose.", "dev.metrofuse.api.").any(name::startsWith)
+        val shared = listOf("java.", "javax.", "android.", "dalvik.", "kotlin.", "kotlinx.coroutines.", "kotlinx.serialization.", "androidx.compose.", "dev.metrofuse.api.", "dev.metrofuse.sdk.").any(name::startsWith)
         val type = findLoadedClass(name) ?: if (shared) super.loadClass(name, false)
             else try { findClass(name) } catch (_: ClassNotFoundException) { super.loadClass(name, false) }
         if (resolve) resolveClass(type)

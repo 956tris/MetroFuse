@@ -8,6 +8,7 @@
 
 # Dynamically loaded APKs are compiled separately against this binary API.
 -keep,includedescriptorclasses class dev.metrofuse.api.** { *; }
+-keep,includedescriptorclasses class dev.metrofuse.sdk.** { *; }
 
 # Host-provided compileOnly SDK dependencies must retain plugin-only calls too.
 -keep,includedescriptorclasses class kotlin.** { public *; protected *; }

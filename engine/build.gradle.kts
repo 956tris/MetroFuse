@@ -23,7 +23,10 @@ kotlin {
     jvm("desktop") { compilerOptions.jvmTarget.set(JvmTarget.JVM_21) }
     jvmToolchain(25)
     sourceSets {
-        commonMain.dependencies { api(project(":plugin-api")) }
+        commonMain.dependencies {
+            api(project(":plugin-api"))
+            api(project(":plugin-sdk"))
+        }
         val jvmSharedMain by creating {
             dependsOn(commonMain.get())
             dependencies {

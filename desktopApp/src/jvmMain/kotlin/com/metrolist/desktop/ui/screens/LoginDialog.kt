@@ -555,7 +555,7 @@ private fun WebViewContent(
             webSettings.desktopWebSettings.transparent = false
             webSettings.desktopWebSettings.dataDirectory = webViewDataDirectory.getOrNull()
             webSettings.desktopWebSettings.initScript = LOGIN_WEBVIEW_INIT_SCRIPT
-            webSettings.customUserAgentString = buildYouTubeBrowserUserAgent()
+            webSettings.customUserAgentString = buildBrowserUserAgent()
         }
     val navigator = rememberWebViewNavigator()
     val coroutineScope = rememberCoroutineScope()
@@ -949,7 +949,7 @@ private suspend fun evaluateJs(
         ""
     }
 
-internal fun buildYouTubeBrowserUserAgent(): String {
+private fun buildBrowserUserAgent(): String {
     val platformToken =
         when {
             OsUtil.isWindows -> "Windows NT 10.0; Win64; x64"

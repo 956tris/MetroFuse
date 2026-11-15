@@ -1,4 +1,4 @@
-package com.metrolist.android.ui.screens
+package dev.metrofuse.sdk
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
@@ -17,8 +17,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -35,60 +33,52 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
-import com.metrolist.android.playlistimport.ProviderLoginWindow
-import com.metrolist.shared.generated.resources.Res
-import com.metrolist.shared.generated.resources.back
-import com.metrolist.shared.generated.resources.login
-import com.metrolist.shared.generated.resources.plugin_login_failed
-import com.metrolist.shared.generated.resources.try_again
-import com.metrolist.shared.playlistimport.awaitProviderCredentials
-import com.metrolist.shared.ui.icons.MetrolistIcons
-import com.metrolist.shared.utils.BlockScreenshots
-import dev.metrofuse.runtime.PluginAccountState
-import dev.metrofuse.runtime.PluginLoginPrompt
-import dev.metrofuse.runtime.acceptsNavigation
-import dev.metrofuse.runtime.captureCookies
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
+import dev.metrofuse.api.LoginUiContext
+import dev.metrofuse.api.WebLoginRequest
 import kotlinx.coroutines.CancellationException
-import org.jetbrains.compose.resources.stringResource
+import kotlinx.coroutines.TimeoutCancellationException
 import java.net.URI
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PluginWebLoginScreen(
-    prompt: PluginLoginPrompt,
-    account: PluginAccountState,
-    onCredentials: (Map<String, String>) -> Unit,
-    onDismiss: () -> Unit,
+actual fun WebViewLoginDialog(
+    request: WebLoginRequest,
+    labels: WebViewLabels,
+    context: LoginUiContext,
 ) {
-    BlockScreenshots()
-    val request = checkNotNull(prompt.web)
+    val onCredentials = context.submit
+    val onDismiss = context.dismiss
     val currentSubmit by rememberUpdatedState(onCredentials)
-    var webView by remember(prompt.token) { mutableStateOf<WebView?>(null) }
+    var webView by remember(request) { mutableStateOf<WebView?>(null) }
     val popups = remember { mutableSetOf<WebView>() }
     var attempt by remember { mutableIntStateOf(0) }
     var pageFailed by remember { mutableStateOf(false) }
-    LaunchedEffect(prompt.token, webView, attempt) {
+    LaunchedEffect(request, webView, attempt) {
         val view = webView ?: return@LaunchedEffect
         pageFailed = false
         try {
             val values =
-                awaitProviderCredentials {
+                awaitBrowserCredentials {
                     val url = view.url
-                    if (url == null || !request.acceptsNavigation(url) || URI(url).host != URI(request.cookieUrl).host) {
+                    if (url == null || !request.acceptsBrowserNavigation(url) || URI(url).host != URI(request.cookieUrl).host) {
                         null
                     } else {
-                        request.captureCookies(CookieManager.getInstance().getCookie(request.cookieUrl).orEmpty())
+                        request.captureBrowserCookies(CookieManager.getInstance().getCookie(request.cookieUrl).orEmpty())
                     }
                 }
             currentSubmit(values)
         } catch (error: CancellationException) {
-            throw error
+            if (error !is TimeoutCancellationException) throw error
+            pageFailed = true
         } catch (_: Exception) {
             pageFailed = true
         }
     }
-    DisposableEffect(prompt.token) {
+    DisposableEffect(request) {
         onDispose {
             popups.forEach { it.destroy() }
             popups.clear()
@@ -103,10 +93,13 @@ fun PluginWebLoginScreen(
         val view = webView
         if (view?.canGoBack() == true) view.goBack() else onDismiss()
     }
-    ProviderLoginWindow(onDismissRequest = onDismiss) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, securePolicy = SecureFlagPolicy.SecureOn),
+    ) {
         Scaffold(topBar = {
-            TopAppBar(title = { Text(stringResource(Res.string.login)) }, navigationIcon = {
-                IconButton(onClick = onDismiss) { Icon(MetrolistIcons.AutoMirrored.Filled.ArrowBack, stringResource(Res.string.back)) }
+            TopAppBar(title = { Text(labels.title) }, navigationIcon = {
+                TextButton(onClick = onDismiss) { Text(labels.cancel) }
             })
         }) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
@@ -129,7 +122,7 @@ fun PluginWebLoginScreen(
                                 override fun shouldOverrideUrlLoading(
                                     view: WebView,
                                     navigation: WebResourceRequest,
-                                ) = !request.acceptsNavigation(navigation.url.toString())
+                                ) = !request.acceptsBrowserNavigation(navigation.url.toString())
 
                                 override fun onPageStarted(
                                     view: WebView,
@@ -166,7 +159,7 @@ fun PluginWebLoginScreen(
                                                 favicon: Bitmap?,
                                             ) {
                                                 if (url == null || url == "about:blank") return
-                                                if (request.acceptsNavigation(url)) view.loadUrl(url)
+                                                if (request.acceptsBrowserNavigation(url)) view.loadUrl(url)
                                                 popups -= popupView
                                                 popupView.destroy()
                                             }
@@ -179,14 +172,14 @@ fun PluginWebLoginScreen(
                         loadUrl(request.url)
                     }
                 })
-                if (account.busy) CircularProgressIndicator(Modifier.align(Alignment.Center))
-                if (pageFailed || account.error != null) {
+                if (context.busy) CircularProgressIndicator(Modifier.align(Alignment.Center))
+                if (pageFailed || context.failed) {
                     Column(Modifier.align(Alignment.BottomCenter)) {
-                        Text(stringResource(Res.string.plugin_login_failed))
-                        TextButton(enabled = !account.busy, onClick = {
+                        Text(labels.error)
+                        TextButton(enabled = !context.busy, onClick = {
                             attempt++
                             webView?.loadUrl(request.url)
-                        }) { Text(stringResource(Res.string.try_again)) }
+                        }) { Text(labels.retry) }
                     }
                 }
             }

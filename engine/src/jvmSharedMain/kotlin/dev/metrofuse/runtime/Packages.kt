@@ -255,7 +255,7 @@ class PackageStore(private val root: File, private val platform: String) {
 
         private fun isHostClass(name: String): Boolean {
             val classPath = name.replace(Regex("^META-INF/versions/[0-9]+/"), "")
-            return classPath.endsWith(".class") && listOf("dev/metrofuse/api/", "androidx/compose/", "kotlin/", "kotlinx/coroutines/", "kotlinx/serialization/").any(classPath::startsWith)
+            return classPath.endsWith(".class") && listOf("dev/metrofuse/api/", "dev/metrofuse/sdk/", "androidx/compose/", "kotlin/", "kotlinx/coroutines/", "kotlinx/serialization/").any(classPath::startsWith)
         }
 
         /** Reads defined class descriptors, rather than rejecting references to host APIs. */
@@ -287,7 +287,7 @@ class PackageStore(private val root: File, private val platform: String) {
                 while (offset in bytes.indices && bytes[offset].toInt() != 0) offset++
                 require(offset in bytes.indices && offset - start <= 65536)
                 val descriptor = bytes.copyOfRange(start, offset).decodeToString()
-                require(!listOf("Ldev/metrofuse/api/", "Landroidx/compose/", "Lkotlin/", "Lkotlinx/coroutines/", "Lkotlinx/serialization/").any(descriptor::startsWith)) { "APK bundles host API/runtime class: $descriptor" }
+                require(!listOf("Ldev/metrofuse/api/", "Ldev/metrofuse/sdk/", "Landroidx/compose/", "Lkotlin/", "Lkotlinx/coroutines/", "Lkotlinx/serialization/").any(descriptor::startsWith)) { "APK bundles host API/runtime class: $descriptor" }
             }
         }
     }

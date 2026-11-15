@@ -5,6 +5,7 @@
 # External native plugins are compiled separately against this binary API.
 # Names alone are insufficient: methods used only by a plugin must survive shrinking.
 -keep,includedescriptorclasses class dev.metrofuse.api.** { *; }
+-keep,includedescriptorclasses class dev.metrofuse.sdk.** { *; }
 
 # Host-provided compileOnly SDK dependencies form the same external ABI.
 # Preserve their callable surface, including Kotlin facades and compiler helpers.

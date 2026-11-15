@@ -2,6 +2,7 @@ package dev.metrofuse.runtime
 
 import dev.metrofuse.api.LoginCredentials
 import dev.metrofuse.api.LoginRequest
+import dev.metrofuse.api.NativeLoginUi
 import dev.metrofuse.api.PluginLoginState
 import dev.metrofuse.api.WebLoginRequest
 import kotlinx.coroutines.CancellationException
@@ -25,6 +26,9 @@ data class PluginAccountState(
     val account: PluginLoginState = PluginLoginState(),
     val busy: Boolean = false,
     val error: LoginFailure? = null,
+    val ui: NativeLoginUi? = null,
+    val uiLoading: Boolean = false,
+    val uiFailed: Boolean = false,
 )
 
 data class PluginLoginPrompt(
@@ -64,6 +68,7 @@ class PluginLogins(
         login: suspend (LoginCredentials) -> PluginLoginState,
         logout: suspend () -> Unit,
         webRequest: suspend () -> WebLoginRequest? = { null },
+        accountUi: suspend () -> NativeLoginUi? = { null },
     ) {
         unbind(owner)
         val binding =
@@ -76,7 +81,18 @@ class PluginLogins(
                 webRequest,
             )
         bindings[owner] = binding
-        update(owner, binding) { PluginAccountState(account = state.value.validated()) }
+        update(owner, binding) { PluginAccountState(account = state.value.validated(), uiLoading = true) }
+        binding.scope.launch {
+            try {
+                val ui = withTimeout(timeoutMs) { accountUi() }
+                update(owner, binding) { it.copy(ui = ui, uiLoading = false) }
+            } catch (error: CancellationException) {
+                if (error !is TimeoutCancellationException) throw error
+                update(owner, binding) { it.copy(error = LoginFailure.REQUEST, uiLoading = false, uiFailed = true) }
+            } catch (_: Throwable) {
+                update(owner, binding) { it.copy(error = LoginFailure.REQUEST, uiLoading = false, uiFailed = true) }
+            }
+        }
         binding.scope.launch {
             try {
                 state.collect { account -> update(owner, binding) { it.copy(account = account.validated()) } }
@@ -95,9 +111,9 @@ class PluginLogins(
                     update(owner, binding) { it.copy(account = restored, busy = false) }
                 } catch (error: CancellationException) {
                     if (error !is TimeoutCancellationException) throw error
-                    update(owner, binding) { PluginAccountState(error = LoginFailure.AUTHENTICATION) }
+                    update(owner, binding) { it.copy(account = PluginLoginState(), busy = false, error = LoginFailure.AUTHENTICATION) }
                 } catch (_: Throwable) {
-                    update(owner, binding) { PluginAccountState(error = LoginFailure.STORAGE) }
+                    update(owner, binding) { it.copy(account = PluginLoginState(), busy = false, error = LoginFailure.STORAGE) }
                 }
             }
         }

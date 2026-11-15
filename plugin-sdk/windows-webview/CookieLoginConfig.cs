@@ -1,6 +1,6 @@
 using System.Text.RegularExpressions;
 
-namespace MetroWv2Helper;
+namespace MetroFuse.PluginSdk;
 
 public sealed record CookieLoginConfig(string url, string cookieUrl, string cookieField,
     List<string> requiredCookies, List<string> allowedHosts)

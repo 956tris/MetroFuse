@@ -47,14 +47,3 @@ catch (IOException) { }
 Check(!retry.IsCompleted);
 Check(retry.TryWrite(payload, _ => { }));
 Console.WriteLine("Login completion tests passed");
-
-var browser = new CookieLoginConfig("https://accounts.google.com/ServiceLogin", "https://music.youtube.com", "cookie",
-    ["SAPISID", "__Secure-3PAPISID"], ["accounts.google.com", "music.youtube.com"]);
-browser.Validate();
-Check(browser.AcceptsNavigation(browser.url));
-foreach (var url in new[] { "http://music.youtube.com", "https://music.youtube.com.evil.test", "https://user@music.youtube.com", "https://music.youtube.com:444" })
-    Check(!browser.AcceptsNavigation(url));
-Check(browser.Capture(new Dictionary<string, string> { ["VISITOR_INFO1_LIVE"] = "guest" }) == null);
-Check(browser.Capture(cookies)!["cookie"] == "SAPISID=session");
-Check(browser.Capture(new Dictionary<string, string> { ["SAPISID"] = "invalid\r\nheader" }) == null);
-Console.WriteLine("Browser login capture tests passed");

@@ -44,6 +44,8 @@ desktopApp/src/desktopMain/resources/macos/bgutil-ytdlp-pot-provider-rs
 metro-wv2-helper/bin/
 metro-wv2-helper/obj/
 metro-wv2-helper/tests/obj/
+plugin-sdk/windows-webview/obj/
+plugin-sdk/windows-webview/tests/obj/
 
 # iOS / Xcode
 DerivedData/

@@ -36,7 +36,6 @@ import com.metrolist.desktop.state.app.AppState
 import com.metrolist.desktop.state.app.UiState
 import com.metrolist.desktop.state.auth.AuthState
 import com.metrolist.desktop.state.playback.PlayerState
-import com.metrolist.desktop.ui.screens.PluginWebLoginDialog
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.account_downloading_update
 import com.metrolist.shared.generated.resources.account_logout_webview_failed
@@ -111,16 +110,7 @@ fun AccountMenu(onDismiss: () -> Unit) {
         onLogout = performLogout,
         isLoggingOut = isLoggingOut,
         menuMaxWidth = 432.dp,
-        accountContent = {
-            PluginAccountMenuSection(webLoginContent = {
-                prompt,
-                state,
-                submit,
-                dismiss,
-                ->
-                PluginWebLoginDialog(prompt, state, submit, dismiss)
-            })
-        },
+        accountContent = { PluginAccountMenuSection() },
         afterMenuContent = { dismiss ->
             if (Settings.shared.credentialsPending) {
                 Row(

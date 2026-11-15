@@ -14,6 +14,7 @@ import java.nio.file.Files
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class YouTubeMusicAccountsTest {
@@ -54,9 +55,10 @@ class YouTubeMusicAccountsTest {
                         )
                         runtime.logins.request(OWNER)
                         val prompt = withTimeout(5000) { runtime.logins.prompt.first { it?.owner == OWNER } }
-                        val browser = assertNotNull(prompt?.web)
-                        assertTrue(browser.acceptsNavigation(browser.url))
-                        assertEquals("https://music.youtube.com", browser.cookieUrl)
+                        val account = withTimeout(5000) { runtime.logins.states.first { it[OWNER]?.ui != null } }.getValue(OWNER)
+                        assertNotNull(account.ui)
+                        assertFalse(account.uiFailed)
+                        assertNull(prompt?.web)
                         assertEquals(
                             "cookie",
                             prompt
