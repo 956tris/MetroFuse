@@ -1,5 +1,6 @@
 package com.metrolist.android.playback
 
+import android.app.Application
 import android.Manifest
 import android.app.NotificationManager
 import android.content.ComponentName
@@ -46,7 +47,7 @@ import java.util.concurrent.atomic.AtomicReference
 import com.russhwolf.settings.Settings as KmpSettings
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [33])
+@Config(application = Application::class, manifest = Config.NONE, sdk = [33])
 class SongDownloadManagerTest {
     @Test
     fun removedCompletedDownloadStaysCancelledAfterRestartAndAllowsExplicitDownload() =

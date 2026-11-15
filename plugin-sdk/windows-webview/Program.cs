@@ -7,14 +7,27 @@ using MetroFuse.PluginSdk;
 internal static class Program
 {
     [STAThread]
-    private static void Main(string[] args)
+    private static int Main(string[] args)
     {
-        if (args.Length != 3) return;
-        var request = JsonSerializer.Deserialize<CookieLoginConfig>(args[0]);
-        if (request == null) return;
-        request.Validate();
-        ApplicationConfiguration.Initialize();
-        Application.Run(new BrowserForm(request, args[1], args[2]));
+        if (args.Length != 3 && (args.Length != 4 || args[3] != "--validate-request")) return 1;
+        try
+        {
+            var request = CookieLoginConfig.ReadFromFile(args[0]);
+            if (args.Length == 4)
+            {
+                using var output = new StreamWriter(Console.OpenStandardOutput());
+                output.Write(JsonSerializer.Serialize(request));
+                return 0;
+            }
+            ApplicationConfiguration.Initialize();
+            Application.Run(new BrowserForm(request, args[1], args[2]));
+            return Environment.ExitCode;
+        }
+        catch
+        {
+            // Invalid requests and startup failures return to the SDK's retry UI.
+            return 1;
+        }
     }
 }
 
@@ -74,7 +87,7 @@ internal sealed class BrowserForm : Form
         try
         {
             var source = browser.CoreWebView2.Source;
-            if (!request.AcceptsNavigation(source) || new Uri(source).Host != new Uri(request.cookieUrl).Host) return;
+            if (!request.CanCapture(source)) return;
             var cookies = await browser.CoreWebView2.CookieManager.GetCookiesAsync(request.cookieUrl);
             var values = request.Capture(cookies.GroupBy(cookie => cookie.Name).ToDictionary(group => group.Key, group => group.Last().Value));
             if (values == null) return;

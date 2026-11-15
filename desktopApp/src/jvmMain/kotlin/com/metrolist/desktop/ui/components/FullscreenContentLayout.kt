@@ -248,6 +248,7 @@ internal fun DesktopLyricsContent(
     textColor: Color,
     textSizeMultiplier: Float = 1.0f,
     isVisible: Boolean = true,
+    immersive: Boolean = false,
 ) {
     val currentSongId = PlayerState.currentTrack?.id
     val isMatchingTrack = currentSongId != null && currentSongId == LyricsState.currentLyricsSongId
@@ -351,6 +352,7 @@ internal fun DesktopLyricsContent(
             selectionState = selection,
             onShareSelection = { selectedText = it },
             textColor = textColor,
+            immersive = immersive,
         )
     }
 }

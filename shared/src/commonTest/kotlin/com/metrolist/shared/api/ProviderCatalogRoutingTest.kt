@@ -10,6 +10,7 @@ import com.metrolist.shared.model.PlaylistItem
 import com.metrolist.shared.model.SearchFilter
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
+import com.metrolist.shared.plugins.MusicFrontend
 import com.metrolist.shared.plugins.PluginServices
 import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
@@ -36,6 +37,7 @@ class ProviderCatalogRoutingTest {
             val items = listOf(song, album, artist, playlist)
             val client = HttpClient(MockEngine { error("Provider catalog must not issue YouTube requests") })
             val previous = PluginServicesStore.current
+            val previousFrontends = PluginServicesStore.frontends.value
             val network = PlaybackNetworkStateStore.current
             Settings.replaceSharedForTest(Settings(MapSettings()))
             PlaybackNetworkStateStore.publish(PlaybackNetworkState(scope = "provider-catalog-fixture"))
@@ -69,6 +71,8 @@ class ProviderCatalogRoutingTest {
                         override suspend fun playlist(id: String): Map<String, List<YTItem>>? =
                             mapOf("header" to listOf(playlist), "songs" to listOf(song)).takeIf { playlist.id == id }
                     }
+                PluginServicesStore.frontends.value = listOf(MusicFrontend("fixture", "Fixture"))
+                Settings.shared.musicFrontendOwner = "plugin:fixture"
                 assertEquals(items, repository.search("fixture"))
                 assertEquals(listOf(song), repository.searchFiltered("fixture", SearchFilter.SONG).items)
                 assertEquals(listOf(album), repository.searchFiltered("fixture", SearchFilter.ALBUM).items)
@@ -84,6 +88,7 @@ class ProviderCatalogRoutingTest {
             } finally {
                 client.close()
                 PluginServicesStore.current = previous
+                PluginServicesStore.frontends.value = previousFrontends
                 PlaybackNetworkStateStore.publish(network)
                 Settings.replaceSharedForTest(null)
             }

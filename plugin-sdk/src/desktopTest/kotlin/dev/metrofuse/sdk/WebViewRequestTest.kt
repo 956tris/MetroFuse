@@ -46,4 +46,29 @@ class WebViewRequestTest {
         val header = "SECURE_AUTH=fixture; OTHER=fixture"
         assertEquals(mapOf("session" to header), request.captureBrowserCookies(header))
     }
+
+    @Test
+    fun completionPathWaitsForTheCookieOriginAndRejectsEmptyCookieHeaders() {
+        val redirect = request.copy(
+            url = "https://music.example.com/login",
+            requiredCookies = emptyList(),
+            completionPath = "/",
+        )
+        redirect.validateBrowserRequest()
+        assertFalse(redirect.canCaptureBrowserCookies(redirect.url))
+        assertFalse(redirect.canCaptureBrowserCookies("https://accounts.example.com/"))
+        assertFalse(redirect.canCaptureBrowserCookies("https://music.example.com/login?next=/"))
+        assertTrue(redirect.canCaptureBrowserCookies("https://music.example.com/?from=login"))
+        assertNull(redirect.captureBrowserCookies("EMPTY="))
+        assertEquals(mapOf("session" to "AUTH=fixture"), redirect.captureBrowserCookies("AUTH=fixture"))
+        assertFailsWith<IllegalArgumentException> { redirect.copy(completionPath = "/login").validateBrowserRequest() }
+        assertFailsWith<IllegalArgumentException> { redirect.copy(completionPath = "//another-host").validateBrowserRequest() }
+    }
+
+    @Test
+    fun iframeNavigationDoesNotBlockSignInWhileTopLevelOriginsRemainRestricted() {
+        assertFalse(request.blocksBrowserNavigation("https://captcha.example.net/challenge", isMainFrame = false))
+        assertTrue(request.blocksBrowserNavigation("https://captcha.example.net/challenge", isMainFrame = true))
+        assertFalse(request.blocksBrowserNavigation(request.url, isMainFrame = true))
+    }
 }

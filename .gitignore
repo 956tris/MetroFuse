@@ -20,6 +20,7 @@ gradle/gradle-daemon-jvm.properties
 
 # Android
 local.properties
+androidApp/src/androidTest/assets/*.apk
 .externalNativeBuild
 .cxx
 *.keystore

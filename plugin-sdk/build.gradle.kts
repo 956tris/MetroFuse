@@ -69,3 +69,10 @@ tasks.named<Jar>("desktopJar") {
     dependsOn(publishBrowserHelper)
     from(helperResources) { include("metrofuse-sdk/windows/metrofuse-browser.exe") }
 }
+
+tasks.named<Test>("desktopTest") {
+    if (System.getProperty("os.name").startsWith("Windows")) {
+        dependsOn(publishBrowserHelper)
+        systemProperty("metrofuse.sdk.browserExecutable", helperResources.get().file("metrofuse-sdk/windows/metrofuse-browser.exe").asFile)
+    }
+}

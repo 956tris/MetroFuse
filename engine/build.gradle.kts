@@ -64,6 +64,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("metrofuse.ytm.native", providers.gradleProperty("metrofuseYtmJar").orNull ?: "")
     systemProperty("metrofuse.ytm.mfp", providers.gradleProperty("metrofuseYtmMfp").orNull ?: "")
     systemProperty("metrofuse.ytm.source", providers.gradleProperty("metrofuseYtmSource").orNull ?: "")
+    systemProperty("metrofuse.jio.package", providers.gradleProperty("metrofuseJioPackage").orNull ?: "")
 }
 
 tasks.named<Test>("desktopTest") {

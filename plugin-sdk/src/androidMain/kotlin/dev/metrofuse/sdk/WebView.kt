@@ -40,7 +40,6 @@ import dev.metrofuse.api.LoginUiContext
 import dev.metrofuse.api.WebLoginRequest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
-import java.net.URI
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,7 +63,7 @@ actual fun WebViewLoginDialog(
             val values =
                 awaitBrowserCredentials {
                     val url = view.url
-                    if (url == null || !request.acceptsBrowserNavigation(url) || URI(url).host != URI(request.cookieUrl).host) {
+                    if (!request.canCaptureBrowserCookies(url)) {
                         null
                     } else {
                         request.captureBrowserCookies(CookieManager.getInstance().getCookie(request.cookieUrl).orEmpty())
@@ -122,7 +121,7 @@ actual fun WebViewLoginDialog(
                                 override fun shouldOverrideUrlLoading(
                                     view: WebView,
                                     navigation: WebResourceRequest,
-                                ) = !request.acceptsBrowserNavigation(navigation.url.toString())
+                                ) = request.blocksBrowserNavigation(navigation.url.toString(), navigation.isForMainFrame)
 
                                 override fun onPageStarted(
                                     view: WebView,

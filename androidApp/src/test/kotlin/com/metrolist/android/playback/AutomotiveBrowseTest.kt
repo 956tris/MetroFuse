@@ -1,5 +1,6 @@
 package com.metrolist.android.playback
 
+import android.app.Application
 import android.content.ContextWrapper
 import android.content.res.Resources
 import android.net.Uri
@@ -84,7 +85,7 @@ import java.nio.file.Files
 import kotlin.random.Random
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [33])
+@Config(application = Application::class, manifest = Config.NONE, sdk = [33])
 class AutomotiveBrowseTest {
     private lateinit var database: MusicDatabase
     private lateinit var client: HttpClient

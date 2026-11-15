@@ -75,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.metrolist.desktop.state.app.UiState
 import com.metrolist.desktop.state.playback.PlayerState
+import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.close_fullscreen_player
 import com.metrolist.shared.generated.resources.exit_expanded_mode
@@ -116,19 +117,27 @@ fun FullscreenPlayerView(
     val playerBackgroundStyle = Settings.shared.playerBackgroundStyle
     val currentTrack = PlayerState.currentTrack
     val isPlaying = PlayerState.isPlaying
+    val canvasEnabled = UiState.playerPresentation.canvasEnabled
+    val immersive = canvasEnabled || PlayerState.isFullscreen || UiState.isNativeFullscreen
+    var hasCanvas by remember(currentTrack?.id, PlayerState.animatedCoverUrl) { mutableStateOf(false) }
     val fullscreenFocusRequester = remember { FocusRequester() }
     LaunchedEffect(PlayerState.isExpanded) {
-        if (PlayerState.isExpanded) fullscreenFocusRequester.requestFocus()
+        if (PlayerState.isExpanded) {
+            fullscreenFocusRequester.requestFocus()
+            if (immersive && UiState.playerPresentation.fullscreenLyricsEnabled && !UiState.showLyricsDrawer && !UiState.showPersistentPlayerDrawer) {
+                LyricsState.toggleLyricsDrawer()
+            }
+        }
     }
 
     val colorScheme = MaterialTheme.colorScheme
 
     fun closeExpandedPlayer() {
+        if (PlayerState.isFullscreen || UiState.isNativeFullscreen) toggleFullscreen()
         PlayerState.exitExpanded()
     }
     val isSolid = playerBackgroundStyle == PlayerBackgroundStyle.SOLID
     val baseBackgroundColor = if (isSolid) colorScheme.surfaceContainer else Color.Black
-    val iconTint = if (isSolid) colorScheme.onSurface.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.8f)
     val captionInsets =
         when {
             PlayerState.isFullscreen || UiState.isNativeFullscreen -> WindowInsets(0)
@@ -150,6 +159,9 @@ fun FullscreenPlayerView(
                     onClick = {},
                 ),
     ) {
+        if (immersive) {
+            ImmersivePlayerBackground(canvasEnabled = canvasEnabled, onCanvasAvailable = { hasCanvas = it })
+        } else {
         when (playerBackgroundStyle) {
             PlayerBackgroundStyle.GRADIENT,
             PlayerBackgroundStyle.ANIMATED_GRADIENT,
@@ -210,6 +222,7 @@ fun FullscreenPlayerView(
                 visible = UiState.showLyricsDrawer,
             )
         }
+        }
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize().windowInsetsPadding(captionInsets),
         ) {
@@ -247,6 +260,9 @@ fun FullscreenPlayerView(
                 val isWide = maxWidth >= 760.dp
 
                 val content = @Composable {
+                    if (immersive) {
+                        ImmersiveFullscreenContent(hasCanvas = canvasEnabled && hasCanvas)
+                    } else {
                     FullscreenContentLayout(
                         currentTrack = currentTrack,
                         isPlaying = isPlaying,
@@ -255,60 +271,15 @@ fun FullscreenPlayerView(
                         toggleWindowFullscreen = toggleFullscreen,
                         closeExpandedPlayer = ::closeExpandedPlayer,
                     )
-                }
-
-                val closeButton = @Composable {
-                    if (isWide) {
-                        IconButton(
-                            onClick = ::closeExpandedPlayer,
-                            modifier =
-                                Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(24.dp)
-                                    .size(48.dp),
-                            shapes = IconButtonDefaults.shapes(),
-                        ) {
-                            Icon(
-                                imageVector = MetrolistIcons.Default.Close,
-                                contentDescription = stringResource(Res.string.close_fullscreen_player),
-                                tint = iconTint,
-                                modifier = Modifier.size(24.dp),
-                            )
-                        }
-                    }
-                }
-
-                val backButton = @Composable {
-                    if (isWide) {
-                        IconButton(
-                            onClick = {
-                                PlayerState.toggleExpandedMode()
-                            },
-                            modifier =
-                                Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(24.dp)
-                                    .size(48.dp),
-                            shapes = IconButtonDefaults.shapes(),
-                        ) {
-                            Icon(
-                                imageVector = MetrolistIcons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(Res.string.exit_expanded_mode),
-                                tint = iconTint,
-                                modifier = Modifier.size(24.dp),
-                            )
-                        }
                     }
                 }
 
                 content()
-                if (!OsUtil.isWindows) {
-                    if (PlayerState.isFullscreen) {
-                        closeButton()
-                    } else {
-                        backButton()
-                    }
-                }
+                FullscreenCanvasToolbar(
+                    toggleWindowFullscreen = toggleFullscreen,
+                    closePlayer = ::closeExpandedPlayer,
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
             }
             if (queueDrawerOpen && !dockQueue) {
                 Box(

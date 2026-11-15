@@ -1,5 +1,6 @@
 package com.metrolist.android.viewmodels
 
+import android.app.Application
 import androidx.lifecycle.ViewModelStore
 import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
@@ -41,7 +42,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 
 @RunWith(RobolectricTestRunner::class)
-@Config(manifest = Config.NONE, sdk = [33])
+@Config(application = Application::class, manifest = Config.NONE, sdk = [33])
 @OptIn(ExperimentalCoroutinesApi::class, ExperimentalResourceApi::class)
 class PlaylistRemovalTest {
     @Before
