@@ -150,7 +150,7 @@ fun PluginAppShell(original: @Composable () -> Unit) {
         PluginUiSlot("ui.app", original)
         overlays.forEach { PluginContributionContent(it, runtime) }
         if (customShell) {
-            Surface(modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
+            Surface(modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
                 TextButton(onClick = { scope.launch { runtime.setUiSafeMode(true) } }) {
                     Text(stringResource(Res.string.plugins_use_original_ui))
                 }
