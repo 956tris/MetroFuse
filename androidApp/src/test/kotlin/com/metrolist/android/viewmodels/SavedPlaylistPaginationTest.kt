@@ -67,7 +67,7 @@ class SavedPlaylistPaginationTest {
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
             val store = ViewModelStore()
             try {
-                val repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+                val repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
                 val model =
                     PlaylistViewModel("RDmix", database, backgroundScope, repositoryProvider = { repository }, thumbnailHint = "home-cover")
                 store.put("playlist", model)
@@ -150,7 +150,7 @@ class SavedPlaylistPaginationTest {
                 database.dao().insert(PlaylistEntity(id = "LPsaved", name = "Saved", browseId = "PLremote", thumbnailUrl = "cached-cover"))
                 database.dao().insert(SongEntity(id = "cached", title = "Cached"))
                 database.dao().insert(PlaylistSongMap(playlistId = "LPsaved", songId = "cached", position = 0))
-                val repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+                val repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
                 val model =
                     PlaylistViewModel(
                         "LPsaved",

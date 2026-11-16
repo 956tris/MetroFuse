@@ -97,7 +97,7 @@ class PlaylistRemovalTest {
                         playlistId = "PLremote",
                         database = database,
                         applicationScope = backgroundScope,
-                        repositoryProvider = { YouTubeRepository(InnerTube(client)) },
+                        repositoryProvider = { YouTubeRepository(InnerTube(client), usePluginCatalog = { false }) },
                     )
                 store.put("playlist", model)
                 awaitPlaylistState { model.playlistTrackCount.value == 2 && !model.isLoading.value }
@@ -176,6 +176,7 @@ class PlaylistRemovalTest {
                         dataSyncId = "channel-sync-id"
                         useLoginForBrowse = true
                     },
+                    usePluginCatalog = { false },
                 )
             val model =
                 PlaylistViewModel(

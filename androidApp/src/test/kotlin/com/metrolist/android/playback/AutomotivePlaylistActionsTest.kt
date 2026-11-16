@@ -161,7 +161,7 @@ class AutomotivePlaylistActionsTest {
         val client = HttpClient(engine) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
         val innerTube = InnerTube(client, retryDelay = {}).apply { cookie = "SAPISID=test-session" }
         try {
-            block(database, YouTubeRepository(innerTube))
+            block(database, YouTubeRepository(innerTube, usePluginCatalog = { false }))
         } finally {
             client.close()
             database.close()

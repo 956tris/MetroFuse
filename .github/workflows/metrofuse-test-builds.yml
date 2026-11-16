@@ -74,3 +74,14 @@ jobs:
           if-no-files-found: error
       - name: Verify Android host
         run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --no-configuration-cache
+      - name: Upload Android verification reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: metrofuse-android-verification
+          path: |
+            androidApp/build/test-results/testDebugUnitTest/
+            androidApp/build/reports/tests/testDebugUnitTest/
+            shared/build/test-results/testAndroidHostTest/
+            shared/build/reports/tests/testAndroidHostTest/
+          if-no-files-found: warn

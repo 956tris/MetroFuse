@@ -78,7 +78,7 @@ class PlaylistPlaybackTest {
                     },
                 ) { install(ContentNegotiation) { json() } }
             try {
-                val repository = YouTubeRepository(InnerTube(client))
+                val repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
                 val model = PlaylistViewModel("PLremote", database, backgroundScope, repositoryProvider = { repository })
                 store.put("playlist", model)
                 awaitPlaylistState { model.songs.value.size == 2 }

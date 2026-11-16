@@ -114,7 +114,7 @@ class AutomotiveBrowseTest {
                 HttpClient(MockEngine { respond(browseResponse, headers = headersOf(HttpHeaders.ContentType, "application/json")) }) {
                     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
                 }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             val date = LocalDateTime(2026, 1, 1, 0, 0)
             val dao = database.dao()
             dao.insert(SongEntity("song", "Song", albumId = "album", inLibrary = date, liked = true, likedDate = date, isUploaded = true))
@@ -291,7 +291,7 @@ class AutomotiveBrowseTest {
                         )
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             val library = library()
             val request = MediaItem.Builder().setMediaId(AutomotiveMediaIds.shuffle(AutomotiveMediaIds.youtubePlaylist("PLremote"))).build()
             val queue = library.resolveSongQueue(request)!!
@@ -454,7 +454,7 @@ class AutomotiveBrowseTest {
                         )
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             val items = library().children(AutomotiveMediaIds.HOME, 0, 100)
             assertEquals(listOf(AutomotiveMediaIds.album("MPREb_album"), AutomotiveMediaIds.artist("UC_artist")), items.map { it.mediaId })
             assertTrue(items.all { it.mediaMetadata.isBrowsable == true })
@@ -473,7 +473,7 @@ class AutomotiveBrowseTest {
                         respond(response, headers = headersOf(HttpHeaders.ContentType, "application/json"))
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             var now = 1L
             var connected = true
             val library = AutomotiveMediaLibrary(context, database, repository, { connected }, { now })
@@ -503,7 +503,7 @@ class AutomotiveBrowseTest {
                         respond(browseResponse, headers = headersOf(HttpHeaders.ContentType, "application/json"))
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             var now = 1L
             val library = AutomotiveMediaLibrary(context, database, repository, { true }, { now })
             try {
@@ -599,7 +599,7 @@ class AutomotiveBrowseTest {
                         throw IOException("offline")
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             val dao = database.dao()
             dao.insert(PlaylistEntity("another", "Another", browseId = "PLanother"))
             dao.insert(PlaylistEntity("local-copy", "Local copy", browseId = "PLcopy", isLocal = true))
@@ -637,7 +637,7 @@ class AutomotiveBrowseTest {
                         throw failure
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             val library = AutomotiveMediaLibrary(context, database, repository, isNetworkConnected = { true })
 
             assertEquals(
@@ -662,7 +662,7 @@ class AutomotiveBrowseTest {
                 HttpClient(MockEngine { respond(response, headers = headersOf(HttpHeaders.ContentType, "application/json")) }) {
                     install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) }
                 }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             var connected = true
             val library = AutomotiveMediaLibrary(context, database, repository, isNetworkConnected = { connected })
 
@@ -684,7 +684,7 @@ class AutomotiveBrowseTest {
         runBlocking {
             client.close()
             client = HttpClient(MockEngine { throw IOException("offline") })
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             database.dao().insert(PlaylistSongMap(playlistId = "stored", songId = "song", position = 0))
             database.dao().insert(PlaylistSongMap(playlistId = "stored", songId = "episode", position = 1))
             val library = library()
@@ -716,7 +716,7 @@ class AutomotiveBrowseTest {
                         )
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             database.dao().insert(PlaylistSongMap(playlistId = "stored", songId = "song", position = 0))
             val library = library()
             assertEquals(
@@ -966,7 +966,7 @@ class AutomotiveBrowseTest {
                         respond(response, headers = headersOf(HttpHeaders.ContentType, "application/json"))
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             var connected = true
             val library = AutomotiveMediaLibrary(context, database, repository, { connected })
             val parent = AutomotiveMediaIds.youtubePlaylist("PLfresh")
@@ -1004,7 +1004,7 @@ class AutomotiveBrowseTest {
                         respond(response, headers = headersOf(HttpHeaders.ContentType, "application/json"))
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             Settings.shared.setAutomotivePinnedPlaylists(
                 listOf(AutomotivePinnedPlaylist(AutomotivePlaylistSource.YOUTUBE, "PLremote", "Remote")),
             )
@@ -1064,7 +1064,7 @@ class AutomotiveBrowseTest {
                         )
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             val result = library().resolveVoiceSearch(VoiceSearchRequest("Remote", VoiceSearchFocus.PLAYLIST))
             assertEquals(1, requests)
             assertEquals(listOf("same", "same"), result.songs.map { it.id })
@@ -1108,7 +1108,7 @@ class AutomotiveBrowseTest {
                         )
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             val result = library().resolveVoiceSearch(VoiceSearchRequest("Remote", VoiceSearchFocus.PLAYLIST))
             assertEquals(if (unavailablePage) 2 else 1, requests)
             assertEquals(listOf("same", "same"), result.songs.map { it.id })
@@ -1139,7 +1139,7 @@ class AutomotiveBrowseTest {
                         )
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             val library = library()
             val parent = AutomotiveMediaIds.youtubePlaylist("PLremote")
             val first = library.children(parent, 0, 3).drop(1)
@@ -1201,6 +1201,7 @@ class AutomotiveBrowseTest {
                         authUser = "0"
                         useLoginForBrowse = true
                     },
+                    usePluginCatalog = { false },
                 )
             database.dao().insert(PlaylistSongMap(playlistId = "stored", songId = "song", position = 0, setVideoId = "cached"))
             val song =
@@ -1500,7 +1501,7 @@ class AutomotiveBrowseTest {
                         )
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client))
+            repository = YouTubeRepository(InnerTube(client), usePluginCatalog = { false })
             Settings.shared.blockedSongIds = "blocked"
             val library = library()
             val page = library.children(AutomotiveMediaIds.youtubePlaylist("PLremote"), 1, 1)
@@ -1533,7 +1534,7 @@ class AutomotiveBrowseTest {
                         respond("{}", headers = headersOf(HttpHeaders.ContentType, "application/json"))
                     },
                 ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
-            repository = YouTubeRepository(InnerTube(client, retryDelay = {}))
+            repository = YouTubeRepository(InnerTube(client, retryDelay = {}), usePluginCatalog = { false })
             val library = AutomotiveMediaLibrary(context, database, repository, { connected }, { 1_000L })
             assertTrue(library.searchSongs("missing").isEmpty())
             assertEquals(0, requests)
