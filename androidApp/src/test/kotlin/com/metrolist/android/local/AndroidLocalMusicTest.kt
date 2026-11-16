@@ -17,10 +17,12 @@ import android.provider.MediaStore
 import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import com.metrolist.shared.db.MusicDatabase
+import com.metrolist.shared.db.entities.SongEntity
 import com.metrolist.shared.local.LocalLibraryImporter
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
@@ -107,6 +109,53 @@ class AndroidLocalMusicTest {
         }
 
     @Test
+    fun rescanReplacesSharedAlbumCoversWithEachFilesArtworkAndRefreshesEditedFiles() =
+        runBlocking {
+            val context = RuntimeEnvironment.getApplication()
+            val file = File(context.cacheDir, "artwork-fixture.mp3").apply { writeBytes(ByteArray(2048)) }
+            val provider = LocalAudioFixtureProvider(file, listOf(17L, 18L))
+            provider.attachInfo(context, ProviderInfo().apply { authority = "media" })
+            ShadowContentResolver.registerProviderInternal("media", provider)
+            val database = Room.inMemoryDatabaseBuilder(context, MusicDatabase::class.java).setDriver(AndroidSQLiteDriver()).build()
+            try {
+                val scanner = AndroidLocalMusicScanner(context, LocalLibraryImporter(database))
+                shadowOf(context).grantPermissions(scanner.permission)
+                val uris = listOf("content://media/external/audio/media/17", "content://media/external/audio/media/18")
+                uris.forEach { uri ->
+                    database.dao().upsert(
+                        SongEntity(
+                            uri,
+                            "Old title",
+                            thumbnailUrl = "content://media/external/audio/albumart/29",
+                            liked = true,
+                            isLocal = true,
+                        ),
+                    )
+                }
+                assertEquals(LocalMusicScanStatus.COMPLETE, scanner.scan().status)
+                val songs = uris.map { database.dao().getSongById(it)!! }
+                val artwork = songs.map { it.thumbnailUrl!! }
+                assertNotEquals(songs[0].title, songs[1].title)
+                assertEquals(songs[0].song.albumId, songs[1].song.albumId)
+                assertNotEquals(artwork[0], artwork[1])
+                assertEquals(uris, artwork.map { Uri.parse(it).getQueryParameter("uri") })
+                assertTrue(songs.all { it.song.liked })
+
+                provider.modifiedSeconds++
+                assertEquals(0, scanner.scan().imported)
+                uris.forEachIndexed { index, uri ->
+                    val updated = database.dao().getSongById(uri)!!
+                    assertNotEquals(artwork[index], updated.thumbnailUrl)
+                    assertEquals(uri, Uri.parse(updated.thumbnailUrl).getQueryParameter("uri"))
+                    assertTrue(updated.song.liked)
+                }
+            } finally {
+                database.close()
+                file.delete()
+            }
+        }
+
+    @Test
     @Config(sdk = [33])
     fun localUriResolutionUsesReadableDescriptorsAndDoesNotFetchRemoteSources() =
         runBlocking {
@@ -136,11 +185,13 @@ class AndroidLocalMusicTest {
 
     private class LocalAudioFixtureProvider(
         private val file: File,
+        private val trackIds: List<Long> = listOf(17L),
     ) : ContentProvider() {
         var denied = false
         var queries = 0
         var opens = 0
         var deletions = 0
+        var modifiedSeconds = 1700000000L
 
         override fun onCreate(): Boolean = true
 
@@ -165,11 +216,17 @@ class AndroidLocalMusicTest {
                     MediaStore.Audio.Media.YEAR to 2026,
                     MediaStore.Audio.Media.TRACK to 2003,
                     MediaStore.Audio.Media.ALBUM_ID to 29,
-                    MediaStore.Audio.Media.DATE_MODIFIED to 1700000000L,
+                    MediaStore.Audio.Media.DATE_MODIFIED to modifiedSeconds,
                 )
             val columns = requireNotNull(projection)
             validateMediaStoreQuery(columns, selection, selectionArgs, sortOrder)
-            return MatrixCursor(columns).apply { addRow(columns.map { values[it] }.toTypedArray()) }
+            return MatrixCursor(columns).apply {
+                trackIds.forEach { id ->
+                    val displayName = if (id == 17L) "Fixture.mp3" else "Other-$id.mp3"
+                    val trackValues = values + mapOf(MediaStore.Audio.Media._ID to id, MediaStore.Audio.Media.DISPLAY_NAME to displayName)
+                    addRow(columns.map { trackValues[it] }.toTypedArray())
+                }
+            }
         }
 
         override fun openAssetFile(

@@ -16,6 +16,7 @@ import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
 import coil3.toBitmap
+import com.metrolist.android.local.localAudioArtworkSource
 import com.metrolist.shared.ui.components.libraryCover
 import com.metrolist.shared.utils.artworkCacheCandidates
 import com.metrolist.shared.utils.canonicalArtworkUrl
@@ -126,7 +127,8 @@ class MediaArtworkProvider : ContentProvider() {
                     try {
                         openMediaArtwork(cache, url)
                     } catch (_: FileNotFoundException) {
-                        if (url.toUri().scheme != "https") throw FileNotFoundException()
+                        val imageUri = url.toUri()
+                        if (imageUri.scheme != "https" && localAudioArtworkSource(imageUri) == null) throw FileNotFoundException()
                         val result =
                             loader.execute(
                                 ImageRequest

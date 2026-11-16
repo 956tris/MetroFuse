@@ -14,6 +14,7 @@ import coil3.memory.MemoryCache
 import coil3.network.DeDupeConcurrentRequestStrategy
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import coil3.request.CachePolicy
+import com.metrolist.android.local.LocalAudioArtworkFetcher
 import com.metrolist.shared.network.PublicArtworkDns
 import com.metrolist.shared.network.sharedOkHttpClient
 import com.metrolist.shared.settings.Settings
@@ -49,6 +50,7 @@ fun createAppImageLoader(context: Context): ImageLoader {
         ImageLoader
             .Builder(appContext)
             .components {
+                add(LocalAudioArtworkFetcher.Factory())
                 add(ArtworkSizingInterceptor { imageLoader })
                 add(
                     OkHttpNetworkFetcherFactory(

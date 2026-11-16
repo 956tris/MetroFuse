@@ -17,6 +17,7 @@ import coil3.intercept.Interceptor
 import coil3.request.ErrorResult
 import coil3.request.ImageResult
 import coil3.request.SuccessResult
+import com.metrolist.android.local.localAudioArtworkUri
 import com.metrolist.shared.model.BuiltinPlaylist
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.playback.MusicQueueEntry
@@ -157,15 +158,23 @@ class MediaArtworkProviderTest {
                         }.build()
                 SingletonImageLoader.setUnsafe(loader)
                 try {
-                    val uri = mediaArtworkUri(context, "https://lh3.googleusercontent.com/uncached=s512")!!
                     val provider = MediaArtworkProvider()
                     provider.attachInfo(context, ProviderInfo().apply { authority = "${context.packageName}.media-artwork" })
-                    val bytes = ParcelFileDescriptor.AutoCloseInputStream(provider.openFile(uri, "r")).use { it.readBytes() }
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    assertEquals(8, bitmap.width)
-                    assertEquals(8, bitmap.height)
-                    assertEquals(null, cache?.openSnapshot(uri.getQueryParameter("key")!!))
-                    assertEquals(0, context.cacheDir.listFiles()!!.count { it.name.startsWith("media-artwork-") })
+                    val urls =
+                        listOf(
+                            "https://lh3.googleusercontent.com/uncached=s512",
+                            localAudioArtworkUri(Uri.parse("content://media/external/audio/media/17"), 1L),
+                        )
+                    urls.forEach { url ->
+                        val uri = mediaArtworkUri(context, url)!!
+                        val bytes = ParcelFileDescriptor.AutoCloseInputStream(provider.openFile(uri, "r")).use { it.readBytes() }
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        assertEquals(8, bitmap.width)
+                        assertEquals(8, bitmap.height)
+                        assertEquals(null, cache?.openSnapshot(uri.getQueryParameter("key")!!))
+                        assertEquals(0, context.cacheDir.listFiles()!!.count { it.name.startsWith("media-artwork-") })
+                        bitmap.recycle()
+                    }
                 } finally {
                     SingletonImageLoader.reset()
                     loader.shutdown()

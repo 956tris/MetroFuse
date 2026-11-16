@@ -85,7 +85,6 @@ class AndroidLocalMusicScanner(
                     MediaStore.Audio.Media.ALBUM,
                     MediaStore.Audio.Media.YEAR,
                     MediaStore.Audio.Media.TRACK,
-                    MediaStore.Audio.Media.ALBUM_ID,
                     MediaStore.Audio.Media.DATE_MODIFIED,
                 )
             val tracks = mutableListOf<LocalTrack>()
@@ -110,28 +109,25 @@ class AndroidLocalMusicScanner(
                 while (cursor.moveToNext()) {
                     currentCoroutineContext().ensureActive()
                     val id = cursor.getLong(indices.getValue(MediaStore.Audio.Media._ID))
+                    val audioUri = ContentUris.withAppendedId(collection, id)
                     val title =
                         text(MediaStore.Audio.Media.TITLE)
                             ?: text(MediaStore.Audio.Media.DISPLAY_NAME)?.substringBeforeLast('.')
                             ?: continue
                     val durationMillis = cursor.getLong(indices.getValue(MediaStore.Audio.Media.DURATION))
-                    val albumId = cursor.getLong(indices.getValue(MediaStore.Audio.Media.ALBUM_ID))
                     val encodedTrack = cursor.getInt(indices.getValue(MediaStore.Audio.Media.TRACK))
                     val year = cursor.getInt(indices.getValue(MediaStore.Audio.Media.YEAR)).takeIf { it > 0 }
                     val modified = cursor.getLong(indices.getValue(MediaStore.Audio.Media.DATE_MODIFIED))
                     tracks +=
                         LocalTrack(
-                            uri = ContentUris.withAppendedId(collection, id).toString(),
+                            uri = audioUri.toString(),
                             title = title,
                             durationSeconds = (durationMillis / 1000L).coerceIn(0, Int.MAX_VALUE.toLong()).toInt(),
                             artist = text(MediaStore.Audio.Media.ARTIST),
                             album = text(MediaStore.Audio.Media.ALBUM),
                             year = year,
                             trackNumber = (encodedTrack % 1000).takeIf { it > 0 },
-                            artworkUri =
-                                albumId.takeIf { it > 0 }?.let {
-                                    "content://media/external/audio/albumart/$it"
-                                },
+                            artworkUri = localAudioArtworkUri(audioUri, modified.takeIf { it > 0 }),
                             dateModifiedMillis = modified.takeIf { it > 0 }?.times(1000L),
                         )
                 }
