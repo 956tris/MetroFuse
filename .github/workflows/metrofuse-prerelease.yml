@@ -8,7 +8,7 @@ on:
       tag:
         description: Existing KMP alpha tag to build and publish
         required: true
-        default: v10.0.0-kmp-alpha-002
+        default: v10.0.0-kmp-alpha-003
         type: string
 
 permissions:
@@ -111,11 +111,12 @@ jobs:
         run: echo "KEYSTORE_PATH=$PREPARED_KEYSTORE" >> "$GITHUB_ENV"
       - name: Build Android release APK
         run: |
-          ./gradlew :androidApp:assembleRelease "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+          ./gradlew :androidApp:assembleRelease :androidApp:exportNativePluginAbi "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
       - name: Validate release APK and signature
         run: |
           set -euo pipefail
           python3 scripts/collect_android_apks.py androidApp/build/outputs/apk/release release-assets "$RELEASE_VERSION" release
+          python3 scripts/verify_native_plugin_abi.py release-assets/Metrolist.apk --classpath-file androidApp/build/plugin-abi/classpath.txt
           python3 - <<'PY'
           import json
           import os
@@ -175,7 +176,7 @@ jobs:
       - name: Build Windows release ZIP
         shell: pwsh
         run: |
-          .\gradlew.bat :desktopApp:assembleWindowsRelease '-Pmetrolist.desktop.arch=x86_64' "-Pmetrolist.sourceRevision=$env:RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+          .\gradlew.bat :desktopApp:assembleWindowsRelease :desktopApp:exportNativePluginAbi '-Pmetrolist.desktop.arch=x86_64' "-Pmetrolist.sourceRevision=$env:RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Validate Windows release ZIP
         shell: pwsh
@@ -191,6 +192,8 @@ jobs:
             try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
             if ($manifest.version -ne $env:RELEASE_VERSION -or $manifest.architecture -ne 'x86_64') { throw 'Windows release metadata does not match' }
           } finally { $archive.Dispose() }
+          python scripts/verify_native_plugin_abi.py dist/Metrofuse-Alpha-Desktop-Windows.zip --classpath-file desktopApp/build/plugin-abi/classpath.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrofuse-windows-release

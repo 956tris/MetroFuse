@@ -1,3 +1,5 @@
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.type.ArtifactTypeDefinition
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.WriteProperties
 import org.gradle.api.tasks.bundling.Jar
@@ -666,7 +668,7 @@ compose.desktop {
             isEnabled.set(true)
             obfuscate.set(false)
             optimize.set(false)
-            configurationFiles.from(project.file("proguard-rules.pro"))
+            configurationFiles.from(project.file("proguard-rules.pro"), rootProject.file("plugin-sdk/native-host-api.pro"))
 
             // Temurin can link from lib/modules; Compose 1.11 only discovers JMOD libraries.
             val jdkHome =
@@ -877,6 +879,35 @@ afterEvaluate {
                 "-XX:SharedArchiveFile=$cdsCache/appcds-$sentryBundleId.jsa",
             )
         }
+    }
+}
+
+val nativePluginAbiLibraries =
+    providers.provider {
+        configurations
+            .getByName("jvmRuntimeClasspath")
+            .incoming
+            .artifactView {
+                attributes.attribute(ArtifactTypeDefinition.ARTIFACT_TYPE_ATTRIBUTE, ArtifactTypeDefinition.JAR_TYPE)
+                componentFilter { component ->
+                    component is ModuleComponentIdentifier &&
+                        (
+                            component.group == "io.ktor" ||
+                                (component.group == "org.jetbrains.kotlinx" && component.module.startsWith("kotlinx-io-"))
+                        )
+                }
+            }.files
+    }
+tasks.register("exportNativePluginAbi") {
+    val output = layout.buildDirectory.file("plugin-abi/classpath.txt")
+    inputs.files(nativePluginAbiLibraries).withPathSensitivity(PathSensitivity.NONE)
+    outputs.file(output)
+    doLast {
+        val libraries = nativePluginAbiLibraries.get()
+        check(libraries.any { it.name.startsWith("ktor-client-core-jvm-") }) { "Ktor plugin ABI reference is missing" }
+        val file = output.get().asFile
+        file.parentFile.mkdirs()
+        file.writeText(libraries.map { it.absolutePath }.sorted().joinToString("\n", postfix = "\n"))
     }
 }
 

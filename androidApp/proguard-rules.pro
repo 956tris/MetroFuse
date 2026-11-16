@@ -6,15 +6,7 @@
 # without the private R8 mapping. Shrinking and optimization stay enabled.
 -dontobfuscate
 
-# Dynamically loaded APKs are compiled separately against this binary API.
--keep,includedescriptorclasses class dev.metrofuse.api.** { *; }
--keep,includedescriptorclasses class dev.metrofuse.sdk.** { *; }
-
-# Host-provided compileOnly SDK dependencies must retain plugin-only calls too.
--keep,includedescriptorclasses class kotlin.** { public *; protected *; }
--keep,includedescriptorclasses class kotlinx.coroutines.** { public *; protected *; }
--keep,includedescriptorclasses class kotlinx.serialization.** { public *; protected *; }
--keep,includedescriptorclasses class androidx.compose.** { public *; protected *; }
+# Native plugin ABI rules are shared with desktop in plugin-sdk/native-host-api.pro.
 
 # JNI calls private QuickJS callbacks and creates these objects directly.
 # These supplement its Android consumer rules with a stable, unoptimized JNI ABI.

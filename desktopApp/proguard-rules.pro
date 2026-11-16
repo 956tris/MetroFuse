@@ -2,17 +2,7 @@
 -keep,includedescriptorclasses class dev.nyx.** { *; }
 -keep,includedescriptorclasses class meow.nyx.** { *; }
 
-# External native plugins are compiled separately against this binary API.
-# Names alone are insufficient: methods used only by a plugin must survive shrinking.
--keep,includedescriptorclasses class dev.metrofuse.api.** { *; }
--keep,includedescriptorclasses class dev.metrofuse.sdk.** { *; }
-
-# Host-provided compileOnly SDK dependencies form the same external ABI.
-# Preserve their callable surface, including Kotlin facades and compiler helpers.
--keep,includedescriptorclasses class kotlin.** { public *; protected *; }
--keep,includedescriptorclasses class kotlinx.coroutines.** { public *; protected *; }
--keep,includedescriptorclasses class kotlinx.serialization.** { public *; protected *; }
--keep,includedescriptorclasses class androidx.compose.** { public *; protected *; }
+# Native plugin ABI rules are shared with Android in plugin-sdk/native-host-api.pro.
 
 # QuickJS JVM has no consumer rules. JNI looks up private callbacks and constructors.
 -keep class com.dokar.quickjs.QuickJs { *; }
