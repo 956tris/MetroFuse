@@ -13,6 +13,7 @@ concurrency:
 
 jobs:
   changes:
+    if: github.repository == 'MetrolistGroup/Metrolist' || github.event_name == 'workflow_dispatch'
     name: Select checks
     runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 5

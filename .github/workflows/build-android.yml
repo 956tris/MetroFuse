@@ -20,6 +20,8 @@ concurrency:
 
 jobs:
   changes:
+    # MetroFuse's automatic Android and desktop checks use metrofuse-test-builds.yml.
+    if: github.repository == 'MetrolistGroup/Metrolist' || github.event_name == 'workflow_dispatch'
     name: Select checks
     runs-on: blacksmith-2vcpu-ubuntu-2604
     timeout-minutes: 5

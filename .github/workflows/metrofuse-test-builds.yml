@@ -3,7 +3,9 @@ name: MetroFuse test builds
 on:
   workflow_dispatch:
   push:
-    branches: [KMP]
+    branches: [KMP, main]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read

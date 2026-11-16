@@ -1,0 +1,232 @@
+name: MetroFuse KMP prerelease
+
+on:
+  push:
+    tags: ['kmp-alpha-*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing KMP alpha tag to build and publish
+        required: true
+        default: kmp-alpha-001
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metrofuse-prerelease-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare KMP prerelease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      version_code: ${{ steps.release.outputs.version_code }}
+      title: ${{ steps.release.outputs.title }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate tag and release version
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^kmp-alpha-[0-9]{3}$ ]] || {
+            echo "KMP prerelease tags must use kmp-alpha-NNN" >&2
+            exit 1
+          }
+          commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
+          test "$commit" = "$(git rev-parse HEAD)"
+          git merge-base --is-ancestor "$commit" origin/main
+          version="$(sed -n 's/^appVersion=//p' gradle.properties | tr -d '\r')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "appVersion must use MAJOR.MINOR.PATCH" >&2
+            exit 1
+          }
+          version_code="$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' androidApp/build.gradle.kts)"
+          [[ "$version_code" =~ ^[0-9]+$ ]]
+          test -s ".github/release-notes/$RELEASE_TAG.md"
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
+          echo "title=KMP ${RELEASE_TAG#kmp-}" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Signed Android release
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH || secrets.KEYSTORE }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+      LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+      LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
+      LYPRIO_HMAC_KEY: ${{ secrets.LYPRIO_HMAC_KEY }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: metrofuse-release-android
+          persist-configuration-cache: 'false'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+      - uses: ./.github/actions/prepare-android-signing
+        id: signing
+      - name: Require the MetroFuse signing key
+        env:
+          SIGNING_AVAILABLE: ${{ steps.signing.outputs.signing_available }}
+        run: test "$SIGNING_AVAILABLE" = true
+      - name: Use the prepared signing keystore
+        env:
+          PREPARED_KEYSTORE: ${{ steps.signing.outputs.keystore_path }}
+        run: echo "KEYSTORE_PATH=$PREPARED_KEYSTORE" >> "$GITHUB_ENV"
+      - name: Build Android release APK
+        run: |
+          ./gradlew :androidApp:assembleRelease "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+      - name: Validate release APK and signature
+        run: |
+          set -euo pipefail
+          python3 scripts/collect_android_apks.py androidApp/build/outputs/apk/release release-assets "$RELEASE_VERSION" release
+          python3 - <<'PY'
+          import json
+          import os
+          import zipfile
+          from pathlib import Path
+          metadata = json.loads(Path("androidApp/build/outputs/apk/release/output-metadata.json").read_text())
+          assert metadata["applicationId"] == "com.metrofuse.music", metadata["applicationId"]
+          assert str(metadata["elements"][0]["versionCode"]) == os.environ["RELEASE_VERSION_CODE"]
+          with zipfile.ZipFile("release-assets/Metrolist.apk") as apk:
+              assert not any(name.endswith((".mfp", ".apk")) or name.startswith("assets/plugins/") for name in apk.namelist()), "APK contains a provider package"
+          PY
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$build_tools/apksigner" verify --verbose release-assets/Metrolist.apk
+          badging="$("$build_tools/aapt" dump badging release-assets/Metrolist.apk)"
+          if grep -q '^application-debuggable' <<< "$badging"; then
+            echo "The release APK must not be debuggable" >&2
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: metrofuse-android-release
+          path: release-assets/Metrolist.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows release ZIP
+    needs: prepare
+    runs-on: windows-2025
+    timeout-minutes: 90
+    env:
+      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+      LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+      LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
+      LYPRIO_HMAC_KEY: ${{ secrets.LYPRIO_HMAC_KEY }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      RELEASE_COMMIT: ${{ needs.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: metrofuse-release-windows
+          persist-configuration-cache: 'false'
+      - uses: ./.github/actions/generate-icons
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: metro-wv2-helper/global.json
+      - name: Build Windows sign-in helper
+        shell: pwsh
+        run: |
+          dotnet publish metro-wv2-helper/metro-wv2-helper.csproj -c Release -r win-x64 --self-contained true -o desktopApp/src/desktopMain/resources/windows -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build Windows release ZIP
+        shell: pwsh
+        run: |
+          .\gradlew.bat :desktopApp:assembleWindowsRelease '-Pmetrolist.desktop.arch=x86_64' "-Pmetrolist.sourceRevision=$env:RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate Windows release ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/Metrofuse-Alpha-Desktop-Windows.zip'))
+          try {
+            $entries = $archive.Entries.FullName
+            if ('Metrofuse Alpha.exe' -notin $entries) { throw 'The Windows launcher is missing' }
+            if ($entries | Where-Object { $_ -match '\.(mfp|apk)$|(^|/)plugins/' }) { throw 'The ZIP contains a provider package' }
+            $reader = [System.IO.StreamReader]::new($archive.GetEntry('install-manifest.json').Open())
+            try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            if ($manifest.version -ne $env:RELEASE_VERSION -or $manifest.architecture -ne 'x86_64') { throw 'Windows release metadata does not match' }
+          } finally { $archive.Dispose() }
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: metrofuse-windows-release
+          path: dist/Metrofuse-Alpha-Desktop-Windows.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish KMP prerelease
+    needs: [prepare, android, windows]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_TITLE: ${{ needs.prepare.outputs.title }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: metrofuse-*-release
+          merge-multiple: true
+          path: release-assets
+      - name: Create checksums and publish release assets
+        run: |
+          set -euo pipefail
+          test -s release-assets/Metrolist.apk
+          test -s release-assets/Metrofuse-Alpha-Desktop-Windows.zip
+          (cd release-assets && sha256sum Metrolist.apk Metrofuse-Alpha-Desktop-Windows.zip > SHA256SUMS.txt)
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/release-is-draft"; then
+            test "$(cat "$RUNNER_TEMP/release-is-draft")" = true || {
+              echo "This prerelease is already published" >&2
+              exit 1
+            }
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TITLE" --notes-file ".github/release-notes/$RELEASE_TAG.md" --draft --prerelease --latest=false
+          fi
+          gh release upload "$RELEASE_TAG" release-assets/Metrolist.apk release-assets/Metrofuse-Alpha-Desktop-Windows.zip release-assets/SHA256SUMS.txt --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,assets
