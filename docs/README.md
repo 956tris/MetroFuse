@@ -1,5 +1,7 @@
 # MetroFuse documentation
 
+Start with the [user guide](user-guide.md) for offline music, installing and updating plugins, source selection, accounts, custom interfaces, playback quality and troubleshooting.
+
 The public [plugin authoring guide](https://github.com/956tris/MetroFuse-Plugin-Docs) covers API 1.1.0, MFP/JAR/APK development, Home/login, packaging, installation and troubleshooting.
 
 Android and desktop share the SDK's [native host API rules](../plugin-sdk/native-host-api.pro). KMP release jobs check packaged Ktor/IO class, method and field definitions against the resolved host libraries before upload. Native plugins must use matching dependency versions and keep host-provided libraries compile-only.

@@ -106,5 +106,6 @@ HANDOFF.md
 *.MD
 !README.md
 !readme.md
+!docs/user-guide.md
 !.github/release-notes/*.md
 desktopApp/src/desktopMain/resources/windows/Microsoft.Web.WebView2.*.xml

@@ -17,6 +17,8 @@ MetroFuse plays local music out of the box, with no account, internet connection
 
 App builds, APKs, installers and app ZIPs never include provider plugins. Provider packages remain separate and require manual installation through Plugins.
 
+Read the [user guide](docs/user-guide.md) for local music setup, plugin formats and installation, account sources, custom interfaces, audio quality and recovery.
+
 When direct audio resolution fails, the shared host searches eligible enabled providers and applies the original MetroFuse matcher to title, artist and duration. It retries with each matched provider's own track ID, respecting the selected audio source and exclusions. Native JAR/APK and JavaScript MFP providers use the same matching flow. Search results are cached for 90 seconds and cleared when the host invalidates provider caches.
 
 The core Home switcher lists Offline first, followed by enabled plugins declaring the `home` capability. Optional manifest `home.title` and `home.icon` fields set the source's label and packaged icon. Native JAR/APK plugins can implement `HomePlugin`; JavaScript MFP plugins register `host.home(callback)`. Home content uses generic `CARDS` or `ROWS_GRID` shelves. Requests use the user's content locale, have a 15-second deadline, and keep a separate cache and retry state for each source. Removing or disabling the selected source switches Home to Offline.

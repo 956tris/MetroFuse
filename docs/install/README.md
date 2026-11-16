@@ -1,5 +1,7 @@
 # Install Metrolist KMP
 
+After installation, follow the [MetroFuse user guide](../user-guide.md) to scan local music, import provider or UI plugins and configure playback. Plugin MFP/JAR/APK packages are imported through **Settings → Plugins**, separately from the application installer.
+
 Choose your platform: [Android](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/android.md), [iOS and iPadOS](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/ios.md), [Windows](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/windows.md), [macOS](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/macos.md), or [Linux](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/linux.md).
 
 ## Get the package
