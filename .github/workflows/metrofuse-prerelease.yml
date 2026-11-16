@@ -2,13 +2,13 @@ name: MetroFuse KMP prerelease
 
 on:
   push:
-    tags: ['kmp-alpha-*']
+    tags: ['v*-kmp-alpha-*']
   workflow_dispatch:
     inputs:
       tag:
         description: Existing KMP alpha tag to build and publish
         required: true
-        default: kmp-alpha-001
+        default: v10.0.0-kmp-alpha-001
         type: string
 
 permissions:
@@ -29,6 +29,7 @@ jobs:
       version_code: ${{ steps.release.outputs.version_code }}
       title: ${{ steps.release.outputs.title }}
       commit: ${{ steps.release.outputs.commit }}
+      notes_file: ${{ steps.release.outputs.notes_file }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -41,10 +42,13 @@ jobs:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          [[ "$RELEASE_TAG" =~ ^kmp-alpha-[0-9]{3}$ ]] || {
-            echo "KMP prerelease tags must use kmp-alpha-NNN" >&2
+          [[ "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-(kmp-alpha-([0-9]{3}))$ ]] || {
+            echo "KMP prerelease tags must use vMAJOR.MINOR.PATCH-kmp-alpha-NNN" >&2
             exit 1
           }
+          tag_version="${BASH_REMATCH[1]}"
+          alpha_name="${BASH_REMATCH[2]}"
+          alpha_number="${BASH_REMATCH[3]}"
           commit="$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")"
           test "$commit" = "$(git rev-parse HEAD)"
           git merge-base --is-ancestor "$commit" origin/main
@@ -53,14 +57,17 @@ jobs:
             echo "appVersion must use MAJOR.MINOR.PATCH" >&2
             exit 1
           }
+          test "$tag_version" = "$version"
           version_code="$(sed -nE 's/^[[:space:]]*versionCode[[:space:]]*=[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' androidApp/build.gradle.kts)"
           [[ "$version_code" =~ ^[0-9]+$ ]]
-          test -s ".github/release-notes/$RELEASE_TAG.md"
+          notes_file=".github/release-notes/$alpha_name.md"
+          test -s "$notes_file"
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
-          echo "title=KMP ${RELEASE_TAG#kmp-}" >> "$GITHUB_OUTPUT"
+          echo "title=KMP alpha-$alpha_number" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
 
   android:
     name: Signed Android release
@@ -203,6 +210,7 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_TITLE: ${{ needs.prepare.outputs.title }}
+      RELEASE_NOTES_FILE: ${{ needs.prepare.outputs.notes_file }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -225,7 +233,7 @@ jobs:
               exit 1
             }
           else
-            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TITLE" --notes-file ".github/release-notes/$RELEASE_TAG.md" --draft --prerelease --latest=false
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TITLE" --notes-file "$RELEASE_NOTES_FILE" --draft --prerelease --latest=false
           fi
           gh release upload "$RELEASE_TAG" release-assets/Metrolist.apk release-assets/Metrofuse-Alpha-Desktop-Windows.zip release-assets/SHA256SUMS.txt --clobber
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false

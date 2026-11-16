@@ -10,6 +10,8 @@ import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.update_not_published_stable
 import com.metrolist.shared.network.sharedOkHttpClient
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.update.RELEASE_API_BASE
+import com.metrolist.shared.update.RELEASE_REPOSITORY_URL
 import com.metrolist.shared.update.ReleaseVersion
 import com.metrolist.shared.utils.OsUtil
 import com.sun.jna.platform.win32.Advapi32Util
@@ -36,7 +38,7 @@ import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
 object DesktopUpdateManager {
-    private const val API_BASE = "https://api.github.com/repos/MetrolistGroup/Metrolist"
+    private const val API_BASE = RELEASE_API_BASE
     internal const val RELEASES_URL = "$API_BASE/releases?per_page=50"
     private const val REGISTRY_PATH = "Software\\Metrolist\\Desktop"
     private const val MAX_MANAGER_BYTES = 128L * 1024 * 1024
@@ -275,7 +277,7 @@ data class GitHubDesktopRelease(
     val version: String get() = tagName.removePrefix("v")
     val installer: GitHubDesktopAsset?
         get() = assets.singleOrNull { it.name == "metrolist-installer-windows-x64-$version.exe" }
-    val url: String get() = "https://github.com/MetrolistGroup/Metrolist/releases/tag/$tagName"
+    val url: String get() = "$RELEASE_REPOSITORY_URL/releases/tag/$tagName"
 
     internal fun canInstall(registeredInstallation: Boolean): Boolean =
         registeredInstallation && !draft && !prerelease && ReleaseVersion.parse(version)?.prerelease?.isEmpty() == true

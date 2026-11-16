@@ -253,7 +253,6 @@ data class AboutCommunityLink(
 val aboutCommunityLinks: List<AboutCommunityLink> =
     listOf(
         AboutCommunityLink(AboutCommunityLinkKind.DISCORD, "https://discord.gg/ddHxkVDgt3"),
-        AboutCommunityLink(AboutCommunityLinkKind.TELEGRAM, "https://t.me/metrolistapp"),
         AboutCommunityLink(AboutCommunityLinkKind.REPOSITORY, "https://github.com/956tris/MetroFuse"),
     )
 

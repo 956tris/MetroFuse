@@ -4,8 +4,12 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
+const val RELEASE_REPOSITORY_URL = "https://github.com/956tris/MetroFuse"
+const val RELEASE_API_BASE = "https://api.github.com/repos/956tris/MetroFuse"
+const val RELEASES_API_URL = "$RELEASE_API_BASE/releases?per_page=50"
+
 /** The repository's latest stable release; GitHub excludes drafts and prereleases from `releases/latest`. */
-const val LATEST_RELEASE_URL = "https://api.github.com/repos/MetrolistGroup/Metrolist/releases/latest"
+const val LATEST_RELEASE_URL = "$RELEASE_API_BASE/releases/latest"
 
 @Serializable
 data class LatestRelease(
