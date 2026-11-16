@@ -53,6 +53,18 @@ internal class PopupSession {
 
 internal val LocalPopupSession = staticCompositionLocalOf<PopupSession?> { null }
 
+val LocalPopupVisibilityObserver = staticCompositionLocalOf<((Any, Boolean) -> Unit)?> { null }
+
+@Composable
+internal fun ObservePopupVisibility(visible: Boolean) {
+    val observer = LocalPopupVisibilityObserver.current ?: return
+    val owner = remember { Any() }
+    SideEffect { observer(owner, visible) }
+    DisposableEffect(owner, observer) {
+        onDispose { observer(owner, false) }
+    }
+}
+
 @Composable
 internal fun popupSheetVisibility(
     visible: Boolean,
@@ -96,6 +108,8 @@ fun PopupVisibility(
 ) {
     val session = rememberPopupSession(visible)
     val hidden = rememberUpdatedState(onHidden)
+    val retained = visible || session.state.retained || session.sheetVisible.value
+    ObservePopupVisibility(retained)
     var requested by remember { mutableStateOf(false) }
     LaunchedEffect(visible, session.state.retained, session.sheetVisible.value) {
         if (visible) requested = true
@@ -104,7 +118,7 @@ fun PopupVisibility(
             hidden.value?.invoke()
         }
     }
-    if (visible || session.state.retained || session.sheetVisible.value) {
+    if (retained) {
         CompositionLocalProvider(LocalPopupSession provides session, content = content)
     }
 }

@@ -33,7 +33,10 @@ class RadioRecommendationHistory {
             val fresh = eligible.filterNot { it.id in previous }
             continuation = page.continuation?.takeIf(seenContinuations::add)
             if (fresh.isNotEmpty()) {
-                return firstPage.copy(songs = varyRadioRecommendations(fresh), continuation = continuation)
+                return firstPage.copy(
+                    songs = if (firstPage.shuffleRecommendations) varyRadioRecommendations(fresh) else fresh,
+                    continuation = continuation,
+                )
             }
             if (fallback.isEmpty()) fallback = eligible
             if (fallback.isNotEmpty()) repeatedPages++
@@ -51,7 +54,9 @@ class RadioRecommendationHistory {
         currentCoroutineContext().ensureActive()
         if (!isCurrent()) return null
         return firstPage.copy(
-            songs = varyRadioRecommendations(filter(fallback)).sortedBy { previous[it.id] ?: -1 },
+            songs =
+                (if (firstPage.shuffleRecommendations) varyRadioRecommendations(filter(fallback)) else filter(fallback))
+                    .sortedBy { previous[it.id] ?: -1 },
             continuation = continuation,
         )
     }

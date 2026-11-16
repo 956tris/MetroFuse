@@ -2,15 +2,20 @@
 
 package com.metrolist.desktop.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -46,6 +51,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -74,8 +80,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.metrolist.desktop.state.app.UiState
-import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.desktop.state.playback.LyricsState
+import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.close_fullscreen_player
 import com.metrolist.shared.generated.resources.exit_expanded_mode
@@ -99,6 +105,7 @@ import com.metrolist.shared.ui.components.ContainedLoadingIndicator
 import com.metrolist.shared.ui.components.LiquidBackground
 import com.metrolist.shared.ui.components.lyrics.LyricsContrastScrim
 import com.metrolist.shared.ui.icons.MetrolistIcons
+import com.metrolist.shared.ui.navigation.blockInput
 import com.metrolist.shared.ui.player.PlayerGradientBackground
 import com.metrolist.shared.ui.theme.getGradientColors
 import com.metrolist.shared.ui.utils.ArtworkBlurStyle
@@ -118,15 +125,23 @@ fun FullscreenPlayerView(
     val currentTrack = PlayerState.currentTrack
     val isPlaying = PlayerState.isPlaying
     val canvasEnabled = UiState.playerPresentation.canvasEnabled
-    val immersive = canvasEnabled || PlayerState.isFullscreen || UiState.isNativeFullscreen
-    var hasCanvas by remember(currentTrack?.id, PlayerState.animatedCoverUrl) { mutableStateOf(false) }
+    val canvasPlayback = rememberAnimatedCoverPlayback(PlayerState.animatedCoverUrl)
+    val immersive = canvasEnabled && canvasPlayback?.hasFrame == true
+    val motion = rememberCanvasPlayerMotion(immersive)
+    val normalBackgroundAlpha by animateFloatAsState(
+        if (immersive) 0f else 1f,
+        tween(900, easing = canvasEasing),
+        label = "normalPlayerBackground",
+    )
     val fullscreenFocusRequester = remember { FocusRequester() }
     LaunchedEffect(PlayerState.isExpanded) {
-        if (PlayerState.isExpanded) {
-            fullscreenFocusRequester.requestFocus()
-            if (immersive && UiState.playerPresentation.fullscreenLyricsEnabled && !UiState.showLyricsDrawer && !UiState.showPersistentPlayerDrawer) {
-                LyricsState.toggleLyricsDrawer()
-            }
+        if (PlayerState.isExpanded) fullscreenFocusRequester.requestFocus()
+    }
+    LaunchedEffect(PlayerState.isExpanded, immersive) {
+        if (PlayerState.isExpanded && immersive && UiState.playerPresentation.fullscreenLyricsEnabled &&
+            !UiState.showLyricsDrawer && !UiState.showPersistentPlayerDrawer
+        ) {
+            LyricsState.toggleLyricsDrawer()
         }
     }
 
@@ -151,6 +166,7 @@ fun FullscreenPlayerView(
             Modifier
                 .fillMaxSize()
                 .background(baseBackgroundColor)
+                .canvasActivity(motion, immersive)
                 .focusRequester(fullscreenFocusRequester)
                 .onFocusChanged { onBackgroundFocusChanged(it.isFocused) }
                 .clickable(
@@ -159,69 +175,69 @@ fun FullscreenPlayerView(
                     onClick = {},
                 ),
     ) {
-        if (immersive) {
-            ImmersivePlayerBackground(canvasEnabled = canvasEnabled, onCanvasAvailable = { hasCanvas = it })
-        } else {
-        when (playerBackgroundStyle) {
-            PlayerBackgroundStyle.GRADIENT,
-            PlayerBackgroundStyle.ANIMATED_GRADIENT,
-            -> {
-                PlayerGradientBackground(
-                    getGradientColors(seedColor),
-                    animate = playerBackgroundStyle == PlayerBackgroundStyle.ANIMATED_GRADIENT,
-                    active = PlayerState.isPlaying && !UiState.videoFullscreenObscuresPlayer,
-                )
-            }
+        if (normalBackgroundAlpha > 0.001f) {
+            Box(Modifier.fillMaxSize().graphicsLayer { alpha = normalBackgroundAlpha }) {
+                when (playerBackgroundStyle) {
+                    PlayerBackgroundStyle.GRADIENT,
+                    PlayerBackgroundStyle.ANIMATED_GRADIENT,
+                    -> {
+                        PlayerGradientBackground(
+                            getGradientColors(seedColor),
+                            animate = playerBackgroundStyle == PlayerBackgroundStyle.ANIMATED_GRADIENT,
+                            active = PlayerState.isPlaying && !UiState.videoFullscreenObscuresPlayer,
+                        )
+                    }
 
-            PlayerBackgroundStyle.BLURRED_ARTWORK -> {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    AsyncImage(
-                        url = PlayerState.currentArtworkUrl ?: "",
-                        artworkPreview = PlayerState.artworkPreview,
-                        modifier = Modifier.fillMaxSize(),
-                        extractColor = true,
-                        contentScale = ContentScale.Crop,
-                        saturation = 1.25f,
-                        blur =
-                            ArtworkBlurStyle(
-                                radius = 64.dp,
-                                backgroundColor = Color.Black,
-                                scale = 1.6f,
-                                edgeTreatment = BlurredEdgeTreatment.Unbounded,
-                                scrimColor = Color.Black.copy(alpha = 0.5f),
-                            ),
+                    PlayerBackgroundStyle.BLURRED_ARTWORK -> {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            AsyncImage(
+                                url = PlayerState.currentArtworkUrl ?: "",
+                                artworkPreview = PlayerState.artworkPreview,
+                                modifier = Modifier.fillMaxSize(),
+                                extractColor = true,
+                                contentScale = ContentScale.Crop,
+                                saturation = 1.25f,
+                                blur =
+                                    ArtworkBlurStyle(
+                                        radius = 64.dp,
+                                        backgroundColor = Color.Black,
+                                        scale = 1.6f,
+                                        edgeTreatment = BlurredEdgeTreatment.Unbounded,
+                                        scrimColor = Color.Black.copy(alpha = 0.5f),
+                                    ),
+                            )
+                        }
+                    }
+
+                    PlayerBackgroundStyle.LIQUID -> {
+                        LiquidBackground(
+                            artworkUrl = PlayerState.currentArtworkUrl,
+                            animate = PlayerState.isPlaying && !UiState.videoFullscreenObscuresPlayer,
+                        )
+                    }
+
+                    PlayerBackgroundStyle.SOLID -> {
+                    }
+                }
+                if (!isSolid) {
+                    val hasArtwork =
+                        playerBackgroundStyle == PlayerBackgroundStyle.BLURRED_ARTWORK ||
+                            playerBackgroundStyle == PlayerBackgroundStyle.LIQUID
+                    LyricsContrastScrim(
+                        backgroundColors =
+                            when (playerBackgroundStyle) {
+                                PlayerBackgroundStyle.BLURRED_ARTWORK -> listOf(colorScheme.surfaceContainerHigh)
+                                PlayerBackgroundStyle.LIQUID -> listOf(baseBackgroundColor)
+                                else -> getGradientColors(seedColor)
+                            },
+                        artworkUrl = PlayerState.currentArtworkUrl.takeIf { hasArtwork },
+                        artworkScrimAlpha = 0.5f,
+                        artworkSaturation = 1.25f,
+                        isLiquid = playerBackgroundStyle == PlayerBackgroundStyle.LIQUID,
+                        visible = UiState.showLyricsDrawer,
                     )
                 }
             }
-
-            PlayerBackgroundStyle.LIQUID -> {
-                LiquidBackground(
-                    artworkUrl = PlayerState.currentArtworkUrl,
-                    animate = PlayerState.isPlaying && !UiState.videoFullscreenObscuresPlayer,
-                )
-            }
-
-            PlayerBackgroundStyle.SOLID -> {
-            }
-        }
-        if (!isSolid) {
-            val hasArtwork =
-                playerBackgroundStyle == PlayerBackgroundStyle.BLURRED_ARTWORK ||
-                    playerBackgroundStyle == PlayerBackgroundStyle.LIQUID
-            LyricsContrastScrim(
-                backgroundColors =
-                    when (playerBackgroundStyle) {
-                        PlayerBackgroundStyle.BLURRED_ARTWORK -> listOf(colorScheme.surfaceContainerHigh)
-                        PlayerBackgroundStyle.LIQUID -> listOf(baseBackgroundColor)
-                        else -> getGradientColors(seedColor)
-                    },
-                artworkUrl = PlayerState.currentArtworkUrl.takeIf { hasArtwork },
-                artworkScrimAlpha = 0.5f,
-                artworkSaturation = 1.25f,
-                isLiquid = playerBackgroundStyle == PlayerBackgroundStyle.LIQUID,
-                visible = UiState.showLyricsDrawer,
-            )
-        }
         }
         BoxWithConstraints(
             modifier = Modifier.fillMaxSize().windowInsetsPadding(captionInsets),
@@ -258,28 +274,65 @@ fun FullscreenPlayerView(
                 modifier = Modifier.fillMaxSize().padding(end = if (dockQueue) animatedQueueWidth.coerceAtLeast(0.dp) else 0.dp),
             ) {
                 val isWide = maxWidth >= 760.dp
+                val playerHeight = maxHeight
 
-                val content = @Composable {
-                    if (immersive) {
-                        ImmersiveFullscreenContent(hasCanvas = canvasEnabled && hasCanvas)
-                    } else {
-                    FullscreenContentLayout(
-                        currentTrack = currentTrack,
-                        isPlaying = isPlaying,
-                        availableHeight = maxHeight,
-                        isWide = isWide,
-                        toggleWindowFullscreen = toggleFullscreen,
-                        closeExpandedPlayer = ::closeExpandedPlayer,
-                    )
+                Crossfade(
+                    targetState = canvasPlayback,
+                    modifier = Modifier.fillMaxSize(),
+                    animationSpec = tween(900, easing = canvasEasing),
+                    label = "canvasVideo",
+                ) { playback ->
+                    if (playback != null) {
+                        AnimatedCoverPlaybackEffect(
+                            playback = playback,
+                            active = isPlaying && !UiState.videoFullscreenObscuresPlayer && playback === canvasPlayback,
+                            frameRequested = playback === canvasPlayback,
+                        )
+                        ImmersivePlayerBackground(playback = playback, canvasEnabled = canvasEnabled, motion = motion)
                     }
                 }
-
-                content()
-                FullscreenCanvasToolbar(
-                    toggleWindowFullscreen = toggleFullscreen,
-                    closePlayer = ::closeExpandedPlayer,
-                    modifier = Modifier.align(Alignment.TopStart),
-                )
+                CompositionLocalProvider(LocalAnimatedCoverPlayback provides canvasPlayback) {
+                    AnimatedContent(
+                        targetState = immersive,
+                        modifier = Modifier.fillMaxSize(),
+                        transitionSpec = {
+                            fadeIn(tween(600, easing = canvasEasing)) togetherWith fadeOut(tween(600, easing = canvasEasing))
+                        },
+                        label = "canvasPlayerLayout",
+                    ) { canvasLayout ->
+                        Box(Modifier.fillMaxSize().blockInput(canvasLayout != immersive)) {
+                            if (canvasLayout) {
+                                ImmersiveFullscreenContent(
+                                    motion = motion,
+                                    toggleWindowFullscreen = toggleFullscreen,
+                                    closePlayer = ::closeExpandedPlayer,
+                                )
+                            } else {
+                                FullscreenContentLayout(
+                                    currentTrack = currentTrack,
+                                    isPlaying = isPlaying,
+                                    availableHeight = playerHeight,
+                                    isWide = isWide,
+                                    toggleWindowFullscreen = toggleFullscreen,
+                                    closeExpandedPlayer = ::closeExpandedPlayer,
+                                )
+                                if (isWide && (PlayerState.isFullscreen || UiState.isNativeFullscreen)) {
+                                    IconButton(
+                                        onClick = ::closeExpandedPlayer,
+                                        modifier = Modifier.align(Alignment.TopEnd).padding(20.dp).size(48.dp),
+                                        shapes = IconButtonDefaults.shapes(),
+                                    ) {
+                                        Icon(
+                                            MetrolistIcons.Default.Close,
+                                            stringResource(Res.string.close_fullscreen_player),
+                                            tint = (if (isSolid) colorScheme.onSurface else Color.White).copy(alpha = 0.8f),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if (queueDrawerOpen && !dockQueue) {
                 Box(

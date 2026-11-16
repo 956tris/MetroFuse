@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 enum class LoginFailure { REQUEST, AUTHENTICATION, STORAGE, LOGOUT }
 
@@ -29,6 +30,7 @@ data class PluginAccountState(
     val ui: NativeLoginUi? = null,
     val uiLoading: Boolean = false,
     val uiFailed: Boolean = false,
+    val revision: Long = 0L,
 )
 
 data class PluginLoginPrompt(
@@ -47,6 +49,7 @@ class PluginLogins(
     val states = MutableStateFlow<Map<String, PluginAccountState>>(emptyMap())
     val prompt = MutableStateFlow<PluginLoginPrompt?>(null)
     private val bindings = ConcurrentHashMap<String, Binding>()
+    private val accountRevision = AtomicLong()
 
     private class Binding(
         val token: String,
@@ -81,7 +84,9 @@ class PluginLogins(
                 webRequest,
             )
         bindings[owner] = binding
-        update(owner, binding) { PluginAccountState(account = state.value.validated(), uiLoading = true) }
+        update(owner, binding) {
+            PluginAccountState(account = state.value.validated(), uiLoading = true, revision = accountRevision.incrementAndGet())
+        }
         binding.scope.launch {
             try {
                 val ui = withTimeout(timeoutMs) { accountUi() }
@@ -95,7 +100,15 @@ class PluginLogins(
         }
         binding.scope.launch {
             try {
-                state.collect { account -> update(owner, binding) { it.copy(account = account.validated()) } }
+                state.collect { account ->
+                    update(owner, binding) {
+                        val validated = account.validated()
+                        it.copy(
+                            account = validated,
+                            revision = if (it.account != validated) accountRevision.incrementAndGet() else it.revision,
+                        )
+                    }
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
@@ -108,7 +121,7 @@ class PluginLogins(
                     val saved = credentials.read(owner) ?: return@withLock
                     update(owner, binding) { it.copy(busy = true) }
                     val restored = withTimeout(timeoutMs) { binding.login(saved) }.validated()
-                    update(owner, binding) { it.copy(account = restored, busy = false) }
+                    update(owner, binding) { it.copy(account = restored, busy = false, revision = accountRevision.incrementAndGet()) }
                 } catch (error: CancellationException) {
                     if (error !is TimeoutCancellationException) throw error
                     update(owner, binding) { it.copy(account = PluginLoginState(), busy = false, error = LoginFailure.AUTHENTICATION) }
@@ -176,7 +189,7 @@ class PluginLogins(
                 withTimeout(timeoutMs) { binding.logout() }
                 throw error
             }
-            update(owner, binding) { it.copy(account = result) }
+            update(owner, binding) { it.copy(account = result, revision = accountRevision.incrementAndGet()) }
             prompt.compareAndSet(current, null)
         }
     }
@@ -184,7 +197,7 @@ class PluginLogins(
     fun logout(owner: String) =
         operation(owner, LoginFailure.LOGOUT) { binding ->
             credentials.write(owner, null)
-            update(owner, binding) { it.copy(account = PluginLoginState()) }
+            update(owner, binding) { it.copy(account = PluginLoginState(), revision = accountRevision.incrementAndGet()) }
             withTimeout(timeoutMs) { binding.logout() }
             update(owner, binding) { it.copy(account = PluginLoginState()) }
             prompt.update { it?.takeUnless { current -> current.owner == owner } }

@@ -13,6 +13,7 @@ import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -42,6 +43,8 @@ import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorProducer
@@ -775,10 +778,12 @@ internal fun InlineLyricsLine(
     isPlusLighter: Boolean = false,
     translationShimmer: State<Float>? = null,
     backgroundTranslationShimmer: State<Float>? = null,
+    appleMusicStyle: Boolean = false,
+    blurUnfocusedLines: Boolean = false,
 ) {
     val animStyle =
-        remember(Settings.shared.lyricsAnimationStyle) {
-            LyricsAnimationStyle.fromString(Settings.shared.lyricsAnimationStyle)
+        remember(Settings.shared.lyricsAnimationStyle, appleMusicStyle) {
+            if (appleMusicStyle) LyricsAnimationStyle.APPLE else LyricsAnimationStyle.fromString(Settings.shared.lyricsAnimationStyle)
         }
     val isRomanizationEnabled = Settings.shared.lyricsRomanizationEnabled
     val hasTimedRoman = remember(entry) { entry.hasTimedRomanization() }
@@ -854,19 +859,35 @@ internal fun InlineLyricsLine(
 
     val colorScheme = MaterialTheme.colorScheme
     val lyricsTextSize = Settings.shared.lyricsTextSize * textSizeMultiplier
-    val lyricsLineSpacing = Settings.shared.lyricsLineSpacing
+    val lyricsLineSpacing = if (appleMusicStyle) 1.2f else Settings.shared.lyricsLineSpacing
 
     // Word-by-word highlighting needs lower line opacity for readability.
-    val unlitAlpha = if (isPlusLighter) 0.2f else 0.35f
-    val targetFocusedAlpha = unlitAlpha
+    val unlitAlpha =
+        if (appleMusicStyle) {
+            0.44f
+        } else if (isPlusLighter) {
+            0.2f
+        } else {
+            0.35f
+        }
+    val targetFocusedAlpha = if (appleMusicStyle) 0.3f else unlitAlpha
     val targetAlpha = if (isActive) 1f else unlitAlpha
     val targetTranslationAlpha = if (isActive) 0.5f else unlitAlpha
 
-    val staggerDurationMs = (750 + staggerDelayMs).toInt()
-    val scaleStaggerDurationMs = (800 + staggerDelayMs * 2).toInt()
+    val staggerDurationMs = (if (appleMusicStyle) 700 else 750 + staggerDelayMs).toInt()
+    val scaleStaggerDurationMs =
+        (
+            if (appleMusicStyle) {
+                if (isActive) 500 else 700
+            } else {
+                800 + staggerDelayMs * 2
+            }
+        ).toInt()
     val targetScale =
         if (isActive || !isAutoScrollEnabled || isSelectionMode) {
             1.0f
+        } else if (appleMusicStyle) {
+            0.98f
         } else if (isLrcSynced) {
             when (distance) {
                 0, 1 -> 0.97f
@@ -988,6 +1009,24 @@ internal fun InlineLyricsLine(
 
     val innerFlipEnabled = !isSelectionMode
     val innerFlip = if (flipShifter != null) remember(flipShifter, flipIndex) { LyricsItemFlip() } else null
+    // Bini am-lyrics uses line-relative focus blur, keeping the active line and its neighbour sharp.
+    val focusBlur by animateDpAsState(
+        targetValue =
+            if (blurUnfocusedLines && !isActive && !isSelectionMode) {
+                (
+                    lyricsTextSize *
+                        when (distance) {
+                            0, 1 -> 0f
+                            2 -> 0.035f
+                            else -> 0.07f
+                        }
+                ).dp
+            } else {
+                0.dp
+            },
+        animationSpec = tween(400),
+        label = "lyricsFocusBlur",
+    )
 
     Box(
         modifier =
@@ -1026,6 +1065,7 @@ internal fun InlineLyricsLine(
             modifier =
                 Modifier
                     .fillMaxWidth()
+                    .blur(focusBlur, BlurredEdgeTreatment.Unbounded)
                     .graphicsLayer {
                         val s = lineLook.scale
                         scaleX = s

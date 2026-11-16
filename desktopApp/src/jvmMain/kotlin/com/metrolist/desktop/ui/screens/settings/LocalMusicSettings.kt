@@ -35,6 +35,8 @@ import com.metrolist.shared.generated.resources.local_music_scan_result
 import com.metrolist.shared.generated.resources.local_music_scanning
 import com.metrolist.shared.generated.resources.local_music_summary
 import com.metrolist.shared.generated.resources.local_music_title
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.settings.SettingsPageId
 import com.metrolist.shared.ui.settings.StorageSection
@@ -110,6 +112,8 @@ internal fun LocalMusicSettingsSection() {
 
 @Composable
 internal fun LocalMusicLibraryActions() {
+    val owner by remember { musicFrontendOwnerChanges() }.collectAsState(effectiveMusicFrontendOwner())
+    if (owner.isNotEmpty()) return
     val state by DesktopLocalMusicLibrary.state.collectAsState()
     Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
         Row(

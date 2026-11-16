@@ -49,6 +49,10 @@ private const val SQLITE_MAX_BIND_PARAMETERS = 999
 @Dao
 @Suppress(RoomWarnings.QUERY_MISMATCH)
 interface SongDao {
+    @Transaction
+    @Query("SELECT * FROM song WHERE isLocal = 1 OR isDownloaded = 1 OR isCached = 1")
+    suspend fun offlineQueueSongs(): List<Song>
+
     @Query(
         """
         SELECT id, duration, playbackPosition,
@@ -489,6 +493,8 @@ interface SongDao {
         SELECT song.* FROM song
         WHERE song.inLibrary IS NOT NULL
           AND (:offlineOnly = 0 OR song.isLocal = 1 OR song.isDownloaded = 1 OR song.isCached = 1)
+          AND (:providerPrefix IS NULL OR (song.isLocal = 0
+              AND substr(song.id, 1, length(:providerPrefix)) = :providerPrefix))
           AND (
               song.title LIKE '%' || :query || '%'
               OR song.customTitle LIKE '%' || :query || '%'
@@ -512,6 +518,7 @@ interface SongDao {
         offset: Int,
         descending: Boolean,
         offlineOnly: Boolean = false,
+        providerPrefix: String? = null,
     ): List<Song>
 
     fun downloadedSongs(

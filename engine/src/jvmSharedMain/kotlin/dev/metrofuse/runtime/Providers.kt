@@ -120,6 +120,8 @@ class ProviderPipelines(
     private val metadataCache = BoundedCache<MetadataContribution>()
     private val audioCache = BoundedCache<AudioResult>()
     private val matchSearch = ProviderMatchSearch(registry, now)
+    private val catalogRecommendations = CatalogRecommendations(registry, now)
+    private val catalogLibrary = CatalogLibrary(registry, now)
     private val cacheRevision = AtomicLong()
 
     fun invalidateCaches() {
@@ -127,6 +129,8 @@ class ProviderPipelines(
         metadataCache.clear()
         audioCache.clear()
         matchSearch.clear()
+        catalogRecommendations.invalidate()
+        catalogLibrary.invalidate()
     }
 
     private fun record(
@@ -339,14 +343,18 @@ class ProviderPipelines(
                             (expires == null || expires > now() + 1000) && (maximum == null || bitrate == null || bitrate <= maximum)
                     if (valid) {
                         record("audio.resolve", entry.id, "SUCCESS", start, attempt)
-                        val ownedResult = result.copy(
-                            stream = stream.copy(
-                                attributes = stream.attributes + mapOf(
-                                    "providerId" to entry.id,
-                                    "resolvedMediaId" to (identity.identifiers["youtube"] ?: identity.canonicalId),
-                                ),
-                            ),
-                        )
+                        val ownedResult =
+                            result.copy(
+                                stream =
+                                    stream.copy(
+                                        attributes =
+                                            stream.attributes +
+                                                mapOf(
+                                                    "providerId" to entry.id,
+                                                    "resolvedMediaId" to (identity.identifiers["youtube"] ?: identity.canonicalId),
+                                                ),
+                                    ),
+                            )
                         stream.expiresAtMillis?.let { expiry ->
                             if (policy.cacheTtlMillis >
                                 0
@@ -618,4 +626,47 @@ class ProviderPipelines(
                     original
             }
         }?.let { (owner, value) -> ownedPlaylist(owner, value) }
+
+    suspend fun recommendations(
+        identity: TrackIdentity,
+        allowedOwners: Set<String>,
+        limit: Int = 100,
+    ): RecommendationResult? =
+        catalogRecommendations.start(identity, allowedOwners, limit)?.let { (owner, result) ->
+            result.copy(tracks = result.tracks.map { ownedTrack(owner, it) })
+        }
+
+    suspend fun continueRecommendations(
+        continuation: String,
+        allowedOwners: Set<String>,
+        limit: Int = 100,
+    ): RecommendationResult? =
+        catalogRecommendations.continuePage(continuation, allowedOwners, limit)?.let { (owner, result) ->
+            result.copy(tracks = result.tracks.map { ownedTrack(owner, it) })
+        }
+
+    suspend fun library(
+        owner: String,
+        request: LibraryRequest,
+    ): LibraryPage? =
+        catalogLibrary.page(owner, request)?.let { page ->
+            page.copy(
+                items =
+                    page.items.map { item ->
+                        item.copy(
+                            track = item.track?.let { ownedTrack(owner, it) },
+                            album = item.album?.let { ownedAlbum(owner, it) },
+                            artist = item.artist?.let { ownedArtist(owner, it) },
+                            playlist = item.playlist?.let { ownedPlaylist(owner, it) },
+                        )
+                    },
+            )
+        }
+
+    fun supportsSongVotes(owner: String): Boolean = catalogLibrary.supportsSongVotes(owner)
+
+    suspend fun setSongVote(
+        owner: String,
+        request: SongVoteRequest,
+    ): Boolean = catalogLibrary.setSongVote(owner, request)
 }

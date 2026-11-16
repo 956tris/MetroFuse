@@ -7,15 +7,15 @@ import com.metrolist.shared.model.PlaylistItem
 import com.metrolist.shared.playlist.createStoredLocalPlaylist
 import com.metrolist.shared.playlist.deleteStoredPlaylist
 import com.metrolist.shared.playlist.renameStoredPlaylist
+import com.metrolist.shared.plugins.MetroFuseHost
 import com.metrolist.shared.state.GlobalYouTubeRepository
-import com.metrolist.shared.viewmodels.LibraryViewModel
 import kotlinx.coroutines.launch
 
 class LibraryViewModel(
     private val database: MusicDatabase,
 ) : ViewModel() {
     private val sharedViewModel =
-        LibraryViewModel(viewModelScope, database, useUpstreamLibrary = false)
+        MetroFuseHost.libraryViewModel(viewModelScope, database)
     val uiState = sharedViewModel.uiState
     val presentation = sharedViewModel.presentation
     val contentMatchedSongs = sharedViewModel.contentMatchedSongs

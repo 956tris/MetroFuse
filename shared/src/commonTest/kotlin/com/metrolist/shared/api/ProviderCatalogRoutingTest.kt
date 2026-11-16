@@ -7,6 +7,7 @@ import com.metrolist.shared.model.AlbumPage
 import com.metrolist.shared.model.ArtistItem
 import com.metrolist.shared.model.ArtistPageResult
 import com.metrolist.shared.model.PlaylistItem
+import com.metrolist.shared.model.RadioQueuePage
 import com.metrolist.shared.model.SearchFilter
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
@@ -57,7 +58,12 @@ class ProviderCatalogRoutingTest {
                             excludedProviders: Set<String>,
                         ) = null
 
-                        override suspend fun lyrics(id: String, title: String, artist: String, durationMs: Long?) = null
+                        override suspend fun lyrics(
+                            id: String,
+                            title: String,
+                            artist: String,
+                            durationMs: Long?,
+                        ) = null
 
                         override suspend fun search(query: String): List<YTItem> = items + song
 
@@ -70,6 +76,12 @@ class ProviderCatalogRoutingTest {
 
                         override suspend fun playlist(id: String): Map<String, List<YTItem>>? =
                             mapOf("header" to listOf(playlist), "songs" to listOf(song)).takeIf { playlist.id == id }
+
+                        override suspend fun startRadioQueue(id: String) =
+                            RadioQueuePage(listOf(song.copy(id = "metrofuse:fixture:recommended")), emptyList(), "metrofuse-radio:fixture")
+
+                        override suspend fun continueRadioQueue(continuation: String) =
+                            RadioQueuePage(listOf(song.copy(id = "metrofuse:fixture:continued")), emptyList())
                     }
                 PluginServicesStore.frontends.value = listOf(MusicFrontend("fixture", "Fixture"))
                 Settings.shared.musicFrontendOwner = "plugin:fixture"
@@ -81,10 +93,26 @@ class ProviderCatalogRoutingTest {
                 assertEquals(listOf(song), repository.getPlaylistPageData(playlist.id).songs)
                 assertEquals(song, repository.getSongMetadata(song.id))
                 assertNull(repository.getSongMetadata("legacy-id"))
-                assertTrue(repository.startRadioQueue(song.id).songs.isEmpty())
+                assertEquals(
+                    "metrofuse:fixture:recommended",
+                    repository
+                        .startRadioQueue(song.id)
+                        .songs
+                        .single()
+                        .id,
+                )
+                assertEquals(
+                    "metrofuse:fixture:continued",
+                    repository
+                        .continueRadioQueue("metrofuse-radio:fixture")
+                        .songs
+                        .single()
+                        .id,
+                )
                 assertFalse(repository.isPlaybackReportingEnabled())
                 PlaybackNetworkStateStore.publish(PlaybackNetworkState(scope = "provider-catalog-fixture", connected = false))
                 assertTrue(repository.search("fixture").isEmpty())
+                assertTrue(repository.startRadioQueue(song.id).songs.isEmpty())
             } finally {
                 client.close()
                 PluginServicesStore.current = previous

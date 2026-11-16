@@ -41,6 +41,7 @@ class LyricsClient(
     youtubeLyricsApi: YouTubeLyricsApi?,
     private val lyprioLyricsProvider: LyprioLyricsProvider?,
 ) : LyricsFetcher {
+    private val metroFuseLyricsProvider = MetroFuseLyricsProvider(httpClient)
     private val betterLyricsProvider = BetterLyricsProvider(httpClient)
     private val unisonLyricsProvider = UnisonProvider(httpClient)
     private val lrcLibProvider = LrcLibLyricsProvider(httpClient)
@@ -77,6 +78,10 @@ class LyricsClient(
         return when (provider) {
             LyricsProvider.USER -> {
                 null
+            }
+
+            LyricsProvider.METROFUSE -> {
+                result("MetroFuse") { metroFuseLyricsProvider.getLyrics(title, artist, duration) }
             }
 
             LyricsProvider.LYPRIO -> {

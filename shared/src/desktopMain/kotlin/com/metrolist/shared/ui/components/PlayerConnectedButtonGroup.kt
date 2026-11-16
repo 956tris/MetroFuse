@@ -293,6 +293,7 @@ actual fun PlayerConnectedButtonGroup(
                 }
             ButtonGroup(
                 overflowIndicator = { menuState ->
+                    ObservePopupVisibility(menuState.isShowing)
                     ButtonGroupDefaults.OverflowIndicator(
                         menuState = menuState,
                         // Square, so it is a circle like the other icon-only buttons.

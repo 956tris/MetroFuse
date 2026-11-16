@@ -2,12 +2,14 @@ package com.metrolist.shared.plugins
 
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.innertubex.extraction.ContentHints
+import com.metrolist.shared.api.SongVote
 import com.metrolist.shared.model.AlbumItem
 import com.metrolist.shared.model.AlbumPage
 import com.metrolist.shared.model.ArtistItem
 import com.metrolist.shared.model.ArtistPageResult
 import com.metrolist.shared.model.LyricsWithProvider
 import com.metrolist.shared.model.PlaylistItem
+import com.metrolist.shared.model.RadioQueuePage
 import com.metrolist.shared.model.SearchFilter
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
@@ -28,6 +30,8 @@ interface PluginServices {
         owner: String,
         force: Boolean = false,
     ) {}
+
+    fun loadMoreHome(owner: String) {}
 
     suspend fun resolve(
         id: String,
@@ -57,12 +61,28 @@ interface PluginServices {
     suspend fun artist(id: String): ArtistPageResult? = null
 
     suspend fun playlist(id: String): Map<String, List<YTItem>>? = null
+
+    suspend fun startRadioQueue(id: String): RadioQueuePage? = null
+
+    suspend fun continueRadioQueue(continuation: String): RadioQueuePage? = null
+
+    suspend fun library(continuation: String? = null): PluginLibraryPage? = null
+
+    suspend fun likedSongs(continuation: String? = null): PluginLibraryPage? = null
+
+    val canSyncSongVotes: Boolean get() = false
+
+    suspend fun setSongVote(
+        id: String,
+        vote: SongVote,
+    ): Boolean = false
 }
 
 object PluginServicesStore {
     private val services = MutableStateFlow<PluginServices?>(null)
     val frontends = MutableStateFlow<List<MusicFrontend>>(emptyList())
     val homePages = MutableStateFlow<Map<String, PluginHomePage>>(emptyMap())
+    val libraryAccounts = MutableStateFlow<Map<String, PluginLibraryAccount>>(emptyMap())
     var current: PluginServices?
         get() = services.value
         set(value) {
@@ -70,6 +90,7 @@ object PluginServicesStore {
             if (value == null) {
                 frontends.value = emptyList()
                 homePages.value = emptyMap()
+                libraryAccounts.value = emptyMap()
             }
         }
 }

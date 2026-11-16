@@ -3,24 +3,129 @@ package com.metrolist.desktop.ui.components
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.neverEqualPolicy
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.unit.IntSize
 import com.metrolist.shared.playback.VideoFrame
 import com.metrolist.shared.playback.VideoPlayer
 import com.metrolist.shared.ui.components.LocalVisualWorkActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.withContext
+
+internal val LocalAnimatedCoverPlayback = staticCompositionLocalOf<AnimatedCoverPlayback?> { null }
+
+internal data class AnimatedCoverViewport(
+    val width: Int,
+    val height: Int,
+    val fillViewport: Boolean,
+)
+
+@Stable
+internal class AnimatedCoverPlayback(
+    val url: String,
+) {
+    var frame by mutableStateOf<VideoFrame?>(null, neverEqualPolicy())
+        private set
+    var hasFrame by mutableStateOf(false)
+        private set
+    private val viewports = mutableStateMapOf<Any, AnimatedCoverViewport>()
+    val targetViewport: AnimatedCoverViewport?
+        get() = viewports.values.maxByOrNull { it.width.toLong() * it.height }
+
+    val player =
+        VideoPlayer(
+            onFrame = {
+                frame = it
+                hasFrame = true
+            },
+            // Keep the outgoing frame until the Canvas dissolve has finished.
+            onEnded = { hasFrame = false },
+            looping = true,
+        ).apply {
+            onStreamExpired = { hasFrame = false }
+        }
+
+    fun requestViewport(
+        owner: Any,
+        width: Int,
+        height: Int,
+        contentScale: ContentScale,
+    ) {
+        if (width > 0 && height > 0) {
+            viewports[owner] = AnimatedCoverViewport(width, height, contentScale == ContentScale.Crop)
+        }
+    }
+
+    fun releaseViewport(owner: Any) {
+        viewports.remove(owner)
+    }
+}
+
+@Composable
+internal fun rememberAnimatedCoverPlayback(url: String?): AnimatedCoverPlayback? = remember(url) { url?.let(::AnimatedCoverPlayback) }
+
+@Composable
+internal fun AnimatedCoverPlaybackEffect(
+    playback: AnimatedCoverPlayback,
+    active: Boolean,
+    frameRequested: Boolean = true,
+) {
+    val visible = LocalVisualWorkActive.current
+    val latestActive by rememberUpdatedState(active)
+    val latestFrameRequested by rememberUpdatedState(frameRequested)
+    LaunchedEffect(playback, visible) {
+        val loaded =
+            withContext(Dispatchers.IO) {
+                playback.player.load(url = playback.url, positionProvider = { 0L })
+            }
+        if (loaded && latestFrameRequested) {
+            playback.player.setVolume(0f)
+            // A paused track still needs one decoded frame to determine Canvas availability.
+            playback.player.play(startPaused = true)
+            combine(snapshotFlow { latestActive }, visible) { playing, shown -> playing && shown }
+                .distinctUntilChanged()
+                .collect { playing ->
+                    if (playing) playback.player.resume() else playback.player.pause()
+                }
+        }
+    }
+    LaunchedEffect(playback) {
+        snapshotFlow { playback.targetViewport }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collectLatest { viewport ->
+                delay(320)
+                playback.player.setTargetSize(viewport.width, viewport.height, fillViewport = viewport.fillViewport)
+            }
+    }
+    DisposableEffect(playback) {
+        onDispose { playback.player.dispose() }
+    }
+}
+
+@Composable
+internal fun rememberAnimatedCoverViewportOwner(playback: AnimatedCoverPlayback): Any {
+    val owner = remember(playback) { Any() }
+    DisposableEffect(playback, owner) {
+        onDispose { playback.releaseViewport(owner) }
+    }
+    return owner
+}
 
 @Composable
 fun AnimatedCover(
@@ -30,73 +135,31 @@ fun AnimatedCover(
     active: Boolean = true,
     onFrameAvailabilityChanged: (Boolean) -> Unit = {},
     backgroundModifier: Modifier? = null,
+    alignment: Alignment = Alignment.Center,
+    backgroundSaturation: Float = 1f,
+    backgroundBrightness: Float = 1f,
 ) {
-    val visible = LocalVisualWorkActive.current
-    val latestActive by rememberUpdatedState(active)
+    val sharedPlayback = LocalAnimatedCoverPlayback.current?.takeIf { it.url == url }
+    val playback = sharedPlayback ?: checkNotNull(rememberAnimatedCoverPlayback(url))
+    if (sharedPlayback == null) AnimatedCoverPlaybackEffect(playback, active)
+    val owner = rememberAnimatedCoverViewportOwner(playback)
     val latestOnFrameAvailabilityChanged by rememberUpdatedState(onFrameAvailabilityChanged)
-    var viewport by remember(url) { mutableStateOf(IntSize.Zero) }
-    var frame by remember(url) { mutableStateOf<VideoFrame?>(null, neverEqualPolicy()) }
-    val player =
-        remember(url) {
-            VideoPlayer(
-                onFrame = {
-                    val firstFrame = frame == null
-                    frame = it
-                    if (firstFrame) latestOnFrameAvailabilityChanged(true)
-                },
-                onEnded = {
-                    frame = null
-                    latestOnFrameAvailabilityChanged(false)
-                },
-                looping = true,
-            )
-        }
+    LaunchedEffect(playback, playback.hasFrame) { latestOnFrameAvailabilityChanged(playback.hasFrame) }
 
-    LaunchedEffect(player, url, visible) {
-        val loaded =
-            withContext(Dispatchers.IO) {
-                player.load(
-                    url = url,
-                    positionProvider = { 0L },
-                )
-            }
-        if (loaded) {
-            player.setVolume(0f)
-            combine(snapshotFlow { latestActive }, visible) { playing, shown -> playing && shown }
-                .distinctUntilChanged()
-                .collect { playing ->
-                    if (playing) player.resume() else player.pause()
-                }
-        }
-    }
-
-    LaunchedEffect(player, viewport, contentScale) {
-        if (viewport.width > 0 && viewport.height > 0) {
-            delay(320)
-            player.setTargetSize(viewport.width, viewport.height, fillViewport = contentScale == ContentScale.Crop)
-        }
-    }
-
-    DisposableEffect(player) {
-        onDispose {
-            player.dispose()
-        }
-    }
-
-    // Both layers use the same decoded frame and one muted, looping player.
     backgroundModifier?.let {
         VideoRenderer(
             modifier = it,
             contentScale = ContentScale.Crop,
-            frameProvider = { frame },
+            frameProvider = { playback.frame.takeIf { playback.hasFrame } },
+            saturation = backgroundSaturation,
+            brightness = backgroundBrightness,
         )
     }
     VideoRenderer(
         modifier = modifier,
         contentScale = contentScale,
-        frameProvider = { frame },
-        onViewportSizeChanged = { width, height ->
-            viewport = IntSize(width, height)
-        },
+        alignment = alignment,
+        frameProvider = { playback.frame.takeIf { playback.hasFrame } },
+        onViewportSizeChanged = { width, height -> playback.requestViewport(owner, width, height, contentScale) },
     )
 }

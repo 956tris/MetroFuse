@@ -23,6 +23,7 @@ class MlxBuilder {
         sourceId: String? = null,
         lyricsCurator: String? = null,
         lyricsCuratorId: String? = null,
+        sourceFormat: String? = null,
     ): MlxBuilder {
         metaLines.clear()
         metaLines.appendLine("mlx_version=$version")
@@ -33,6 +34,7 @@ class MlxBuilder {
         sourceId?.let { metaLines.appendLine("source_id=$it") }
         lyricsCurator?.let { metaLines.appendLine("lyrics_curator=$it") }
         lyricsCuratorId?.let { metaLines.appendLine("lyrics_curator_id=$it") }
+        sourceFormat?.let { metaLines.appendLine("source_format=$it") }
         return this
     }
 

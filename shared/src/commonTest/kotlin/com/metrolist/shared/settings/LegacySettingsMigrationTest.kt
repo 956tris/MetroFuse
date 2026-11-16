@@ -31,6 +31,7 @@ class LegacySettingsMigrationTest {
                 LyricsProvider.UNISON,
                 LyricsProvider.PAXSENIX,
                 LyricsProvider.LRCRED,
+                LyricsProvider.METROFUSE,
             )
         val order = LyricsProvider.parseUserOrderFromStoredCsv(settings.lyricsProviderOrder)
         assertEquals(expected, order)

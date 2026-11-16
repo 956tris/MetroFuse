@@ -2,6 +2,7 @@ package com.metrolist.desktop.storage
 
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.OfflineSongAvailability
+import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.db.upsertHistorySong
 import com.metrolist.shared.db.withDatabaseTransaction
 
@@ -32,7 +33,15 @@ internal fun desktopSongOfflineAvailability(
         val indexedDownloads = downloads()
         val snapshot = desktopSongOfflineSnapshot(indexedDownloads, cachedIds(), downloadPath, cachePath)
         restoreDownloadedSongs(database, indexedDownloads.filter { it.songId in snapshot.downloadedIds })
-        snapshot.downloadedIds + snapshot.cachedIds
+        val localIds =
+            database.dao().offlineQueueSongs().filter { it.song.isLocal }.mapNotNullTo(mutableSetOf()) { song ->
+                song.id.takeIf {
+                    desktopLocalPlaybackResource(it, song.toSongItem())?.contentLengthBytes?.let { bytes ->
+                        bytes > 0
+                    } == true
+                }
+            }
+        localIds + snapshot.downloadedIds + snapshot.cachedIds
     }
 
 internal suspend fun restoreDownloadedSongs(

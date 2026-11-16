@@ -123,6 +123,8 @@ import com.metrolist.shared.model.PlaylistItem
 import com.metrolist.shared.model.PodcastItem
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.YTItem
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.settings.HiddenLibraryItem
 import com.metrolist.shared.settings.HiddenLibraryItems
@@ -195,6 +197,7 @@ fun LibraryScreen(
     val database: MusicDatabase = koinInject()
     val scope = rememberCoroutineScope()
     val localMusicScan = rememberLocalMusicScanControl { viewModel.refresh(force = true) }
+    val libraryOwner by remember { musicFrontendOwnerChanges() }.collectAsStateWithLifecycle(effectiveMusicFrontendOwner())
     var searchQuery by remember { mutableStateOf("") }
     val libraryGridState = rememberLazyGridState()
     val activeLibraryGridState = rememberLibrarySearchScrollState(searchQuery, libraryGridState)
@@ -449,7 +452,7 @@ fun LibraryScreen(
     }
 
     val content: @Composable () -> Unit = {
-        if (selectedFilter == LibraryFilter.PODCASTS && !Settings.shared.hidePodcasts) {
+        if (libraryOwner.isEmpty() && selectedFilter == LibraryFilter.PODCASTS && !Settings.shared.hidePodcasts) {
             Column(
                 modifier =
                     Modifier
@@ -471,7 +474,8 @@ fun LibraryScreen(
                 )
             }
         } else {
-            val showLocalMusicScan = !localMusicScan.hasPermission || uiState.items.none { it is SongItem && it.isLocal }
+            val showLocalMusicScan =
+                libraryOwner.isEmpty() && (!localMusicScan.hasPermission || uiState.items.none { it is SongItem && it.isLocal })
             Column(Modifier.fillMaxSize()) {
                 if (showLocalMusicScan) {
                     LocalMusicScanCard(
@@ -785,51 +789,53 @@ fun LibraryScreen(
             ) { content() }
         }
 
-        ScrollingAddButton(
-            label = stringResource(Res.string.new_playlist),
-            onClick = { showNewPlaylistMenu = true },
-            state = rememberScrollingFabState(activeLibraryGridState),
-            modifier =
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = floatingActionsBottomInset.value + 16.dp),
-        ) {
-            FabMenuPopup(
-                expanded = rootActive && showNewPlaylistMenu,
-                onDismissRequest = { showNewPlaylistMenu = false },
+        if (libraryOwner.isEmpty()) {
+            ScrollingAddButton(
+                label = stringResource(Res.string.new_playlist),
+                onClick = { showNewPlaylistMenu = true },
+                state = rememberScrollingFabState(activeLibraryGridState),
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = floatingActionsBottomInset.value + 16.dp),
             ) {
-                DropdownMenuGroup(shapes = MenuDefaults.groupShape(0, 1)) {
-                    DropdownMenuItem(
-                        modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)),
-                        text = { Text(localMusicScan.label) },
-                        enabled = localMusicScan.state.status != LocalMusicScanStatus.SCANNING,
-                        onClick = {
-                            showNewPlaylistMenu = false
-                            localMusicScan.onClick()
-                        },
-                    )
-                    DropdownMenuItem(
-                        modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)).navigationPopupSource(),
-                        text = { Text(stringResource(Res.string.create_playlist)) },
-                        onClick = {
-                            showNewPlaylistMenu = false
-                            showCreateDialog = true
-                        },
-                    )
-                    DropdownMenuItem(
-                        modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)),
-                        text = { Text(stringResource(Res.string.import_playlist)) },
-                        onClick = {
-                            showNewPlaylistMenu = false
-                            onNavigateToPlaylistImport()
-                        },
-                    )
+                FabMenuPopup(
+                    expanded = rootActive && showNewPlaylistMenu,
+                    onDismissRequest = { showNewPlaylistMenu = false },
+                ) {
+                    DropdownMenuGroup(shapes = MenuDefaults.groupShape(0, 1)) {
+                        DropdownMenuItem(
+                            modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)),
+                            text = { Text(localMusicScan.label) },
+                            enabled = localMusicScan.state.status != LocalMusicScanStatus.SCANNING,
+                            onClick = {
+                                showNewPlaylistMenu = false
+                                localMusicScan.onClick()
+                            },
+                        )
+                        DropdownMenuItem(
+                            modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)).navigationPopupSource(),
+                            text = { Text(stringResource(Res.string.create_playlist)) },
+                            onClick = {
+                                showNewPlaylistMenu = false
+                                showCreateDialog = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            modifier = Modifier.tvFocusHighlight(RoundedCornerShape(4.dp)),
+                            text = { Text(stringResource(Res.string.import_playlist)) },
+                            onClick = {
+                                showNewPlaylistMenu = false
+                                onNavigateToPlaylistImport()
+                            },
+                        )
+                    }
                 }
             }
         }
     }
 
-    PopupVisibility(visible = rootActive && showCreateDialog) {
+    PopupVisibility(visible = rootActive && libraryOwner.isEmpty() && showCreateDialog) {
         PlaylistNameDialog(
             title = stringResource(Res.string.create_playlist),
             confirmLabel = stringResource(Res.string.create_playlist),

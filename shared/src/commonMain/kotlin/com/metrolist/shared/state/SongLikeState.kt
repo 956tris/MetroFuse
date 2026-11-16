@@ -19,6 +19,9 @@ import com.metrolist.shared.deviceconnect.DeviceCrypto
 import com.metrolist.shared.deviceconnect.toBase64
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.moveSelection
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicLibraryAccountChanges
+import com.metrolist.shared.plugins.pluginLibraryAccountKey
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.viewmodels.LIBRARY_REFRESH_TTL_MILLIS
@@ -31,6 +34,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
@@ -41,6 +45,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -115,7 +120,22 @@ object SongLikeState {
     var dislikedSongIds by mutableStateOf(loadDislikedSongIds())
         private set
 
-    fun initialize() = Unit
+    private var accountObserver: Job? = null
+
+    fun initialize() =
+        remoteSyncGate.withLock {
+            if (accountObserver?.isActive != true) {
+                accountObserver =
+                    scope.launch {
+                        musicLibraryAccountChanges().collectLatest { (owner, account) ->
+                            if (owner.isNotEmpty() && (account == null || account.busy)) return@collectLatest
+                            activateCurrentAccount()
+                            if (owner.isNotEmpty() && account?.loggedIn == true) refreshLikesFromRemote(force = true)
+                        }
+                    }
+            }
+            Unit
+        }
 
     fun refreshFromSettings() =
         remoteSyncGate.withLock {
@@ -172,6 +192,9 @@ object SongLikeState {
         if (account in customOrderUpdates) customOrderUpdates[account]?.map(SongItem::id) else loadCustomOrders()[account]
 
     private fun currentOrderAccount(settings: Settings = Settings.shared): String {
+        val owner = effectiveMusicFrontendOwner()
+        if (owner.isNotEmpty()) return pluginLibraryAccountKey(owner)
+        if (settings.likedSongsOrderAccount.startsWith("plugin:")) return settings.likedSongsOrderAccount
         val authUser = settings.innerTubeAuthUser
         val dataSyncId = settings.dataSyncId
         if (dataSyncId.isNotBlank()) return "$dataSyncId|$authUser"
@@ -211,14 +234,15 @@ object SongLikeState {
         voteRevision.incrementAndGet()
         customOrdersCache = null
         val savedOrder = savedCustomOrder(current)
-        updateLikedSongs(emptyList())
+        val localLikes = _likedSongsFlow.value.filter(SongItem::isLocal)
+        updateLikedSongs(localLikes)
         persistenceGate.withLock {
             persistenceRevision.incrementAndGet()
             Settings.shared.likedSongsOrderAccount = current
             Settings.shared.likedSongsOrderCustomized = savedOrder != null
-            Settings.shared.likedSongsJson = "[]"
-            Settings.shared.likedSongsRecencyJson = "[]"
-            Settings.shared.likedSongIds = ""
+            Settings.shared.likedSongsJson = Json.encodeToString(localLikes)
+            Settings.shared.likedSongsRecencyJson = Json.encodeToString(localLikes.map(SongItem::id))
+            Settings.shared.likedSongIds = localLikes.joinToString(",") { it.id }
         }
         enqueueSnapshot()
         return true
@@ -322,7 +346,9 @@ object SongLikeState {
         savePendingVotes(pending)
         songs.filter { pending[it.id] == null }.forEach { removeDislike(it.id, sync = false) }
         val pendingLikes = _likedSongsFlow.value.filter { pending[it.id] == SongVote.LIKE }
-        val reconciledRemote = (pendingLikes + songs.filter { pending[it.id] == null }).distinctBy(SongItem::id)
+        val reconciledRemote =
+            (_likedSongsFlow.value.filter(SongItem::isLocal) + pendingLikes + songs.filter { pending[it.id] == null })
+                .distinctBy(SongItem::id)
         val snapshotIds = localSnapshot.mapTo(hashSetOf(), SongItem::id)
         val concurrentLikes =
             likedSongRecency
@@ -413,7 +439,9 @@ object SongLikeState {
         force: Boolean = true,
         nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
         loadSongs: suspend (onProgress: (List<SongItem>) -> Unit) -> List<SongItem>? = { onProgress ->
-            if (GlobalYouTubeRepository.instance.isYouTubeHistoryAvailable()) {
+            if (effectiveMusicFrontendOwner().isNotEmpty()) {
+                GlobalYouTubeRepository.instance.getPluginLikedSongs(onProgress)
+            } else if (GlobalYouTubeRepository.instance.isYouTubeHistoryAvailable()) {
                 loadLikedSongPages(
                     GlobalYouTubeRepository.instance.getPlaylistPages("VLLM", applyContentFilters = false),
                     onProgress,
@@ -569,7 +597,7 @@ object SongLikeState {
 
             updateLikedSongs(currentList)
             saveLikedSongs()
-            syncLike(song.id, liked)
+            if (!song.isLocal) syncLike(song.id, liked)
             if (liked) _newLikes.tryEmit(song)
             return liked
         }
@@ -762,6 +790,16 @@ object SongLikeState {
         operation: String,
         session: InnerTube.SessionSnapshot,
     ) {
+        val owner = effectiveMusicFrontendOwner()
+        if (owner.isNotEmpty()) {
+            val account = pluginLibraryAccountKey(owner)
+            YouTubeSyncState.failed(operation) {
+                if (account == pluginLibraryAccountKey(owner) && owner == effectiveMusicFrontendOwner()) {
+                    if (operation == "votes") syncPendingVotes() else refreshLikesFromRemote(force = true)
+                }
+            }
+            return
+        }
         if (GlobalInnerTube.instance.sessionSnapshot() != session || !GlobalInnerTube.instance.hasSapCookieAuth(session)) return
         YouTubeSyncState.failed(operation) {
             if (GlobalInnerTube.instance.sessionSnapshot() == session) {
@@ -775,7 +813,7 @@ object SongLikeState {
             val account = Settings.shared.likedSongsOrderAccount
             val requestSession = GlobalInnerTube.instance.sessionSnapshot()
             val pending = remoteSyncGate.withLock { pendingVotes() }
-            if (pending.isEmpty() || !runCatching { repository.isYouTubeHistoryAvailable() }.getOrDefault(false)) {
+            if (pending.isEmpty() || !runCatching { repository.canSyncSongVotes() }.getOrDefault(false)) {
                 return@withLock
             }
             var allSucceeded = true
@@ -810,6 +848,28 @@ object SongLikeState {
             }
             if (allSucceeded) YouTubeSyncState.succeeded("votes")
         }
+
+    internal fun reconcilePluginVotes(
+        votes: Map<String, SongVote>,
+        songs: Map<String, SongItem>,
+        revision: Long,
+    ) = remoteSyncGate.withLock {
+        if (votes.isEmpty() || revision != voteRevision.value) return@withLock
+        val owner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty) ?: return@withLock
+        val owned = votes.filterKeys { it.startsWith("metrofuse:$owner:") }
+        reconcileRemoteVotes(owned, revision, songs)
+        val pending = pendingVotes()
+        val additions =
+            owned
+                .filter { (id, vote) -> vote == SongVote.LIKE && pending[id] == null && !isLiked(id) }
+                .keys
+                .mapNotNull(songs::get)
+        if (additions.isNotEmpty()) {
+            additions.forEach { removeDislike(it.id, sync = false) }
+            updateLikedSongs((additions + _likedSongsFlow.value).distinctBy(SongItem::id))
+            saveLikedSongs()
+        }
+    }
 }
 
 internal suspend fun loadLikedSongPages(

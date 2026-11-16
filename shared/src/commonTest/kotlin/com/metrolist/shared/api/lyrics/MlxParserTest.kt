@@ -9,6 +9,42 @@ import kotlin.test.assertTrue
 
 class MlxParserTest {
     @Test
+    fun jsonWordsInheritSeparatorsForMainBackgroundAndRomanizedLyrics() {
+        val mlx =
+            """
+            {"version":2,"lines":[{
+              "startMs":1000,"endMs":2500,"text":"You probably know",
+              "words":[{"text":"You","startMs":1000,"endMs":1200},
+                       {"text":"pro","startMs":1200,"endMs":1400},
+                       {"text":"bably","startMs":1400,"endMs":1600},
+                       {"text":"know","startMs":1600,"endMs":2500}],
+              "backgroundText":"Oh yeah",
+              "backgroundWords":[{"text":"Oh","startMs":1000,"endMs":1600},
+                                 {"text":"yeah","startMs":1600,"endMs":2500}],
+              "romanizedText":"You probably know",
+              "romanizedWords":[{"text":"You","startMs":1000,"endMs":1200},
+                                {"text":"pro","startMs":1200,"endMs":1400},
+                                {"text":"bably","startMs":1400,"endMs":1600},
+                                {"text":"know","startMs":1600,"endMs":2500}]
+            }]}
+            """.trimIndent()
+        val line = MlxParser.parse(mlx).lines.single()
+        val words = requireNotNull(line.words)
+        assertEquals(listOf(true, false, true, false, true, false), words.map { it.hasTrailingSpace })
+        assertEquals(
+            "You probably know",
+            words.filterNot { it.isBackground }.joinToString("") {
+                it.text +
+                    if (it.hasTrailingSpace) " " else ""
+            },
+        )
+        assertEquals("Oh yeah", words.filter { it.isBackground }.joinToString("") { it.text + if (it.hasTrailingSpace) " " else "" })
+        assertEquals(listOf(true, false, true, false), requireNotNull(line.romanizedWords).map { it.hasTrailingSpace })
+        assertEquals(listOf(1.0, 1.2, 1.4, 1.6, 1.0, 1.6), words.map { it.startTime })
+        assertEquals(listOf(1.2, 1.4, 1.6, 2.5, 1.6, 2.5), words.map { it.endTime })
+    }
+
+    @Test
     fun rejectsKugouChineseTranslationInRomanizationWithoutChangingOtherFields() {
         for (translation in listOf("你好", "Hello 世界", "\uD840\uDC00", "\uFA11")) {
             val mlx =

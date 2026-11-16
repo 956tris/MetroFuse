@@ -45,6 +45,9 @@ class OfflineLibraryTest {
                         SongEntity("cached", "Match D cached", inLibrary = saved, isCached = true),
                     )
                 tracks.forEach { database.dao().insert(it) }
+                val providerSong = SongEntity("metrofuse:fixture:saved", "Match E selected provider", inLibrary = saved)
+                database.dao().insert(providerSong)
+                database.dao().insert(SongEntity("metrofuse:other:saved", "Match F other provider", inLibrary = saved))
                 val expected = tracks.drop(1).map { it.id }.toSet()
                 val model = LibraryViewModel(CoroutineScope(coroutineContext + job), database, useUpstreamLibrary = false)
                 model.setActive(true)
@@ -81,7 +84,11 @@ class OfflineLibraryTest {
 
                 PluginServicesStore.frontends.value = listOf(MusicFrontend("fixture", "Fixture"))
                 Settings.shared.musicFrontendOwner = "fixture"
-                awaitSongs(tracks.map { it.id }.toSet())
+                awaitSongs(setOf(providerSong.id))
+                assertEquals(
+                    setOf(providerSong.id),
+                    contentMatchedSongs(database, "Match", providerOwner = "fixture").map { it.id }.toSet(),
+                )
                 withTimeout(30_000) { search.uiState.first { it.recentSearchItems.map { item -> item.id } == listOf(providerRecent.id) } }
                 Settings.shared.musicFrontendOwner = ""
                 awaitSongs(expected)

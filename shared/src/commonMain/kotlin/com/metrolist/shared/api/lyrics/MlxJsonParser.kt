@@ -102,7 +102,7 @@ internal object MlxJsonParser {
                     source.lines.map { line ->
                         // Untimed TTML paragraphs can inherit the song's end without a line start.
                         val lineEndMs = line.endMs?.takeIf { line.startMs != null }
-                        val backgroundWords = line.backgroundWords.map { it.timestamp(background = true) }.toMutableList()
+                        val backgroundWords = line.backgroundWords.timestamps(line.backgroundText, background = true).toMutableList()
                         if (backgroundWords.isEmpty() && !line.backgroundText.isNullOrBlank()) {
                             backgroundWords +=
                                 WordTimestamp(
@@ -114,7 +114,7 @@ internal object MlxJsonParser {
                                     isLineTimed = true,
                                 )
                         }
-                        val words = (line.words.map { it.timestamp() } + backgroundWords).takeIf { it.isNotEmpty() }
+                        val words = (line.words.timestamps(line.text) + backgroundWords).takeIf { it.isNotEmpty() }
                         LyricsEntry(
                             time = line.startMs ?: 0,
                             text =
@@ -134,7 +134,7 @@ internal object MlxJsonParser {
                             isBackground = line.background,
                             translatedText = line.translatedText,
                             romanizedText = line.romanizedText,
-                            romanizedWords = line.romanizedWords.map { it.timestamp() }.takeIf { it.isNotEmpty() },
+                            romanizedWords = line.romanizedWords.timestamps(line.romanizedText).takeIf { it.isNotEmpty() },
                             songPart = line.part?.let(parts::getOrNull)?.name,
                             backgroundText = line.backgroundText,
                             backgroundTranslatedText = line.backgroundTranslatedText,
@@ -159,7 +159,18 @@ internal object MlxJsonParser {
         return json.encodeToString(JsonObject(document + ("lines" to JsonArray(lines))))
     }
 
-    private fun JsonWord.timestamp(background: Boolean = false): WordTimestamp =
+    private fun List<JsonWord>.timestamps(
+        lineText: String?,
+        background: Boolean = false,
+    ): List<WordTimestamp> {
+        val aligned = lineText?.takeIf(String::isNotBlank)?.let { alignLyricsWordText(it, map(JsonWord::text)) }
+        return mapIndexed { index, word -> word.timestamp(aligned?.get(index) ?: word.text, background) }
+    }
+
+    private fun JsonWord.timestamp(
+        text: String,
+        background: Boolean,
+    ): WordTimestamp =
         WordTimestamp(
             text = text.removeSuffix(" "),
             startTime = startMs / 1000.0,

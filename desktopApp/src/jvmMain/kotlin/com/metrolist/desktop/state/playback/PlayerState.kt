@@ -19,6 +19,7 @@ import com.metrolist.desktop.state.app.UiState
 import com.metrolist.desktop.state.auth.AuthState
 import com.metrolist.desktop.storage.DownloadManager
 import com.metrolist.desktop.storage.SongCacheManager
+import com.metrolist.desktop.storage.desktopLocalPlaybackResource
 import com.metrolist.desktop.utils.AppLogger
 import com.metrolist.desktop.utils.ComposeTrayManager
 import com.metrolist.desktop.window.playbackWindowVisibility
@@ -88,6 +89,7 @@ import com.metrolist.shared.playback.PlaybackRecoveryAction
 import com.metrolist.shared.playback.PlaybackRecoveryBudget
 import com.metrolist.shared.playback.PlaybackRecoveryPolicy
 import com.metrolist.shared.playback.PlaybackSeekSource
+import com.metrolist.shared.playback.QUEUE_SOURCE_AUTO_MIX
 import com.metrolist.shared.playback.QueueRemoval
 import com.metrolist.shared.playback.TokenlessStreamRenewal
 import com.metrolist.shared.playback.VideoFrame
@@ -103,6 +105,8 @@ import com.metrolist.shared.playback.shouldPlayAfterSongChange
 import com.metrolist.shared.playback.shouldSkipAfterPlaybackFailure
 import com.metrolist.shared.playback.songsShareAlbum
 import com.metrolist.shared.playback.sponsorblock.observeSponsorBlockSkipping
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.scrobble.ScrobbleManager
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.settings.Settings
@@ -720,7 +724,8 @@ object PlayerState {
         private set
     var isPlaying by mutableStateOf(false)
         private set
-    private var isPlaybackResolving by mutableStateOf(false)
+    internal var isPlaybackResolving by mutableStateOf(false)
+        private set
     private var isPlaybackStalled by mutableStateOf(false)
     val isPlaybackLoading: Boolean get() = isPlaybackResolving || isPlaybackStalled
     var progress by mutableStateOf(0f)
@@ -1120,7 +1125,25 @@ object PlayerState {
     }
 
     private val recommendationHistory = RadioRecommendationHistory()
-    private val radio = DesktopQueueRadio(scope, queue, ::queueChanged, recommendationHistory = recommendationHistory)
+    private val radio =
+        DesktopQueueRadio(
+            scope,
+            queue,
+            ::queueChanged,
+            recommendationHistory = recommendationHistory,
+            canPlayQueuedRecommendation = { song ->
+                val owner = effectiveMusicFrontendOwner()
+                if (owner.isNotEmpty() && PlaybackNetworkStateStore.current.connected && song.id.startsWith("metrofuse:$owner:")) {
+                    true
+                } else {
+                    withContext(Dispatchers.IO) {
+                        desktopLocalPlaybackResource(song.id, song)?.contentLengthBytes?.let { it > 0 } == true ||
+                            DownloadManager.getLocalPlaybackResource(song.id, song) != null ||
+                            SongCacheManager.getCachedPlaybackResource(song.id, song) != null
+                    }
+                }
+            },
+        )
 
     var swapPlayerControls by Settings.shared::swapPlayerControls
     var animatedGradient by Settings.shared::animatedGradient
@@ -1236,6 +1259,14 @@ object PlayerState {
     }
 
     init {
+        scope.launch {
+            combine(musicFrontendOwnerChanges(), PlaybackNetworkStateStore.state) { owner, network -> owner to network.connected }
+                .distinctUntilChanged()
+                .collectLatest {
+                    radio.sourceChanged()
+                    currentTrack?.let(::maybePrefetchRecommendationsForCurrentQueue)
+                }
+        }
         scope.launch { playbackUiVisible.collect(player::setProgressUiVisible) }
         scope.launch {
             observeSponsorBlockSkipping(
@@ -3668,7 +3699,7 @@ object PlayerState {
         val existing = queue.items.value.mapTo(mutableSetOf()) { it.id }
         val additions = songs.filter { !it.isUnavailable && !blocked.isBlocked(it) && existing.add(it.id) }
         if (additions.isNotEmpty()) {
-            queue.addToQueue(additions)
+            queue.addToQueue(additions.map { it.copy(queueSourceTitle = QUEUE_SOURCE_AUTO_MIX) })
             recommendationHistory.remember(additions)
             queueChanged()
         }

@@ -104,6 +104,8 @@ import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.UserPlaylist
 import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.model.toSongItem
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.settings.HiddenLibraryItems
 import com.metrolist.shared.settings.LibraryFilterType
 import com.metrolist.shared.settings.LibraryViewType
@@ -166,6 +168,7 @@ fun LibraryScreen(
     SideEffect { onScrollStateChange(activeLibraryGridState) }
     var isSearchOpen by remember { mutableStateOf(false) }
     val hiddenItemVersion by HiddenLibraryItems.version.collectAsState()
+    val libraryOwner by remember { musicFrontendOwnerChanges() }.collectAsState(effectiveMusicFrontendOwner())
     var showCreateDialog by remember { mutableStateOf(false) }
     LaunchedEffect(UiState.createPlaylistRequested) {
         if (UiState.createPlaylistRequested) {
@@ -181,7 +184,10 @@ fun LibraryScreen(
     var playlistDeleteFailed by remember { mutableStateOf(false) }
     var showHiddenItems by remember { mutableStateOf(false) }
     val hiddenItemKeys = remember(hiddenItemVersion) { HiddenLibraryItems.keys() }
-    val hiddenItems = remember(hiddenItemVersion) { HiddenLibraryItems.all() }
+    val hiddenItems =
+        remember(hiddenItemVersion, libraryOwner) {
+            HiddenLibraryItems.all().filter { libraryOwner.isEmpty() || it.id.startsWith("metrofuse:$libraryOwner:") }
+        }
     val autoPlaylists = libraryAutoPlaylists()
     val items = remember(sections) { sections.values.flatten() }
 
@@ -384,33 +390,35 @@ fun LibraryScreen(
                     hoverColor = colorScheme.onSurfaceVariant,
                 ),
         )
-        ScrollingAddButton(
-            label = stringResource(Res.string.new_playlist),
-            onClick = { showNewPlaylistMenu = true },
-            state = rememberScrollingFabState(activeLibraryGridState),
-            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp),
-        ) {
-            FabMenuPopup(
-                expanded = showNewPlaylistMenu,
-                onDismissRequest = { showNewPlaylistMenu = false },
+        if (libraryOwner.isEmpty()) {
+            ScrollingAddButton(
+                label = stringResource(Res.string.new_playlist),
+                onClick = { showNewPlaylistMenu = true },
+                state = rememberScrollingFabState(activeLibraryGridState),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 16.dp),
             ) {
-                DropdownMenuGroup(shapes = MenuDefaults.groupShape(0, 1)) {
-                    DropdownMenuItem(
-                        modifier = Modifier.navigationPopupSource(),
-                        text = { Text(stringResource(Res.string.create_playlist)) },
-                        onClick = {
-                            showNewPlaylistMenu = false
-                            showCreateDialog = true
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text(stringResource(Res.string.import_playlist)) },
-                        onClick = {
-                            showNewPlaylistMenu = false
-                            UiState.openPlaylistImportRequested = true
-                            UiState.showSettings = true
-                        },
-                    )
+                FabMenuPopup(
+                    expanded = showNewPlaylistMenu,
+                    onDismissRequest = { showNewPlaylistMenu = false },
+                ) {
+                    DropdownMenuGroup(shapes = MenuDefaults.groupShape(0, 1)) {
+                        DropdownMenuItem(
+                            modifier = Modifier.navigationPopupSource(),
+                            text = { Text(stringResource(Res.string.create_playlist)) },
+                            onClick = {
+                                showNewPlaylistMenu = false
+                                showCreateDialog = true
+                            },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(Res.string.import_playlist)) },
+                            onClick = {
+                                showNewPlaylistMenu = false
+                                UiState.openPlaylistImportRequested = true
+                                UiState.showSettings = true
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -454,7 +462,7 @@ fun LibraryScreen(
         )
     }
 
-    PopupVisibility(visible = showCreateDialog) {
+    PopupVisibility(visible = libraryOwner.isEmpty() && showCreateDialog) {
         PlaylistNameDialog(
             title = stringResource(Res.string.create_playlist_dialog_title),
             confirmActionLabel = stringResource(Res.string.playlist_create_action),

@@ -207,6 +207,9 @@ class MusicPlayer(
     val playbackReady: Boolean
         get() = synchronized(playerLock) { currentPlaybackInstanceId != 0L && audioPlayer.isPrepared && !audioPlayer.hasFailed }
 
+    val audioFormat: PlaybackAudioFormat?
+        get() = synchronized(playerLock) { audioPlayer.audioFormat.takeIf { playbackReady } }
+
     private val _volume = MutableStateFlow(1f)
     val volume: StateFlow<Float> = _volume.asStateFlow()
 

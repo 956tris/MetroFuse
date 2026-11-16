@@ -19,8 +19,10 @@ actual fun WebLoginRequest.validateBrowserRequest() {
 
 internal fun WebLoginRequest.canCaptureBrowserCookies(value: String?): Boolean {
     if (value == null || !acceptsBrowserNavigation(value)) return false
+    // Service cookies can arrive before the identity provider finishes its redirects.
+    val path = completionPath ?: return requiredCookies.isNotEmpty()
     val uri = URI(value)
-    return uri.host == URI(cookieUrl).host && (completionPath == null || uri.path.ifEmpty { "/" } == completionPath)
+    return uri.host == URI(cookieUrl).host && uri.path.ifEmpty { "/" } == path
 }
 
 internal suspend fun awaitBrowserCredentials(capture: suspend () -> Map<String, String>?): Map<String, String> =
@@ -54,6 +56,8 @@ fun WebLoginRequest.captureBrowserCookies(header: String): Map<String, String>? 
             }.toMap()
     if (cookies.none { it.value.isNotBlank() } ||
         (requiredCookies.isNotEmpty() && requiredCookies.none { !cookies[it].isNullOrBlank() })
-    ) return null
+    ) {
+        return null
+    }
     return mapOf(cookieField to header)
 }

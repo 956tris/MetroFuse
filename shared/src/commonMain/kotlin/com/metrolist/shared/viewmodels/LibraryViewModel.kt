@@ -1,6 +1,7 @@
 package com.metrolist.shared.viewmodels
 
 import androidx.compose.runtime.snapshotFlow
+import com.metrolist.shared.api.LibraryItemsResult
 import com.metrolist.shared.api.YouTubeRepository
 import com.metrolist.shared.auth.YouTubeSyncState
 import com.metrolist.shared.db.MusicDatabase
@@ -27,8 +28,10 @@ import com.metrolist.shared.model.parseDisplayCount
 import com.metrolist.shared.playlist.LibraryBookmarkMutations
 import com.metrolist.shared.playlist.LibraryBookmarkSnapshot
 import com.metrolist.shared.playlist.LibraryDeletionTracker
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
-import com.metrolist.shared.plugins.musicFrontendOwnerChanges
+import com.metrolist.shared.plugins.musicLibraryAccountChanges
+import com.metrolist.shared.plugins.pluginLibraryAccountKey
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTubeRepository
 import com.metrolist.shared.state.PodcastLibrary
@@ -181,6 +184,8 @@ class LibraryViewModel(
     private var cachedRemoteAccountKey: String? = null
     private var observedAccountKey = currentLibraryAccountKey()
     private var cachedBookmarkSnapshot = LibraryBookmarkMutations.capture()
+    private var pluginRefreshJob: Job? = null
+    private var lastPluginRefreshEpoch = 0L
 
     fun setActive(active: Boolean) {
         localActive.value = active
@@ -218,6 +223,7 @@ class LibraryViewModel(
                                 offset = _contentMatchedSongs.value.size,
                                 descending = request.descending,
                                 offlineOnly = !useUpstreamLibrary && effectiveMusicFrontendOwner().isEmpty(),
+                                providerOwner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty),
                             )
                         }.orEmpty()
                 if (loadedSearchRequest == request && searchRequest.value == request) {
@@ -258,9 +264,9 @@ class LibraryViewModel(
 
     init {
         scope.launch {
-            musicFrontendOwnerChanges().drop(1).collect {
+            musicLibraryAccountChanges().drop(1).collect {
                 updateSearchRequest(searchRequest.value.copy(revision = searchRequest.value.revision + 1L))
-                refresh(force = false)
+                refresh(force = true)
             }
         }
         scope.launch {
@@ -269,7 +275,11 @@ class LibraryViewModel(
             }
         }
         scope.launch {
-            if (!useUpstreamLibrary) {
+            if (effectiveMusicFrontendOwner().isNotEmpty()) {
+                refresh(force = false)
+                return@launch
+            }
+            if (!useUpstreamLibrary && effectiveMusicFrontendOwner().isEmpty()) {
                 loadLocal()
                 return@launch
             }
@@ -340,6 +350,7 @@ class LibraryViewModel(
                                         request.query,
                                         descending = request.descending,
                                         offlineOnly = !useUpstreamLibrary && effectiveMusicFrontendOwner().isEmpty(),
+                                        providerOwner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty),
                                     )
                                 }.orEmpty()
                         if (searchRequest.value == request) {
@@ -353,6 +364,12 @@ class LibraryViewModel(
         }
 
     fun refresh(force: Boolean = true) {
+        val owner = effectiveMusicFrontendOwner()
+        if (owner.isNotEmpty()) {
+            refreshPluginLibrary(owner, force)
+            return
+        }
+        if (observedAccountKey.startsWith("plugin:")) resetPluginLibrary(currentLibraryAccountKey())
         if (!useUpstreamLibrary) {
             if (localActive.value) localReloads.trySend(Unit) else scope.launch { loadLocal() }
             return
@@ -557,6 +574,87 @@ class LibraryViewModel(
         }
     }
 
+    private fun resetPluginLibrary(accountKey: String) {
+        pluginRefreshJob?.cancel()
+        countResolutionJob?.cancel()
+        ++refreshGeneration
+        observedAccountKey = accountKey
+        cachedRemoteItems = emptyList()
+        cachedRemoteAccountKey = null
+        reconciliationFilter = null
+        lastPluginRefreshEpoch = 0L
+        LibraryDeletionTracker.clear()
+        _uiState.update { it.copy(items = emptyList(), isLoading = true, isRefreshing = false, error = false) }
+    }
+
+    private fun refreshPluginLibrary(
+        owner: String,
+        force: Boolean,
+    ) {
+        val accountKey = pluginLibraryAccountKey(owner)
+        if (observedAccountKey != accountKey) resetPluginLibrary(accountKey)
+        if (PluginServicesStore.libraryAccounts.value[owner]?.busy == true) {
+            pluginRefreshJob?.cancel()
+            scope.launch { loadLocal() }
+            return
+        }
+        if (!force && (
+                pluginRefreshJob?.isActive == true ||
+                    !shouldRefreshLibrary(Clock.System.now().toEpochMilliseconds(), lastPluginRefreshEpoch)
+            )
+        ) {
+            return
+        }
+        pluginRefreshJob?.cancel()
+        val generation = ++refreshGeneration
+        val bookmarkSnapshot = LibraryBookmarkMutations.capture()
+
+        fun isCurrent() = generation == refreshGeneration && currentLibraryAccountKey() == accountKey
+        pluginRefreshJob =
+            scope.launch {
+                _uiState.update { it.copy(isLoading = it.items.isEmpty(), isRefreshing = it.items.isNotEmpty(), error = false) }
+                try {
+                    val local = database?.let { loadLocalItemsWithHistory(it) }.orEmpty()
+                    if (!isCurrent()) return@launch
+
+                    fun publish(result: LibraryItemsResult) {
+                        if (!isCurrent()) throw CancellationException("Library source changed")
+                        val remote = result.items.let(LibraryDeletionTracker::filterDeleted)
+                        cachedRemoteItems =
+                            LibraryBookmarkMutations.filterRemoved(
+                                if (result.complete) remote else mergeLibraryItems(cachedRemoteItems, remote),
+                                bookmarkSnapshot,
+                            )
+                        cachedRemoteAccountKey = accountKey
+                        cachedBookmarkSnapshot = bookmarkSnapshot
+                        _uiState.update {
+                            it.copy(
+                                items =
+                                    mergeLibraryItems(
+                                        local.let(LibraryDeletionTracker::filterDeleted),
+                                        cachedRemoteItems,
+                                        downloadedKeys,
+                                    ),
+                            )
+                        }
+                    }
+                    val result = repository.getCompleteLibraryItemsResult(force = force, onPage = ::publish)
+                    publish(result)
+                    if (result.complete) lastPluginRefreshEpoch = Clock.System.now().toEpochMilliseconds()
+                    _uiState.update { it.copy(isLoading = false, isRefreshing = false, error = !result.complete) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    if (isCurrent()) {
+                        YtLogger.e("LibrarySync", "Plugin library refresh failed type=${error::class.simpleName}")
+                        _uiState.update { it.copy(error = true) }
+                    }
+                } finally {
+                    if (isCurrent()) _uiState.update { it.copy(isLoading = false, isRefreshing = false) }
+                }
+            }
+    }
+
     fun refreshAfterHomeLoaded() {
         if (!hasRefreshedAfterHomeLoaded) {
             hasRefreshedAfterHomeLoaded = true
@@ -758,7 +856,18 @@ class LibraryViewModel(
                 )
             }
         val items = (playlists + songs + episodes + artists + albums + podcasts).distinctBy(::libraryItemKey)
-        if (useUpstreamLibrary || effectiveMusicFrontendOwner().isNotEmpty()) return items
+        val owner = effectiveMusicFrontendOwner()
+        if (owner.isNotEmpty()) {
+            return items.filter { item ->
+                item.id.startsWith("metrofuse:$owner:") &&
+                    when (item) {
+                        is SongItem -> !item.isLocal
+                        is PlaylistItem -> !item.isLocal
+                        else -> true
+                    }
+            }
+        }
+        if (useUpstreamLibrary) return items
         val availableSongs = dao.allSongs().first().filter { it.song.isLocal || it.song.isDownloaded || it.song.isCached }
         val songIds = availableSongs.mapTo(mutableSetOf()) { it.id }
         val albumIds = availableSongs.mapNotNullTo(mutableSetOf()) { it.song.albumId }
@@ -902,12 +1011,14 @@ internal fun libraryAccountKey(
     authUser: String,
 ): String = "${dataSyncId.ifBlank { accountEmail.ifBlank { "signed-out" } }}|$authUser"
 
-internal fun currentLibraryAccountKey(): String =
-    libraryAccountKey(
+internal fun currentLibraryAccountKey(): String {
+    effectiveMusicFrontendOwner().takeIf(String::isNotEmpty)?.let { return pluginLibraryAccountKey(it) }
+    return libraryAccountKey(
         Settings.shared.dataSyncId,
         Settings.shared.accountEmail,
         Settings.shared.innerTubeAuthUser,
     )
+}
 
 internal class LibraryReconciliationFilter(
     private val accountKey: String,
@@ -979,9 +1090,19 @@ internal suspend fun contentMatchedSongs(
     offset: Int = 0,
     descending: Boolean = false,
     offlineOnly: Boolean = false,
+    providerOwner: String? = null,
 ): List<SongItem> =
     withContext(Dispatchers.Default) {
         val term = query.trim()
         if (term.length < 2) return@withContext emptyList()
-        database.dao().contentMatchedSongs(term, LIBRARY_SEARCH_PAGE_SIZE, offset, descending, offlineOnly).map { it.toSongItem() }
+        database
+            .dao()
+            .contentMatchedSongs(
+                term,
+                LIBRARY_SEARCH_PAGE_SIZE,
+                offset,
+                descending,
+                offlineOnly,
+                providerPrefix = providerOwner?.let { "metrofuse:$it:" },
+            ).map { it.toSongItem() }
     }

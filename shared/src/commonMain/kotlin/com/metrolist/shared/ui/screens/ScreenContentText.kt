@@ -1,7 +1,9 @@
 package com.metrolist.shared.ui.screens
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.album
 import com.metrolist.shared.generated.resources.albums
@@ -113,6 +115,8 @@ import com.metrolist.shared.generated.resources.verified_artists
 import com.metrolist.shared.generated.resources.voice_search
 import com.metrolist.shared.model.CollectionSort
 import com.metrolist.shared.model.PlaylistSongSort
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.components.CollectionFilterBarText
 import com.metrolist.shared.ui.components.PlaylistOrderControlsText
@@ -189,6 +193,8 @@ fun libraryContentText() =
 
 @Composable
 fun libraryAutoPlaylists(hasNewUploads: Boolean = false): List<LibraryAutoPlaylist> {
+    val owner by remember { musicFrontendOwnerChanges() }.collectAsStateWithLifecycle(effectiveMusicFrontendOwner())
+    if (owner.isNotEmpty()) return emptyList()
     val newLabel = stringResource(Res.string.new_label)
     val playlists =
         buildList {

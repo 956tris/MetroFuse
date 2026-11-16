@@ -37,3 +37,17 @@ data class HomeShelf(
 interface HomePlugin {
     suspend fun getHome(request: HomeRequest): List<HomeShelf> = emptyList()
 }
+
+@Serializable
+data class HomePage(
+    val shelves: List<HomeShelf>,
+    val continuation: String? = null,
+)
+
+/** Hosts load subsequent pages as the user reaches the end of the current shelves. */
+interface PagedHomePlugin : HomePlugin {
+    suspend fun getHomePage(
+        request: HomeRequest,
+        continuation: String? = null,
+    ): HomePage
+}

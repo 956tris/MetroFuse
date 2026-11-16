@@ -261,7 +261,7 @@ fun LyricsView(
     val shimmerColor = MaterialTheme.colorScheme.primary
     val globalOffsetMs = Settings.shared.globalLyricsOffsetMs
     val effectiveOffsetMs = LyricsUtils.combinedLyricsOffsetMs(timingOffsetMs, globalOffsetMs)
-    val isPlusLighter = isLiquidBackground && Settings.shared.lyricsPlusLighter
+    val isPlusLighter = !immersive && isLiquidBackground && Settings.shared.lyricsPlusLighter
     val lyricsActiveByRealTiming = Settings.shared.lyricsActiveByRealTiming
     val selection = selectionState ?: remember(songId, lyrics) { LyricsSelectionState() }
     val selectedIndices = selection.selectedIndices
@@ -420,12 +420,12 @@ fun LyricsView(
         }
 
     val lineAlignments =
-        remember(lyrics, agents, Settings.shared.respectAgentPositioning, Settings.shared.lyricsTextPosition) {
+        remember(lyrics, agents, Settings.shared.respectAgentPositioning, Settings.shared.lyricsTextPosition, immersive) {
             LyricsUtils.assignLineAlignments(
                 lyrics,
                 agents = agents,
                 respectAgentPositioning = Settings.shared.respectAgentPositioning,
-                lyricsTextPosition = Settings.shared.lyricsTextPosition,
+                lyricsTextPosition = if (immersive) "LEFT" else Settings.shared.lyricsTextPosition,
             )
         }
 
@@ -440,7 +440,7 @@ fun LyricsView(
         }
 
     val providerTextAlign =
-        when (Settings.shared.lyricsTextPosition.uppercase()) {
+        when (if (immersive) "LEFT" else Settings.shared.lyricsTextPosition.uppercase()) {
             "LEFT" -> TextAlign.Start
             "RIGHT" -> TextAlign.End
             else -> TextAlign.Center
@@ -1173,7 +1173,7 @@ fun LyricsView(
                                     bottomEndFraction = 1f,
                                     maxRadius = LYRICS_PROGRESSIVE_BLUR_MAX_DP.dp,
                                     enabled =
-                                        (immersive || Settings.shared.lyricsProgressiveBlur) &&
+                                        !immersive && Settings.shared.lyricsProgressiveBlur &&
                                             isAutoScrollEnabled &&
                                             !isManualScrolling.value &&
                                             !isSelectionMode,
@@ -1519,6 +1519,9 @@ fun LyricsView(
                                                             flipShifter = scrollShifter,
                                                             flipIndex = index,
                                                             isPlusLighter = isPlusLighter,
+                                                            appleMusicStyle = immersive,
+                                                            blurUnfocusedLines =
+                                                                immersive && shouldFollowPlayback && !isManualScrolling.value,
                                                             translationShimmer =
                                                                 translationShimmer.takeIf {
                                                                     idx in

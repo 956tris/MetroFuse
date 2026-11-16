@@ -68,6 +68,9 @@ class AudioDecoder private constructor(
     val sampleRate = frameGrabber.sampleRate
     val audioChannels = frameGrabber.audioChannels
 
+    // Capture the encoded stream before decoding converts it to the renderer's 16-bit PCM.
+    val audioFormat = frameGrabber.sourceAudioFormat
+
     val duration = frameGrabber.getLengthInTime() / 1000
 
     @Volatile

@@ -6,6 +6,7 @@
 
 package com.metrolist.shared.playback.ffmpeg
 
+import com.metrolist.shared.playback.PlaybackAudioFormat
 import com.metrolist.shared.utils.Logger
 import org.bytedeco.ffmpeg.avcodec.*
 import org.bytedeco.ffmpeg.avformat.*
@@ -535,6 +536,38 @@ class FFmpegFrameGrabber : FrameGrabber {
         get() = audio_c?.takeUnless { it.isNull }?.bit_rate()?.toInt() ?: super.audioBitrate
         set(value) {
             super.audioBitrate = value
+        }
+
+    val sourceAudioFormat: PlaybackAudioFormat?
+        get() {
+            val stream = audio_st?.takeUnless { it.isNull } ?: return null
+            val parameters = stream.codecpar()
+            val context = audio_c?.takeUnless { it.isNull }
+            val codecId = parameters.codec_id()
+            val codecName = avcodec_get_name(codecId)?.string?.takeIf { it.isNotBlank() && it != "unknown" } ?: return null
+            val lossless = (avcodec_descriptor_get(codecId)?.props() ?: 0) and AV_CODEC_PROP_LOSSLESS != 0
+            val rawDepth = parameters.bits_per_raw_sample().takeIf { it > 0 } ?: context?.bits_per_raw_sample()?.takeIf { it > 0 }
+            val bitDepth = if (lossless) rawDepth ?: av_get_bits_per_sample(codecId).takeIf { it > 0 } else null
+            val streamBitrate = parameters.bit_rate().takeIf { it > 0L } ?: context?.bit_rate()?.takeIf { it > 0L }
+            val container = oc?.takeUnless { it.isNull }
+            // A container bitrate can include another audio stream or music video. Never label that as audio quality.
+            val mediaStreamCount =
+                container?.let { format ->
+                    (0 until format.nb_streams()).count { index ->
+                        val candidate = format.streams(index)
+                        val type = candidate.codecpar().codec_type()
+                        type == AVMEDIA_TYPE_AUDIO ||
+                            (type == AVMEDIA_TYPE_VIDEO && candidate.disposition() and AV_DISPOSITION_ATTACHED_PIC == 0)
+                    }
+                }
+            val containerBitrate = container?.bit_rate()?.takeIf { it > 0L && mediaStreamCount == 1 }
+            return PlaybackAudioFormat(
+                codec = codecName,
+                sampleRateHz = parameters.sample_rate().takeIf { it > 0 } ?: context?.sample_rate()?.takeIf { it > 0 },
+                bitDepth = bitDepth,
+                bitrateBps = streamBitrate ?: containerBitrate,
+                bitrateIsAverage = streamBitrate == null && containerBitrate != null,
+            )
         }
 
     val formatName: String?

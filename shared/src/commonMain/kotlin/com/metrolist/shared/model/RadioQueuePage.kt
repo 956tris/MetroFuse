@@ -6,6 +6,7 @@ data class RadioQueuePage(
     val songs: List<SongItem>,
     val chips: List<RadioQueueChip>,
     val continuation: String? = null,
+    val shuffleRecommendations: Boolean = true,
 )
 
 data class RadioQueueChip(
@@ -34,6 +35,7 @@ fun buildRadioQueueRecommendations(
     songs
         .asSequence()
         .filter { it.id.isNotBlank() }
+        .filterNot(SongItem::isUnavailable)
         .filterNot { songsOnly && (it.isVideoSong || it.isPodcast) }
         .filterNot(isBlocked)
         .filterNot { it.id in queuedSongIds }

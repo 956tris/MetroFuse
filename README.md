@@ -15,9 +15,17 @@
 
 MetroFuse plays local music out of the box, with no account, internet connection or installed plugins required. New installations open Offline Home. Home, Search and Library use local music by default. Click the Home title to choose an enabled plugin frontend; selecting Offline restricts playback to local or downloaded audio. Audio provider priority remains in the playback menus. On Windows, the app scans your Music folder and lets you add other folders. On Android, use **Library → Add → Scan local music** or **Settings → Storage → Local music**, then allow audio access. Songs, albums, artists, playlists, likes and listening history stay on the device.
 
+App builds, APKs, installers and app ZIPs never include provider plugins. Provider packages remain separate and require manual installation through Plugins.
+
 When direct audio resolution fails, the shared host searches eligible enabled providers and applies the original MetroFuse matcher to title, artist and duration. It retries with each matched provider's own track ID, respecting the selected audio source and exclusions. Native JAR/APK and JavaScript MFP providers use the same matching flow. Search results are cached for 90 seconds and cleared when the host invalidates provider caches.
 
 The core Home switcher lists Offline first, followed by enabled plugins declaring the `home` capability. Optional manifest `home.title` and `home.icon` fields set the source's label and packaged icon. Native JAR/APK plugins can implement `HomePlugin`; JavaScript MFP plugins register `host.home(callback)`. Home content uses generic `CARDS` or `ROWS_GRID` shelves. Requests use the user's content locale, have a 15-second deadline, and keep a separate cache and retry state for each source. Removing or disabling the selected source switches Home to Offline.
+
+Library follows the selected frontend too. Providers implementing `LibraryProvider` supply their account's songs, albums, artists and playlists through paginated requests. Results appear as pages load and refresh after sign-in, sign-out or switching sources. UI plugins use the same Library feed. A selected provider's Library excludes local files, local playlists, local scanning controls and automatic device collections. Offline Library contains the device's local, downloaded and cached music.
+
+Metrofuse Lyrics is available on Android and desktop in the configurable lyrics sources. Its API at `https://metrofuse-lyrics-worker.amax69420lol.workers.dev/lyrics` looks up songs by title, artist and known duration. Word, line and plain responses use the existing shared lyrics renderer and cache; word and line timestamps retain their millisecond precision. Word spacing follows the full line text, preserving contiguous syllables and scripts that do not use spaces. Word lyrics saved by the earlier API converter refresh when online, preserving saved offsets and source selections. Existing source controls, lyric offsets, click-to-seek and other providers remain available.
+
+Providers can also expose their liked-song pages and support song votes. YouTube Music's Liked Music list supplies existing likes, and like, unlike and dislike actions use the plugin's signed-in account. The host refreshes likes when accounts or frontends change and preserves local favorites.
 
 The profile button and app Settings remain available for every source. The profile menu adds account and login actions when the selected source declares `login`. Native plugins own account screens through `NativeLoginUi`; JavaScript plugins contribute the SDK's browser screen through the `ui` callback in `host.login(callbacks)`. Reusable platform WebViews and the Windows helper live in [plugin-sdk](plugin-sdk/README.md). The YouTube Music plugin owns its Google navigation rules, login text and account verification. Existing form and `WebLoginPlugin`/`web` callbacks remain compatible. The host observes account status, delivers submitted credentials only to the current activation and stores accepted sessions encrypted under the plugin ID. Windows uses user-bound DPAPI; Android uses Keystore AES-GCM. Plugin credential persistence is currently unavailable on Linux and macOS. Account changes clear cached audio and metadata and refresh that source's Home. Native plugins run trusted code in the host process; cooperative cancellation cannot forcibly stop arbitrary blocking native code.
 
@@ -77,6 +85,8 @@ DO NOT REMOVE THIS SECTION, I WANT TO ADD IT LATER!!!
 - Video playback (Android and desktop)
 - Content filters for AI-generated content, explicit-only playback and SFW-only playback
 - Canvas from Apple Music, Spotify and YouTube Music
+- Desktop Canvas fullscreen with a feathered video/blur split, Apple-style lyrics and the regular player controls
+- Audio format badge with the source codec, original bit depth, exact sample rate and bitrate; hover for values in Hz and bit/s. Unknown fields stay hidden, and container averages are labelled separately.
 - Player, thumbnail, miniplayer and background styles
 - Custom fonts and app icons
 

@@ -10,6 +10,7 @@ import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,9 +49,11 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -66,7 +70,6 @@ import com.metrolist.desktop.state.content.PlaylistAlbumState
 import com.metrolist.desktop.state.playback.ListenTogetherState
 import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.desktop.state.playback.PlayerState
-import com.metrolist.shared.plugins.PluginUiSlot
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.cd_playback_position
 import com.metrolist.shared.generated.resources.more
@@ -79,6 +82,7 @@ import com.metrolist.shared.generated.resources.view_album
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.isLive
 import com.metrolist.shared.model.previewAspectRatio
+import com.metrolist.shared.plugins.PluginUiSlot
 import com.metrolist.shared.settings.PlayerBackgroundStyle
 import com.metrolist.shared.settings.PlayerType
 import com.metrolist.shared.settings.Settings
@@ -90,6 +94,7 @@ import com.metrolist.shared.ui.components.PopupVisibility
 import com.metrolist.shared.ui.components.VintagePlayerControls
 import com.metrolist.shared.ui.components.VintagePlayerControlsText
 import com.metrolist.shared.ui.icons.MetrolistIcons
+import com.metrolist.shared.ui.menu.CursorContextMenuState
 import com.metrolist.shared.ui.menu.cursorContextMenu
 import com.metrolist.shared.ui.menu.rememberCursorContextMenuState
 import com.metrolist.shared.ui.navigation.navigationPopupSource
@@ -140,11 +145,6 @@ fun PlayerCoreContent(
     toggleWindowFullscreen: () -> Unit,
 ) {
     val playerMenu = rememberCursorContextMenuState()
-    val castState by PlayerState.castManager.state.collectAsState()
-    val isListenTogetherGuest = ListenTogetherState.isListenTogetherGuest()
-    var showCastDialog by remember { mutableStateOf(false) }
-    var showDetailsDialog by remember { mutableStateOf(false) }
-    var showSleepDialog by remember { mutableStateOf(false) }
 
     val artworkRatio =
         if (PlayerState.animatedCoverUrl != null) 1f else (currentTrack?.previewAspectRatio ?: 1f).coerceAtLeast(1f)
@@ -188,166 +188,13 @@ fun PlayerCoreContent(
             }
         }
 
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.widthIn(max = 650.dp * scale).fillMaxWidth(),
-        ) {
-            ActiveLyricsLine(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-
-            Spacer(Modifier.height(54.dp * scale))
-
-            val isSolid = Settings.shared.playerBackgroundStyle == PlayerBackgroundStyle.SOLID
-            val textBackgroundColor by animateColorAsState(
-                targetValue = if (isSolid) MaterialTheme.colorScheme.onSurface else Color.White,
-                label = "PlayerContentTextColor",
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text(
-                        currentTrack?.title ?: stringResource(Res.string.not_playing),
-                        style = MaterialTheme.typography.headlineMedium.copy(fontSize = 24.sp, lineHeight = 32.sp),
-                        fontWeight = FontWeight.Bold,
-                        color = textBackgroundColor,
-                        maxLines = 1,
-                        softWrap = false,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable(
-                                    enabled = currentTrack != null,
-                                    onClickLabel = stringResource(Res.string.view_album),
-                                ) {
-                                    currentTrack?.let { song ->
-                                        PlayerState.exitExpanded()
-                                        PlaylistAlbumState.openSongAlbum(song)
-                                    }
-                                }.basicMarquee(
-                                    iterations = if (UiState.videoFullscreenObscuresPlayer) 0 else 1,
-                                    initialDelayMillis = 2000,
-                                    velocity = 30.dp,
-                                ),
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    PlayerArtistLine(
-                        artists = currentTrack?.artists,
-                        onNavigateToArtist = { id -> ArtistState.fetchArtistData(id) },
-                        fallbackText = "",
-                        iterations = 1,
-                        initialDelayMillis = 2000,
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 12.sp, lineHeight = 16.sp),
-                        color = textBackgroundColor.copy(alpha = 0.8f),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-
-                Spacer(Modifier.width(16.dp))
-
-                Box {
-                    PlayerLikeShareButtons(
-                        isLiked = currentTrack?.let { PlayerState.isLiked(it.id) } == true,
-                        onLikeClick = { currentTrack?.let { PlayerState.toggleLike(it) } },
-                        onShareClick = {
-                            currentTrack?.let { track ->
-                                AppState.copyToClipboard(ShareUrls.song(track.id))
-                            }
-                        },
-                        groupHeight = 40.dp,
-                        buttonWidth = 48.dp,
-                        iconSize = 20.dp,
-                        onMoreClick = playerMenu::openAnchored,
-                        isMoreActive = playerMenu.expanded,
-                    )
-
-                    PlayerMenuPanel(
-                        expanded = playerMenu.expanded,
-                        offset = playerMenu.offset,
-                        onDismiss = playerMenu::dismiss,
-                        onShowAddToPlaylistDialog = {
-                            PlayerState.currentTrack?.let { song ->
-                                PlayerState.showAddToPlaylistSong = song
-                            }
-                            playerMenu.dismiss()
-                        },
-                        onShowDetailsDialog = {
-                            playerMenu.dismiss()
-                            showDetailsDialog = true
-                        },
-                        onShowSleepTimerDialog = {
-                            playerMenu.dismiss()
-                            showSleepDialog = true
-                        },
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(8.dp * scale))
-
-            PlayerProgressSection()
-
-            if (!isListenTogetherGuest) {
-                Spacer(Modifier.height(14.dp * scale))
-
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    DesktopPrimaryPlaybackControls(isPlaying, scale, textBackgroundColor)
-                }
-            }
-
-            Spacer(Modifier.height(42.dp * scale))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PlayerConnectedButtonGroup(
-                    modifier = Modifier.weight(1f),
-                    sectioned = true,
-                    touchTarget = 40.dp,
-                    onShuffleClick = if (!isListenTogetherGuest) ({ PlayerState.toggleShuffle() }) else null,
-                    isShuffled = PlayerState.shuffleEnabled,
-                    onRepeatClick = if (!isListenTogetherGuest) ({ PlayerState.cycleRepeatMode() }) else null,
-                    repeatMode = PlayerState.repeatMode,
-                    volume = PlayerState.volume,
-                    onVolumeChange = { PlayerState.setVolumeLevel(it) },
-                    onQueueClick = UiState::togglePersistentPlayerDrawer,
-                    onLyricsClick = {
-                        LyricsState.toggleLyricsDrawer()
-                    },
-                    isLyricsActive = UiState.showLyricsDrawer,
-                    isQueueActive = UiState.showPersistentPlayerDrawer,
-                    onVideoClick =
-                        if (shouldShowVideoButton()) {
-                            PlayerState::toggleFullscreenVideo
-                        } else {
-                            null
-                        },
-                    isVideoActive = false,
-                    onSubtitleClick =
-                        if (PlayerState.isVideoActive) {
-                            {
-                                PlayerState.isSubtitleActive = !PlayerState.isSubtitleActive
-                            }
-                        } else {
-                            null
-                        },
-                    isSubtitleActive = PlayerState.isSubtitleActive,
-                    onCastClick = if (!isListenTogetherGuest) ({ showCastDialog = true }) else null,
-                    isCasting = castState.isConnected,
-                    onFullscreenClick = toggleWindowFullscreen,
-                    isFullscreen = PlayerState.isFullscreen || UiState.isNativeFullscreen,
-                )
-            }
-        }
+        DesktopPlayerControls(
+            currentTrack = currentTrack,
+            isPlaying = isPlaying,
+            scale = scale,
+            menuState = playerMenu,
+            toggleWindowFullscreen = toggleWindowFullscreen,
+        )
     }
     Layout(
         content = content,
@@ -379,6 +226,245 @@ fun PlayerCoreContent(
         layout(constraints.maxWidth, artwork.height + controls.height) {
             artwork.placeRelative((constraints.maxWidth - artwork.width) / 2, 0)
             controls.placeRelative((constraints.maxWidth - controls.width) / 2, artwork.height)
+        }
+    }
+}
+
+@Composable
+internal fun DesktopPlayerControls(
+    currentTrack: SongItem?,
+    isPlaying: Boolean,
+    scale: Float,
+    immersive: Boolean = false,
+    motion: CanvasPlayerMotion? = null,
+    menuState: CursorContextMenuState? = null,
+    toggleWindowFullscreen: () -> Unit,
+) {
+    val playerMenu = menuState ?: rememberCursorContextMenuState()
+    val castState by PlayerState.castManager.state.collectAsState()
+    val isListenTogetherGuest = ListenTogetherState.isListenTogetherGuest()
+    var showCastDialog by remember { mutableStateOf(false) }
+    var showDetailsDialog by remember { mutableStateOf(false) }
+    var showSleepDialog by remember { mutableStateOf(false) }
+    var controlsReservePx by remember { mutableIntStateOf(0) }
+    var actionsHeightPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    val collapseGapPx = actionsHeightPx + with(density) { (26.dp * scale - 16.dp).toPx() }
+    LaunchedEffect(playerMenu.expanded, showCastDialog, showDetailsDialog, showSleepDialog) {
+        motion?.menuOpen = playerMenu.expanded || showCastDialog || showDetailsDialog || showSleepDialog
+    }
+    DisposableEffect(motion) {
+        onDispose { motion?.menuOpen = false }
+    }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.widthIn(max = 650.dp * scale).fillMaxWidth().cursorContextMenu(playerMenu),
+    ) {
+        if (!immersive) {
+            ActiveLyricsLine(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+            Spacer(Modifier.height(54.dp * scale))
+        }
+
+        val isSolid = !immersive && Settings.shared.playerBackgroundStyle == PlayerBackgroundStyle.SOLID
+        val textBackgroundColor by animateColorAsState(
+            targetValue = if (isSolid) MaterialTheme.colorScheme.onSurface else Color.White,
+            label = "PlayerContentTextColor",
+        )
+
+        val metadata: @Composable (Modifier) -> Unit = { metadataModifier ->
+            Column(
+                modifier = metadataModifier,
+            ) {
+                val title: @Composable (Modifier) -> Unit = { titleModifier ->
+                    Text(
+                        currentTrack?.title ?: stringResource(Res.string.not_playing),
+                        style = MaterialTheme.typography.headlineMedium.copy(fontSize = 24.sp, lineHeight = 32.sp),
+                        fontWeight = FontWeight.Bold,
+                        color = textBackgroundColor,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier =
+                            titleModifier
+                                .clickable(
+                                    enabled = currentTrack != null,
+                                    onClickLabel = stringResource(Res.string.view_album),
+                                ) {
+                                    currentTrack?.let { song ->
+                                        PlayerState.exitExpanded()
+                                        PlaylistAlbumState.openSongAlbum(song)
+                                    }
+                                }.basicMarquee(
+                                    iterations = if (UiState.videoFullscreenObscuresPlayer) 0 else 1,
+                                    initialDelayMillis = 2000,
+                                    velocity = 30.dp,
+                                ),
+                    )
+                }
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    if (maxWidth >= 420.dp) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            title(Modifier.weight(1f))
+                            PlayerAudioQualityBadge(contentColor = textBackgroundColor)
+                        }
+                    } else {
+                        Column {
+                            title(Modifier.fillMaxWidth())
+                            PlayerAudioQualityBadge(
+                                contentColor = textBackgroundColor,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(2.dp))
+                PlayerArtistLine(
+                    artists = currentTrack?.artists,
+                    onNavigateToArtist = { id -> ArtistState.fetchArtistData(id) },
+                    fallbackText = "",
+                    iterations = 1,
+                    initialDelayMillis = 2000,
+                    style =
+                        MaterialTheme.typography.titleMedium.copy(
+                            fontSize = if (immersive) 16.sp else 12.sp,
+                            lineHeight = if (immersive) 20.sp else 16.sp,
+                        ),
+                    color = textBackgroundColor.copy(alpha = 0.8f),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
+        val actions: @Composable () -> Unit = {
+            Box(Modifier.canvasControlsVisibility(motion).onSizeChanged { actionsHeightPx = it.height }) {
+                PlayerLikeShareButtons(
+                    isLiked = currentTrack?.let { PlayerState.isLiked(it.id) } == true,
+                    onLikeClick = { currentTrack?.let { PlayerState.toggleLike(it) } },
+                    onShareClick = {
+                        currentTrack?.let { track ->
+                            AppState.copyToClipboard(ShareUrls.song(track.id))
+                        }
+                    },
+                    groupHeight = 40.dp,
+                    buttonWidth = 48.dp,
+                    iconSize = 20.dp,
+                    onMoreClick = playerMenu::openAnchored,
+                    isMoreActive = playerMenu.expanded,
+                )
+
+                PlayerMenuPanel(
+                    expanded = playerMenu.expanded,
+                    offset = playerMenu.offset,
+                    onDismiss = playerMenu::dismiss,
+                    onShowAddToPlaylistDialog = {
+                        PlayerState.currentTrack?.let { song ->
+                            PlayerState.showAddToPlaylistSong = song
+                        }
+                        playerMenu.dismiss()
+                    },
+                    onShowDetailsDialog = {
+                        playerMenu.dismiss()
+                        showDetailsDialog = true
+                    },
+                    onShowSleepTimerDialog = {
+                        playerMenu.dismiss()
+                        showSleepDialog = true
+                    },
+                )
+            }
+        }
+        if (immersive) {
+            metadata(
+                Modifier.fillMaxWidth().graphicsLayer {
+                    translationY = (controlsReservePx + collapseGapPx) * (1f - (motion?.lift?.value ?: 1f))
+                },
+            )
+            Spacer(Modifier.height(14.dp * scale))
+            Box(Modifier.fillMaxWidth()) { actions() }
+            Spacer(Modifier.height(12.dp * scale))
+        } else {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                metadata(Modifier.weight(1f))
+                Spacer(Modifier.width(16.dp))
+                actions()
+            }
+            Spacer(Modifier.height(8.dp * scale))
+        }
+        Box(
+            Modifier.fillMaxWidth().graphicsLayer {
+                translationY = controlsReservePx * (1f - (motion?.lift?.value ?: 1f))
+            },
+        ) {
+            PlayerProgressSection(immersive = immersive)
+        }
+
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .onSizeChanged { controlsReservePx = it.height }
+                .canvasControlsVisibility(motion),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (!isListenTogetherGuest) {
+                Spacer(Modifier.height(14.dp * scale))
+
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    DesktopPrimaryPlaybackControls(isPlaying, scale, textBackgroundColor)
+                }
+            }
+
+            Spacer(Modifier.height((if (immersive) 16.dp else 42.dp) * scale))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PlayerConnectedButtonGroup(
+                    modifier = Modifier.weight(1f),
+                    sectioned = !immersive,
+                    touchTarget = 40.dp,
+                    onShuffleClick = if (!isListenTogetherGuest) ({ PlayerState.toggleShuffle() }) else null,
+                    isShuffled = PlayerState.shuffleEnabled,
+                    onRepeatClick = if (!isListenTogetherGuest) ({ PlayerState.cycleRepeatMode() }) else null,
+                    repeatMode = PlayerState.repeatMode,
+                    volume = PlayerState.volume,
+                    onVolumeChange = { PlayerState.setVolumeLevel(it) },
+                    onQueueClick = UiState::togglePersistentPlayerDrawer,
+                    onLyricsClick = {
+                        if (immersive) UiState.playerPresentation.fullscreenLyricsEnabled = !UiState.showLyricsDrawer
+                        LyricsState.toggleLyricsDrawer()
+                    },
+                    isLyricsActive = UiState.showLyricsDrawer,
+                    isQueueActive = UiState.showPersistentPlayerDrawer,
+                    onVideoClick =
+                        if (shouldShowVideoButton()) {
+                            PlayerState::toggleFullscreenVideo
+                        } else {
+                            null
+                        },
+                    isVideoActive = false,
+                    onSubtitleClick =
+                        if (PlayerState.isVideoActive) {
+                            {
+                                PlayerState.isSubtitleActive = !PlayerState.isSubtitleActive
+                            }
+                        } else {
+                            null
+                        },
+                    isSubtitleActive = PlayerState.isSubtitleActive,
+                    onCastClick = if (!isListenTogetherGuest) ({ showCastDialog = true }) else null,
+                    isCasting = castState.isConnected,
+                    onFullscreenClick = toggleWindowFullscreen,
+                    isFullscreen = PlayerState.isFullscreen || UiState.isNativeFullscreen,
+                )
+            }
         }
     }
     PopupVisibility(visible = showCastDialog) {

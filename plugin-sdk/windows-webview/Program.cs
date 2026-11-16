@@ -23,8 +23,9 @@ internal static class Program
             Application.Run(new BrowserForm(request, args[1], args[2]));
             return Environment.ExitCode;
         }
-        catch
+        catch (Exception error)
         {
+            BrowserDiagnostics.Failure("startup_failed", error);
             // Invalid requests and startup failures return to the SDK's retry UI.
             return 1;
         }
@@ -37,12 +38,16 @@ internal sealed class BrowserForm : Form
     private readonly CookieLoginConfig request;
     private readonly System.Windows.Forms.Timer timer = new() { Interval = 500 };
     private readonly string profile;
+    private readonly Action<Dictionary<string, string>>? resultSink;
     private bool extracting;
+    private string? captureState;
 
-    public BrowserForm(CookieLoginConfig request, string title, string profile)
+    public BrowserForm(CookieLoginConfig request, string title, string profile,
+        Action<Dictionary<string, string>>? resultSink = null)
     {
         this.request = request;
         this.profile = profile;
+        this.resultSink = resultSink;
         Text = title;
         Size = new System.Drawing.Size(800, 800);
         StartPosition = FormStartPosition.CenterScreen;
@@ -55,18 +60,33 @@ internal sealed class BrowserForm : Form
                 var options = environment.CreateCoreWebView2ControllerOptions();
                 options.IsInPrivateModeEnabled = true;
                 await browser.EnsureCoreWebView2Async(environment, options);
-                browser.CoreWebView2.NavigationStarting += (_, args) => args.Cancel = !request.AcceptsNavigation(args.Uri);
+                await BrowserNetworkDiagnostics.Attach(browser.CoreWebView2);
+                browser.CoreWebView2.NavigationStarting += (_, args) =>
+                {
+                    args.Cancel = !request.AcceptsNavigation(args.Uri);
+                    BrowserDiagnostics.Write(args.Cancel ? "navigation_blocked" : "navigation_started", args.Uri);
+                };
+                browser.CoreWebView2.SourceChanged += (_, _) =>
+                    BrowserDiagnostics.Write("source_changed", browser.CoreWebView2.Source);
+                browser.CoreWebView2.NavigationCompleted += (_, args) =>
+                    BrowserDiagnostics.Write("navigation_completed", browser.CoreWebView2.Source,
+                        args.IsSuccess ? "success" : args.WebErrorStatus.ToString());
+                browser.CoreWebView2.ProcessFailed += (_, args) =>
+                    BrowserDiagnostics.Write("browser_process_failed", status: args.ProcessFailedKind.ToString());
                 browser.CoreWebView2.NewWindowRequested += (_, args) =>
                 {
                     args.Handled = true;
+                    BrowserDiagnostics.Write(request.AcceptsNavigation(args.Uri) ? "popup_redirected" : "popup_blocked", args.Uri);
                     if (request.AcceptsNavigation(args.Uri)) browser.CoreWebView2.Navigate(args.Uri);
                 };
+                BrowserDiagnostics.Write("browser_ready", status: environment.BrowserVersionString);
                 timer.Tick += async (_, _) => await CaptureSession();
                 timer.Start();
                 browser.CoreWebView2.Navigate(request.url);
             }
-            catch
+            catch (Exception error)
             {
+                BrowserDiagnostics.Failure("browser_initialization_failed", error);
                 // SDK callers receive a failed/cancelled result, never native exception text.
                 Environment.ExitCode = 1;
                 Close();
@@ -87,16 +107,27 @@ internal sealed class BrowserForm : Form
         try
         {
             var source = browser.CoreWebView2.Source;
-            if (!request.CanCapture(source)) return;
+            if (!request.AcceptsNavigation(source)) return;
             var cookies = await browser.CoreWebView2.CookieManager.GetCookiesAsync(request.cookieUrl);
             var values = request.Capture(cookies.GroupBy(cookie => cookie.Name).ToDictionary(group => group.Key, group => group.Last().Value));
-            if (values == null) return;
-            using var output = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
-            output.Write(JsonSerializer.Serialize(new { values }));
+            var state = $"cookie_ready={values != null},capture_allowed={request.CanCapture(source)}";
+            if (captureState != state)
+            {
+                captureState = state;
+                BrowserDiagnostics.Write("session_state", source, state);
+            }
+            if (values == null || !request.CanCapture(source)) return;
+            if (resultSink != null) resultSink(values);
+            else
+            {
+                using var output = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
+                output.Write(JsonSerializer.Serialize(new { values }));
+            }
+            BrowserDiagnostics.Write("session_captured", source);
             browser.CoreWebView2.CookieManager.DeleteAllCookies();
             Close();
         }
-        catch { }
+        catch (Exception error) { BrowserDiagnostics.Failure("cookie_capture_failed", error); }
         finally { extracting = false; }
     }
 }

@@ -7,9 +7,12 @@ import kotlinx.serialization.json.Json
 import org.junit.Assume.assumeTrue
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class WindowsBrowserProcessTest {
     private val request =
@@ -58,4 +61,32 @@ class WindowsBrowserProcessTest {
         }
 
     private fun executable() = File(checkNotNull(System.getProperty("metrofuse.sdk.browserExecutable")))
+
+    @Test
+    fun helperFailuresReportDiagnosticsWithoutEchoingPrivateRequestData(): Unit =
+        runBlocking {
+            assumeTrue(System.getProperty("os.name").startsWith("Windows"))
+            val directory = Files.createTempDirectory("SDK browser diagnostic ").toFile()
+            val diagnostics = CopyOnWriteArrayList<String>()
+            try {
+                val requestFile = directory.resolve("request.json")
+                requestFile.writeText("{\"private\":\"fixture-private-value\",broken}", Charsets.UTF_8)
+                withTimeout(30_000) {
+                    assertFailsWith<IllegalStateException> {
+                        readSdkBrowserOutput(
+                            executable(),
+                            requestFile,
+                            "SDK",
+                            directory.resolve("profile"),
+                            validateOnly = true,
+                            onDiagnostic = diagnostics::add,
+                        )
+                    }
+                }
+                assertTrue(diagnostics.any { "event=startup_failed" in it })
+                assertFalse(diagnostics.any { "fixture-private-value" in it || "request.json" in it })
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
 }

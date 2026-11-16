@@ -17,6 +17,136 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class DesktopQueueRadioTest {
+    @Test
+    fun goingOfflineRemovesUnavailableAutomaticSongsAndKeepsExplicitQueuesAndDownloads() =
+        runBlocking {
+            val seed = song("seed")
+            val remote = song("remote").copy(queueSourceTitle = QUEUE_SOURCE_AUTO_MIX)
+            val download = song("download").copy(queueSourceTitle = QUEUE_SOURCE_AUTO_MIX)
+            val explicit = song("explicit")
+            val queue = MusicQueue().apply { setQueue(listOf(seed, remote, download, explicit)) }
+            var source = "online"
+            val radio =
+                DesktopQueueRadio(
+                    this,
+                    queue,
+                    {},
+                    radio = { page(listOf(song("local"))) },
+                    autoLoadMore = { true },
+                    sourceKey = { source },
+                    canPlayQueuedRecommendation = { source == "online" || it.id == "download" },
+                )
+            radio.syncQueue()
+            radio.sourceChanged()
+            source = "offline"
+            radio.sourceChanged()
+            assertEquals(listOf("seed", "download", "explicit"), queue.items.value.map { it.id })
+            assertEquals(0, queue.currentIndex.value)
+            radio.load(2, seed, false) { true }
+            assertEquals(listOf("seed", "download", "explicit", "local"), queue.items.value.map { it.id })
+        }
+
+    @Test
+    fun unusedRecommendationsAreBufferedUntilTheNextBatch() =
+        runBlocking {
+            val seed = song("seed")
+            val queue = MusicQueue().apply { setQueue(listOf(seed)) }
+            var starts = 0
+            var continuations = 0
+            val radio =
+                DesktopQueueRadio(
+                    this,
+                    queue,
+                    {},
+                    {
+                        starts++
+                        page(listOf(song("one"), song("two"), song("three"), song("four")), "more").copy(shuffleRecommendations = false)
+                    },
+                    { false },
+                    continueRadio = {
+                        continuations++
+                        page(listOf(song("five")))
+                    },
+                    autoLoadMore = { true },
+                )
+            radio.syncQueue()
+            radio.load(2, seed, false) { true }
+            radio.load(2, seed, false) { true }
+            assertEquals(listOf("seed", "one", "two", "three", "four"), queue.items.value.map { it.id })
+            assertEquals(1, starts)
+            assertEquals(0, continuations)
+            radio.load(2, seed, false) { true }
+            assertEquals(
+                "five",
+                queue.items.value
+                    .last()
+                    .id,
+            )
+            assertEquals(1, continuations)
+        }
+
+    @Test
+    fun switchingOfflineRejectsAnInFlightOnlinePageAndBuildsALocalQueue() =
+        runBlocking {
+            val seed = song("seed").copy(isLocal = true)
+            val queue = MusicQueue().apply { setQueue(listOf(seed)) }
+            val response = CompletableDeferred<RadioQueuePage>()
+            var source = "online"
+            val radio =
+                DesktopQueueRadio(
+                    this,
+                    queue,
+                    {},
+                    { if (source == "online") response.await() else page(listOf(song("local-one"), song("local-two"))) },
+                    { false },
+                    autoLoadMore = { true },
+                    sourceKey = { source },
+                )
+            radio.syncQueue()
+            val online = async { radio.load(4, seed, false) { true } }
+            yield()
+            source = "offline"
+            response.complete(page(listOf(song("remote-one"), song("remote-two")), "remote-page"))
+            assertNull(online.await())
+            assertEquals(listOf(seed), queue.items.value)
+            radio.load(4, seed, false) { true }
+            assertEquals(
+                setOf("seed", "local-one", "local-two"),
+                queue.items.value
+                    .map { it.id }
+                    .toSet(),
+            )
+        }
+
+    @Test
+    fun changingSourcesDiscardsBufferedOnlineTracks() =
+        runBlocking {
+            val seed = song("seed")
+            val queue = MusicQueue().apply { setQueue(listOf(seed)) }
+            var source = "online"
+            val radio =
+                DesktopQueueRadio(
+                    this,
+                    queue,
+                    {},
+                    { page(if (source == "online") listOf(song("remote-one"), song("remote-two")) else listOf(song("local"))) },
+                    { false },
+                    autoLoadMore = { true },
+                    sourceKey = { source },
+                )
+            radio.syncQueue()
+            radio.load(1, seed, false) { true }
+            source = "offline"
+            radio.load(1, seed, false) { true }
+            assertEquals(
+                "local",
+                queue.items.value
+                    .last()
+                    .id,
+            )
+            assertEquals(3, queue.items.value.size)
+        }
+
     private fun song(id: String) = SongItem(id = id, title = id, artists = emptyList(), thumbnail = null, album = null)
 
     private fun page(

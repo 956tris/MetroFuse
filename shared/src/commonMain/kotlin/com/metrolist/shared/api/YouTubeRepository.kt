@@ -47,6 +47,7 @@ import com.metrolist.shared.db.isAvailableOffline
 import com.metrolist.shared.db.loadOfflineAlbum
 import com.metrolist.shared.db.loadOfflineArtist
 import com.metrolist.shared.db.loadOfflinePlaylist
+import com.metrolist.shared.db.loadOfflineRadio
 import com.metrolist.shared.db.removeUnavailableRemotePlaylist
 import com.metrolist.shared.db.searchOfflineMedia
 import com.metrolist.shared.db.storeAlbumPage
@@ -80,6 +81,7 @@ import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.model.isEditablePlaylistId
 import com.metrolist.shared.model.isLive
 import com.metrolist.shared.model.isPodcast
+import com.metrolist.shared.model.librarySearchKey
 import com.metrolist.shared.model.parseDisplayCount
 import com.metrolist.shared.model.toSongItem
 import com.metrolist.shared.playlist.LibraryDeletionTracker
@@ -87,6 +89,7 @@ import com.metrolist.shared.playlist.PlaylistChanges
 import com.metrolist.shared.plugins.PluginServices
 import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.pluginLibraryAccountKey
 import com.metrolist.shared.plugins.pluginSearchMatches
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.state.SongLikeState
@@ -560,7 +563,11 @@ class YouTubeRepository(
             YouTubeDataPage(emptyList())
         }
 
-    suspend fun getCompleteLibraryItemsResult(force: Boolean = true): LibraryItemsResult {
+    suspend fun getCompleteLibraryItemsResult(
+        force: Boolean = true,
+        onPage: suspend (LibraryItemsResult) -> Unit = {},
+    ): LibraryItemsResult {
+        if (usesProviderCatalog || effectiveMusicFrontendOwner().isNotEmpty()) return getPluginLibraryItems(onPage)
         val requestSession = innerTube.sessionSnapshot()
         if (!innerTube.hasSapCookieAuth(requestSession)) return LibraryItemsResult(emptyList(), complete = true)
         val results =
@@ -633,6 +640,64 @@ class YouTubeRepository(
             unresolvedPlaylistEditabilityIds = unresolvedPlaylistEditabilityIds,
             uploadedSongs = uploadedSongs,
         )
+    }
+
+    internal suspend fun getPluginLikedSongs(onProgress: (List<SongItem>) -> Unit): List<SongItem>? {
+        val result = getPluginLibraryItems({ onProgress(it.items.filterIsInstance<SongItem>()) }, likedSongsOnly = true)
+        return result.items.filterIsInstance<SongItem>().takeIf { result.complete }
+    }
+
+    private suspend fun getPluginLibraryItems(
+        onPage: suspend (LibraryItemsResult) -> Unit,
+        likedSongsOnly: Boolean = false,
+    ): LibraryItemsResult {
+        val owner =
+            effectiveMusicFrontendOwner().takeIf(String::isNotEmpty)
+                ?: return LibraryItemsResult(emptyList(), complete = true)
+        val accountKey = pluginLibraryAccountKey(owner)
+        if (PluginServicesStore.libraryAccounts.value[owner]?.loggedIn == false) {
+            return LibraryItemsResult(emptyList(), complete = true)
+        }
+        val services = PluginServicesStore.current ?: return LibraryItemsResult(emptyList(), complete = true)
+        services.awaitReady()
+        val items = linkedMapOf<String, YTItem>()
+        val seen = mutableSetOf<String>()
+        var continuation: String? = null
+        var complete = true
+
+        fun requireCurrentAccount() {
+            if (owner != effectiveMusicFrontendOwner() || accountKey != pluginLibraryAccountKey(owner)) {
+                throw CancellationException("Library source changed")
+            }
+        }
+        repeat(1000) {
+            requireCurrentAccount()
+            val page =
+                try {
+                    if (likedSongsOnly) services.likedSongs(continuation) else services.library(continuation)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Exception) {
+                    YtLogger.e(TAG, "Plugin library failed type=${error::class.simpleName}")
+                    return LibraryItemsResult(items.values.toList(), complete = false)
+                }
+            requireCurrentAccount()
+            if (page ==
+                null
+            ) {
+                return LibraryItemsResult(items.values.toList(), complete = !likedSongsOnly && continuation == null && complete)
+            }
+            page.items.forEach { items[it.librarySearchKey()] = it }
+            complete = complete && page.complete
+            val next = page.continuation?.takeIf(String::isNotBlank)
+            val repeated = next != null && !seen.add(next)
+            val result = LibraryItemsResult(items.values.toList(), complete = complete && next == null && !repeated)
+            onPage(result)
+            requireCurrentAccount()
+            if (next == null || repeated) return result
+            continuation = next
+        }
+        return LibraryItemsResult(items.values.toList(), complete = false)
     }
 
     private suspend fun getAllBrowseItems(
@@ -1851,13 +1916,50 @@ class YouTubeRepository(
         }
     }
 
-    suspend fun likeVideo(videoId: String): Boolean =
-        runSongVote { session -> innerTube.likeVideo(YouTubeClient.WEB_REMIX, videoId, session) }
+    fun canSyncSongVotes(): Boolean =
+        if (usePluginCatalog()) PluginServicesStore.current?.canSyncSongVotes == true else isYouTubeHistoryAvailable()
+
+    suspend fun likeVideo(videoId: String): Boolean = voteSong(videoId, SongVote.LIKE)
+
+    private suspend fun voteSong(
+        videoId: String,
+        vote: SongVote,
+    ): Boolean {
+        if (usePluginCatalog()) return PluginServicesStore.current?.setSongVote(videoId, vote) == true
+        return runSongVote { session ->
+            when (vote) {
+                SongVote.LIKE -> innerTube.likeVideo(YouTubeClient.WEB_REMIX, videoId, session)
+                SongVote.DISLIKE -> innerTube.dislikeVideo(YouTubeClient.WEB_REMIX, videoId, session)
+                SongVote.INDIFFERENT -> innerTube.unlikeVideo(YouTubeClient.WEB_REMIX, videoId, session)
+            }
+        }
+    }
 
     internal suspend fun likeVideos(
         videoIds: List<String>,
         onLiked: suspend (String) -> Unit = {},
     ): SongVoteBatchResult {
+        if (usePluginCatalog()) {
+            val authenticated = canSyncSongVotes()
+            val succeeded = mutableListOf<String>()
+            if (authenticated) {
+                videoIds.forEach { id ->
+                    val success =
+                        try {
+                            likeVideo(id)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (_: Exception) {
+                            false
+                        }
+                    if (success) {
+                        onLiked(id)
+                        succeeded += id
+                    }
+                }
+            }
+            return SongVoteBatchResult(authenticated, succeeded)
+        }
         val requestSession = innerTube.sessionSnapshot()
         if (!innerTube.hasSapCookieAuth(requestSession)) {
             return SongVoteBatchResult(
@@ -1889,11 +1991,9 @@ class YouTubeRepository(
         return SongVoteBatchResult(authenticated = true, succeededIds = succeeded)
     }
 
-    suspend fun dislikeVideo(videoId: String): Boolean =
-        runSongVote { session -> innerTube.dislikeVideo(YouTubeClient.WEB_REMIX, videoId, session) }
+    suspend fun dislikeVideo(videoId: String): Boolean = voteSong(videoId, SongVote.DISLIKE)
 
-    suspend fun unlikeVideo(videoId: String): Boolean =
-        runSongVote { session -> innerTube.unlikeVideo(YouTubeClient.WEB_REMIX, videoId, session) }
+    suspend fun unlikeVideo(videoId: String): Boolean = voteSong(videoId, SongVote.INDIFFERENT)
 
     suspend fun deleteUploadedSong(entityId: String): Boolean =
         try {
@@ -2476,15 +2576,49 @@ class YouTubeRepository(
         playlistId: String = "RDAMVM$videoId",
         params: String? = null,
     ): RadioQueuePage {
-        if (usesProviderCatalog || videoId.startsWith("metrofuse:")) return RadioQueuePage(emptyList(), emptyList())
+        if (!PlaybackNetworkStateStore.current.connected ||
+            (usesProviderCatalog && effectiveMusicFrontendOwner().isEmpty()) ||
+            videoId.startsWith("file:", ignoreCase = true) || databaseProvider()
+                ?.dao()
+                ?.getSongById(videoId)
+                ?.song
+                ?.isLocal == true
+        ) {
+            return offlineRadioQueue(videoId)
+        }
+        if (usesProviderCatalog || videoId.startsWith("metrofuse:")) {
+            val page = providerRadioQueue { it.startRadioQueue(videoId) }
+            return page?.takeIf { it.songs.isNotEmpty() || it.continuation != null } ?: offlineRadioQueue(videoId)
+        }
         val page = parseRadioQueueResponse(nextResponse(videoId, playlistId, params))
         return page.copy(songs = BlockedContent.filterSongs(page.songs))
     }
 
     suspend fun continueRadioQueue(continuation: String): RadioQueuePage {
-        if (usesProviderCatalog) return RadioQueuePage(emptyList(), emptyList())
+        if (!PlaybackNetworkStateStore.current.connected || (usesProviderCatalog && effectiveMusicFrontendOwner().isEmpty())) {
+            return offlineRadioQueue()
+        }
+        if (usesProviderCatalog || continuation.startsWith("metrofuse-radio:")) {
+            val page = providerRadioQueue { it.continueRadioQueue(continuation) }
+            return page?.takeIf { it.songs.isNotEmpty() || it.continuation != null } ?: offlineRadioQueue()
+        }
         val page = parseRadioQueueResponse(nextResponse(continuation = continuation))
         return page.copy(songs = BlockedContent.filterSongs(page.songs))
+    }
+
+    private suspend fun providerRadioQueue(request: suspend (PluginServices) -> RadioQueuePage?): RadioQueuePage? =
+        try {
+            providerCatalogLookup(request)?.let { it.copy(songs = BlockedContent.filterSongs(it.songs)) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            YtLogger.w(TAG, "Provider recommendations failed type=${error::class.simpleName}")
+            null
+        }
+
+    private suspend fun offlineRadioQueue(seedId: String? = null): RadioQueuePage {
+        val available = offlineSongAvailabilityProvider()?.songIds()
+        return databaseProvider()?.loadOfflineRadio(seedId, available) ?: RadioQueuePage(emptyList(), emptyList())
     }
 
     suspend fun getMusicVideoCounterpart(

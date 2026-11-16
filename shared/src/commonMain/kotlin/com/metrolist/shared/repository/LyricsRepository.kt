@@ -8,6 +8,7 @@ import com.metrolist.shared.api.lyrics.LyricsFetcher
 import com.metrolist.shared.api.lyrics.LyricsTranslationClient
 import com.metrolist.shared.api.lyrics.LyricsTranslationFailure
 import com.metrolist.shared.api.lyrics.LyricsUtils
+import com.metrolist.shared.api.lyrics.METROFUSE_LYRICS_SOURCE_FORMAT
 import com.metrolist.shared.api.lyrics.MusicVideoLyricsRetimer
 import com.metrolist.shared.api.lyrics.YouTubeLyricsApi
 import com.metrolist.shared.api.lyrics.YouTubeLyricsProvider
@@ -29,14 +30,14 @@ import com.metrolist.shared.model.MlxDocument
 import com.metrolist.shared.model.MlxSong
 import com.metrolist.shared.model.WordTimestamp
 import com.metrolist.shared.model.lyricsProviderLabel
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTube
-import com.metrolist.shared.plugins.PluginServicesStore
-import com.metrolist.shared.youtube.playback.PlaybackNetworkStateStore
 import com.metrolist.shared.utils.getSystemLanguage
 import com.metrolist.shared.utils.systemCountryCode
 import com.metrolist.shared.youtube.playback.PlaybackEventKind
 import com.metrolist.shared.youtube.playback.PlaybackEventLog
+import com.metrolist.shared.youtube.playback.PlaybackNetworkStateStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +78,13 @@ private val VIDEO_SPECIFIC_LYRICS_PROVIDERS =
 // Keep saved lyrics from retired providers available offline.
 private fun isRetiredLyricsProvider(provider: String): Boolean =
     provider.equals("LyricsPlus", ignoreCase = true) || provider.equals("Zemer", ignoreCase = true)
+
+internal fun needsMetroFuseLyricsRefresh(lyrics: LyricsEntity): Boolean {
+    if (!lyrics.provider.equals("MetroFuse", ignoreCase = true)) return false
+    val document = LyricsUtils.parseMlxDocument(lyrics.lyrics) ?: return false
+    return document.meta.sourceFormat != METROFUSE_LYRICS_SOURCE_FORMAT &&
+        lyricsTimingKind(document.lines) == LyricsTimingKind.WORD_SYNCED
+}
 
 private fun configuredLyricsProviders(): List<LyricsProvider> =
     LyricsProvider.preferredProvidersForFetch(
@@ -382,7 +390,7 @@ class LyricsRepository(
                 preferVideoProviders,
             )
         val fetchOrder = lookupKey.providers
-        val cachedLyrics =
+        val initialCachedLyrics =
             databaseDao?.cachedLyrics(videoId)?.let { cached ->
                 if (skipCache && cached.provider == LyricsEntity.LYRICS_NOT_FOUND) {
                     databaseDao.cacheLyricsIfUnchanged(cached.copy(missLookupKey = null, missExpiresAt = null), cached)
@@ -390,16 +398,53 @@ class LyricsRepository(
                     cached
                 }
             }
+        // Early API conversions discarded line separators, so those cached words need a fresh response.
+        val cachedLyrics =
+            if (!skipCache && initialCachedLyrics != null && PlaybackNetworkStateStore.current.connected &&
+                (initialCachedLyrics.isUserSelected || providerPriority(initialCachedLyrics.provider, providers) != Int.MAX_VALUE) &&
+                needsMetroFuseLyricsRefresh(initialCachedLyrics)
+            ) {
+                val refreshed =
+                    fetchProviderLyrics(
+                        lookupVideoId,
+                        title,
+                        artist,
+                        duration,
+                        album,
+                        LyricsProvider.METROFUSE,
+                        isVideoContext = isVideoContext,
+                    ).lyrics.firstOrNull { usableProviderLyrics(LyricsUtils.parseLyrics(it.lyrics)) }
+                if (refreshed == null) {
+                    initialCachedLyrics
+                } else {
+                    databaseDao?.cacheLyricsIfUnchanged(
+                        LyricsEntity(
+                            id = videoId,
+                            lyrics = refreshed.lyrics,
+                            provider = refreshed.provider,
+                            offsetMs = initialCachedLyrics.offsetMs,
+                            isUserSelected = initialCachedLyrics.isUserSelected,
+                        ),
+                        expected = initialCachedLyrics,
+                    ) ?: initialCachedLyrics
+                }
+            } else {
+                initialCachedLyrics
+            }
         val pluginServices = PluginServicesStore.current
         if (!skipCache && cachedMissExpiry(cachedLyrics, lookupKey) != null && pluginServices?.hasLyricsProviders != true) return null
         val cachedResult = cachedLyricsResult(cachedLyrics, providers)
         if (!skipCache && cachedResult != null &&
             (
                 cachedResult.isUserSelected || isLocalLyricsProvider(cachedResult.provider) ||
-                    (pluginServices?.isLyricsProviderEnabled(cachedResult.provider) == true && !PlaybackNetworkStateStore.current.connected) ||
+                    (
+                        pluginServices?.isLyricsProviderEnabled(
+                            cachedResult.provider,
+                        ) == true && !PlaybackNetworkStateStore.current.connected
+                    ) ||
                     (
                         pluginServices?.hasLyricsProviders != true &&
-                        providerPriority(cachedResult.provider, providers) == 0 &&
+                            providerPriority(cachedResult.provider, providers) == 0 &&
                             lyricsTimingKind(LyricsUtils.parseLyrics(cachedResult.lyrics)) >= preferredTiming
                     )
             )
@@ -409,10 +454,11 @@ class LyricsRepository(
 
         pluginServices?.lyrics(videoId, title, artist, duration)?.let { pluginLyrics ->
             if (usableProviderLyrics(LyricsUtils.parseLyrics(pluginLyrics.lyrics))) {
-                val stored = databaseDao?.cacheLyricsIfUnchanged(
-                    LyricsEntity(videoId, pluginLyrics.lyrics, provider = pluginLyrics.provider, offsetMs = savedLyricsOffset(videoId)),
-                    expected = cachedLyrics,
-                )
+                val stored =
+                    databaseDao?.cacheLyricsIfUnchanged(
+                        LyricsEntity(videoId, pluginLyrics.lyrics, provider = pluginLyrics.provider, offsetMs = savedLyricsOffset(videoId)),
+                        expected = cachedLyrics,
+                    )
                 val accepted = cachedLyricsResult(stored, providers) ?: pluginLyrics
                 onLyricsAvailable(accepted)
                 return accepted

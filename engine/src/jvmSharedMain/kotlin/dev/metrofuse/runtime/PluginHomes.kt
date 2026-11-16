@@ -1,6 +1,8 @@
 package dev.metrofuse.runtime
 
 import dev.metrofuse.api.HomeItem
+import dev.metrofuse.api.HomeLayout
+import dev.metrofuse.api.HomePage
 import dev.metrofuse.api.HomeRequest
 import dev.metrofuse.api.HomeShelf
 import dev.metrofuse.api.Track
@@ -22,6 +24,9 @@ data class PluginHomeState(
     val loading: Boolean = false,
     val error: Boolean = false,
     val loaded: Boolean = false,
+    val continuation: String? = null,
+    val loadingMore: Boolean = false,
+    val loadMoreError: Boolean = false,
 )
 
 /** One activation-owned request and cache per source. Offline never enters this registry. */
@@ -34,9 +39,10 @@ class PluginHomes(
 
     private class Binding(
         val scope: CoroutineScope,
-        val getHome: suspend (HomeRequest) -> List<HomeShelf>,
+        val getPage: suspend (HomeRequest, String?) -> HomePage,
     ) {
         val revision = AtomicLong()
+        val seenContinuations = ConcurrentHashMap.newKeySet<String>()
         var request: HomeRequest? = null
         var job: Job? = null
     }
@@ -44,9 +50,14 @@ class PluginHomes(
     fun bind(
         owner: String,
         getHome: suspend (HomeRequest) -> List<HomeShelf>,
+    ) = bindPaged(owner) { request, _ -> HomePage(getHome(request)) }
+
+    fun bindPaged(
+        owner: String,
+        getPage: suspend (HomeRequest, String?) -> HomePage,
     ) {
         unbind(owner)
-        bindings[owner] = Binding(CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])), getHome)
+        bindings[owner] = Binding(CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job])), getPage)
         pages.update { it + (owner to PluginHomeState()) }
     }
 
@@ -78,13 +89,15 @@ class PluginHomes(
         binding.job?.cancel()
         val revision = binding.revision.incrementAndGet()
         binding.request = request
-        update(owner, binding, revision) { it.copy(loading = true, error = false) }
+        binding.seenContinuations.clear()
+        update(owner, binding, revision) { it.copy(loading = true, error = false, loadingMore = false, loadMoreError = false) }
         binding.job =
             binding.scope.launch {
                 try {
-                    val shelves = withTimeout(timeoutMs) { binding.getHome(request) }
-                    validateHome(shelves)
-                    update(owner, binding, revision) { PluginHomeState(shelves, loaded = true) }
+                    val page = withTimeout(timeoutMs) { binding.getPage(request, null) }
+                    validateHome(page.shelves)
+                    val continuation = nextContinuation(binding, page.continuation, page.shelves)
+                    update(owner, binding, revision) { PluginHomeState(page.shelves, loaded = true, continuation = continuation) }
                 } catch (error: CancellationException) {
                     if (error !is TimeoutCancellationException) throw error
                     update(owner, binding, revision) { it.copy(loading = false, error = true) }
@@ -92,6 +105,44 @@ class PluginHomes(
                     update(owner, binding, revision) { it.copy(loading = false, error = true) }
                 }
             }
+    }
+
+    @Synchronized
+    fun loadMore(owner: String) {
+        val binding = bindings[owner] ?: return
+        val previous = pages.value[owner] ?: return
+        val request = binding.request ?: return
+        val continuation = previous.continuation ?: return
+        if (!previous.loaded || previous.loading || previous.loadingMore) return
+        val revision = binding.revision.get()
+        update(owner, binding, revision) { it.copy(loadingMore = true, loadMoreError = false) }
+        binding.job =
+            binding.scope.launch {
+                try {
+                    val page = withTimeout(timeoutMs) { binding.getPage(request, continuation) }
+                    validateHome(page.shelves)
+                    val shelves = mergeHomeShelves(previous.shelves, page.shelves)
+                    val next = nextContinuation(binding, page.continuation, shelves)
+                    update(owner, binding, revision) {
+                        it.copy(shelves = shelves, continuation = next, loadingMore = false, loadMoreError = false)
+                    }
+                } catch (cancelled: CancellationException) {
+                    if (cancelled !is TimeoutCancellationException) throw cancelled
+                    update(owner, binding, revision) { it.copy(loadingMore = false, loadMoreError = true) }
+                } catch (_: Throwable) {
+                    update(owner, binding, revision) { it.copy(loadingMore = false, loadMoreError = true) }
+                }
+            }
+    }
+
+    private fun nextContinuation(
+        binding: Binding,
+        continuation: String?,
+        shelves: List<HomeShelf>,
+    ): String? {
+        require((continuation?.length ?: 0) <= 16_384)
+        if (shelves.size >= 60 || shelves.sumOf { it.items.size } >= 1000) return null
+        return continuation?.takeIf { it.isNotBlank() && binding.seenContinuations.add(it) }
     }
 
     private fun update(
@@ -107,6 +158,28 @@ class PluginHomes(
                 current + (owner to transform(current[owner] ?: PluginHomeState()))
             }
         }
+    }
+}
+
+internal fun mergeHomeShelves(
+    existing: List<HomeShelf>,
+    additional: List<HomeShelf>,
+): List<HomeShelf> {
+    fun HomeItem.identity(): String =
+        track?.let { "track:${it.id}" } ?: album?.let { "album:${it.id}" }
+            ?: artist?.let { "artist:${it.id}" } ?: "playlist:${playlist?.id}"
+
+    val shelves = linkedMapOf<Pair<String, HomeLayout>, HomeShelf>()
+    for (shelf in existing + additional) {
+        val key = shelf.title to shelf.layout
+        val previous = shelves[key]
+        shelves[key] = shelf.copy(items = (previous?.items.orEmpty() + shelf.items).distinctBy { it.identity() })
+    }
+    var remaining = 1000
+    return shelves.values.take(60).mapNotNull { shelf ->
+        val items = shelf.items.take(minOf(100, remaining))
+        remaining -= items.size
+        items.takeIf { it.isNotEmpty() }?.let { shelf.copy(items = it) }
     }
 }
 

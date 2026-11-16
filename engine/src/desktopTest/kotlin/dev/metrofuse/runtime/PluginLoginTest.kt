@@ -2,6 +2,8 @@ package dev.metrofuse.runtime
 
 import androidx.compose.runtime.Composable
 import dev.metrofuse.api.LoginCredentials
+import dev.metrofuse.api.LoginField
+import dev.metrofuse.api.LoginRequest
 import dev.metrofuse.api.LoginUiContext
 import dev.metrofuse.api.Manifest
 import dev.metrofuse.api.NativeLoginUi
@@ -31,6 +33,61 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class PluginLoginTest {
+    @Test
+    fun signingInAgainWithTheSameDisplayNameStillInvalidatesTheAccountRevision() =
+        runBlocking<Unit> {
+            val credentials =
+                object : CredentialStore {
+                    override suspend fun read(owner: String): LoginCredentials? = null
+
+                    override suspend fun write(
+                        owner: String,
+                        credentials: LoginCredentials?,
+                    ) {}
+                }
+            val logins = PluginLogins(this, credentials)
+            val owner = "fixture.account"
+            try {
+                logins.bind(
+                    owner,
+                    "activation",
+                    MutableStateFlow(PluginLoginState()),
+                    request = { LoginRequest(listOf(LoginField("token", "Token"))) },
+                    login = { PluginLoginState(loggedIn = true, accountName = "Same display name") },
+                    logout = {},
+                )
+                var revision =
+                    logins.states.value
+                        .getValue(owner)
+                        .revision
+                repeat(2) {
+                    logins.request(owner)
+                    withTimeout(1000) { logins.prompt.first { it?.owner == owner } }
+                    logins.submit(owner, mapOf("token" to "fixture-$it"))
+                    val account =
+                        withTimeout(1000) {
+                            logins.states.first {
+                                it[owner]?.let { state -> !state.busy && state.account.loggedIn && state.revision > revision } ==
+                                    true
+                            }
+                        }.getValue(owner)
+                    assertTrue(account.revision > revision)
+                    revision = account.revision
+                }
+                logins.logout(owner)
+                val signedOut =
+                    withTimeout(1000) {
+                        logins.states.first {
+                            it[owner]?.let { state -> !state.busy && !state.account.loggedIn && state.revision > revision } ==
+                                true
+                        }
+                    }.getValue(owner)
+                assertFalse(signedOut.account.loggedIn)
+            } finally {
+                logins.unbind(owner)
+            }
+        }
+
     @Test
     fun accountUiFailureAndTimeoutFinishWithSanitizedState() =
         runBlocking<Unit> {

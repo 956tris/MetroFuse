@@ -17,10 +17,10 @@ import com.metrolist.shared.playlist.LibraryDeletionTracker
 import com.metrolist.shared.playlist.createStoredLocalPlaylist
 import com.metrolist.shared.playlist.deleteStoredPlaylist
 import com.metrolist.shared.playlist.renameStoredPlaylist
+import com.metrolist.shared.plugins.MetroFuseHost
 import com.metrolist.shared.settings.BlockedContent
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTubeRepository
-import com.metrolist.shared.viewmodels.LibraryViewModel
 import com.metrolist.shared.youtube.logging.YtLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -62,11 +62,10 @@ internal class UserPlaylistSourceCache {
 object LibraryContentState {
     private val database: MusicDatabase by lazy { GlobalContext.get().get() }
     private val libraryViewModel =
-        LibraryViewModel(
+        MetroFuseHost.libraryViewModel(
             AppState.scope,
             database,
             DownloadManager.downloadStates.map { states -> states.filterValues { it == DownloadState.DOWNLOADED }.keys },
-            useUpstreamLibrary = false,
         )
     var librarySections by mutableStateOf<Map<String, List<YTItem>>>(emptyMap())
         private set

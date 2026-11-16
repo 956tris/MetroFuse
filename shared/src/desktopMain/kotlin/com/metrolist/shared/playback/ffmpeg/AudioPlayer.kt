@@ -1,5 +1,6 @@
 package com.metrolist.shared.playback.ffmpeg
 
+import com.metrolist.shared.playback.PlaybackAudioFormat
 import com.metrolist.shared.playback.SeekableMediaSource
 import com.metrolist.shared.playback.instantSilenceSeekTarget
 import java.io.InputStream
@@ -21,6 +22,9 @@ class AudioPlayer(
 ) {
     @Volatile
     private var decoder: AudioDecoder? = null
+
+    val audioFormat: PlaybackAudioFormat?
+        get() = decoder?.audioFormat
 
     @Volatile
     private var renderer: AudioRenderer? = null

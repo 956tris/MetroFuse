@@ -900,6 +900,9 @@ class HomeViewModel(
                 libraryRefreshGeneration = request.refresh,
                 data = page.sections,
                 sections = page.sections,
+                continuation = page.continuation,
+                isLoadingMore = page.loadingMore,
+                loadMoreError = page.loadMoreError,
                 isLoading = !page.loaded && !page.error,
                 isRefreshing = page.loading && page.loaded,
                 error = if (page.error) getString(Res.string.home_load_failed) else null,
@@ -1023,7 +1026,13 @@ class HomeViewModel(
     )
 
     fun loadMoreSections() {
-        if (!useUpstreamDiscovery) return
+        if (!useUpstreamDiscovery) {
+            val owner = effectiveMusicFrontendOwner()
+            if (owner.isNotEmpty() && _uiState.value.continuation != null && !_uiState.value.isLoadingMore) {
+                PluginServicesStore.current?.loadMoreHome(owner)
+            }
+            return
+        }
         val continuation = _uiState.value.continuation
         if (!paginationInProgress.compareAndSet(false, true)) return
         if (continuation == null) {

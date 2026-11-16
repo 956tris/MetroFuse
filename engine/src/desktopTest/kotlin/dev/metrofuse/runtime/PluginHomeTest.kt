@@ -33,6 +33,40 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PluginHomeTest {
+    @Test
+    fun realQuickJsHomePagesKeepOwnershipAndReceiveTheContinuation() =
+        runBlocking {
+            fixture { runtime ->
+                install(
+                    runtime,
+                    "fixture.paged",
+                    "return request.continuation ? {shelves:[{title:'Mixes',items:[{playlist:{id:'mix',title:'Mix',author:''}}]}]} : {shelves:[{title:'Quick picks',items:[{track:{id:'one',title:'One',artist:'',album:''}}]}],continuation:'home-page'}",
+                )
+                runtime.enable("fixture.paged")
+                runtime.homes.refresh("fixture.paged", request)
+                val first =
+                    withTimeout(
+                        5000,
+                    ) { runtime.homes.pages.first { it["fixture.paged"]?.loaded == true } }.getValue("fixture.paged")
+                assertEquals("home-page", first.continuation)
+                runtime.homes.loadMore("fixture.paged")
+                val next =
+                    withTimeout(
+                        5000,
+                    ) { runtime.homes.pages.first { it["fixture.paged"]?.shelves?.size == 2 } }.getValue("fixture.paged")
+                assertEquals(
+                    "metrofuse:fixture.paged:mix",
+                    next.shelves
+                        .last()
+                        .items
+                        .single()
+                        .playlist!!
+                        .id,
+                )
+                assertTrue(next.continuation == null)
+            }
+        }
+
     private val request = HomeRequest(Locale.getDefault().language, Locale.getDefault().country)
     private val shelf = HomeShelf("Rows", listOf(HomeItem(track = Track("one", "One", "", ""))), HomeLayout.ROWS_GRID)
 
@@ -230,7 +264,9 @@ class PluginHomeTest {
                 capabilities = if (capability) listOf("home") else listOf("catalog"),
                 home = HomeSourceMetadata(title = "Home fixture"),
             )
-        val script = "globalThis.plugin={init(host){host.home(async request=>{$body});host.action('crash',()=>{throw Error('fixture crash')});}};"
+        val script =
+            "globalThis.plugin={init(host){host.home(async request=>{$body});" +
+                "host.action('crash',()=>{throw Error('fixture crash')});}};"
         val bytes =
             ByteArrayOutputStream().use { output ->
                 ZipOutputStream(output).use { zip ->

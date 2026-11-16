@@ -1,15 +1,11 @@
 package com.metrolist.shared.plugins
 
-import com.metrolist.shared.db.MusicDatabase
-import com.metrolist.shared.db.entities.toSongItem
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.flowOn
-import kotlinx.coroutines.flow.map
 import androidx.compose.runtime.snapshotFlow
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.BuildConfig
+import com.metrolist.shared.api.SongVote
+import com.metrolist.shared.db.MusicDatabase
+import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.model.AlbumItem
 import com.metrolist.shared.model.AlbumPage
 import com.metrolist.shared.model.AlbumTiny
@@ -24,14 +20,17 @@ import com.metrolist.shared.model.MlxMeta
 import com.metrolist.shared.model.MlxSong
 import com.metrolist.shared.model.PlaylistItem
 import com.metrolist.shared.model.PluginHomeLayout
+import com.metrolist.shared.model.RadioQueuePage
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.WordTimestamp
 import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.state.SongLikeState
 import com.metrolist.shared.ui.navigation.Navigator
 import com.metrolist.shared.ui.navigation.Screen
 import com.metrolist.shared.ui.playback.PlaybackController
 import com.metrolist.shared.utils.Logger
+import com.metrolist.shared.viewmodels.LibraryViewModel
 import com.metrolist.shared.youtube.playback.PlaybackResource
 import dev.metrofuse.api.AudioQuery
 import dev.metrofuse.api.CatalogAlbum
@@ -42,20 +41,23 @@ import dev.metrofuse.api.HomeRequest
 import dev.metrofuse.api.HostLogger
 import dev.metrofuse.api.HostNavigation
 import dev.metrofuse.api.HostServices
-import dev.metrofuse.api.UiLibraryHost
-import dev.metrofuse.api.UiLocalSearch
-import dev.metrofuse.api.UiPlaybackControls
 import dev.metrofuse.api.HostSettings
+import dev.metrofuse.api.LibraryRequest
 import dev.metrofuse.api.LyricsRequest
 import dev.metrofuse.api.PlaybackState
 import dev.metrofuse.api.Player
 import dev.metrofuse.api.QualityPreference
 import dev.metrofuse.api.QualityPreset
 import dev.metrofuse.api.SearchRequest
+import dev.metrofuse.api.SongVoteRequest
 import dev.metrofuse.api.StreamTransport
 import dev.metrofuse.api.Track
 import dev.metrofuse.api.TrackCatalog
 import dev.metrofuse.api.TrackIdentity
+import dev.metrofuse.api.TrackVote
+import dev.metrofuse.api.UiLibraryHost
+import dev.metrofuse.api.UiLocalSearch
+import dev.metrofuse.api.UiPlaybackControls
 import dev.metrofuse.runtime.CredentialStore
 import dev.metrofuse.runtime.MetadataMapping
 import dev.metrofuse.runtime.Runtime
@@ -69,10 +71,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -97,16 +104,42 @@ object MetroFuseHost : PluginServices {
     private val playlists = ConcurrentHashMap<String, CatalogPlaylist>()
     private var platform = "desktop"
     private var libraryDatabase: MusicDatabase? = null
+    private var sharedLibraryViewModel: LibraryViewModel? = null
 
     fun attachLibrary(database: MusicDatabase) {
         libraryDatabase = database
     }
 
-    internal fun library(offset: Int, limit: Int): Flow<List<Track>> =
-        libraryDatabase?.dao()?.songsByNameAsc(limit.coerceIn(1, 200), offset.coerceAtLeast(0))
-            ?.map { songs -> songs.map { it.toSongItem().also(::remember).toPluginTrack() } }
-            ?.flowOn(Dispatchers.Default) ?: flowOf(emptyList())
+    @Synchronized
+    fun libraryViewModel(
+        scope: CoroutineScope,
+        database: MusicDatabase,
+        downloadedSongIds: Flow<Set<String>>? = null,
+    ): LibraryViewModel =
+        sharedLibraryViewModel ?: LibraryViewModel(
+            hostScope ?: scope,
+            database,
+            downloadedSongIds,
+            useUpstreamLibrary = false,
+        ).also { sharedLibraryViewModel = it }
 
+    internal fun library(
+        offset: Int,
+        limit: Int,
+    ): Flow<List<Track>> =
+        libraryDatabase?.let { database ->
+            val model = libraryViewModel(checkNotNull(hostScope), database)
+            model.setActive(true)
+            model.refresh(force = false)
+            model.uiState
+                .map { state ->
+                    state.items
+                        .filterIsInstance<SongItem>()
+                        .drop(offset.coerceAtLeast(0))
+                        .take(limit.coerceIn(1, 200))
+                        .map { it.also(::remember).toPluginTrack() }
+                }.flowOn(Dispatchers.Default)
+        } ?: flowOf(emptyList())
 
     val runtime: Runtime get() = checkNotNull(engine) { "Plugin host has not been configured" }
     val isConfigured: Boolean get() = engine != null
@@ -128,12 +161,18 @@ object MetroFuseHost : PluginServices {
         hostScope = scope
         val services =
             object : HostServices, UiLibraryHost, UiLocalSearch {
-                override suspend fun searchLibrary(query: String, limit: Int): List<Track> =
+                override suspend fun searchLibrary(
+                    query: String,
+                    limit: Int,
+                ): List<Track> =
                     libraryDatabase?.dao()?.searchSongs(query, limit)?.first().orEmpty().map { entry ->
                         entry.toSongItem().also(::remember).toPluginTrack()
                     }
 
-                override fun library(offset: Int, limit: Int) = MetroFuseHost.library(offset, limit)
+                override fun library(
+                    offset: Int,
+                    limit: Int,
+                ) = MetroFuseHost.library(offset, limit)
 
                 override val playback = playbackAdapter
                 override val navigation = MetroFuseHost.navigation
@@ -166,6 +205,15 @@ object MetroFuseHost : PluginServices {
             }
         engine = Runtime(directory, platform, scope, services, hostVersion = BuildConfig.APP_VERSION, credentialStore = credentialStore)
         PluginServicesStore.current = this
+        SongLikeState.initialize()
+        scope.launch {
+            runtime.libraryAccounts.collect { accounts ->
+                PluginServicesStore.libraryAccounts.value =
+                    accounts.mapValues { (_, state) ->
+                        PluginLibraryAccount(state.revision, state.account.loggedIn, state.busy)
+                    }
+            }
+        }
         scope.launch {
             ready.await()
             combine(runtime.plugins, snapshotFlow { Settings.shared.musicFrontendOwner }) { plugins, _ ->
@@ -225,6 +273,9 @@ object MetroFuseHost : PluginServices {
                             loading = page.loading,
                             error = page.error,
                             loaded = page.loaded,
+                            continuation = page.continuation,
+                            loadingMore = page.loadingMore,
+                            loadMoreError = page.loadMoreError,
                         )
                     }
             }
@@ -289,10 +340,14 @@ object MetroFuseHost : PluginServices {
         playbackAdapter.playTrack(songFor(track))
     }
 
+    override fun loadMoreHome(owner: String) {
+        if (owner == effectiveMusicFrontendOwner()) engine?.homes?.loadMore(owner)
+    }
+
     private fun songFor(track: Track): SongItem {
         require(track.id.isNotBlank() && track.title.isNotBlank() && track.extras.size <= 64) { "Invalid plugin track" }
         identities[track.id] = trackIdentity(track.id, track.extras)
-        return (songs[track.id] ?: track.toSongItem()).also(::remember)
+        return track.toSongItem(songs[track.id]).also(::remember)
     }
 
     fun bindNavigator(navigator: Navigator): () -> Unit = navigation.bind(navigator, checkNotNull(hostScope))
@@ -303,6 +358,7 @@ object MetroFuseHost : PluginServices {
             engine?.close()
             hostScope?.cancel()
             playbackAdapter.detach()
+            sharedLibraryViewModel = null
         }
 
     private fun remember(song: SongItem) {
@@ -442,6 +498,94 @@ object MetroFuseHost : PluginServices {
             result.playlists.map { PlaylistItem(it.id, it.title, it.artwork.takeIf(String::isNotBlank), author = it.author) }
     }
 
+    override suspend fun startRadioQueue(id: String): RadioQueuePage? {
+        ready.await()
+        val owner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty) ?: return null
+        val result = runtime.pipelines.recommendations(identities[id] ?: trackIdentity(id), setOf(owner)) ?: return null
+        if (effectiveMusicFrontendOwner() != owner) return null
+        return RadioQueuePage(result.tracks.map(::songFor), emptyList(), result.continuation)
+    }
+
+    override suspend fun continueRadioQueue(continuation: String): RadioQueuePage? {
+        ready.await()
+        val owner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty) ?: return null
+        val result = runtime.pipelines.continueRecommendations(continuation, setOf(owner)) ?: return null
+        if (effectiveMusicFrontendOwner() != owner) return null
+        return RadioQueuePage(result.tracks.map(::songFor), emptyList(), result.continuation)
+    }
+
+    override suspend fun library(continuation: String?): PluginLibraryPage? = loadLibraryPage(continuation, likedSongsOnly = false)
+
+    override suspend fun likedSongs(continuation: String?): PluginLibraryPage? = loadLibraryPage(continuation, likedSongsOnly = true)
+
+    override val canSyncSongVotes: Boolean
+        get() {
+            val owner = effectiveMusicFrontendOwner()
+            val account = PluginServicesStore.libraryAccounts.value[owner]
+            return owner.isNotEmpty() && account?.loggedIn == true && !account.busy &&
+                engine?.pipelines?.supportsSongVotes(owner) == true
+        }
+
+    override suspend fun setSongVote(
+        id: String,
+        vote: SongVote,
+    ): Boolean {
+        ready.await()
+        val owner = effectiveMusicFrontendOwner()
+        if (!canSyncSongVotes) return false
+        val prefix = "metrofuse:$owner:"
+        if (id.startsWith("metrofuse:") && !id.startsWith(prefix)) return false
+        val accountKey = pluginLibraryAccountKey(owner)
+        val result = runtime.pipelines.setSongVote(owner, SongVoteRequest(id.removePrefix(prefix), TrackVote.valueOf(vote.name)))
+        if (owner != effectiveMusicFrontendOwner() || accountKey != pluginLibraryAccountKey(owner)) {
+            throw CancellationException("Song vote account changed")
+        }
+        return result
+    }
+
+    private suspend fun loadLibraryPage(
+        continuation: String?,
+        likedSongsOnly: Boolean,
+    ): PluginLibraryPage? {
+        ready.await()
+        val owner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty) ?: return null
+        val accountKey = pluginLibraryAccountKey(owner)
+        SongLikeState.activateCurrentAccount()
+        val voteRevision = SongLikeState.voteObservationRevision()
+        val locale = Locale.getDefault()
+        val language = Settings.shared.contentLanguage.takeUnless { it == "SYSTEM" } ?: locale.language
+        val country = Settings.shared.contentCountry.takeUnless { it == "SYSTEM" } ?: locale.country
+        val result = runtime.pipelines.library(owner, LibraryRequest(language, country, continuation, likedSongsOnly)) ?: return null
+        if (effectiveMusicFrontendOwner() != owner || pluginLibraryAccountKey(owner) != accountKey) {
+            throw CancellationException("Library source changed")
+        }
+        val items =
+            result.items.mapNotNull { item ->
+                item.track?.let(::songFor)
+                    ?: item.album?.let {
+                        retain(albums, it.id, it)
+                        albumItem(it)
+                    }
+                    ?: item.artist?.let {
+                        retain(artists, it.id, it)
+                        ArtistItem(it.id, it.name, it.artwork.takeIf(String::isNotBlank))
+                    }
+                    ?: item.playlist?.let {
+                        retain(playlists, it.id, it)
+                        PlaylistItem(it.id, it.title, it.artwork.takeIf(String::isNotBlank), author = it.author)
+                    }
+            }
+        val votes =
+            result.items
+                .mapNotNull { item ->
+                    val track = item.track ?: return@mapNotNull null
+                    val vote = SongVote.entries.firstOrNull { it.name == track.extras["likeStatus"] } ?: return@mapNotNull null
+                    track.id to vote
+                }.toMap()
+        SongLikeState.reconcilePluginVotes(votes, items.filterIsInstance<SongItem>().associateBy(SongItem::id), voteRevision)
+        return PluginLibraryPage(items, result.continuation, result.complete)
+    }
+
     private fun <T> retain(
         values: ConcurrentHashMap<String, T>,
         id: String,
@@ -562,6 +706,8 @@ private fun Track.toSongItem(base: SongItem? = null): SongItem {
     val mappedArtist = artist.takeIf(String::isNotBlank)?.let { listOf(ArtistTiny(null, it)) }.orEmpty()
     val mappedDuration = duration.takeIf { it > 0 }?.div(1000)
     val mappedArtwork = artwork.takeIf(String::isNotBlank)
+    val mappedVideoType = extras["musicVideoType"]?.takeIf(String::isNotBlank)
+    val mappedExplicitness = extras["explicit"]?.toBooleanStrictOrNull()
     return base?.copy(
         title = title,
         artists =
@@ -570,18 +716,47 @@ private fun Track.toSongItem(base: SongItem? = null): SongItem {
         album = mappedAlbum ?: base.album,
         thumbnail = mappedArtwork ?: base.thumbnail,
         duration = mappedDuration ?: base.duration,
-    ) ?: SongItem(id, title, mappedArtwork, mappedArtist, mappedAlbum, mappedDuration)
+        musicVideoType = mappedVideoType ?: base.musicVideoType,
+        isExplicit = mappedExplicitness ?: base.isExplicit,
+        explicitness = mappedExplicitness ?: base.explicitness,
+    ) ?: SongItem(
+        id,
+        title,
+        mappedArtwork,
+        mappedArtist,
+        mappedAlbum,
+        mappedDuration,
+        musicVideoType = mappedVideoType,
+        isExplicit = mappedExplicitness == true,
+        explicitness = mappedExplicitness,
+    )
 }
 
 private class ControllerPlayer(
     private val mapTrack: (Track) -> SongItem,
-) : Player, UiPlaybackControls {
+) : Player,
+    UiPlaybackControls {
     override val state = MutableStateFlow(PlaybackState(Track("", "", "", "")))
     private var controller: PlaybackController? = null
     private var commandScope: CoroutineScope? = null
     private var observer: Job? = null
     override val capabilities: Set<String> get() =
-        setOf("toggle", "play", "pause", "next", "previous", "seek", "stop", "queue", "playTracks", "addToQueue", "shuffle", "repeat", "queueIndex", "radio") +
+        setOf(
+            "toggle",
+            "play",
+            "pause",
+            "next",
+            "previous",
+            "seek",
+            "stop",
+            "queue",
+            "playTracks",
+            "addToQueue",
+            "shuffle",
+            "repeat",
+            "queueIndex",
+            "radio",
+        ) +
             if (controller?.supportsVolume == true) setOf("volume") else emptySet()
 
     fun attach(
@@ -634,15 +809,20 @@ private class ControllerPlayer(
         checkNotNull(commandScope).launch(Dispatchers.Main.immediate) { action(target) }
     }
 
-    override fun startTrackRadio() = command { controller ->
-        controller.state.value.currentSong?.let(controller::startRadio)
-    }
+    override fun startTrackRadio() =
+        command { controller ->
+            controller.state.value.currentSong
+                ?.let(controller::startRadio)
+        }
 
     override fun toggleShuffle() = command { it.toggleShuffle() }
+
     override fun cycleRepeat() = command { it.toggleRepeat() }
-    override fun selectQueueIndex(index: Int) = command {
-        if (index in it.state.value.queue.indices) it.playQueueIndex(index)
-    }
+
+    override fun selectQueueIndex(index: Int) =
+        command {
+            if (index in it.state.value.queue.indices) it.playQueueIndex(index)
+        }
 
     override fun toggle() = command { it.togglePlayPause() }
 

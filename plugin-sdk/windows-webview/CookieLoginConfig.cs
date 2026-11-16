@@ -32,8 +32,14 @@ public sealed record CookieLoginConfig(string url, string cookieUrl, string cook
             throw new ArgumentException("Invalid browser login request");
     }
 
-    public bool CanCapture(string value) => AcceptsNavigation(value) && new Uri(value).Host == new Uri(cookieUrl).Host
-        && (completionPath == null || new Uri(value).AbsolutePath == completionPath);
+    public bool CanCapture(string value)
+    {
+        if (!AcceptsNavigation(value)) return false;
+        // Service cookies can arrive before the identity provider finishes its redirects.
+        if (completionPath == null) return requiredCookies.Count > 0;
+        var uri = new Uri(value);
+        return uri.Host == new Uri(cookieUrl).Host && uri.AbsolutePath == completionPath;
+    }
 
     public Dictionary<string, string>? Capture(IReadOnlyDictionary<string, string> cookies)
     {

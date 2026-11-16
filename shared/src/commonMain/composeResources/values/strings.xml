@@ -1174,6 +1174,8 @@
     <string name="lyrics_provider_lyrics_plus_description">Multi-backend source with word or line timing, singer roles, background vocals, and transliterations</string>
     <!-- Translators: Supporting text beneath the provider unknown option in the lyrics. -->
     <string name="lyrics_provider_unknown_description">Additional lyric source</string>
+    <string name="brand_metrofuse_lyrics">Metrofuse Lyrics</string>
+    <string name="lyrics_provider_metrofuse_description">Word-by-word, line-synced and plain lyrics from Kugou, NetEase, Deezer, QQ Music and LRCLIB, matched using the song title, artist and duration</string>
     <!-- Translators: Label for text position left in the lyrics. -->
     <string name="lyrics_text_position_left">Left</string>
     <!-- Translators: Label for text position center in the lyrics. -->
@@ -4824,6 +4826,15 @@
     <!-- Translators: Label for ms unit in the Android app. -->
     <string name="bitrate_value">%1$d kbps</string>
     <string name="sample_rate_value">%1$d Hz</string>
+    <!-- Translators: Exact source audio values. %1$s is a localized number. -->
+    <string name="audio_quality_bit_depth">%1$s-bit</string>
+    <string name="audio_quality_sample_rate">%1$s kHz</string>
+    <string name="audio_quality_bitrate">%1$s kbps</string>
+    <string name="audio_quality_bitrate_exact">%1$s bit/s</string>
+    <string name="audio_quality_average_bitrate">Average bitrate</string>
+    <string name="audio_quality_source_format">Playing audio format</string>
+    <string name="audio_quality_detail">%1$s: %2$s</string>
+    <string name="audio_quality_bitrate_detail">%1$s: %2$s (%3$s)</string>
     <string name="import_error_unsupported_playlist_entries">This playlist contains local files or direct URLs that Android cannot access. Import a playlist containing YouTube links, or choose the local files on desktop.</string>
     <string name="import_error_local_files_require_local_playlist">Local audio files can only be imported into a local playlist.</string>
     <string name="import_error_file_read_failed">Could not read the playlist file. Choose it again and grant file access.</string>

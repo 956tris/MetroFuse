@@ -1,6 +1,8 @@
 package dev.metrofuse.sdk
 
 import dev.metrofuse.api.WebLoginRequest
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -48,12 +50,36 @@ class WebViewRequestTest {
     }
 
     @Test
+    fun phoneApprovalCompletesWhenServiceCookiesArriveBeforeTheFinalRedirect(): Unit =
+        runBlocking {
+            val identityPage = "https://accounts.example.com/challenge/phone"
+            var polls = 0
+            val captured =
+                withTimeout(5_000) {
+                    awaitBrowserCredentials {
+                        polls++
+                        if (!request.canCaptureBrowserCookies(identityPage)) {
+                            null
+                        } else {
+                            request.captureBrowserCookies(if (polls < 3) "OTHER=pending" else "SECURE_AUTH=approved")
+                        }
+                    }
+                }
+            assertEquals(3, polls)
+            assertEquals(mapOf("session" to "SECURE_AUTH=approved"), captured)
+            assertFalse(request.canCaptureBrowserCookies("https://accounts.example.com.evil.test/challenge/phone"))
+            assertFalse(request.canCaptureBrowserCookies("http://accounts.example.com/challenge/phone"))
+            assertFalse(request.copy(completionPath = "/").canCaptureBrowserCookies("https://accounts.example.com/"))
+        }
+
+    @Test
     fun completionPathWaitsForTheCookieOriginAndRejectsEmptyCookieHeaders() {
-        val redirect = request.copy(
-            url = "https://music.example.com/login",
-            requiredCookies = emptyList(),
-            completionPath = "/",
-        )
+        val redirect =
+            request.copy(
+                url = "https://music.example.com/login",
+                requiredCookies = emptyList(),
+                completionPath = "/",
+            )
         redirect.validateBrowserRequest()
         assertFalse(redirect.canCaptureBrowserCookies(redirect.url))
         assertFalse(redirect.canCaptureBrowserCookies("https://accounts.example.com/"))

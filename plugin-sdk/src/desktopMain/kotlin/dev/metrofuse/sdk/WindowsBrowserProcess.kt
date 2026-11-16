@@ -13,12 +13,26 @@ internal suspend fun readSdkBrowserOutput(
     title: String,
     profile: File,
     validateOnly: Boolean = false,
+    onDiagnostic: (String) -> Unit = System.err::println,
 ): String =
     withContext(Dispatchers.IO) {
         // Windows argument parsing removes JSON quotes; pass only paths and the window title.
         val command = mutableListOf(executable.absolutePath, requestFile.absolutePath, title, profile.absolutePath)
         if (validateOnly) command += "--validate-request"
-        val process = ProcessBuilder(command).redirectError(ProcessBuilder.Redirect.DISCARD).start()
+        val process = ProcessBuilder(command).start()
+        val diagnostics =
+            Thread({
+                runCatching {
+                    process.errorStream.bufferedReader().useLines { lines ->
+                        lines.forEach { line ->
+                            if (line.startsWith("METROFUSE_BROWSER ") && line.length <= 512) onDiagnostic(line)
+                        }
+                    }
+                }
+            }, "metrofuse-browser-diagnostics").apply {
+                isDaemon = true
+                start()
+            }
         try {
             suspendCancellableCoroutine { continuation ->
                 continuation.invokeOnCancellation { process.destroyForcibly() }
@@ -32,5 +46,6 @@ internal suspend fun readSdkBrowserOutput(
             }
         } finally {
             if (process.isAlive) process.destroyForcibly()
+            diagnostics.join(1_000)
         }
     }
