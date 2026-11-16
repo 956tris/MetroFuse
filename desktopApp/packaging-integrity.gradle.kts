@@ -19,6 +19,7 @@ import java.util.zip.ZipFile
 // Packaging and integrity tasks stay in applied scripts, not buildSrc: its ephemeral
 // CI outputs otherwise invalidate the configuration cache between builds.
 val appName = rootProject.extra["appName"] as String
+val quickJsNativePrefix = extra["quickJsNativePrefix"] as String
 
 val currentOperatingSystem =
     org.gradle.internal.os.OperatingSystem
@@ -395,7 +396,13 @@ val verifyReleaseDistributableJars =
         val expectedSqlitePrefix = "org/sqlite/native/$sqliteNativePath/"
         val nucleusPlatform = jnaPlatform.replace("x86-64", "x64")
         val keptNativePrefixes =
-            listOf("com/sun/jna/$jnaPlatform/", "$jnaPlatform/", "nucleus/native/$nucleusPlatform/", "composetray/native/$nucleusPlatform/")
+            listOf(
+                "com/sun/jna/$jnaPlatform/",
+                "$jnaPlatform/",
+                "nucleus/native/$nucleusPlatform/",
+                "composetray/native/$nucleusPlatform/",
+                quickJsNativePrefix,
+            )
         val ffmpegPlatform =
             when (platform) {
                 "win" -> "windows-${if (isArm64) "arm64" else "x86_64"}"

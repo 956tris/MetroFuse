@@ -150,6 +150,14 @@ val jnaPlatform =
         "mac" -> if (isArm64) "darwin-aarch64" else "darwin-x86-64"
         else -> if (isArm64) "linux-aarch64" else "linux-x86-64"
     }
+val quickJsPlatform =
+    when (platform) {
+        "win" -> "windows"
+        "mac" -> "macos"
+        else -> platform
+    }
+val quickJsNativePrefix = "jni/${quickJsPlatform}_${if (isArm64) "aarch64" else "x64"}/"
+extra["quickJsNativePrefix"] = quickJsNativePrefix
 tasks.matching { it.name == "proguardReleaseJars" }.configureEach {
     inputs.property("desktopArchitecture", targetArchitecture)
     val keptNatives =
@@ -159,6 +167,7 @@ tasks.matching { it.name == "proguardReleaseJars" }.configureEach {
             "nucleus." to "nucleus/native/${jnaPlatform.replace("x86-64", "x64")}/",
             "share-jvm" to "nucleus/native/${jnaPlatform.replace("x86-64", "x64")}/",
             "ComposeNativeTray-jvm" to "composetray/native/${jnaPlatform.replace("x86-64", "x64")}/",
+            "quickjs-jvm" to quickJsNativePrefix,
         )
     val outputFiles = outputs.files
     // doLast must not read script-level values; the configuration cache cannot store the script object.

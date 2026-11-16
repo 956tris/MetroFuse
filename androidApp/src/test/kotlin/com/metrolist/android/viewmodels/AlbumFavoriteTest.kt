@@ -1,6 +1,7 @@
 package com.metrolist.android.viewmodels
 
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
 import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import com.metrolist.android.playback.AudioCacheManager
@@ -20,7 +21,9 @@ import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -75,8 +78,16 @@ class AlbumFavoriteTest {
                 second.isFavorite.first { it }
                 assertFalse(first.isFavorite.value)
             } finally {
+                val viewModelJobs =
+                    listOfNotNull(
+                        store["first"]?.viewModelScope?.coroutineContext?.job,
+                        store["second"]?.viewModelScope?.coroutineContext?.job,
+                    )
                 store.clear()
+                viewModelJobs.forEach { it.join() }
+                backgroundScope.coroutineContext.job.cancelAndJoin()
                 client.close()
+                client.coroutineContext.job.join()
                 database.close()
                 Dispatchers.resetMain()
                 Settings.replaceSharedForTest(null)

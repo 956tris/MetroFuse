@@ -8,7 +8,7 @@ on:
       tag:
         description: Existing KMP alpha tag to build and publish
         required: true
-        default: v10.0.0-kmp-alpha-001
+        default: v10.0.0-kmp-alpha-002
         type: string
 
 permissions:
