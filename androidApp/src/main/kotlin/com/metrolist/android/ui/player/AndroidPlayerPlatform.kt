@@ -24,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
@@ -47,7 +48,6 @@ import com.metrolist.android.ui.component.AdaptiveModalBottomSheet
 import com.metrolist.android.ui.download.rememberDownloadPermissionGate
 import com.metrolist.android.ui.screens.PlayerDeviceConnectSheet
 import com.metrolist.android.utils.shareImage
-import com.metrolist.shared.plugins.PluginUiSlot
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.api.artwork.YouTubeCanvasClip
 import com.metrolist.shared.api.lyrics.LyricsUtils
@@ -62,6 +62,7 @@ import com.metrolist.shared.generated.resources.unknown
 import com.metrolist.shared.listentogether.ListenTogetherManager
 import com.metrolist.shared.listentogether.ListenTogetherRoomRole
 import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.plugins.PluginUiSlot
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.settings.displayName
 import com.metrolist.shared.state.SongLikeState
@@ -92,6 +93,14 @@ class AndroidPlayerPlatform(
     override val supportsPictureInPicture = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
     override val supportsVideoPlayback = true
     override val supportsCasting = true
+
+    @Composable
+    override fun AudioQualityBadge(
+        contentColor: Color,
+        modifier: Modifier,
+    ) {
+        AndroidAudioQualityBadge(playerConnection, contentColor, modifier)
+    }
 
     @Composable
     override fun isListenTogetherGuest(): Boolean {
@@ -283,7 +292,10 @@ class AndroidPlayerPlatform(
     )
 
     @Composable
-    override fun RenderExtension(point: String, fallback: @Composable () -> Unit) {
+    override fun RenderExtension(
+        point: String,
+        fallback: @Composable () -> Unit,
+    ) {
         PluginUiSlot(point, fallback)
     }
 

@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.IBinder
 import android.widget.Toast
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.media3.common.Format
 import androidx.media3.common.Player
 import com.metrolist.android.R
 import com.metrolist.android.deviceconnect.AndroidDeviceConnect
@@ -211,6 +212,7 @@ class PlayerConnection(
                 events: Player.Events,
             ) {
                 updatePlaybackState(player.playbackState)
+                sourceAudioFormatState.value = musicService?.player?.sourceAudioFormat
             }
         }
 
@@ -226,6 +228,9 @@ class PlayerConnection(
 
     private val _isConnected = MutableStateFlow(false)
     override val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
+
+    private val sourceAudioFormatState = MutableStateFlow<Format?>(null)
+    val sourceAudioFormat: StateFlow<Format?> = sourceAudioFormatState.asStateFlow()
 
     private val _currentSong = MutableStateFlow<SongItem?>(null)
     override val currentSong: StateFlow<SongItem?> = _currentSong.asStateFlow()
@@ -415,6 +420,7 @@ class PlayerConnection(
         observationScope = null
         musicService?.player?.removePlayerListener(readinessListener)
         musicService = null
+        sourceAudioFormatState.value = null
         pendingCommands.disconnected()
         crossfadeStateValue.value = null
         updatePlaybackState(Player.STATE_IDLE)
@@ -536,6 +542,7 @@ class PlayerConnection(
         }
         scope.launch {
             combine(player.currentSong, player.currentPosition, player.duration, player.bufferedPosition) { _, _, _, _ ->
+                sourceAudioFormatState.value = player.sourceAudioFormat
                 if (!_castState.value.isConnected) {
                     _currentSong.value = player.currentSong.value
                     _currentPosition.value = player.currentPosition.value

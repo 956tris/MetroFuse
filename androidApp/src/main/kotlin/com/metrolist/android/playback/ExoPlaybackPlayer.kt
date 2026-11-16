@@ -18,6 +18,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
@@ -607,6 +608,13 @@ class ExoPlaybackPlayer(
     private val queuePlaybackRequestsState = queuePlaybackRequestFlow()
     private val onEOFPlaybackInstanceState = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     private val streamFailureState = MutableSharedFlow<AndroidPlaybackRecoveryRequest>(extraBufferCapacity = 1)
+    override val sourceAudioFormat: Format?
+        get() =
+            exo.audioFormat.takeIf {
+                controllerClock == null && !playbackTransitions.pending.value &&
+                    exo.playbackState == Player.STATE_READY
+            }
+
     override val currentSong: StateFlow<SongItem?> = _currentSong.asStateFlow()
     override val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
     override val wantsPlayback: Boolean get() = controllerClock?.playback?.playing ?: exo.playWhenReady

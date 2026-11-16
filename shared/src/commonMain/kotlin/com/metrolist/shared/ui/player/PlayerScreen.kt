@@ -1953,6 +1953,7 @@ fun PlayerScreen(
                                                                     },
                                                                 ),
                                                     )
+                                                    LocalPlayerPlatform.current.AudioQualityBadge(textBackgroundColor)
                                                 }
                                             }
                                         }

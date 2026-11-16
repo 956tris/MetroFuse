@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.unit.Dp
 import com.metrolist.shared.api.artwork.CanvasContentSource
@@ -27,9 +28,18 @@ interface PlayerPlatform {
     val supportsCasting: Boolean
 
     @Composable
-    fun RenderExtension(point: String, fallback: @Composable () -> Unit) {
+    fun RenderExtension(
+        point: String,
+        fallback: @Composable () -> Unit,
+    ) {
         fallback()
     }
+
+    @Composable
+    fun AudioQualityBadge(
+        contentColor: Color,
+        modifier: Modifier = Modifier,
+    ) = Unit
 
     fun canvasCacheKey(
         songId: String,

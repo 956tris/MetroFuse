@@ -496,6 +496,7 @@ internal fun TabletPlayerContent(
                                         .clip(RoundedCornerShape(10.dp))
                                         .padding(vertical = 4.dp),
                             )
+                            LocalPlayerPlatform.current.AudioQualityBadge(textBackgroundColor)
 
                             Spacer(modifier = Modifier.height(12.dp))
                             PlayerLikeShareButtons(
@@ -1405,6 +1406,7 @@ internal fun LandscapePlayerContent(
                                                 .clip(RoundedCornerShape(10.dp))
                                                 .padding(vertical = 4.dp),
                                     )
+                                    LocalPlayerPlatform.current.AudioQualityBadge(controlsColor)
                                 }
 
                                 Spacer(modifier = Modifier.width(12.dp))

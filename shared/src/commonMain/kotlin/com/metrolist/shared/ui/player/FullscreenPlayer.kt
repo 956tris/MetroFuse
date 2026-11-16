@@ -485,6 +485,7 @@ private fun FullscreenControlsOverlay(
                             color = Color.White.copy(alpha = 0.7f),
                             iterations = 0,
                         )
+                        LocalPlayerPlatform.current.AudioQualityBadge(Color.White)
                     }
                 }
 

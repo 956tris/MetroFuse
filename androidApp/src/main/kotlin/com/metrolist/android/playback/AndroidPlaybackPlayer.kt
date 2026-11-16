@@ -1,5 +1,6 @@
 package com.metrolist.android.playback
 
+import androidx.media3.common.Format
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import com.metrolist.shared.deviceconnect.DcLocalPlaybackState
@@ -22,6 +23,8 @@ data class AndroidPlaybackRecoveryRequest(
 )
 
 interface AndroidPlaybackPlayer {
+    val sourceAudioFormat: Format? get() = null
+
     val currentSong: StateFlow<SongItem?>
     val isPlaying: StateFlow<Boolean>
     val wantsPlayback: Boolean
