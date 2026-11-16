@@ -11,17 +11,27 @@ plugins {
 group = "dev.metrofuse"
 version = "1.1.0"
 
+compose.resources {
+    packageOfResClass = "dev.metrofuse.sdk.resources"
+    publicResClass = true
+    generateResClass = always
+}
+
 kotlin {
     android {
         namespace = "dev.metrofuse.sdk"
         compileSdk { version = release(37) { minorApiLevel = 1 } }
         minSdk = 24
+        androidResources.enable = true
         compilerOptions.jvmTarget.set(JvmTarget.JVM_21)
     }
     jvm("desktop") { compilerOptions.jvmTarget.set(JvmTarget.JVM_21) }
     jvmToolchain(25)
     sourceSets {
-        commonMain.dependencies { api(project(":plugin-api")) }
+        commonMain.dependencies {
+            api(project(":plugin-api"))
+            api(compose.components.resources)
+        }
         commonTest.dependencies { implementation(kotlin("test")) }
         val common = getByName("commonMain")
         val jvmSharedMain = create("jvmSharedMain") { dependsOn(common) }

@@ -59,6 +59,7 @@ import com.metrolist.shared.generated.resources.plugins_screen_unavailable
 import com.metrolist.shared.generated.resources.plugins_title
 import com.metrolist.shared.generated.resources.plugins_unsupported_ui
 import com.metrolist.shared.generated.resources.plugins_use_original_ui
+import com.metrolist.shared.ui.navigation.LocalNavigator
 import com.metrolist.shared.ui.navigation.Screen
 import dev.metrofuse.api.Layer
 import dev.metrofuse.api.Track
@@ -138,6 +139,12 @@ fun PluginAppShell(original: @Composable () -> Unit) {
         return
     }
     val runtime = MetroFuseHost.runtime
+    // Settings, recovery and detail routes must remain reachable from a custom shell.
+    val route = LocalNavigator.current.state.currentRoute
+    if (route != Screen.Home && route != Screen.Search && route != Screen.Library) {
+        original()
+        return
+    }
     val registry by runtime.registry.state.collectAsState()
     val safeMode by runtime.uiSafeMode.collectAsState()
     val recovery by runtime.recovery.collectAsState()

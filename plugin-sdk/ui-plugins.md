@@ -64,7 +64,17 @@ A native plugin runs inside the application process and can prevent the main loo
 
 Examples are source only. A fresh installation has zero installed third-party plugins.
 
+## MetroFlow first release
+
+The [MetroFlow native plugin](https://github.com/956tris/MetroFuse-MetroFlow/tree/main/native) and [JavaScript plugin](https://github.com/956tris/MetroFuse-MetroFlow/tree/main/javascript) provide a Spotify-inspired dark layout with green accents using MetroFuse's existing player and installed providers. They include real artwork and content, Home, Search, Library and Queue. Settings and Plugins open the built-in interface, and Back returns to the custom shell. Neither package contains a streaming provider or service credentials.
+
+Build native packages with `:native:packagePluginJar :native:packagePluginApk` in the separate MetroFlow repository. Import `build/outputs/plugins/metroflow.jar` on desktop or `metroflow.apk` on Android through Plugins. Package JavaScript with `tooling/pack-mfp.ps1 -Source javascript -Output build/outputs/plugins/metroflow.mfp` in that repository; MFP works on both platforms. Choose one variant at a time. Native packages compile against host API and SDK dependencies only; these libraries are never bundled into plugin artifacts. The host must be built from this revision to supply the new SDK helpers and strings.
+
+Native authors can reuse `PluginPlaybackControls`, `PlaybackLabels` and `PluginSeekBar` from `dev.metrofuse.sdk`, and use `PluginContext.searchUiCatalog` for typed host search. Durations and positions are milliseconds. The helper controls disable unavailable actions, and the seek slider waits for drag completion before calling the host. Native library pages contain at most 100 tracks per request in MetroFlow and can be traversed using Previous and Load more. Host collection service results currently contain up to 100 tracks, so larger provider collections require the built-in collection interface for their complete list.
+
 ## Catalog, artwork and adaptive shells
+
+Run `node tests/test_metroflow.mjs` from the [MetroFlow repository](https://github.com/956tris/MetroFuse-MetroFlow) root to check the JavaScript/host contract: library paging, stale asynchronous replies, queue occurrence selection, millisecond seeking, subscription disposal and the host's tree limits. Validate MFP integrity after packing. Native SDK backend checks run with `:plugin-sdk:desktopTest`.
 
 | Service | Request | Response |
 | --- | --- | --- |

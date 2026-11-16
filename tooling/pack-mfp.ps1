@@ -7,7 +7,7 @@ Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $pluginRoot = (Resolve-Path -LiteralPath $Source).Path
 $pluginManifestPath = Join-Path $pluginRoot 'manifest.json'
-$pluginManifest = Get-Content -LiteralPath $pluginManifestPath -Raw | ConvertFrom-Json
+$pluginManifest = Get-Content -LiteralPath $pluginManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($pluginManifest.runtime -ne 'javascript' -or $pluginManifest.api -ne '1.1.0') { throw 'This packer accepts JavaScript API 1.1.0 plugins only' }
 $pluginFiles = @(Get-ChildItem -LiteralPath $pluginRoot -File -Recurse | Where-Object { $_.FullName -ne $pluginManifestPath } | Sort-Object FullName)
 $pluginHashes = [ordered]@{}
