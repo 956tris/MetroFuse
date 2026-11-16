@@ -14,9 +14,9 @@ import kotlin.test.assertTrue
 class DesktopUrlHandlerTest {
     @Test
     fun recognizesDiscordCallbacksForStartupAndSecondLaunchDelivery() {
-        assertTrue(DesktopUrlHandler.canHandle("\"metrolist-auth://discord/callback?code=code&state=state\""))
-        assertFalse(DesktopUrlHandler.canHandle("metrolist-auth://discord.evil/callback?code=code&state=state"))
-        assertFalse(DesktopUrlHandler.canHandle("metrolist-auth://discord/callback-extra?code=code&state=state"))
+        assertTrue(DesktopUrlHandler.canHandle("\"discord-1508739806186963045:///authorize/callback?code=code&state=state\""))
+        assertFalse(DesktopUrlHandler.canHandle("discord-1508739806186963045://discord.evil/authorize/callback?code=code&state=state"))
+        assertFalse(DesktopUrlHandler.canHandle("discord-1508739806186963045:///authorize/callback-extra?code=code&state=state"))
     }
 
     @Test

@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 
 val appVersion = providers.gradleProperty("appVersion").get()
+val discordAppId = providers.gradleProperty("discordAppId").get().toLong()
 val appName = rootProject.extra["appName"] as String
 val appArtifactName = rootProject.extra["appArtifactName"] as String
 
@@ -54,7 +55,7 @@ StartupWMClass=$appName
 Comment=$appName music client
 Categories=AudioVideo;Player;
 Terminal=false
-MimeType=x-scheme-handler/metrolist;x-scheme-handler/metrolist-auth;
+MimeType=x-scheme-handler/metrolist;x-scheme-handler/discord-$discordAppId;
             """.trimIndent(),
         )
 

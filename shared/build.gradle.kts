@@ -726,6 +726,7 @@ val generateBuildConfig =
                 .get()
         inputs.property("appVersion", appVersion)
         inputs.property("appName", rootProject.extra["appName"])
+        inputs.property("discordAppId", providers.gradleProperty("discordAppId").get().toLong())
         inputs.property("sourceRevision", sourceRevision)
         inputs.property("bundledLanguageTags", bundledLanguageTags.joinToString(","))
 
@@ -747,6 +748,7 @@ val generateBuildConfig =
                 @OptIn(ExperimentalObjCRefinement::class)
                 @HiddenFromObjC
                 object BuildConfig {
+                    const val DISCORD_APP_ID = ${inputs.properties["discordAppId"]}L
                     const val LASTFM_API_KEY = "${inputs.properties["lastFmKey"]}"
                     const val LASTFM_SECRET = "${inputs.properties["lastFmSecret"]}"
                     const val LYPRIO_BASE_URL = "${inputs.properties["lyprioBaseUrl"]}"

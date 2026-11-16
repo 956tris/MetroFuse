@@ -43,7 +43,7 @@ data class DiscordErrorInfo(
 
 object DiscordRpcManager {
     private const val TAG = "DiscordSvc"
-    private const val DISCORD_APP_ID = "1447278780795064401"
+    private const val DISCORD_APP_ID = "${DiscordDefaults.DISCORD_APP_ID}"
 
     @Volatile private var initialized: Boolean = false
 

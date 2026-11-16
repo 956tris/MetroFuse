@@ -180,6 +180,7 @@ import com.metrolist.shared.constants.VideoViewerVisibleKey
 import com.metrolist.shared.constants.VoiceSearchEnabledKey
 import com.metrolist.shared.constants.YouTubeCanvasModeKey
 import com.metrolist.shared.constants.YouTubeCanvasQualityKey
+import com.metrolist.shared.discord.DiscordDefaults
 import com.metrolist.shared.model.CollectionSort
 import com.metrolist.shared.model.LyricsProvider
 import com.metrolist.shared.model.PlaylistPickerSort
@@ -597,8 +598,8 @@ class Settings(
     var discordButton1Text by preference("Listen on YouTube Music")
     var discordButton1Url by preference("{song.url}")
     var discordButton2Enabled by preference(true)
-    var discordButton2Text by preference("Visit Metrolist")
-    var discordButton2Url by preference("https://github.com/MetrolistGroup/Metrolist")
+    var discordButton2Text by preference(DiscordDefaults.BUTTON2_LABEL)
+    var discordButton2Url by preference(DiscordDefaults.BUTTON2_URL)
     var discordUsername by preference("")
     var discordName by preference("")
     var discordAvatar by preference("")

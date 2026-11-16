@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.net.toUri
 import com.metrolist.shared.discord.DiscordAuthSession
 import com.metrolist.shared.discord.DiscordAuthSessionStore
+import com.metrolist.shared.discord.DiscordDefaults
 import com.metrolist.shared.discord.DiscordRpcManager
 import com.metrolist.shared.discord.DiscordTokenStore
 import com.metrolist.shared.state.GlobalYouTube
@@ -36,7 +37,7 @@ object DiscordLoginFlow {
 
     fun handleCallback(intent: Intent): Boolean {
         val data = intent.data ?: return false
-        if (data.scheme != "metrolist-auth" || data.host != "discord") return false
+        if (data.scheme != DiscordDefaults.DISCORD_CALLBACK_SCHEME) return false
         val session = sessions.pending() ?: return true
         val redirect = session.redirectUri.toUri()
         if (data.scheme != redirect.scheme || data.authority != redirect.authority || data.path != redirect.path) return true

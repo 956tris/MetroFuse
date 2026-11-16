@@ -216,9 +216,9 @@ fun AboutScreen(
             )
 
             CollaboratorsList(
-                contributors = listOf(AboutContributors.lead),
+                contributors = listOf(AboutContributors.mainDeveloper),
                 text = text,
-                title = text.creatorSection,
+                title = text.mainDeveloperSection,
                 avatarSize = 64.dp,
                 colorScheme = colorScheme,
                 onContributorClick = { selectedContributor = it },
@@ -226,18 +226,9 @@ fun AboutScreen(
             )
 
             CollaboratorsList(
-                contributors = AboutContributors.leads,
+                contributors = AboutContributors.metrolistDevelopers,
                 text = text,
-                title = text.leadsSection,
-                avatarSize = 64.dp,
-                colorScheme = colorScheme,
-                onContributorClick = { selectedContributor = it },
-                onContributorLongClick = onContributorLongClick,
-            )
-
-            CollaboratorsList(
-                contributors = AboutContributors.collaborators,
-                text = text,
+                title = text.metrolistDevelopersSection,
                 colorScheme = colorScheme,
                 onContributorClick = { selectedContributor = it },
                 onContributorLongClick = onContributorLongClick,
@@ -435,7 +426,7 @@ private fun CollaboratorsList(
     colorScheme: ColorScheme,
     onContributorClick: (AboutContributor) -> Unit,
     onContributorLongClick: ((AboutContributor) -> Unit)?,
-    title: String? = text.collaborators,
+    title: String?,
     avatarSize: Dp = 48.dp,
 ) {
     Column(Modifier.fillMaxWidth()) {

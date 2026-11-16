@@ -208,16 +208,18 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.metrolist.music"
+        applicationId = "com.metrofuse.music"
         minSdk = 24
         targetSdk = 37
-        versionCode = 154
+        versionCode = 801
         versionName = appVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
 
-        buildConfigField("Long", "DISCORD_APP_ID", "1447278780795064401L")
+        val discordAppId = providers.gradleProperty("discordAppId").get().toLong()
+        buildConfigField("Long", "DISCORD_APP_ID", "${discordAppId}L")
+        manifestPlaceholders["discordCallbackScheme"] = "discord-$discordAppId"
         buildConfigField("String", "BUNDLED_LANGUAGE_TAGS", "\"${bundledLanguageTags.joinToString(",")}\"")
     }
 

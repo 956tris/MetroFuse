@@ -14,9 +14,9 @@ class DesktopDiscordRegistrationTest {
         val launcher = "/opt/Metrolist żółć/AppImage"
         val entry = linuxDiscordDesktopEntry(launcher, "Metrolist")
         assertTrue("Exec=env \"$launcher\" %u\n" in entry)
-        assertTrue("MimeType=x-scheme-handler/metrolist-auth;\n" in entry)
+        assertTrue("MimeType=x-scheme-handler/discord-1508739806186963045;\n" in entry)
         assertEquals(
-            listOf("xdg-mime", "default", "com.metrolist.desktop.discord-auth.desktop", "x-scheme-handler/metrolist-auth"),
+            listOf("xdg-mime", "default", "com.metrolist.desktop.discord-auth.desktop", "x-scheme-handler/discord-1508739806186963045"),
             linuxDiscordRegistrationCommand(),
         )
     }

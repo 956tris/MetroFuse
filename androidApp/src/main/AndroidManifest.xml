@@ -204,9 +204,7 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="metrolist-auth" />
-                <data android:host="discord" />
-                <data android:pathPrefix="/callback" />
+                <data android:scheme="${discordCallbackScheme}" />
             </intent-filter>
 
             <intent-filter>

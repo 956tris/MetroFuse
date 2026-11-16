@@ -163,11 +163,11 @@ class DiscordAuth(
 
     companion object {
         private const val TAG = "DiscordSvc"
-        private const val DISCORD_APP_ID = 1447278780795064401L
-        private const val DISCORD_OAUTH_AUTHORIZE = "https://discord.com/oauth2/authorize"
-        private const val DISCORD_OAUTH_TOKEN = "https://discord.com/api/v10/oauth2/token"
-        private const val DISCORD_REDIRECT_URI = "metrolist-auth://discord/callback"
-        private const val DISCORD_SCOPES = "openid sdk.social_layer_presence"
+        private const val DISCORD_APP_ID = DiscordDefaults.DISCORD_APP_ID
+        private const val DISCORD_OAUTH_AUTHORIZE = DiscordDefaults.DISCORD_OAUTH_AUTHORIZE
+        private const val DISCORD_OAUTH_TOKEN = DiscordDefaults.DISCORD_OAUTH_TOKEN
+        private const val DISCORD_REDIRECT_URI = DiscordDefaults.DISCORD_REDIRECT_URI
+        private const val DISCORD_SCOPES = DiscordDefaults.DISCORD_SCOPES
 
         fun generatePkcePair(): PkcePair {
             val bytes = DeviceCrypto.secureRandomBytes(64)

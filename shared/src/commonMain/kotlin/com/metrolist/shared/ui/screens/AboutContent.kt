@@ -41,16 +41,15 @@ import com.metrolist.shared.generated.resources.brand_telegram
 import com.metrolist.shared.generated.resources.credits_android_designer
 import com.metrolist.shared.generated.resources.credits_android_developer
 import com.metrolist.shared.generated.resources.credits_android_lead
-import com.metrolist.shared.generated.resources.credits_collaborators_section
 import com.metrolist.shared.generated.resources.credits_creator
-import com.metrolist.shared.generated.resources.credits_creator_section
 import com.metrolist.shared.generated.resources.credits_desktop_developer
 import com.metrolist.shared.generated.resources.credits_desktop_lead
-import com.metrolist.shared.generated.resources.credits_leads_section
 import com.metrolist.shared.generated.resources.credits_license_desc
 import com.metrolist.shared.generated.resources.credits_license_name
 import com.metrolist.shared.generated.resources.credits_lyrics_ui_services
 import com.metrolist.shared.generated.resources.credits_macos_developer
+import com.metrolist.shared.generated.resources.credits_main_developer
+import com.metrolist.shared.generated.resources.credits_metrolist_devs
 import com.metrolist.shared.generated.resources.credits_multiplatform_developer
 import com.metrolist.shared.generated.resources.credits_wearos_designer
 import com.metrolist.shared.generated.resources.credits_windows_developer
@@ -70,9 +69,9 @@ import org.jetbrains.compose.resources.stringResource as sharedStringResource
 fun rememberAboutScreenText(): AboutScreenText =
     AboutScreenText(
         title = sharedStringResource(Res.string.about),
-        creatorSection = sharedStringResource(Res.string.credits_creator_section),
-        leadsSection = sharedStringResource(Res.string.credits_leads_section),
-        collaborators = sharedStringResource(Res.string.credits_collaborators_section),
+        mainDeveloperSection = sharedStringResource(Res.string.credits_main_developer),
+        metrolistDevelopersSection = sharedStringResource(Res.string.credits_metrolist_devs),
+        mainDeveloperRole = sharedStringResource(Res.string.credits_main_developer),
         creatorRole = sharedStringResource(Res.string.credits_creator),
         androidLeadRole = sharedStringResource(Res.string.credits_android_lead),
         desktopLeadRole = sharedStringResource(Res.string.credits_desktop_lead),
@@ -93,6 +92,7 @@ fun rememberAboutScreenText(): AboutScreenText =
     )
 
 enum class AboutContributorRole {
+    MAIN_DEVELOPER,
     CREATOR,
     ANDROID_LEAD,
     DESKTOP_LEAD,
@@ -135,6 +135,14 @@ data class AboutContributor(
 }
 
 object AboutContributors {
+    val mainDeveloper: AboutContributor =
+        AboutContributor(
+            name = "956tris",
+            role = AboutContributorRole.MAIN_DEVELOPER,
+            githubHandle = "956tris",
+            avatarShape = AboutAvatarShape.COOKIE_9_SIDED,
+        )
+
     val lead: AboutContributor =
         AboutContributor(
             name = "Mo Agamy",
@@ -226,7 +234,8 @@ object AboutContributors {
             ),
         ).sortedBy { it.name.lowercase() }
 
-    val all: List<AboutContributor> = listOf(lead) + leads + collaborators
+    val metrolistDevelopers: List<AboutContributor> = listOf(lead) + leads + collaborators
+    val all: List<AboutContributor> = listOf(mainDeveloper) + metrolistDevelopers
 }
 
 enum class AboutCommunityLinkKind {
@@ -243,19 +252,19 @@ data class AboutCommunityLink(
 
 val aboutCommunityLinks: List<AboutCommunityLink> =
     listOf(
-        AboutCommunityLink(AboutCommunityLinkKind.DISCORD, "https://discord.com/invite/zrdbeRG2Mt"),
+        AboutCommunityLink(AboutCommunityLinkKind.DISCORD, "https://discord.gg/ddHxkVDgt3"),
         AboutCommunityLink(AboutCommunityLinkKind.TELEGRAM, "https://t.me/metrolistapp"),
-        AboutCommunityLink(AboutCommunityLinkKind.REPOSITORY, "https://github.com/MetrolistGroup/Metrolist"),
+        AboutCommunityLink(AboutCommunityLinkKind.REPOSITORY, "https://github.com/956tris/MetroFuse"),
     )
 
 val aboutLicenseLink: AboutCommunityLink =
-    AboutCommunityLink(AboutCommunityLinkKind.LICENSE, "https://github.com/MetrolistGroup/Metrolist/blob/main/LICENSE")
+    AboutCommunityLink(AboutCommunityLinkKind.LICENSE, "https://github.com/956tris/MetroFuse/blob/main/LICENSE")
 
 data class AboutScreenText(
     val title: String,
-    val creatorSection: String,
-    val leadsSection: String,
-    val collaborators: String,
+    val mainDeveloperSection: String,
+    val metrolistDevelopersSection: String,
+    val mainDeveloperRole: String,
     val creatorRole: String,
     val androidLeadRole: String,
     val desktopLeadRole: String,
@@ -276,6 +285,7 @@ data class AboutScreenText(
 ) {
     fun roleLabel(role: AboutContributorRole): String =
         when (role) {
+            AboutContributorRole.MAIN_DEVELOPER -> mainDeveloperRole
             AboutContributorRole.CREATOR -> creatorRole
             AboutContributorRole.ANDROID_LEAD -> androidLeadRole
             AboutContributorRole.DESKTOP_LEAD -> desktopLeadRole
@@ -332,6 +342,7 @@ fun AuthorInfoSheet(
 ) {
     val roleLabel =
         when (contributor.role) {
+            AboutContributorRole.MAIN_DEVELOPER -> sharedStringResource(Res.string.credits_main_developer)
             AboutContributorRole.CREATOR -> sharedStringResource(Res.string.credits_creator)
             AboutContributorRole.ANDROID_LEAD -> sharedStringResource(Res.string.credits_android_lead)
             AboutContributorRole.DESKTOP_LEAD -> sharedStringResource(Res.string.credits_desktop_lead)

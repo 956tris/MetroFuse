@@ -8,4 +8,4 @@ Terminal=false
 Categories=AudioVideo;Player;Music;
 StartupWMClass=Metrofuse Alpha
 Keywords=music;player;youtube;streaming;
-MimeType=x-scheme-handler/metrolist;x-scheme-handler/metrolist-auth;
+MimeType=x-scheme-handler/metrolist;x-scheme-handler/discord-1508739806186963045;

@@ -720,6 +720,10 @@
     <string name="credits_desktop_lead">Lead desktop developer</string>
     <!-- Translators: Label for credits creator in the About screen. -->
     <string name="credits_creator">Creator of Metrolist</string>
+    <!-- Translators: Role and section heading for MetroFuse's main developer. -->
+    <string name="credits_main_developer">Main developer</string>
+    <!-- Translators: Section heading for the upstream Metrolist developers. -->
+    <string name="credits_metrolist_devs">Metrolist devs</string>
     <!-- Translators: Heading for Rich Presence in the Discord integration. -->
     <string name="discord_rpc_title" translatable="false">Discord Rich Presence</string>
     <!-- Translators: Label for credits android developer in the About screen. -->

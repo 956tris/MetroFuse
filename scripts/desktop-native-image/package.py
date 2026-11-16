@@ -54,7 +54,7 @@ def package(image, target, destination, version):
         (app / 'bin/Metrolist').chmod(0o755)
         (app / 'AppRun').write_text('#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/bin/Metrolist" "$@"\n')
         (app / 'AppRun').chmod(0o755)
-        (app / 'Metrolist.desktop').write_text('[Desktop Entry]\nType=Application\nName=Metrolist\nExec=bin/Metrolist %u\nIcon=Metrolist\nStartupWMClass=Metrolist\nComment=Metrolist music client\nCategories=AudioVideo;Player;\nTerminal=false\nMimeType=x-scheme-handler/metrolist;x-scheme-handler/metrolist-auth;\n')
+        (app / 'Metrolist.desktop').write_text('[Desktop Entry]\nType=Application\nName=Metrolist\nExec=bin/Metrolist %u\nIcon=Metrolist\nStartupWMClass=Metrolist\nComment=Metrolist music client\nCategories=AudioVideo;Player;\nTerminal=false\nMimeType=x-scheme-handler/metrolist;x-scheme-handler/discord-1508739806186963045;\n')
         shutil.copy2(ROOT / 'desktopApp/src/desktopMain/resources/logo.png', app / 'Metrolist.png')
         (app / 'resources').symlink_to('lib/native/resources', target_is_directory=True)
         output = destination / (name + '.AppImage')

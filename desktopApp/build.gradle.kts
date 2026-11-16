@@ -93,6 +93,7 @@ configurations.matching { it.name.startsWith("jvm") }.configureEach {
 
 group = "com.metrolist"
 val appVersion = providers.gradleProperty("appVersion").get()
+val discordAppId = providers.gradleProperty("discordAppId").get().toLong()
 val appName = rootProject.extra["appName"] as String
 val appArtifactName = rootProject.extra["appArtifactName"] as String
 version = appVersion
@@ -825,7 +826,7 @@ compose.desktop {
                                 <key>CFBundleURLSchemes</key>
                                 <array>
                                     <string>metrolist</string>
-                                    <string>metrolist-auth</string>
+                                    <string>discord-$discordAppId</string>
                                 </array>
                             </dict>
                         </array>

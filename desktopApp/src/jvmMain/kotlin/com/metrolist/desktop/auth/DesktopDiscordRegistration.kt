@@ -3,6 +3,7 @@ package com.metrolist.desktop.auth
 import com.metrolist.desktop.utils.AppLogger
 import com.metrolist.desktop.utils.registerWindowsUriHandler
 import com.metrolist.shared.BuildConfig
+import com.metrolist.shared.discord.DiscordDefaults
 import com.metrolist.shared.utils.OsUtil
 import com.metrolist.shared.utils.XdgUtils
 import com.sun.jna.platform.win32.Advapi32Util
@@ -21,7 +22,7 @@ internal fun registerDesktopDiscordCallback(displayName: String): Boolean =
                 .orElse(null)
         when {
             OsUtil.isWindows -> {
-                registerWindowsUriHandler(launcher?.let(::File), displayName, "metrolist-auth") { key, name, value ->
+                registerWindowsUriHandler(launcher?.let(::File), displayName, DiscordDefaults.DISCORD_CALLBACK_SCHEME) { key, name, value ->
                     Advapi32Util.registryCreateKey(WinReg.HKEY_CURRENT_USER, key)
                     Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, key, name, value)
                 }
@@ -117,4 +118,4 @@ private fun runRegistrationCommand(command: List<String>): String? {
 }
 
 private const val DISCORD_DESKTOP_FILE = "com.metrolist.desktop.discord-auth.desktop"
-private const val DISCORD_MIME_TYPE = "x-scheme-handler/metrolist-auth"
+private const val DISCORD_MIME_TYPE = "x-scheme-handler/${DiscordDefaults.DISCORD_CALLBACK_SCHEME}"

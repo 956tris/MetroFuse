@@ -6,4 +6,4 @@ Exec=metrolist %u
 Icon=metrolist
 Terminal=false
 Categories=AudioVideo;Player;
-MimeType=x-scheme-handler/metrolist;x-scheme-handler/metrolist-auth;
+MimeType=x-scheme-handler/metrolist;x-scheme-handler/discord-1508739806186963045;

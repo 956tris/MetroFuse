@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.core.net.toUri
 import com.metrolist.shared.discord.DiscordAuthSession
 import com.metrolist.shared.discord.DiscordAuthSessionStore
+import com.metrolist.shared.discord.DiscordDefaults
 import com.metrolist.shared.settings.Settings
 import com.russhwolf.settings.MapSettings
 import org.junit.Assert.assertFalse
@@ -20,14 +21,15 @@ class DiscordLoginFlowTest {
     fun callbackFindsPersistedSessionWithoutAnActiveSettingsScreenAndRequiresItsState() {
         Settings.replaceSharedForTest(Settings(MapSettings()))
         try {
-            DiscordAuthSessionStore().save(DiscordAuthSession("authorize", "metrolist-auth://discord", "verifier", "expected"))
+            val redirect = DiscordDefaults.DISCORD_REDIRECT_URI
+            DiscordAuthSessionStore().save(DiscordAuthSession("authorize", redirect, "verifier", "expected"))
             assertFalse(DiscordLoginFlow.handleCallback(Intent(Intent.ACTION_VIEW, "https://example.org".toUri())))
             assertTrue(
-                DiscordLoginFlow.handleCallback(Intent(Intent.ACTION_VIEW, "metrolist-auth://discord?state=wrong&error=denied".toUri())),
+                DiscordLoginFlow.handleCallback(Intent(Intent.ACTION_VIEW, "$redirect?state=wrong&error=denied".toUri())),
             )
             assertTrue(DiscordLoginFlow.isActive)
             assertTrue(
-                DiscordLoginFlow.handleCallback(Intent(Intent.ACTION_VIEW, "metrolist-auth://discord?state=expected&error=denied".toUri())),
+                DiscordLoginFlow.handleCallback(Intent(Intent.ACTION_VIEW, "$redirect?state=expected&error=denied".toUri())),
             )
             assertFalse(DiscordLoginFlow.isActive)
         } finally {

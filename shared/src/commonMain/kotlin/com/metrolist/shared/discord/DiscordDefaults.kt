@@ -1,5 +1,7 @@
 package com.metrolist.shared.discord
 
+import com.metrolist.shared.BuildConfig
+
 fun resolveDiscordButtonLabel(
     configured: String,
     default: String,
@@ -7,20 +9,23 @@ fun resolveDiscordButtonLabel(
 ): String = if (configured.isEmpty() || configured == default) localized else configured
 
 object DiscordDefaults {
+    const val DISCORD_APP_ID = BuildConfig.DISCORD_APP_ID
+    const val DISCORD_CALLBACK_SCHEME = "discord-$DISCORD_APP_ID"
+
     const val YOUTUBE_WATCH_URL = "https://music.youtube.com/watch?v="
 
     const val BUTTON1_LABEL = "Listen on YouTube Music"
     const val BUTTON1_URL_TEMPLATE = "{song.url}"
 
-    const val BUTTON2_LABEL = "Visit Metrolist"
-    const val BUTTON2_URL = "https://github.com/MetrolistGroup/Metrolist"
+    const val BUTTON2_LABEL = "Visit Metrofuse Alpha"
+    const val BUTTON2_URL = "https://github.com/956tris/MetroFuse"
 
     const val STATE_TEMPLATE = "{artist.name}"
     const val DETAILS_TEMPLATE = "{song.name}"
 
     const val DISCORD_OAUTH_AUTHORIZE = "https://discord.com/oauth2/authorize"
     const val DISCORD_OAUTH_TOKEN = "https://discord.com/api/v10/oauth2/token"
-    const val DISCORD_REDIRECT_URI = "metrolist-auth://discord/callback"
+    const val DISCORD_REDIRECT_URI = "$DISCORD_CALLBACK_SCHEME:///authorize/callback"
 
     const val DISCORD_SCOPES = "openid sdk.social_layer_presence"
 }
