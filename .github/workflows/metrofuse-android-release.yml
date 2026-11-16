@@ -1,0 +1,82 @@
+name: MetroFuse Android release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: metrofuse-android-release
+  cancel-in-progress: false
+
+jobs:
+  android:
+    name: Signed Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH || secrets.KEYSTORE }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+      LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+      LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
+      LYPRIO_HMAC_KEY: ${{ secrets.LYPRIO_HMAC_KEY }}
+      RELEASE_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: metrofuse-release-android
+          persist-configuration-cache: 'false'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+      - uses: ./.github/actions/prepare-android-signing
+        id: signing
+      - name: Require the MetroFuse signing key
+        env:
+          SIGNING_AVAILABLE: ${{ steps.signing.outputs.signing_available }}
+        run: test "$SIGNING_AVAILABLE" = true
+      - name: Use the prepared signing keystore
+        env:
+          PREPARED_KEYSTORE: ${{ steps.signing.outputs.keystore_path }}
+        run: echo "KEYSTORE_PATH=$PREPARED_KEYSTORE" >> "$GITHUB_ENV"
+      - name: Build Android release APK
+        run: ./gradlew :androidApp:assembleRelease :androidApp:exportNativePluginAbi "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+      - name: Validate release APK
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^appVersion=//p' gradle.properties | tr -d '\r')"
+          python3 scripts/collect_android_apks.py androidApp/build/outputs/apk/release release-assets "$version" release
+          python3 scripts/verify_native_plugin_abi.py release-assets/Metrolist.apk --classpath-file androidApp/build/plugin-abi/classpath.txt
+          python3 - <<'PY'
+          import json
+          import zipfile
+          from pathlib import Path
+          metadata = json.loads(Path('androidApp/build/outputs/apk/release/output-metadata.json').read_text())
+          assert metadata['applicationId'] == 'com.metrofuse.music'
+          with zipfile.ZipFile('release-assets/Metrolist.apk') as apk:
+              names = apk.namelist()
+              assert 'assets/composeResources/dev.metrofuse.sdk.resources/values/strings.commonMain.cvr' in names
+              assert not any(n.endswith(('.mfp', '.apk')) or n.startswith('assets/plugins/') for n in names)
+          PY
+          build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          "$build_tools/apksigner" verify --verbose release-assets/Metrolist.apk
+          badging="$("$build_tools/aapt" dump badging release-assets/Metrolist.apk)"
+          if grep -q '^application-debuggable' <<< "$badging"; then
+            echo 'Release APK is debuggable' >&2
+            exit 1
+          fi
+          (cd release-assets && sha256sum Metrolist.apk > SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: metrofuse-android-release
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
