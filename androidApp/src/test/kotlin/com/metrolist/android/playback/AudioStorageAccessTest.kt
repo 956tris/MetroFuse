@@ -29,14 +29,15 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.Implementation
-import org.robolectric.annotation.Implements
+import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowContentResolver
 import org.robolectric.shadows.ShadowParcelFileDescriptor
+import org.robolectric.util.ReflectionHelpers
 import java.io.File
+import java.io.RandomAccessFile
 
 @RunWith(RobolectricTestRunner::class)
-@Config(application = Application::class, manifest = Config.NONE, sdk = [33], shadows = [UnknownSizeParcelFileDescriptor::class])
+@Config(application = Application::class, manifest = Config.NONE, sdk = [33])
 class AudioStorageAccessTest {
     @Test
     fun unknownLengthRemainsPlayableAndRevokedAccessDoesNotDeleteTheFile() =
@@ -95,7 +96,9 @@ class AudioStorageAccessTest {
             }
         }
 
-    private class UnknownLengthProvider(private val audio: File) : ContentProvider() {
+    private class UnknownLengthProvider(
+        private val audio: File,
+    ) : ContentProvider() {
         var denied = false
         var deletions = 0
 
@@ -107,6 +110,16 @@ class AudioStorageAccessTest {
         ): AssetFileDescriptor {
             if (denied) throw SecurityException("Access revoked")
             val descriptor = ParcelFileDescriptor.open(audio, ParcelFileDescriptor.MODE_READ_ONLY)
+            val shadow = Shadow.extract<ShadowParcelFileDescriptor>(descriptor)
+            ReflectionHelpers.getField<RandomAccessFile>(shadow, "file").close()
+            // Resolver wrappers share the backing file, while they discard ParcelFileDescriptor subclasses.
+            ReflectionHelpers.setField(
+                shadow,
+                "file",
+                object : RandomAccessFile(audio, "r") {
+                    override fun length(): Long = AssetFileDescriptor.UNKNOWN_LENGTH
+                },
+            )
             return AssetFileDescriptor(descriptor, 0L, AssetFileDescriptor.UNKNOWN_LENGTH)
         }
 
@@ -144,11 +157,4 @@ class AudioStorageAccessTest {
             return 1
         }
     }
-}
-
-// Robolectric backs pipes with regular files, which otherwise report a known stat size.
-@Implements(ParcelFileDescriptor::class)
-class UnknownSizeParcelFileDescriptor : ShadowParcelFileDescriptor() {
-    @Implementation
-    override fun getStatSize(): Long = -1L
 }
