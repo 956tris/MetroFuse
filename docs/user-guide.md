@@ -101,6 +101,8 @@ Use **Settings & plugins** in the JavaScript interface, or **Settings** and **Pl
 
 The separate [Spotify plugin](https://github.com/956tris/MetroFuse-Spotify/releases) supplies Home, search, collections, library, likes, artist details, lyrics and available Canvas metadata. Import one `.mfp`, desktop `.jar` or Android plugin `.apk` variant and sign in through its account screen. It requires the patched host release; choose an audio provider separately for playback.
 
+The native Spotify plugin waits for the browser to return to the Web Player before capturing its session. Cold native sign-in and saved-session verification have up to 90 seconds for token and account checks.
+
 Its **Report listening history to Spotify** and **Use Spotify Web Player upcoming queue** settings are independent and off by default. Queue sync uses Spotify's actual Web Player queue and preserves the current host track. Reporting sends listening activity back to Spotify. Live account behavior remains unverified in this prerelease and depends on Spotify's private endpoints and account permissions.
 
 Use the player for previous, play/pause, next, seeking and the current queue. Artwork, playback controls and supported lyrics remain host features even when a plugin supplies content. Lyrics availability depends on your enabled sources and the current song.
