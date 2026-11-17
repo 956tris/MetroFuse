@@ -45,6 +45,7 @@ class PluginLogins(
     private val scope: CoroutineScope,
     private val credentials: CredentialStore,
     private val timeoutMs: Long = 15_000,
+    private val loginTimeoutMs: Long = 90_000,
 ) {
     val states = MutableStateFlow<Map<String, PluginAccountState>>(emptyMap())
     val prompt = MutableStateFlow<PluginLoginPrompt?>(null)
@@ -120,7 +121,7 @@ class PluginLogins(
                 try {
                     val saved = credentials.read(owner) ?: return@withLock
                     update(owner, binding) { it.copy(busy = true) }
-                    val restored = withTimeout(timeoutMs) { binding.login(saved) }.validated()
+                    val restored = withTimeout(loginTimeoutMs) { binding.login(saved) }.validated()
                     update(owner, binding) { it.copy(account = restored, busy = false, revision = accountRevision.incrementAndGet()) }
                 } catch (error: CancellationException) {
                     if (error !is TimeoutCancellationException) throw error
@@ -180,7 +181,8 @@ class PluginLogins(
             require(values.values.all { it.isNotBlank() && it.length <= 16384 })
             check(credentials !== UnavailableCredentialStore)
             val supplied = LoginCredentials(values.toMap())
-            val result = withTimeout(timeoutMs) { binding.login(supplied) }.validated()
+            // Cold sign-in may need several sequential token and account HTTP requests.
+            val result = withTimeout(loginTimeoutMs) { binding.login(supplied) }.validated()
             check(result.loggedIn)
             if (bindings[owner] !== binding || prompt.value !== current) return@operation
             try {
