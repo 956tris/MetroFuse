@@ -3,28 +3,41 @@ package com.metrolist.shared.plugins
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -45,8 +58,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.SubcomposeLayout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -60,6 +78,7 @@ import com.metrolist.shared.generated.resources.plugins_screen_unavailable
 import com.metrolist.shared.generated.resources.plugins_title
 import com.metrolist.shared.generated.resources.plugins_unsupported_ui
 import com.metrolist.shared.generated.resources.plugins_use_original_ui
+import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.navigation.LocalNavigator
 import com.metrolist.shared.ui.navigation.Screen
 import dev.metrofuse.api.Layer
@@ -75,7 +94,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
-import java.net.URI
 
 internal const val PLUGIN_SCREEN_PREFIX = "plugin:"
 internal const val PLUGIN_SCREEN_POINT_PREFIX = "screen."
@@ -134,7 +152,10 @@ fun PluginDestinationScreen(
 }
 
 @Composable
-fun PluginAppShell(original: @Composable () -> Unit) {
+fun PluginAppShell(
+    original: @Composable () -> Unit,
+    onCustomUiLaidOut: () -> Unit = {},
+) {
     if (!MetroFuseHost.isConfigured) {
         original()
         return
@@ -159,14 +180,29 @@ fun PluginAppShell(original: @Composable () -> Unit) {
         return
     }
     val scope = rememberCoroutineScope()
-    Box(Modifier.fillMaxSize().then(if (customShell) Modifier.safeDrawingPadding() else Modifier)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .then(if (customShell) Modifier.safeDrawingPadding() else Modifier)
+            .onGloballyPositioned { if (customShell) onCustomUiLaidOut() },
+    ) {
         PluginUiSlot("ui.app", original)
         overlays.forEach { PluginContributionContent(it, runtime) }
         if (customShell) {
-            Surface(modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)) {
-                TextButton(onClick = { scope.launch { runtime.setUiSafeMode(true) } }) {
-                    Text(stringResource(Res.string.plugins_use_original_ui))
-                }
+            IconButton(
+                onClick = { scope.launch { runtime.setUiSafeMode(true) } },
+                modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(40.dp),
+                colors =
+                    IconButtonDefaults.iconButtonColors(
+                        containerColor = Color.Black.copy(alpha = 0.2f),
+                        contentColor = Color.White.copy(alpha = 0.6f),
+                    ),
+            ) {
+                Icon(
+                    MetrolistIcons.Outlined.SettingsBackupRestore,
+                    contentDescription = stringResource(Res.string.plugins_use_original_ui),
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
     }
@@ -275,9 +311,18 @@ internal fun PluginContributionContent(
                     }
                 }
             }
-        val scope = rememberCoroutineScope()
         var failed by remember { mutableStateOf(false) }
         if (!failed) {
+            val completeFirstRender = remember { runtime.beginUiRender() }
+
+            fun reject(error: Throwable) {
+                runtime.forceOriginalUi()
+                // Recovery must survive disposal of the broken contribution's composition scope.
+                runtime.scope.launch {
+                    failed = true
+                    runtime.failUi(contribution.owner, error)
+                }
+            }
             SubcomposeLayout { constraints ->
                 try {
                     val children =
@@ -292,20 +337,27 @@ internal fun PluginContributionContent(
                         }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
                     val width = (children.maxOfOrNull { it.width } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
                     val height = (children.maxOfOrNull { it.height } ?: 0).coerceIn(constraints.minHeight, constraints.maxHeight)
-                    layout(width, height) { children.forEach { it.placeRelative(0, 0) } }
+                    layout(width, height) {
+                        try {
+                            children.forEach { it.placeRelative(0, 0) }
+                            completeFirstRender()
+                        } catch (error: CancellationException) {
+                            completeFirstRender()
+                            throw error
+                        } catch (error: Exception) {
+                            reject(error)
+                        } catch (error: LinkageError) {
+                            reject(error)
+                        }
+                    }
                 } catch (error: CancellationException) {
+                    completeFirstRender()
                     throw error
                 } catch (error: Exception) {
-                    scope.launch {
-                        failed = true
-                        runtime.failUi(contribution.owner, error)
-                    }
+                    reject(error)
                     layout(constraints.minWidth, constraints.minHeight) {}
                 } catch (error: LinkageError) {
-                    scope.launch {
-                        failed = true
-                        runtime.failUi(contribution.owner, error)
-                    }
+                    reject(error)
                     layout(constraints.minWidth, constraints.minHeight) {}
                 }
             }
@@ -344,8 +396,15 @@ private fun PluginNode(
     val modifier =
         parentModifier
             .then(if (node.props["fillWidth"] == "true") Modifier.fillMaxWidth() else Modifier)
+            .then(if (node.props["fillHeight"] == "true") Modifier.fillMaxHeight() else Modifier)
             .then(if (node.props["fillSize"] == "true") Modifier.fillMaxSize() else Modifier)
             .then(
+                node.props["aspectRatio"]
+                    ?.toFloatOrNull()
+                    ?.takeIf { it.isFinite() && it in 0.1f..10f }
+                    ?.let { Modifier.aspectRatio(it) }
+                    ?: Modifier,
+            ).then(
                 node.props["width"]
                     ?.toIntOrNull()
                     ?.coerceIn(1, 1200)
@@ -361,7 +420,16 @@ private fun PluginNode(
                     ?.coerceIn(0, 64)
                     ?.let { Modifier.clip(RoundedCornerShape(it.dp)) } ?: Modifier,
             ).then(node.props["background"]?.let(::pluginColor)?.let { Modifier.background(it) } ?: Modifier)
-            .padding((node.props["padding"]?.toIntOrNull()?.coerceIn(0, 96) ?: 0).dp)
+            .then(
+                if (node.props["action"] != null && node.type in setOf("Box", "Column", "Row", "Artwork", "Text")) {
+                    Modifier.clickable(
+                        enabled = node.props["enabled"] != "false",
+                        role = Role.Button,
+                    ) { action(node.props["value"].orEmpty()) }
+                } else {
+                    Modifier
+                },
+            ).padding((node.props["padding"]?.toIntOrNull()?.coerceIn(0, 96) ?: 0).dp)
     val children: @Composable () -> Unit = {
         node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target, track) } }
     }
@@ -371,6 +439,11 @@ private fun PluginNode(
                 text("text"),
                 modifier = modifier,
                 color = node.props["color"]?.let(::pluginColor) ?: Color.Unspecified,
+                fontWeight =
+                    node.props["fontWeight"]
+                        ?.toIntOrNull()
+                        ?.coerceIn(100, 900)
+                        ?.let(::FontWeight),
                 maxLines = node.props["maxLines"]?.toIntOrNull()?.coerceIn(1, 20) ?: Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis,
                 fontSize =
@@ -397,6 +470,44 @@ private fun PluginNode(
             PluginArtwork(text("url"), text("description").ifBlank { null }, modifier)
         }
 
+        "Icon" -> {
+            Icon(
+                pluginUiIcon(text("icon")),
+                text("description").ifBlank { null },
+                modifier.size(
+                    (
+                        node.props["iconSize"]?.toIntOrNull()?.coerceIn(12, 64)
+                            ?: 24
+                    ).dp,
+                ),
+                tint = node.props["color"]?.let(::pluginColor) ?: MaterialTheme.colorScheme.onSurface,
+            )
+        }
+
+        "IconButton" -> {
+            IconButton(
+                onClick = { action(node.props["value"].orEmpty()) },
+                modifier = modifier,
+                enabled = node.props["enabled"] != "false",
+                colors =
+                    IconButtonDefaults.iconButtonColors(
+                        contentColor =
+                            node.props["color"]?.let(::pluginColor) ?: MaterialTheme.colorScheme.onSurface,
+                    ),
+            ) {
+                Icon(
+                    pluginUiIcon(text("icon")),
+                    text("description").ifBlank { null },
+                    Modifier.size(
+                        (
+                            node.props["iconSize"]?.toIntOrNull()?.coerceIn(12, 64)
+                                ?: 24
+                        ).dp,
+                    ),
+                )
+            }
+        }
+
         "Spacer" -> {
             Spacer(modifier)
         }
@@ -406,7 +517,16 @@ private fun PluginNode(
         }
 
         "LazyColumn" -> {
-            LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(spacing)) {
+            LazyColumn(
+                modifier,
+                verticalArrangement = Arrangement.spacedBy(spacing),
+                horizontalAlignment =
+                    when (node.props["horizontalAlignment"]) {
+                        "center" -> Alignment.CenterHorizontally
+                        "end" -> Alignment.End
+                        else -> Alignment.Start
+                    },
+            ) {
                 items(node.children, key = UiNode::id) { PluginNode(it, owner, runtime, target, track) }
             }
         }
@@ -451,8 +571,35 @@ private fun PluginNode(
             )
         }
 
+        "Progress" -> {
+            val fraction =
+                node.props["value"]
+                    ?.toFloatOrNull()
+                    ?.takeIf(Float::isFinite)
+                    ?.coerceIn(0f, 1f) ?: 0f
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = modifier,
+                color =
+                    node.props["color"]?.let(::pluginColor) ?: MaterialTheme.colorScheme.primary,
+                trackColor =
+                    node.props["trackColor"]?.let(::pluginColor) ?: MaterialTheme.colorScheme.surfaceVariant,
+                gapSize = 0.dp,
+                drawStopIndicator = {},
+            )
+        }
+
         "Column", "List", "Section" -> {
-            Column(modifier, verticalArrangement = Arrangement.spacedBy(spacing)) {
+            Column(
+                modifier,
+                verticalArrangement = Arrangement.spacedBy(spacing),
+                horizontalAlignment =
+                    when (node.props["horizontalAlignment"]) {
+                        "center" -> Alignment.CenterHorizontally
+                        "end" -> Alignment.End
+                        else -> Alignment.Start
+                    },
+            ) {
                 node.children.forEach { child ->
                     val weight = child.layoutWeight()
                     key(child.id) {
@@ -476,7 +623,22 @@ private fun PluginNode(
         }
 
         "Row" -> {
-            Row(modifier, horizontalArrangement = Arrangement.spacedBy(spacing), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier,
+                horizontalArrangement =
+                    when (node.props["horizontalArrangement"]) {
+                        "center" -> Arrangement.spacedBy(spacing, Alignment.CenterHorizontally)
+                        "end" -> Arrangement.spacedBy(spacing, Alignment.End)
+                        "spaceBetween" -> Arrangement.SpaceBetween
+                        else -> Arrangement.spacedBy(spacing)
+                    },
+                verticalAlignment =
+                    when (node.props["verticalAlignment"]) {
+                        "top" -> Alignment.Top
+                        "bottom" -> Alignment.Bottom
+                        else -> Alignment.CenterVertically
+                    },
+            ) {
                 node.children.forEach { child ->
                     val weight = child.layoutWeight()
                     key(child.id) {
@@ -520,6 +682,16 @@ private fun PluginNode(
                 Text(
                     text("text").ifEmpty { text("label") },
                     color = node.props["color"]?.let(::pluginColor) ?: Color.Unspecified,
+                    fontSize =
+                        node.props["fontSize"]
+                            ?.toIntOrNull()
+                            ?.coerceIn(8, 96)
+                            ?.sp ?: TextUnit.Unspecified,
+                    fontWeight =
+                        node.props["fontWeight"]
+                            ?.toIntOrNull()
+                            ?.coerceIn(100, 900)
+                            ?.let(::FontWeight),
                     maxLines = node.props["maxLines"]?.toIntOrNull()?.coerceIn(1, 20) ?: Int.MAX_VALUE,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -558,10 +730,56 @@ private fun PluginNode(
 
         "TextField", "Input" -> {
             var value by remember(node.id, node.props["value"]) { mutableStateOf(node.props["value"].orEmpty()) }
-            Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(value, { value = it.take(250) }, Modifier.weight(1f), label = { Text(text("label")) }, singleLine = true)
-                TextButton(onClick = { action(value) }) {
-                    Text(text("submit").ifBlank { stringResource(Res.string.plugins_apply) })
+            if (node.props["appearance"] == "search") {
+                val container = node.props["background"]?.let(::pluginColor) ?: MaterialTheme.colorScheme.surfaceVariant
+                Row(
+                    modifier.clip(CircleShape).background(container).padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(pluginUiIcon("search"), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    BasicTextField(
+                        value,
+                        {
+                            value = it.take(250)
+                        },
+                        Modifier.weight(
+                            1f,
+                        ),
+                        singleLine = true,
+                        textStyle =
+                            MaterialTheme.typography.bodyLarge.copy(
+                                color = MaterialTheme.colorScheme.onSurface,
+                            ),
+                        cursorBrush =
+                            SolidColor(
+                                MaterialTheme.colorScheme.onSurface,
+                            ),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions =
+                            KeyboardActions(onSearch = {
+                                action(value)
+                            }),
+                        decorationBox = { input ->
+                            Box {
+                                if (value.isEmpty()) Text(text("label"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                input()
+                            }
+                        },
+                    )
+                }
+            } else {
+                Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value,
+                        { value = it.take(250) },
+                        Modifier.weight(1f),
+                        label = { Text(text("label")) },
+                        singleLine = true,
+                    )
+                    TextButton(onClick = { action(value) }) {
+                        Text(text("submit").ifBlank { stringResource(Res.string.plugins_apply) })
+                    }
                 }
             }
         }
@@ -593,15 +811,7 @@ private fun PluginArtwork(
     description: String?,
     modifier: Modifier,
 ) {
-    val source =
-        remember(url) {
-            runCatching { URI(url) }
-                .getOrNull()
-                ?.takeIf {
-                    it.scheme == "https" && it.userInfo == null && it.port in setOf(-1, 443) &&
-                        it.host?.matches(Regex("(?=.*[a-zA-Z])[a-zA-Z0-9-]+(?:\\.[a-zA-Z0-9-]+)+")) == true
-                }?.toString()
-        }
+    val source = remember(url) { pluginArtworkSource(url) }
     Box(modifier.background(MaterialTheme.colorScheme.surfaceVariant)) {
         if (source != null) AsyncImage(source, description, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
     }

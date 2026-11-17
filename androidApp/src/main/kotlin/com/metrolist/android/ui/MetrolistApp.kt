@@ -1975,7 +1975,7 @@ fun MetrolistApp(
                 }
             }
             }
-            PluginAppShell(originalUi)
+            PluginAppShell(originalUi, onCustomUiLaidOut = { startupPresentation?.customInterfaceLaidOut = true })
         }
     }
 }

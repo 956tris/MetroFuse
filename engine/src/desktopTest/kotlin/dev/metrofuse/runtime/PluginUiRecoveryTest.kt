@@ -9,6 +9,45 @@ import kotlin.test.assertTrue
 
 class PluginUiRecoveryTest {
     @Test
+    fun interruptedFirstRenderBlocksStartupBeforeTheRuntimeExists() {
+        val storage = Files.createTempDirectory("metrofuse-interrupted-render-").toFile()
+        try {
+            val complete = PluginUiRecovery(storage).beginRender()
+            assertTrue(PluginUiRecovery(storage).isOriginalUiForced)
+            assertTrue(PluginUiRecovery(storage).isPluginStartupBlocked)
+            complete()
+            assertFalse(PluginUiRecovery(storage).isOriginalUiForced)
+            assertFalse(PluginUiRecovery(storage).isPluginStartupBlocked)
+        } finally {
+            storage.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun nestedRendersMustAllCompleteBeforeClearingTheRecoveryMarker() {
+        val storage = Files.createTempDirectory("metrofuse-nested-render-").toFile()
+        try {
+            val recovery = PluginUiRecovery(storage)
+            val outer = recovery.beginRender()
+            val inner = recovery.beginRender()
+            outer()
+            outer()
+            assertTrue(PluginUiRecovery(storage).isPluginStartupBlocked)
+            inner()
+            assertFalse(PluginUiRecovery(storage).isPluginStartupBlocked)
+            val abandoned = recovery.beginRender()
+            recovery.setOriginalUi(false)
+            val current = recovery.beginRender()
+            abandoned()
+            assertTrue(PluginUiRecovery(storage).isPluginStartupBlocked)
+            current()
+            assertFalse(PluginUiRecovery(storage).isPluginStartupBlocked)
+        } finally {
+            storage.deleteRecursively()
+        }
+    }
+
+    @Test
     fun recoveryCreatesStorageWithoutRuntimeAndExplicitReenableClearsFailureMarkers() {
         val root = Files.createTempDirectory("metrofuse-ui-marker-").toFile()
         try {

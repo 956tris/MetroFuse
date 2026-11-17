@@ -10,6 +10,7 @@ internal class StartupPresentation(
     var contentLaidOut = false
     var homeRequired = false
     var homeLaidOut = false
+    var customInterfaceLaidOut = false
     var homeCacheReady = false
     var avatarReady = true
 
@@ -20,7 +21,7 @@ internal class StartupPresentation(
         restoringBackup: Boolean,
     ): Boolean {
         if (recovering || restoringBackup) return false
-        if (!startupReady || !contentLaidOut || (homeRequired && !homeLaidOut)) return true
+        if (!startupReady || !contentLaidOut || (homeRequired && !homeLaidOut && !customInterfaceLaidOut)) return true
         return nowMs - startedAtMs < 1_200L && (!avatarReady || (homeRequired && !homeCacheReady))
     }
 }

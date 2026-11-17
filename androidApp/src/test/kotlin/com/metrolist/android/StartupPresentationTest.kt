@@ -54,6 +54,21 @@ class StartupPresentationTest {
     }
 
     @Test
+    fun customShellLayoutReleasesHomeWithoutTheReplacedBuiltInHomeCallback() {
+        val presentation =
+            StartupPresentation(100).apply {
+                contentLaidOut = true
+                homeRequired = true
+            }
+        assertTrue(presentation.keepSplash(5_000, true, false, false))
+        presentation.customInterfaceLaidOut = true
+        assertFalse(presentation.keepSplash(5_000, true, false, false))
+        assertTrue(presentation.keepSplash(5_000, false, false, false))
+        presentation.contentLaidOut = false
+        assertTrue(presentation.keepSplash(5_000, true, false, false))
+    }
+
+    @Test
     fun onboardingAndOtherStartupTabsDoNotWaitForHome() {
         val presentation = StartupPresentation(100)
         assertTrue(presentation.keepSplash(200, true, false, false))

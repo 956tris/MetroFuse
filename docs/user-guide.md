@@ -68,14 +68,16 @@ Account changes refresh that source's cached content. A provider's account libra
 
 Import and enable a UI plugin using the same steps as a provider. When a full-shell replacement is available, **Installed → App interface** lets you select it by name. If several replacements are active, choose the one you want. Use one package variant of the same UI plugin for your platform.
 
-The host keeps **Use original interface** available in a custom shell. Choose it to return to the built-in interface, then open Plugins to inspect errors or disable the UI plugin. **Enable custom interfaces** turns custom rendering back on after you have addressed the problem. Switching interfaces continues to use the host player and queue.
+The host keeps a small **Use original interface** restore icon in the top-right corner of a custom shell. Choose it to return to the built-in interface, then open Plugins to inspect errors or disable the UI plugin. **Enable custom interfaces** turns custom rendering back on after you have addressed the problem. Switching interfaces continues to use the host player and queue.
+
+If recovery paused plugin activation during startup, review or disable the failing plugin first, then choose **Enable custom interfaces** and restart to resume your saved activation choices.
 
 If the custom interface prevents normal startup:
 
 - On the Android or desktop crash screen, choose **Use original MetroFuse UI**. This saves recovery before restarting, restores the built-in interface and pauses automatic plugin activation across later restarts. Your plugin activation choices are preserved; review the failing plugin before resuming activation.
 - On Windows, launch MetroFuse with the `--original-ui` argument.
 - On Android, an advanced launch can set the boolean intent extra `metrofuse.original_ui=true`; this is an intent extra, not an app setting or a website address.
-- If the app detects a UI failure, it can restore the original presentation on restart. Review the recovery notice and **Advanced → Diagnostics** before re-enabling the plugin. Repeated failures can quarantine a UI plugin; a native crash or deadlock may require restarting the app.
+- If a plugin's first render is interrupted or the app detects a UI failure, the next launch restores the original presentation and pauses automatic plugin activation. Review the recovery notice and **Advanced → Diagnostics** before re-enabling custom interfaces. Repeated failures can quarantine a UI plugin; a native crash or deadlock may require restarting the app.
 
 Plugin authors can use the [SDK UI guide](../plugin-sdk/ui-plugins.md) for supported surfaces, player access and recovery behavior.
 

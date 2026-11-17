@@ -71,9 +71,12 @@ class Runtime(
         uiSafeMode.value = true
     }
 
+    fun beginUiRender(): () -> Unit = uiRecovery.beginRender()
+
     suspend fun recordUiFailure(owners: Set<String>) =
         withContext(Dispatchers.IO) {
             if (owners.isEmpty()) return@withContext
+            uiRecovery.recoverOriginalUi()
             writePluginJson(
                 uiFailureMarker,
                 buildJsonObject {
@@ -127,8 +130,8 @@ class Runtime(
         error: Throwable,
     ) {
         forceOriginalUi()
-        setUiSafeMode(true)
         withContext(Dispatchers.IO) {
+            uiRecovery.recoverOriginalUi()
             recordFailure(owner)
             if (failureCounts.getOrDefault(owner, 0) >= 2) quarantine(owner, IllegalStateException("UI rendering failed"))
         }
@@ -146,7 +149,8 @@ class Runtime(
                         ?.takeIf { it.isNotEmpty() }
                         ?.let { prefix -> frames.any { it.className.startsWith("$prefix.") } } == true
                 }.mapTo(mutableSetOf()) { it.manifest.id }
-        recordUiFailure(owners)
+        // Compose can throw from host layout/drawing frames after plugin code has returned.
+        recordUiFailure(owners.ifEmpty { activeOwners })
     }
 
     suspend fun setUiSafeMode(enabled: Boolean) =
@@ -363,6 +367,7 @@ class Runtime(
                 if (initialized) return@withLock
                 require(storage.mkdirs() || storage.isDirectory)
                 recovery.value = marker.exists()
+                if (recovery.value) uiRecovery.recoverOriginalUi()
                 if (uiRecovery.isOriginalUiForced) forceOriginalUi()
                 marker.writeText("Unclean exit: start without plugins")
                 storageReady.complete(Unit)
