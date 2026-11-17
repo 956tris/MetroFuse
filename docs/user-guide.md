@@ -24,7 +24,7 @@ The Home title opens the source selector. **Offline** is listed first. Enabled p
 
 Selecting a provider does not move or delete your device library. Switch back to **Offline** to find local music, local playlists and scanning controls. If the selected plugin is disabled or removed, the app returns to Offline. A provider without account-library support retains the host's saved-content view.
 
-**Source selection and audio priority are separate controls.** The source selector chooses the frontend you browse. Audio providers resolve playback, and their order is managed through playback source controls and **Settings → Plugins → Advanced → Providers**. A higher priority runs first. Selecting Offline still restricts playback to offline audio.
+**Source selection and audio priority are separate controls.** The source selector chooses the frontend you browse. Audio providers resolve playback, and their order is managed through playback source controls and **Settings → Plugins → Advanced → Providers**. Hold and drag a handle to reorder providers within a group; earlier providers run first, after their dependencies. Tap or click a handle for move actions, or focus it and use Alt+Up/Down. Installed plugins can be reordered the same way; provider group order overrides that plugin order. Orders are saved across restarts, including preferences for temporarily disabled providers. Selecting Offline still restricts playback to offline audio.
 
 ## Choose a plugin package
 
@@ -72,6 +72,7 @@ The host keeps **Use original interface** available in a custom shell. Choose it
 
 If the custom interface prevents normal startup:
 
+- On the Android or desktop crash screen, choose **Use original MetroFuse UI**. This saves recovery before restarting, restores the built-in interface and pauses automatic plugin activation across later restarts. Your plugin activation choices are preserved; review the failing plugin before resuming activation.
 - On Windows, launch MetroFuse with the `--original-ui` argument.
 - On Android, an advanced launch can set the boolean intent extra `metrofuse.original_ui=true`; this is an intent extra, not an app setting or a website address.
 - If the app detects a UI failure, it can restore the original presentation on restart. Review the recovery notice and **Advanced → Diagnostics** before re-enabling the plugin. Repeated failures can quarantine a UI plugin; a native crash or deadlock may require restarting the app.
@@ -93,6 +94,12 @@ Open **Settings → Plugins → Installed → Import or update plugin** and sele
 Use **Settings & plugins** in the JavaScript interface, or **Settings** and **Plugins** in the native interface, to open the built-in screens. Settings, Plugins and detail destinations keep MetroFuse's original interface so account configuration, scanning and recovery remain accessible. Use the host's **Back** control to return from those screens to MetroFlow. To change the content source, choose **Use original interface**, select the source through the original Home title, then re-enable the custom interface in Plugins. A MetroFlow package supplies the interface; any provider package and account are configured separately.
 
 ## Playback, quality and lyrics
+
+### Spotify metadata and account
+
+The separate [Spotify plugin](https://github.com/956tris/MetroFuse-Spotify/releases) supplies Home, search, collections, library, likes, artist details, lyrics and available Canvas metadata. Import one `.mfp`, desktop `.jar` or Android plugin `.apk` variant and sign in through its account screen. It requires the patched host release; choose an audio provider separately for playback.
+
+Its **Report listening history to Spotify** and **Use Spotify Web Player upcoming queue** settings are independent and off by default. Queue sync uses Spotify's actual Web Player queue and preserves the current host track. Reporting sends listening activity back to Spotify. Live account behavior remains unverified in this prerelease and depends on Spotify's private endpoints and account permissions.
 
 Use the player for previous, play/pause, next, seeking and the current queue. Artwork, playback controls and supported lyrics remain host features even when a plugin supplies content. Lyrics availability depends on your enabled sources and the current song.
 
@@ -116,6 +123,8 @@ For offline listening, use local files or audio already downloaded or cached by 
 | Custom interface hangs or crashes | Restore the original interface using the recovery steps above, inspect Diagnostics and disable the failing plugin. |
 
 **Settings → Plugins → Advanced** contains provider priority, a search test and recent diagnostics. When reporting a problem, include the MetroFuse version, OS, plugin name/version, package format, exact error and steps to reproduce. Remove credentials and private account data from logs.
+
+Drag a provider's handle to change its priority. Keyboard and accessibility users can use the move actions. Ordering is saved per provider category, including preferences for disabled or temporarily unavailable providers.
 
 ## Back up before major changes
 
