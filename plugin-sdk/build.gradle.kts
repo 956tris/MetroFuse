@@ -37,7 +37,10 @@ kotlin {
         val jvmSharedMain = create("jvmSharedMain") { dependsOn(common) }
         getByName("androidMain") {
             dependsOn(jvmSharedMain)
-            dependencies { implementation(libs.activity) }
+            dependencies {
+                implementation(libs.activity)
+                implementation("androidx.webkit:webkit:1.14.0")
+            }
         }
         getByName("desktopMain") {
             dependsOn(jvmSharedMain)
