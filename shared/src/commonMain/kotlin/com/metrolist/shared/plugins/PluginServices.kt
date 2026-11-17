@@ -26,6 +26,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 interface PluginServices {
     suspend fun awaitReady() {}
 
+    suspend fun canvas(
+        title: String,
+        artist: String,
+        durationMs: Long?,
+        album: String?,
+    ): String? = null
+
     fun refreshHome(
         owner: String,
         force: Boolean = false,

@@ -8,6 +8,7 @@ import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.ui.playback.PlaybackController
 import com.metrolist.shared.ui.playback.PlaybackListState
 import com.metrolist.shared.ui.playback.PlaybackUiState
+import com.metrolist.shared.ui.playback.UpcomingQueueController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -17,7 +18,7 @@ import kotlinx.coroutines.flow.stateIn
 
 class DesktopPlaybackController(
     scope: CoroutineScope,
-) : PlaybackController {
+) : UpcomingQueueController {
     override val listState =
         combine(PlayerState.player.currentSong, PlayerState.player.isPlaying) { song, playing ->
             PlaybackListState(song?.id, playing)
@@ -65,6 +66,11 @@ class DesktopPlaybackController(
 
     override fun currentPositionMs(): Long = PlayerState.currentMediaPositionMs()
 
+    override fun playbackInstanceId(): String? =
+        PlayerState.player.currentPlaybackInstanceId
+            .takeIf { it > 0L }
+            ?.toString()
+
     override fun togglePlayPause() = PlayerState.togglePlay()
 
     override val supportsVolume: Boolean get() = true
@@ -90,6 +96,8 @@ class DesktopPlaybackController(
     override fun playNext(songs: List<SongItem>) = PlayerState.playNext(songs)
 
     override fun addToQueue(songs: List<SongItem>) = PlayerState.addToQueue(songs)
+
+    override fun replaceUpcomingQueue(songs: List<SongItem>) = PlayerState.replaceUpcomingQueueFromListenTogether(songs)
 
     override fun reorderQueue(order: List<Int>) = PlayerState.reorderQueue(order)
 

@@ -4,6 +4,7 @@ import com.metrolist.shared.network.ExpectedHttpFailureStatusCodes
 import com.metrolist.shared.network.HttpFailureLog
 import com.metrolist.shared.network.readTextLimited
 import com.metrolist.shared.network.sharedHttpTransportHandlesFailures
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.utils.SystemLocale
 import com.metrolist.shared.youtube.logging.YtLogger
@@ -53,6 +54,9 @@ class DirectCanvasProvider(
     },
     private val now: () -> Long = System::currentTimeMillis,
     private val saveSession: (String) -> Unit = { Settings.shared.spotifySession = it },
+    private val pluginCanvas: suspend (String, String, Long?, String?) -> String? = { title, artist, duration, album ->
+        PluginServicesStore.current?.canvas(title, artist, duration, album)
+    },
 ) {
     private val http =
         HttpClient(client.engine) {
@@ -77,7 +81,18 @@ class DirectCanvasProvider(
         duration: Long?,
         album: String? = null,
         primaryArtist: String? = null,
-    ): String? = getCanvasesInternal(title, artist, duration, album, primaryArtist, includeAppleMusic = false).spotify
+    ): String? {
+        val pluginResult =
+            try {
+                withTimeoutOrNull(15_000) { pluginCanvas(title, artist, duration, album) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                null
+            }
+        if (trustedMedia(pluginResult, false)) return pluginResult
+        return getCanvasesInternal(title, artist, duration, album, primaryArtist, includeAppleMusic = false).spotify
+    }
 
     suspend fun getCanvases(
         title: String,

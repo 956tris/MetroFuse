@@ -17,6 +17,8 @@ import java.io.InputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -61,7 +63,8 @@ class Runtime(
     val plugins = MutableStateFlow<List<PluginStatus>>(emptyList())
     val logs = MutableStateFlow<List<String>>(emptyList())
     val recovery = MutableStateFlow(false)
-    val uiSafeMode = MutableStateFlow(false)
+    private val uiRecovery = PluginUiRecovery(storage)
+    val uiSafeMode = MutableStateFlow(uiRecovery.isOriginalUiForced)
     private val uiFailureMarker = File(storage, "ui-failure.json")
 
     fun forceOriginalUi() {
@@ -148,8 +151,7 @@ class Runtime(
 
     suspend fun setUiSafeMode(enabled: Boolean) =
         withContext(Dispatchers.IO) {
-            val file = File(storage, "original-ui.marker")
-            if (enabled) file.writeText("Use original UI") else Files.deleteIfExists(file.toPath())
+            uiRecovery.setOriginalUi(enabled)
             uiSafeMode.value = enabled
         }
 
@@ -361,7 +363,7 @@ class Runtime(
                 if (initialized) return@withLock
                 require(storage.mkdirs() || storage.isDirectory)
                 recovery.value = marker.exists()
-                if (File(storage, "original-ui.marker").isFile || uiFailureMarker.isFile) forceOriginalUi()
+                if (uiRecovery.isOriginalUiForced) forceOriginalUi()
                 marker.writeText("Unclean exit: start without plugins")
                 storageReady.complete(Unit)
                 store.recoverInterruptedInstallations()
@@ -382,7 +384,7 @@ class Runtime(
                                 .map { it.jsonPrimitive.content }
                         failedOwners.forEach(::recordFailure)
                         val quarantined = failedOwners.filterTo(mutableSetOf()) { failureCounts.getOrDefault(it, 0) >= 2 }
-                        File(storage, "original-ui.marker").writeText("Use original UI")
+                        uiRecovery.setOriginalUi(true)
                         Files.deleteIfExists(uiFailureMarker.toPath())
                         if (quarantined.isNotEmpty()) {
                             desiredEnabled = desiredEnabled - quarantined
@@ -423,7 +425,7 @@ class Runtime(
                             log("host", "Installed package ${dir.name} rejected: $e")
                         }
                     }
-                    if (!recovery.value) {
+                    if (!recovery.value && !uiRecovery.isPluginStartupBlocked) {
                         val pending = desiredEnabled.toMutableSet()
                         while (pending.isNotEmpty()) {
                             val ready =
@@ -1057,6 +1059,17 @@ class Runtime(
         val jsGate = Mutex()
         private val bridgeWaiters = AtomicInteger()
         private val uiSubscriptions = MutableStateFlow(emptySet<String>())
+        private val sockets =
+            PluginSockets(observers) { name, payload ->
+                try {
+                    evaluate("JSON.stringify(await __emit(${quote(name)},$payload))")
+                } catch (e: CancellationException) {
+                    if (e !is TimeoutCancellationException) throw e
+                    scope.launch { quarantine(id, IllegalStateException("Socket callback failed")) }
+                } catch (_: Exception) {
+                    scope.launch { quarantine(id, IllegalStateException("Socket callback failed")) }
+                }
+            }
 
         /** The dependency's native timer includes pending async time on the tested builds.
          * Bound active evaluation separately, retaining a wall deadline and native cancellation. */
@@ -1279,7 +1292,7 @@ class Runtime(
                                 }
                             }
                     }
-                override val player =
+                override val player: Player =
                     object : Player by this@Runtime.player {
                         override fun stop() {
                             requireActive()
@@ -1295,6 +1308,19 @@ class Runtime(
                                         )
                                     },
                                 )
+                            }
+                        }
+                    }.let { guarded ->
+                        val upcoming = this@Runtime.player as? UpcomingQueuePlayer
+                        if (upcoming == null) {
+                            guarded
+                        } else {
+                            object : UpcomingQueuePlayer, Player by guarded {
+                                override fun replaceUpcomingQueue(tracks: List<Track>) {
+                                    requireActive()
+                                    require("replaceUpcomingQueue" in upcoming.capabilities) { "Upcoming queue replacement is unavailable" }
+                                    upcoming.replaceUpcomingQueue(tracks)
+                                }
                             }
                         }
                     }
@@ -1528,6 +1554,9 @@ class Runtime(
             }
             q.function("__uiSubscription") { args ->
                 val name = args[0] as String
+                if (name.startsWith("socket.message/")) {
+                    sockets.subscribe(name.removePrefix("socket.message/"), (args[1] as Number).toInt() > 0)
+                }
                 if (name in UI_EVENTS) {
                     val active = (args[1] as Number).toInt() > 0
                     uiSubscriptions.update { if (active) it + name else it - name }
@@ -1630,6 +1659,10 @@ class Runtime(
                                 player.addToQueue(codec.decodeFromString<List<Track>>(args[1] as String))
                             }
 
+                            "replaceUpcomingQueue" -> {
+                                (player as UpcomingQueuePlayer).replaceUpcomingQueue(codec.decodeFromString<List<Track>>(args[1] as String))
+                            }
+
                             else -> {
                                 error("Unknown player command")
                             }
@@ -1641,6 +1674,13 @@ class Runtime(
                 }
             }
             q.function("__platform") { platform }
+            q.function("__locale") {
+                buildJsonObject {
+                    put("language", Locale.getDefault().toLanguageTag())
+                    put("country", Locale.getDefault().country)
+                    put("timeZone", TimeZone.getDefault().id)
+                }.toString()
+            }
             q.function("__playerState") { codec.encodeToString(player.state.value) }
             q.function("__playerCapabilities") { codec.encodeToString(player.capabilities) }
             q.asyncFunction("__settings") { args ->
@@ -1670,6 +1710,46 @@ class Runtime(
                 bridgeWaiters.incrementAndGet()
                 try {
                     codec.encodeToString(context.network.request(codec.decodeFromString<HttpRequest>(args[0] as String)))
+                } finally {
+                    bridgeWaiters.decrementAndGet()
+                }
+            }
+            q.asyncFunction("__socket") { args ->
+                requireActive()
+                require("network.websocket" in p.manifest.capabilities) { "WebSocket capability required" }
+                bridgeWaiters.incrementAndGet()
+                try {
+                    owned {
+                        when (args[0]) {
+                            "open" -> {
+                                val request =
+                                    try {
+                                        codec.decodeFromString<PluginSocketRequest>(args[1] as String)
+                                    } catch (_: Exception) {
+                                        throw IllegalArgumentException("Invalid socket request")
+                                    }
+                                sockets.open(request)
+                            }
+
+                            "receive" -> {
+                                codec.encodeToString(sockets.receive(args[1] as String, (args[2] as Number).toLong()))
+                            }
+
+                            "send" -> {
+                                sockets.send(args[1] as String, args[2] as String)
+                                null
+                            }
+
+                            "close" -> {
+                                sockets.close(args[1] as String)
+                                null
+                            }
+
+                            else -> {
+                                error("Unknown socket command")
+                            }
+                        }
+                    }
                 } finally {
                     bridgeWaiters.decrementAndGet()
                 }
@@ -1894,6 +1974,7 @@ class Runtime(
                     asModule = true,
                 )
             }
+            sockets.startDelivery()
             @OptIn(FlowPreview::class)
             val playbackChanges = player.state.sample(250)
             observeUi("playback_changed", playbackChanges) { codec.encodeToString(it) }
@@ -1972,6 +2053,7 @@ class Runtime(
         }
 
         suspend fun close() {
+            sockets.close()
             job.cancelAndJoin()
             withContext(NonCancellable) {
                 try {
@@ -2037,8 +2119,10 @@ class Runtime(
               player: async (action, value=0) => __player(action, value),
               playTracks: async (tracks,startIndex=0) => __player('playTracks',JSON.stringify(tracks),startIndex),
               addToQueue: async tracks => __player('addToQueue',JSON.stringify(tracks)),
+              replaceUpcomingQueue: async tracks => __player('replaceUpcomingQueue',JSON.stringify(tracks)),
               playerState: () => JSON.parse(__playerState()),
               platform: () => __platform(),
+              locale: () => JSON.parse(__locale()),
               destination: () => __destination(),
               navigate: destination => host.call('navigation.route/v1', {destination}),
               pluginStates: () => JSON.parse(__pluginStates()),
@@ -2050,6 +2134,7 @@ class Runtime(
               loginState: state => __loginState(JSON.stringify(state)),
               home: callback => { globalThis.__home=requireFunction(callback); },
               http: async request => JSON.parse(await __http(JSON.stringify(request))),
+              socket: Object.freeze({open: async request => __socket('open',JSON.stringify(request)), send: async (id,text) => __socket('send',String(id),String(text)), receive: async (id,timeoutMs=10000) => JSON.parse(await __socket('receive',String(id),timeoutMs)), close: async id => __socket('close',String(id))}),
               track: async identity => JSON.parse(await __catalog(JSON.stringify(identity))),
               service: (name, fn) => { __services[name] = requireFunction(fn); __service(name); },
               contract: contract => __contract(JSON.stringify(contract)),

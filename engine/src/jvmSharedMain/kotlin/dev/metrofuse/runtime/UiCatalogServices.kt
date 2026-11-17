@@ -33,6 +33,9 @@ internal fun Runtime.registerUiCatalogServices() {
         )
     }
 
+    register("ui.source/v1") {
+        uiSourceMetadata(host.settings.get("music.frontend").orEmpty(), plugins.value, logins.states.value)
+    }
     register("ui.search/v1") { request ->
         val query =
             request["query"]
@@ -135,5 +138,23 @@ internal fun Runtime.registerUiCatalogServices() {
             put("trackId", track.id)
             if (result != null) put("lyrics", codec.encodeToJsonElement(LyricsResult.serializer(), result))
         }
+    }
+}
+
+internal fun uiSourceMetadata(
+    selected: String,
+    plugins: List<PluginStatus>,
+    accounts: Map<String, PluginAccountState>,
+): JsonObject {
+    val plugin = plugins.firstOrNull { it.manifest.id == selected && it.phase == LifecyclePhase.ACTIVE }
+    val account = plugin?.let { accounts[it.manifest.id]?.account }?.takeIf { it.loggedIn }
+    return buildJsonObject {
+        put("id", plugin?.manifest?.id.orEmpty())
+        put("offline", plugin == null)
+        put("loggedIn", account != null)
+        plugin?.manifest?.let { manifest ->
+            put("title", manifest.home?.title?.takeIf { it.isNotBlank() } ?: manifest.name)
+        }
+        account?.accountName?.takeIf { it.isNotBlank() }?.let { put("accountName", it) }
     }
 }

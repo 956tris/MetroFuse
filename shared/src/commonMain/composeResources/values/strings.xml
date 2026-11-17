@@ -5219,6 +5219,9 @@
     <string name="episode_played">Played</string>
     <string name="lastfm_service_error">Last.fm sign-in is unavailable. Please try again later.</string>
     <string name="crash_logs" translatable="false">Crash logs</string>
+    <string name="crash_use_original_ui" translatable="false">Restart with original UI</string>
+    <string name="crash_use_original_ui_description" translatable="false">Restarts with the built-in interface and pauses automatic plugin startup. Re-enable plugin UI in Plugins when ready.</string>
+    <string name="crash_use_original_ui_failed" translatable="false">Could not save recovery mode. Try again before restarting.</string>
     <string name="crash_restart" translatable="false">Restart app</string>
     <string name="database_downgrade" translatable="false">Database downgrades are never supported because they would cause data loss. Install the newer version of Metrofuse Alpha again.</string>
     <string name="crash_imminent_title" translatable="false">Metrofuse Alpha is about to crash</string>
@@ -5565,4 +5568,14 @@
     <string name="music_frontend_switch">Choose music frontend</string>
     <string name="music_frontend_offline_summary">Only local and downloaded music can play in Offline.</string>
     <string name="swap_artwork_lyrics_sides">Swap artwork and lyrics sides</string>
+    <string name="plugin_order_summary">Hold and drag a handle to change plugin order. Earlier plugins take priority, after their dependencies.</string>
+    <string name="plugin_order_provider_summary">Hold and drag a handle within a provider group. Providers are tried from top to bottom, after their dependencies. This overrides the plugin order for that group.</string>
+    <string name="plugin_order_handle">Reorder %1$s, position %2$d of %3$d. Open for move actions, or use Alt and the arrow keys.</string>
+    <string name="plugin_order_move_up">Move earlier</string>
+    <string name="plugin_order_move_down">Move later</string>
+    <string name="spotify_related_artists">Related artists</string>
+    <string name="spotify_featuring">Featuring</string>
+    <string name="spotify_artist_playlists">Artist playlists</string>
+    <string name="spotify_concerts">Concerts</string>
+    <string name="spotify_merch">Merchandise</string>
 </resources>

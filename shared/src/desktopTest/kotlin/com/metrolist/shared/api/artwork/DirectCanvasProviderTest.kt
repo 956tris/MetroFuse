@@ -23,6 +23,46 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class DirectCanvasProviderTest {
+    @Test
+    fun pluginCanvasWorksWithoutBuiltInSpotifyLoginOrNetworkRequests() =
+        runBlocking {
+            HttpClient(MockEngine { error("Plugin Canvas must not need host authentication") }).use { client ->
+                val provider =
+                    DirectCanvasProvider(client, { "" }, pluginCanvas = { title, artist, duration, album ->
+                        assertEquals(listOf("Song", "Artist", 180000L, "Album"), listOf(title, artist, duration, album))
+                        "https://canvaz.scdn.co/fixture.mp4"
+                    })
+                assertEquals("https://canvaz.scdn.co/fixture.mp4", provider.getSpotifyCanvas("Song", "Artist", 180000, "Album"))
+            }
+        }
+
+    @Test
+    fun unsafePluginCanvasFallsBackAndCancellationPropagates() =
+        runBlocking {
+            HttpClient(MockEngine { respond("", HttpStatusCode.NotFound) }).use { client ->
+                val unsafe =
+                    DirectCanvasProvider(client, { "" }, pluginCanvas = {
+                        _,
+                        _,
+                        _,
+                        _,
+                        ->
+                        "https://canvaz.scdn.co.evil.example/fixture.mp4"
+                    })
+                assertNull(unsafe.getSpotifyCanvas("Song", "Artist", null))
+                val started = CompletableDeferred<Unit>()
+                val cancellable =
+                    DirectCanvasProvider(client, { "" }, pluginCanvas = { _, _, _, _ ->
+                        started.complete(Unit)
+                        awaitCancellation()
+                    })
+                val job = async { cancellable.getSpotifyCanvas("Song", "Artist", null) }
+                started.await()
+                job.cancelAndJoin()
+                assertTrue(job.isCancelled)
+            }
+        }
+
     private val now = 1_800_000_000_000L
     private val jwt =
         "eyJhbGciOiJIUzI1NiJ9." +

@@ -113,7 +113,16 @@ data class ArtistItem(
     override val libraryAddedAt: Long? = null,
     override val libraryUpdatedAt: Long? = null,
     val channelId: String? = null,
+    val externalLinks: List<ArtistExternalLink> = emptyList(),
 ) : YTItem()
+
+@Serializable
+data class ArtistExternalLink(
+    val title: String,
+    val url: String,
+    val kind: String,
+    val details: String? = null,
+)
 
 fun ArtistItem.forArtistScreenMenu(): ArtistItem = copy(thumbnail = banner ?: thumbnail)
 

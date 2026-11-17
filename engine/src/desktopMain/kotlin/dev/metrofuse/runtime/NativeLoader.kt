@@ -7,7 +7,7 @@ import java.util.UUID
 
 private class NativePluginClassLoader(artifact: File) : URLClassLoader(arrayOf(artifact.toURI().toURL()), NativePlugin::class.java.classLoader) {
     override fun loadClass(name: String, resolve: Boolean): Class<*> = synchronized(getClassLoadingLock(name)) {
-        val shared = listOf("java.", "javax.", "sun.", "jdk.", "kotlin.", "kotlinx.coroutines.", "kotlinx.serialization.", "androidx.compose.", "dev.metrofuse.api.", "dev.metrofuse.sdk.").any(name::startsWith)
+        val shared = listOf("java.", "javax.", "sun.", "jdk.", "kotlin.", "kotlinx.coroutines.", "kotlinx.serialization.", "androidx.compose.", "org.jetbrains.compose.resources.", "dev.metrofuse.api.", "dev.metrofuse.sdk.").any(name::startsWith)
         val type = findLoadedClass(name) ?: if (shared) super.loadClass(name, false)
             else try { findClass(name) } catch (_: ClassNotFoundException) { super.loadClass(name, false) }
         if (resolve) resolveClass(type)

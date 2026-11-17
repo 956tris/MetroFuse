@@ -9,6 +9,7 @@ import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.model.AlbumItem
 import com.metrolist.shared.model.AlbumPage
 import com.metrolist.shared.model.AlbumTiny
+import com.metrolist.shared.model.ArtistExternalLink
 import com.metrolist.shared.model.ArtistItem
 import com.metrolist.shared.model.ArtistPageResult
 import com.metrolist.shared.model.ArtistTiny
@@ -29,6 +30,7 @@ import com.metrolist.shared.state.SongLikeState
 import com.metrolist.shared.ui.navigation.Navigator
 import com.metrolist.shared.ui.navigation.Screen
 import com.metrolist.shared.ui.playback.PlaybackController
+import com.metrolist.shared.ui.playback.UpcomingQueueController
 import com.metrolist.shared.utils.Logger
 import com.metrolist.shared.viewmodels.LibraryViewModel
 import com.metrolist.shared.youtube.playback.PlaybackResource
@@ -58,6 +60,7 @@ import dev.metrofuse.api.TrackVote
 import dev.metrofuse.api.UiLibraryHost
 import dev.metrofuse.api.UiLocalSearch
 import dev.metrofuse.api.UiPlaybackControls
+import dev.metrofuse.api.UpcomingQueuePlayer
 import dev.metrofuse.runtime.CredentialStore
 import dev.metrofuse.runtime.MetadataMapping
 import dev.metrofuse.runtime.Runtime
@@ -82,8 +85,18 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
 import java.io.File
 import java.net.URI
 import java.util.Locale
@@ -92,6 +105,39 @@ import kotlin.time.Instant
 
 /** One engine per process, using the application's existing controller and resolver. */
 object MetroFuseHost : PluginServices {
+    override suspend fun canvas(
+        title: String,
+        artist: String,
+        durationMs: Long?,
+        album: String?,
+    ): String? {
+        val current = engine ?: return null
+        val selected = current.registry.service("artwork.canvas/v1") ?: return null
+        if (current.plugins.value.none { it.manifest.id == selected.owner && it.state == "Enabled" }) return null
+        val account =
+            current.logins.states.value[selected.owner]
+                ?.account ?: return null
+        if (!account.loggedIn) return null
+        val track = Track("", title, artist, album.orEmpty(), durationMs ?: 0)
+        return try {
+            val response =
+                withTimeoutOrNull(15_000) {
+                    selected.value.call(buildJsonObject { put("track", Json.encodeToJsonElement(track)) })
+                } ?: return null
+            if (current.logins.states.value[selected.owner]
+                    ?.account != account ||
+                current.registry.service("artwork.canvas/v1")?.owner != selected.owner
+            ) {
+                return null
+            }
+            (response["url"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.length <= 8192 }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private var engine: Runtime? = null
     private var hostScope: CoroutineScope? = null
     private val ready = CompletableDeferred<Unit>()
@@ -622,14 +668,141 @@ object MetroFuseHost : PluginServices {
         ready.await()
         if (!activeCatalogOwner(id)) return null
         val value = runtime.pipelines.artist(id) ?: artists[id] ?: return null
+        val owner = id.substringAfter(':').substringBefore(':')
+        val extra = artistMetadata(owner, id.removePrefix("metrofuse:$owner:"))
+        val description = (extra["biography"] as? JsonPrimitive)?.contentOrNull?.take(100_000)
+        val listeners = (extra["monthlyListeners"] as? JsonPrimitive)?.contentOrNull?.take(256)
         return ArtistPageResult(
-            mapOf(
-                "header" to listOf(ArtistItem(id, value.name, value.artwork.takeIf(String::isNotBlank))),
-                "songs" to value.tracks.map(::songFor),
-                "albums" to value.albums.map(::albumItem),
-            ),
+            buildMap {
+                put(
+                    "header",
+                    listOf(
+                        ArtistItem(
+                            id,
+                            value.name,
+                            value.artwork.takeIf(String::isNotBlank),
+                            description = description,
+                            monthlyListeners = listeners,
+                            externalLinks = extra.artistLinks(),
+                        ),
+                    ),
+                )
+                put("songs", value.tracks.map(::songFor))
+                put("albums", value.albums.map(::albumItem))
+                extra.albumList("featuring").takeIf { it.isNotEmpty() }?.let { albums ->
+                    put("spotify_featuring", albums.map { albumItem(it.owned(owner)) })
+                }
+                extra.artistList("relatedArtists").takeIf { it.isNotEmpty() }?.let { artists ->
+                    put(
+                        "spotify_related_artists",
+                        artists.map { artist ->
+                            val ownedId = "metrofuse:$owner:${artist.id}"
+                            retain(this@MetroFuseHost.artists, ownedId, artist.copy(id = ownedId))
+                            ArtistItem(ownedId, artist.name, artist.artwork.takeIf(String::isNotBlank))
+                        },
+                    )
+                }
+                extra.playlistList("playlists").takeIf { it.isNotEmpty() }?.let { playlists ->
+                    put(
+                        "spotify_artist_playlists",
+                        playlists.map { playlist ->
+                            val ownedId = "metrofuse:$owner:${playlist.id}"
+                            retain(this@MetroFuseHost.playlists, ownedId, playlist.copy(id = ownedId))
+                            PlaylistItem(ownedId, playlist.title, playlist.artwork.takeIf(String::isNotBlank), author = playlist.author)
+                        },
+                    )
+                }
+            },
         )
     }
+
+    private suspend fun artistMetadata(
+        owner: String,
+        id: String,
+    ): JsonObject {
+        val source =
+            runtime.registry.serviceCandidates("catalog.artist-metadata/v1").firstOrNull { it.owner == owner }
+                ?: return JsonObject(emptyMap())
+        val account =
+            runtime.logins.states.value[owner]
+                ?.account
+        return try {
+            val result =
+                withTimeoutOrNull(15_000) { source.value.call(buildJsonObject { put("id", id) }) }
+                    ?: return JsonObject(emptyMap())
+            if (runtime.logins.states.value[owner]
+                    ?.account != account ||
+                !activeCatalogOwner("metrofuse:$owner:$id")
+            ) {
+                return JsonObject(emptyMap())
+            }
+            (result["metadata"] as? JsonObject) ?: result
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            JsonObject(emptyMap())
+        }
+    }
+
+    private fun JsonObject.albumList(key: String): List<CatalogAlbum> =
+        (this[key] as? JsonArray)
+            .orEmpty()
+            .take(
+                100,
+            ).mapNotNull { runCatching { Json.decodeFromJsonElement<CatalogAlbum>(it) }.getOrNull() }
+
+    private fun JsonObject.artistLinks(): List<ArtistExternalLink> =
+        listOf("concerts" to "concert", "merch" to "merch").flatMap { (key, kind) ->
+            (this[key] as? JsonArray).orEmpty().take(30).mapNotNull { element ->
+                val value = element as? JsonObject ?: return@mapNotNull null
+
+                fun text(name: String) = (value[name] as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank)
+                val title = (text("title") ?: text("name"))?.take(512) ?: return@mapNotNull null
+                val rawUrl = text("url") ?: text("uri") ?: return@mapNotNull null
+                val url =
+                    if (rawUrl.startsWith(
+                            "spotify:concert:",
+                        )
+                    ) {
+                        "https://open.spotify.com/concert/${rawUrl.substringAfterLast(':')}"
+                    } else {
+                        rawUrl
+                    }
+                val uri = runCatching { URI(url) }.getOrNull() ?: return@mapNotNull null
+                if (uri.scheme != "https" || uri.userInfo != null || uri.host.isNullOrBlank() || url.length > 8192) return@mapNotNull null
+                val details =
+                    listOfNotNull(
+                        text("city"),
+                        text("venue"),
+                        text("startDateIso"),
+                        text("price"),
+                    ).joinToString(" · ").takeIf(String::isNotBlank)
+                ArtistExternalLink(title, url, kind, details)
+            }
+        }
+
+    private fun JsonObject.artistList(key: String): List<CatalogArtist> =
+        (this[key] as? JsonArray)
+            .orEmpty()
+            .take(
+                100,
+            ).mapNotNull { runCatching { Json.decodeFromJsonElement<CatalogArtist>(it) }.getOrNull() }
+
+    private fun JsonObject.playlistList(key: String): List<CatalogPlaylist> =
+        (this[key] as? JsonArray)
+            .orEmpty()
+            .take(
+                100,
+            ).mapNotNull { runCatching { Json.decodeFromJsonElement<CatalogPlaylist>(it) }.getOrNull() }
+
+    private fun CatalogAlbum.owned(owner: String): CatalogAlbum =
+        copy(
+            id = "metrofuse:$owner:$id",
+            tracks =
+                tracks.take(1000).map { track ->
+                    track.copy(id = "metrofuse:$owner:${track.id}")
+                },
+        ).also { retain(albums, it.id, it) }
 
     override suspend fun playlist(id: String): Map<String, List<YTItem>>? {
         ready.await()
@@ -734,7 +907,7 @@ private fun Track.toSongItem(base: SongItem? = null): SongItem {
 
 private class ControllerPlayer(
     private val mapTrack: (Track) -> SongItem,
-) : Player,
+) : UpcomingQueuePlayer,
     UiPlaybackControls {
     override val state = MutableStateFlow(PlaybackState(Track("", "", "", "")))
     private var controller: PlaybackController? = null
@@ -757,7 +930,8 @@ private class ControllerPlayer(
             "queueIndex",
             "radio",
         ) +
-            if (controller?.supportsVolume == true) setOf("volume") else emptySet()
+            (if (controller?.supportsVolume == true) setOf("volume") else emptySet()) +
+            (if (controller is UpcomingQueueController) setOf("replaceUpcomingQueue") else emptySet())
 
     fun attach(
         controller: PlaybackController,
@@ -793,7 +967,10 @@ private class ControllerPlayer(
                             value.isPlaying,
                             value.positionMs,
                             pluginQueue,
-                        )
+                        ).apply {
+                            currentIndex = value.currentQueueIndex.takeIf { it >= 0 }
+                            playbackInstanceId = (controller as? UpcomingQueueController)?.playbackInstanceId()
+                        }
                 }
             }
     }
@@ -825,6 +1002,14 @@ private class ControllerPlayer(
         }
 
     override fun toggle() = command { it.togglePlayPause() }
+
+    override fun replaceUpcomingQueue(tracks: List<Track>) {
+        require(tracks.size <= 1000) { "Upcoming queue exceeds the host limit" }
+        command { target ->
+            val queue = target as? UpcomingQueueController ?: error("Upcoming queue reconciliation is unavailable")
+            queue.replaceUpcomingQueue(tracks.map(mapTrack))
+        }
+    }
 
     override fun seek(position: Long) = command { it.seekTo(position.coerceAtLeast(0)) }
 

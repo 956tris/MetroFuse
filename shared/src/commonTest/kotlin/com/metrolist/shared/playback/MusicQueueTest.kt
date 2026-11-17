@@ -10,6 +10,27 @@ import kotlin.test.assertTrue
 
 class MusicQueueTest {
     @Test
+    fun upcomingReplacementPreservesCurrentOccurrenceAndDuplicateFutureEntries() {
+        val duplicate = song("same")
+        val queue = MusicQueue().apply { setQueue(listOf(song("played"), duplicate, song("old")), 1) }
+        val current = queue.state.value.entries[1]
+        queue.replaceUpcomingQueue(listOf(duplicate, duplicate, song("next")))
+        assertSame(current, queue.state.value.entries[1])
+        assertEquals(1, queue.currentIndex.value)
+        assertEquals(listOf("played", "same", "same", "same", "next"), queue.items.value.map { it.id })
+        assertEquals(
+            5,
+            queue.state.value.entries
+                .map { it.key }
+                .toSet()
+                .size,
+        )
+        queue.replaceUpcomingQueue(emptyList())
+        assertSame(current, queue.state.value.entries[1])
+        assertEquals(listOf("played", "same"), queue.items.value.map { it.id })
+    }
+
+    @Test
     fun legacyUnshuffleRestoresOriginalOrderAndCurrentOccurrence() {
         val duplicate = song("duplicate")
         val original = listOf(song("first"), duplicate, song("third"), duplicate)

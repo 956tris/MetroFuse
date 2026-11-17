@@ -99,6 +99,7 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -119,6 +120,7 @@ import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.about
 import com.metrolist.shared.generated.resources.action_like
 import com.metrolist.shared.generated.resources.album_type
+import com.metrolist.shared.generated.resources.albums
 import com.metrolist.shared.generated.resources.artist_actions
 import com.metrolist.shared.generated.resources.artist_latest_release
 import com.metrolist.shared.generated.resources.artist_play_all
@@ -140,6 +142,11 @@ import com.metrolist.shared.generated.resources.show_more
 import com.metrolist.shared.generated.resources.shuffle
 import com.metrolist.shared.generated.resources.song_count
 import com.metrolist.shared.generated.resources.songs
+import com.metrolist.shared.generated.resources.spotify_artist_playlists
+import com.metrolist.shared.generated.resources.spotify_concerts
+import com.metrolist.shared.generated.resources.spotify_featuring
+import com.metrolist.shared.generated.resources.spotify_merch
+import com.metrolist.shared.generated.resources.spotify_related_artists
 import com.metrolist.shared.generated.resources.subscribe
 import com.metrolist.shared.generated.resources.subscribed
 import com.metrolist.shared.generated.resources.top_tracks
@@ -581,6 +588,43 @@ private fun ArtistScreenContent(
                 )
             }
 
+            if (!isPlaceholder && artist.externalLinks.isNotEmpty()) {
+                item(key = "artist_external_links", contentType = "links") {
+                    val uriHandler = LocalUriHandler.current
+                    Column(Modifier.fillMaxWidth().padding(horizontal = if (isWide) 24.dp else 16.dp, vertical = 12.dp)) {
+                        artist.externalLinks.groupBy { it.kind }.forEach { (kind, links) ->
+                            SectionTitle(
+                                title =
+                                    stringResource(
+                                        if (kind ==
+                                            "concert"
+                                        ) {
+                                            Res.string.spotify_concerts
+                                        } else {
+                                            Res.string.spotify_merch
+                                        },
+                                    ),
+                                isWide = isWide,
+                            )
+                            links.forEach { link ->
+                                TextButton(onClick = { uriHandler.openUri(link.url) }, modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.fillMaxWidth()) {
+                                        Text(link.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        link.details?.let {
+                                            Text(
+                                                it,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             item(key = "artist_footer_space", contentType = "spacer") { Spacer(Modifier.height(24.dp)) }
         }
         val barMenuClick = onMenuClick.takeIf { actionSize == ArtistActionSize.Compact }
@@ -777,6 +821,11 @@ private fun LazyListScope.renderArtistSections(
                         val sectionTitle =
                             when {
                                 title == "latest_release" -> stringResource(Res.string.artist_latest_release)
+                                title == "songs" -> stringResource(Res.string.top_tracks)
+                                title == "albums" -> stringResource(Res.string.albums)
+                                title == "spotify_related_artists" -> stringResource(Res.string.spotify_related_artists)
+                                title == "spotify_featuring" -> stringResource(Res.string.spotify_featuring)
+                                title == "spotify_artist_playlists" -> stringResource(Res.string.spotify_artist_playlists)
                                 title == topTracksSection -> stringResource(Res.string.top_tracks)
                                 else -> title
                             }

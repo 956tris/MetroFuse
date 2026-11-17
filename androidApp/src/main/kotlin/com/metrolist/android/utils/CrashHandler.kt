@@ -13,10 +13,10 @@ import com.metrolist.android.BuildConfig
 import com.metrolist.android.ui.screens.CrashActivity
 import com.metrolist.shared.crash.CrashReport
 import com.metrolist.shared.crash.FatalCrashHandler
-import com.metrolist.shared.plugins.MetroFuseHost
-import kotlinx.coroutines.runBlocking
 import com.metrolist.shared.crash.FileCrashStore
+import com.metrolist.shared.plugins.MetroFuseHost
 import com.metrolist.shared.settings.Settings
+import kotlinx.coroutines.runBlocking
 import java.io.File
 
 object CrashHandler {
@@ -61,10 +61,18 @@ object CrashHandler {
         val fallback = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler(
             FatalCrashHandler(fallback) { thread, throwable ->
+                val reportId = record(context, throwable, thread)
                 if (MetroFuseHost.isConfigured) {
-                    runCatching { runBlocking { MetroFuseHost.runtime.reportUiCrash(throwable) } }
+                    Thread(
+                        { runCatching { runBlocking { MetroFuseHost.runtime.reportUiCrash(throwable) } } },
+                        "CrashPluginAttribution",
+                    ).apply {
+                        isDaemon = true
+                        start()
+                        join(500)
+                    }
                 }
-                launch(context, record(context, throwable, thread))
+                launch(context, reportId)
                 Thread({ runCatching { Settings.shared.flush() } }, "CrashSettingsFlush").apply {
                     isDaemon = true
                     start()

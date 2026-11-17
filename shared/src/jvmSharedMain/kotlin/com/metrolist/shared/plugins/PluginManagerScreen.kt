@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
@@ -40,7 +41,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,6 +62,7 @@ import com.metrolist.shared.ui.components.ExpressiveSwitch
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.settings.LocalSettingsPageBottomPadding
 import com.metrolist.shared.ui.settings.SettingsNavigationRow
+import com.metrolist.shared.ui.utils.segmentedGroupShape
 import dev.metrofuse.api.Layer
 import dev.metrofuse.api.PluginSettings
 import dev.metrofuse.api.SearchRequest
@@ -67,6 +79,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.compose.resources.stringResource
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
 import java.io.File
 
 @Composable
@@ -86,6 +100,46 @@ fun PluginManagerScreen(
     val scope = rememberCoroutineScope()
     var operationInProgress by remember { mutableStateOf(false) }
     val busy = operationInProgress || importInProgress
+    val orderedPlugins =
+        runtime.registry
+            .order("plugins", plugins.map { it.manifest.id })
+            .mapNotNull { id -> plugins.firstOrNull { it.manifest.id == id } }
+    val providers =
+        listOf(
+            "audio.resolve" to
+                runtime.registry
+                    .audioSources()
+                    .filter { it.owner != "builtin" }
+                    .map { it.id },
+            "metadata.resolve" to runtime.registry.metadataSources().map { it.id },
+            "lyrics.resolve" to runtime.registry.lyricsProviders().map { it.id },
+            "search.resolve" to runtime.registry.searchProviders().map { it.id },
+        )
+    val listState = rememberLazyListState()
+
+    fun moveOrder(
+        point: String?,
+        ids: List<String>,
+        from: Int,
+        to: Int,
+    ) {
+        if (busy || from !in ids.indices || to !in ids.indices) return
+        runtime.registry.reorderVisible(point, ids.toMutableList().apply { add(to, removeAt(from)) })
+    }
+    val reorderState =
+        rememberReorderableLazyListState(listState) { from, to ->
+            val fromKey = from.key as? String ?: return@rememberReorderableLazyListState
+            val toKey = to.key as? String ?: return@rememberReorderableLazyListState
+            val ids = orderedPlugins.map { it.manifest.id }
+            if (fromKey in ids && toKey in ids) {
+                moveOrder(null, ids, ids.indexOf(fromKey), ids.indexOf(toKey))
+            } else {
+                providers.forEach { (point, order) ->
+                    val keys = order.map { "$point:$it" }
+                    if (fromKey in keys && toKey in keys) moveOrder(point, order, keys.indexOf(fromKey), keys.indexOf(toKey))
+                }
+            }
+        }
     var error by remember { mutableStateOf<String?>(null) }
     var section by rememberSaveable { mutableStateOf(0) }
     var advancedSection by rememberSaveable { mutableStateOf<String?>(null) }
@@ -129,6 +183,7 @@ fun PluginManagerScreen(
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding =
                     PaddingValues(
@@ -138,7 +193,7 @@ fun PluginManagerScreen(
                         bottom =
                             24.dp + LocalSettingsPageBottomPadding.current,
                     ),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                verticalArrangement = Arrangement.spacedBy(if (section == 0 || advancedSection == "providers") 4.dp else 16.dp),
             ) {
                 (error ?: importError)?.let { message ->
                     item { PluginNotice(message, isError = true) }
@@ -149,7 +204,11 @@ fun PluginManagerScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(stringResource(Res.string.plugins_app_interface), style = MaterialTheme.typography.titleMedium)
                             TextButton(onClick = { operation { runtime.setUiSafeMode(!safeMode) } }, enabled = !busy) {
-                                Text(stringResource(if (safeMode) Res.string.plugins_enable_custom_ui else Res.string.plugins_use_original_ui))
+                                Text(
+                                    stringResource(
+                                        if (safeMode) Res.string.plugins_enable_custom_ui else Res.string.plugins_use_original_ui,
+                                    ),
+                                )
                             }
                             if (replacements.size > 1) {
                                 Text(stringResource(Res.string.plugins_ui_conflict))
@@ -175,8 +234,18 @@ fun PluginManagerScreen(
                             PluginImportCard(onImport, !busy)
                         }
                         item {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(stringResource(Res.string.plugins_your_plugins), style = MaterialTheme.typography.titleMedium)
+                            Column(Modifier.padding(top = 16.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    stringResource(Res.string.plugins_your_plugins),
+                                    modifier = Modifier.semantics { heading() },
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                                Text(
+                                    stringResource(Res.string.plugin_order_summary),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                                 Text(
                                     stringResource(
                                         Res.string.plugins_installed_summary,
@@ -205,12 +274,33 @@ fun PluginManagerScreen(
                                 }
                             }
                         }
-                        items(plugins, key = { it.manifest.id }) { plugin ->
-                            InstalledPluginCard(runtime, plugin, busy, ::operation)
+                        items(orderedPlugins, key = { it.manifest.id }) { plugin ->
+                            ReorderableItem(reorderState, key = plugin.manifest.id, enabled = !busy) { dragging ->
+                                val index = orderedPlugins.indexOf(plugin)
+                                val ids = orderedPlugins.map { it.manifest.id }
+                                InstalledPluginCard(
+                                    runtime,
+                                    plugin,
+                                    busy,
+                                    ::operation,
+                                    shape = segmentedGroupShape(index == 0, index == orderedPlugins.lastIndex, dragging),
+                                    orderHandle = {
+                                        PluginOrderHandle(
+                                            plugin.manifest.name,
+                                            index,
+                                            ids.size,
+                                            !busy,
+                                            Modifier.longPressDraggableHandle(),
+                                            onMove = { target -> moveOrder(null, ids, index, target) },
+                                        )
+                                    },
+                                )
+                            }
                         }
                         item {
                             Text(
                                 stringResource(Res.string.plugins_trust),
+                                modifier = Modifier.padding(top = 12.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -259,31 +349,21 @@ fun PluginManagerScreen(
                         }
                         when (advancedSection) {
                             "providers" -> {
-                                val providers =
-                                    runtime.registry
-                                        .audioSources()
-                                        .filter { it.owner != "builtin" }
-                                        .map { "audio.resolve" to it.id } +
-                                        runtime.registry.metadataSources().map { "metadata.resolve" to it.id } +
-                                        runtime.registry.lyricsProviders().map { "lyrics.resolve" to it.id } +
-                                        runtime.registry.searchProviders().map { "search.resolve" to it.id }
                                 item {
                                     Text(
-                                        stringResource(Res.string.plugins_priority_summary),
+                                        stringResource(Res.string.plugin_order_provider_summary),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    if (providers.isEmpty()) {
+                                    if (providers.all { it.second.isEmpty() }) {
                                         Text(
                                             stringResource(Res.string.plugins_no_providers),
                                             Modifier.padding(top = 12.dp),
                                         )
                                     }
                                 }
-                                items(providers, key = { "${it.first}:${it.second}" }) { (point, id) ->
-                                    val priority = registry.pointPriorities[point]?.get(id) ?: 0
-                                    PluginSurface {
-                                        Text(id, style = MaterialTheme.typography.titleSmall)
+                                providers.filter { it.second.isNotEmpty() }.forEach { (point, ids) ->
+                                    item(key = "heading:$point") {
                                         Text(
                                             stringResource(
                                                 when (point) {
@@ -293,10 +373,34 @@ fun PluginManagerScreen(
                                                     else -> Res.string.plugins_provider_search
                                                 },
                                             ),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp).semantics { heading() },
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.primary,
                                         )
-                                        PluginPriority(priority, !busy) { runtime.registry.pointPriority(point, id, it) }
+                                    }
+                                    items(ids, key = { "$point:$it" }) { id ->
+                                        ReorderableItem(reorderState, key = "$point:$id", enabled = !busy) { dragging ->
+                                            val index = ids.indexOf(id)
+                                            Surface(
+                                                shape = segmentedGroupShape(index == 0, index == ids.lastIndex, dragging),
+                                                color = MaterialTheme.colorScheme.surfaceContainer,
+                                            ) {
+                                                Row(
+                                                    Modifier.fillMaxWidth().padding(16.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                ) {
+                                                    Text(id, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+                                                    PluginOrderHandle(
+                                                        id,
+                                                        index,
+                                                        ids.size,
+                                                        !busy,
+                                                        Modifier.longPressDraggableHandle(),
+                                                        onMove = { target -> moveOrder(point, ids, index, target) },
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -323,7 +427,7 @@ fun PluginManagerScreen(
                                     }
                                 }
                                 items(searchResults, key = { it.id }) { track ->
-                                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+                                    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
                                         Row(
                                             Modifier.fillMaxWidth().padding(16.dp),
                                             verticalAlignment = Alignment.CenterVertically,
@@ -369,7 +473,7 @@ private fun PluginImportCard(
     onImport: () -> Unit,
     enabled: Boolean,
 ) {
-    Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+    Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.primaryContainer) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(MetrolistIcons.Outlined.Extension, null, Modifier.size(28.dp))
@@ -385,8 +489,11 @@ private fun PluginImportCard(
 }
 
 @Composable
-internal fun PluginSurface(content: @Composable () -> Unit) {
-    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+internal fun PluginSurface(
+    shape: Shape = MaterialTheme.shapes.extraLarge,
+    content: @Composable () -> Unit,
+) {
+    Surface(shape = shape, color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) { content() }
     }
 }
@@ -397,7 +504,7 @@ private fun PluginNotice(
     isError: Boolean = false,
 ) {
     Surface(
-        shape = RoundedCornerShape(20.dp),
+        shape = MaterialTheme.shapes.large,
         color = if (isError) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Text(message, Modifier.fillMaxWidth().padding(16.dp), style = MaterialTheme.typography.bodyMedium)
@@ -410,6 +517,8 @@ private fun InstalledPluginCard(
     plugin: PluginStatus,
     busy: Boolean,
     operation: (suspend () -> Unit) -> Unit,
+    shape: Shape,
+    orderHandle: @Composable () -> Unit,
 ) {
     val manifest = plugin.manifest
     val registry by runtime.registry.state.collectAsState()
@@ -420,7 +529,7 @@ private fun InstalledPluginCard(
     val settings = contributions.filter { it.point.startsWith("settings.") || it.point.endsWith(".settings") }
     val enabled = plugin.phase == LifecyclePhase.ACTIVE
     val toggleLabel = stringResource(if (enabled) Res.string.plugins_disable else Res.string.plugins_enable)
-    PluginSurface {
+    PluginSurface(shape) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val icon =
                 manifest.icon?.let { File(plugin.directory, it) }?.takeIf {
@@ -441,6 +550,7 @@ private fun InstalledPluginCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            orderHandle()
             Box {
                 IconButton(onClick = { menuOpen = true }, enabled = !busy) {
                     Icon(MetrolistIcons.Outlined.MoreVert, stringResource(Res.string.plugins_actions))
@@ -546,7 +656,6 @@ private fun InstalledPluginCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            PluginPriority(registry.priorities[manifest.id] ?: 0, !busy) { runtime.registry.priority(manifest.id, it) }
         }
         if (showSettings) {
             Text(stringResource(Res.string.plugins_settings), style = MaterialTheme.typography.titleSmall)
@@ -564,18 +673,89 @@ private fun InstalledPluginCard(
 }
 
 @Composable
-private fun PluginPriority(
-    priority: Int,
+private fun PluginOrderHandle(
+    name: String,
+    index: Int,
+    count: Int,
     enabled: Boolean,
-    onChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    onMove: (Int) -> Unit,
 ) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(stringResource(Res.string.plugins_priority, priority), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-        IconButton(enabled = enabled && priority > -1000, onClick = { onChange(priority - 1) }) {
-            Icon(MetrolistIcons.Outlined.KeyboardArrowDown, stringResource(Res.string.plugins_priority_down))
+    var menuOpen by remember { mutableStateOf(false) }
+    val up = stringResource(Res.string.plugin_order_move_up)
+    val down = stringResource(Res.string.plugin_order_move_down)
+    val description = stringResource(Res.string.plugin_order_handle, name, index + 1, count)
+    Box {
+        IconButton(
+            enabled = enabled && count > 1,
+            onClick = { menuOpen = true },
+            modifier =
+                modifier
+                    .onPreviewKeyEvent { event ->
+                        if (enabled && event.type == KeyEventType.KeyDown && event.isAltPressed) {
+                            when {
+                                event.key == Key.DirectionUp && index > 0 -> {
+                                    onMove(index - 1)
+                                    true
+                                }
+
+                                event.key == Key.DirectionDown && index < count - 1 -> {
+                                    onMove(index + 1)
+                                    true
+                                }
+
+                                else -> {
+                                    false
+                                }
+                            }
+                        } else {
+                            false
+                        }
+                    }.semantics {
+                        customActions =
+                            if (enabled) {
+                                buildList {
+                                    if (index > 0) {
+                                        add(
+                                            CustomAccessibilityAction(up) {
+                                                onMove(index - 1)
+                                                true
+                                            },
+                                        )
+                                    }
+                                    if (index < count - 1) {
+                                        add(
+                                            CustomAccessibilityAction(down) {
+                                                onMove(index + 1)
+                                                true
+                                            },
+                                        )
+                                    }
+                                }
+                            } else {
+                                emptyList()
+                            }
+                    },
+        ) {
+            Icon(MetrolistIcons.Outlined.DragHandle, description)
         }
-        IconButton(enabled = enabled && priority < 1000, onClick = { onChange(priority + 1) }) {
-            Icon(MetrolistIcons.Outlined.KeyboardArrowUp, stringResource(Res.string.plugins_priority_up))
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(
+                text = { Text(up) },
+                enabled = enabled && index > 0,
+                onClick = {
+                    menuOpen = false
+                    onMove(index - 1)
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(down) },
+                enabled = enabled && index < count - 1,
+                onClick = {
+                    menuOpen = false
+                    onMove(index + 1)
+                },
+            )
         }
     }
 }

@@ -13,7 +13,7 @@ import sys
 import zipfile
 
 
-PREFIXES = ('io/ktor/', 'kotlinx/io/')
+PREFIXES = ('io/ktor/', 'kotlinx/io/', 'org/jetbrains/compose/resources/')
 VISIBLE = 0x0001 | 0x0004
 STATIC = 0x0008
 
@@ -196,6 +196,8 @@ def main():
             expected.update(jar_definitions(Path(line.strip()).read_bytes()))
     if not expected:
         raise ValueError('No resolved Ktor/IO ABI reference classes')
+    # Native Compose callers retain this facade even when host calls were inlined.
+    expected.setdefault('Lorg/jetbrains/compose/resources/StringResourcesKt;', {'methods': {}, 'fields': {}})
     packaged = packaged_definitions(args.package)
     missing = missing_api(expected, packaged)
     if missing:

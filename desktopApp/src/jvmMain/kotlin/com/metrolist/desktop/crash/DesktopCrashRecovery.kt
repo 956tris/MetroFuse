@@ -23,9 +23,12 @@ import com.metrolist.shared.generated.resources.crash_updates_action
 import com.metrolist.shared.generated.resources.crash_updates_checking
 import com.metrolist.shared.generated.resources.crash_updates_error
 import com.metrolist.shared.generated.resources.crash_updates_no_updates
+import com.metrolist.shared.generated.resources.crash_use_original_ui
+import com.metrolist.shared.generated.resources.crash_use_original_ui_failed
+import com.metrolist.shared.plugins.MetroFuseHost
 import com.metrolist.shared.utils.XdgUtils
 import com.metrolist.shared.utils.openUrl
-import com.metrolist.shared.plugins.MetroFuseHost
+import dev.metrofuse.runtime.PluginUiRecovery
 import kotlinx.coroutines.runBlocking
 import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.getString
@@ -143,6 +146,15 @@ object DesktopCrashRecovery {
             action(Res.string.crash_restart) {
                 ProcessBuilder(desktopRestartCommand()).prepareDesktopRelaunch().inheritIO().start()
                 exitProcess(0)
+            }
+            action(Res.string.crash_use_original_ui) {
+                runCatching {
+                    PluginUiRecovery(File(XdgUtils.getXdgDataHome(), "metrofuse/plugins")).recoverOriginalUi()
+                    ProcessBuilder(desktopRestartCommand()).prepareDesktopRelaunch().inheritIO().start()
+                    exitProcess(0)
+                }.onFailure {
+                    JOptionPane.showMessageDialog(frame, label(Res.string.crash_use_original_ui_failed))
+                }
             }
             action(Res.string.crash_close) { exitProcess(0) }
             val update = action(Res.string.crash_updates_checking) {}

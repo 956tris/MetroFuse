@@ -117,6 +117,9 @@ import com.metrolist.shared.generated.resources.crash_upload_disclosure
 import com.metrolist.shared.generated.resources.crash_upload_failed
 import com.metrolist.shared.generated.resources.crash_uploaded
 import com.metrolist.shared.generated.resources.crash_uploading
+import com.metrolist.shared.generated.resources.crash_use_original_ui
+import com.metrolist.shared.generated.resources.crash_use_original_ui_description
+import com.metrolist.shared.generated.resources.crash_use_original_ui_failed
 import com.metrolist.shared.ui.LocalIsTv
 import com.metrolist.shared.ui.components.ContainedLoadingIndicator
 import com.metrolist.shared.ui.crash.CrashLogsScreen
@@ -124,6 +127,7 @@ import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.tv.tvHorizontalScrollFocus
 import com.metrolist.shared.ui.tv.tvVerticalScrollFocus
 import com.metrolist.shared.ui.utils.setText
+import dev.metrofuse.runtime.PluginUiRecovery
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -202,15 +206,11 @@ class CrashActivity : ComponentActivity() {
                             crashLog = crashLog,
                             uploadState = crashViewModel.uploadState,
                             onClose = { finishAffinity() },
-                            onRestart = {
-                                startActivity(
-                                    Intent(
-                                        this,
-                                        MainActivity::class.java,
-                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
-                                )
-                                finishAffinity()
+                            onRecoverOriginalUi = {
+                                PluginUiRecovery(File(filesDir, "plugins")).recoverOriginalUi()
+                                restartApp()
                             },
+                            onRestart = ::restartApp,
                             onCopy = { scope.launch { clipboard.setText(crashLog) } },
                             onLogs = { showLogs = true },
                             onUpdate = { showUpdate = true },
@@ -231,6 +231,14 @@ class CrashActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    private fun restartApp() {
+        startActivity(
+            Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK),
+        )
+        finishAffinity()
     }
 
     private fun shareCrashLog(crashLog: String) {
@@ -285,6 +293,7 @@ private fun CrashScreen(
     uploadState: CrashUploadState,
     onClose: () -> Unit,
     onRestart: () -> Unit,
+    onRecoverOriginalUi: () -> Unit,
     onCopy: () -> Unit,
     onLogs: () -> Unit,
     onUpdate: () -> Unit,
@@ -294,6 +303,7 @@ private fun CrashScreen(
 ) {
     val verticalScrollState = rememberScrollState()
     val horizontalScrollState = rememberScrollState()
+    var recoveryFailed by remember { mutableStateOf(false) }
     val paste = (uploadState as? CrashUploadState.Uploaded)?.paste
     val pasteIdLine = stringResource(Res.string.crash_paste_id, paste?.id.orEmpty())
     val pasteUrlLine = stringResource(Res.string.crash_paste_url, paste?.url.orEmpty())
@@ -392,6 +402,25 @@ private fun CrashScreen(
                         },
                     )
                 }
+            }
+            Button(
+                onClick = {
+                    recoveryFailed = runCatching(onRecoverOriginalUi).isFailure
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shapes = ButtonDefaults.shapes(),
+            ) {
+                Text(stringResource(Res.string.crash_use_original_ui))
+            }
+            Text(
+                text = stringResource(Res.string.crash_use_original_ui_description),
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            if (recoveryFailed) {
+                Text(
+                    text = stringResource(Res.string.crash_use_original_ui_failed),
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
             CrashUpdateButton(onUpdate)
             CrashUploadStatus(

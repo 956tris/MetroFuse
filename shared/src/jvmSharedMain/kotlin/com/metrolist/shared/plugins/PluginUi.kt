@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -158,7 +159,7 @@ fun PluginAppShell(original: @Composable () -> Unit) {
         return
     }
     val scope = rememberCoroutineScope()
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(if (customShell) Modifier.safeDrawingPadding() else Modifier)) {
         PluginUiSlot("ui.app", original)
         overlays.forEach { PluginContributionContent(it, runtime) }
         if (customShell) {

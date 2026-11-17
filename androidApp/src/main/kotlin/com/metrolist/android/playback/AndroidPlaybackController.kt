@@ -5,6 +5,7 @@ import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.playback.PlaybackSeekSource
 import com.metrolist.shared.ui.playback.PlaybackController
 import com.metrolist.shared.ui.playback.PlaybackUiState
+import com.metrolist.shared.ui.playback.UpcomingQueueController
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
@@ -16,7 +17,7 @@ import kotlinx.coroutines.flow.stateIn
 class AndroidPlaybackController(
     private val connection: PlayerConnection,
     scope: CoroutineScope,
-) : PlaybackController {
+) : UpcomingQueueController {
     private val baseState =
         combine(
             connection.currentSong,
@@ -68,6 +69,8 @@ class AndroidPlaybackController(
 
     override fun currentPositionMs(): Long = connection.currentPositionMs()
 
+    override fun playbackInstanceId(): String? = connection.playbackInstanceId()?.toString()
+
     override fun togglePlayPause() = connection.togglePlayPause()
 
     override val supportsVolume: Boolean get() = true
@@ -99,6 +102,10 @@ class AndroidPlaybackController(
 
     override fun addToQueue(songs: List<SongItem>) {
         connection.addToQueue(songs)
+    }
+
+    override fun replaceUpcomingQueue(songs: List<SongItem>) {
+        connection.replaceUpcomingQueueFromRemote(songs)
     }
 
     override fun startSleepTimer(

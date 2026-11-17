@@ -433,6 +433,37 @@ class Registry {
         state.update { if (point == null) it.copy(globalOrder = owners) else it.copy(pointOrder = it.pointOrder + (point to owners)) }
     }
 
+    /** Reorders a visible subset without discarding preferences for disabled providers. */
+    @Synchronized fun reorderVisible(
+        point: String?,
+        ids: List<String>,
+    ) {
+        require(ids.size <= 512 && ids.distinct().size == ids.size)
+        state.update { snapshot ->
+            val previous = if (point == null) snapshot.globalOrder else snapshot.pointOrder[point].orEmpty()
+            val providers =
+                when (point) {
+                    "audio.resolve" -> audioSources.values.map { it.id to it.owner }
+                    "metadata.resolve" -> metadataSources.values.map { it.id to it.owner }
+                    "lyrics.resolve" -> lyricsProviders.values.map { it.id to it.owner }
+                    "search.resolve" -> searchProviders.values.map { it.id to it.owner }
+                    else -> emptyList()
+                }
+            // Older configurations can rank an owner's entire provider group. Explicit IDs must precede those aliases.
+            val aliases = providers.filter { it.first in ids && it.second !in ids }.map { it.second }.toSet()
+            val remaining = ids.iterator()
+            val merged =
+                previous.filterNot { it in aliases }.map { if (it in ids) remaining.next() else it } +
+                    remaining.asSequence().toList() + previous.filter { it in aliases }
+            require(merged.size <= 512)
+            if (point == null) {
+                snapshot.copy(globalOrder = merged)
+            } else {
+                snapshot.copy(pointOrder = snapshot.pointOrder + (point to merged))
+            }
+        }
+    }
+
     fun pointPriority(
         point: String,
         owner: String,

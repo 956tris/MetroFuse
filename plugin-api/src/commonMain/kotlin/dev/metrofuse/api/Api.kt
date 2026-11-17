@@ -26,7 +26,28 @@ const val COMPOSE_ABI = "kotlin-2.4.21_compose-1.13.0-beta02_api-1.1.0"
     val playing: Boolean = false,
     val position: Long = 0,
     val queue: List<Track> = emptyList(),
-)
+) {
+    // Body properties preserve the published JVM constructor and copy descriptors.
+    var currentIndex: Int? = null
+    var playbackInstanceId: String? = null
+
+    override fun equals(other: Any?): Boolean =
+        this === other ||
+            (
+                other is PlaybackState && track == other.track && playing == other.playing &&
+                    position == other.position && queue == other.queue &&
+                    currentIndex == other.currentIndex && playbackInstanceId == other.playbackInstanceId
+            )
+
+    override fun hashCode(): Int {
+        var result = track.hashCode()
+        result = 31 * result + playing.hashCode()
+        result = 31 * result + position.hashCode()
+        result = 31 * result + queue.hashCode()
+        result = 31 * result + (currentIndex ?: 0)
+        return 31 * result + (playbackInstanceId?.hashCode() ?: 0)
+    }
+}
 
 interface Player {
     val state: StateFlow<PlaybackState>

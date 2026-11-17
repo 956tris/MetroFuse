@@ -22,6 +22,7 @@ import dev.metrofuse.api.Track
 import dev.metrofuse.api.TrackCatalog
 import dev.metrofuse.api.TrackIdentity
 import java.io.ByteArrayInputStream
+import java.io.File
 import java.io.ByteArrayOutputStream
 import java.net.InetSocketAddress
 import java.util.concurrent.CountDownLatch
@@ -154,6 +155,57 @@ class JavaScriptRuntimeTest {
             assertTrue(runtime.registry.layers("ui.app").isEmpty())
             assertEquals("test.shell.first", runtime.registry.layers("ui.home").single().owner)
         }
+    }
+
+    @Test
+    fun crashRecoverySkipsPluginInitializationAndPersistsUntilExplicitlyReenabled() = runBlocking {
+        val root = Files.createTempDirectory("metrofuse-crash-recovery-").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val plugin = manifest("test.recovery.ui")
+        try {
+            val first = Runtime(root, "desktop", scope, EngineTestHost())
+            try {
+                first.initialize()
+                first.install(ByteArrayInputStream(packageBytes(plugin, "globalThis.plugin={init(host){host.ui('ui.app',{id:'shell',type:'Text'});}};")))
+                first.enable(plugin.id)
+            } finally {
+                first.close()
+            }
+            PluginUiRecovery(root).recoverOriginalUi()
+            repeat(2) {
+                val recovered = Runtime(root, "desktop", scope, EngineTestHost())
+                try {
+                    assertTrue(recovered.uiSafeMode.value, "Safe mode must apply before initialization or composition")
+                    recovered.initialize()
+                    assertEquals("Installed", recovered.plugins.value.single().state)
+                    assertTrue(recovered.registry.layers("ui.app").isEmpty())
+                    assertTrue(File(root, "configuration.json").readText().contains(plugin.id))
+                } finally {
+                    recovered.close()
+                }
+            }
+            val manager = Runtime(root, "desktop", scope, EngineTestHost())
+            try {
+                manager.initialize()
+                manager.setUiSafeMode(false)
+                assertFalse(manager.uiSafeMode.value)
+            } finally {
+                manager.close()
+            }
+            val resumed = Runtime(root, "desktop", scope, EngineTestHost())
+            try {
+                assertFalse(resumed.uiSafeMode.value)
+                resumed.initialize()
+                assertEquals("Enabled", resumed.plugins.value.single().state)
+                assertEquals(plugin.id, resumed.registry.layers("ui.app").single().owner)
+            } finally {
+                resumed.close()
+            }
+        } finally {
+            scope.cancel()
+            root.deleteRecursively()
+        }
+        Unit
     }
 
     @Test
