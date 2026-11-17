@@ -249,7 +249,7 @@ class Runtime(
         )
         scope.launch {
             player.state.map { it.track.id to it.playing }.distinctUntilChanged().collect { (id, playing) ->
-                events.publish(
+                events.publishHost(
                     "playback",
                     buildJsonObject {
                         put("track", buildJsonObject { put("id", id) })
@@ -264,7 +264,7 @@ class Runtime(
                     it.track
                 }.distinctUntilChanged()
                 .collect {
-                    events.publish(
+                    events.publishHost(
                         "track_changed",
                         codec.encodeToJsonElement(it.copy(extras = emptyMap())).jsonObject,
                     )
@@ -272,7 +272,7 @@ class Runtime(
         }
         scope.launch {
             player.state.map { it.queue }.distinctUntilChanged().collect {
-                events.publish(
+                events.publishHost(
                     "queue_changed",
                     buildJsonObject {
                         put(
@@ -294,7 +294,7 @@ class Runtime(
                 }.distinctUntilChanged()
                 .drop(1)
                 .collect {
-                    events.publish(
+                    events.publishHost(
                         if (it) "playback_started" else "playback_paused",
                         buildJsonObject { put("trackId", player.state.value.track.id) },
                     )
@@ -302,7 +302,7 @@ class Runtime(
         }
         scope.launch {
             host.navigation.destination.drop(1).distinctUntilChanged().collect {
-                events.publish("navigation_changed", buildJsonObject { put("destination", it) })
+                events.publishHost("navigation_changed", buildJsonObject { put("destination", it) })
             }
         }
         scope.launch {
@@ -321,7 +321,7 @@ class Runtime(
                 if (event !=
                     null
                 ) {
-                    events.publish(
+                    events.publishHost(
                         event,
                         buildJsonObject {
                             put("provider", diagnostic.provider)
@@ -862,7 +862,7 @@ class Runtime(
                     desiredEnabled = desiredEnabled + id
                     saveConfiguration()
                     log(id, "Enabled external ${p.manifest.runtime} plugin")
-                    scope.launch { events.publish("plugin_enabled", buildJsonObject { put("id", id) }) }
+                    scope.launch { events.publishHost("plugin_enabled", buildJsonObject { put("id", id) }) }
                 } catch (e: Throwable) {
                     homes.unbind(id)
                     logins.unbind(id)
@@ -926,7 +926,7 @@ class Runtime(
             log(id, "Cleanup: $e")
         } finally {
             registry.remove(id)
-            scope.launch { events.publish("plugin_disabled", buildJsonObject { put("id", id) }) }
+            scope.launch { events.publishHost("plugin_disabled", buildJsonObject { put("id", id) }) }
         }
     }
 
@@ -1298,7 +1298,7 @@ class Runtime(
                             requireActive()
                             this@Runtime.player.stop()
                             scope.launch {
-                                events.publish(
+                                events.publishHost(
                                     "playback_stopped",
                                     buildJsonObject {
                                         put(
