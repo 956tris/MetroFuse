@@ -258,6 +258,7 @@ class App :
             "android",
             get<CoroutineScope>(),
             androidCredentialStore(File(noBackupFilesDir, "plugin-credentials")),
+            onPluginFailure = SentryManager::reportPluginFailure,
         )
         MetroFuseHost.attachLibrary(get())
         MetroFuseHost.attachController(AndroidPlaybackController(get<PlayerConnection>(), get<CoroutineScope>()))

@@ -18,6 +18,11 @@ concurrency:
   group: metrofuse-prerelease-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+env:
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
 jobs:
   prepare:
     name: Prepare KMP prerelease
@@ -110,6 +115,8 @@ jobs:
           PREPARED_KEYSTORE: ${{ steps.signing.outputs.keystore_path }}
         run: echo "KEYSTORE_PATH=$PREPARED_KEYSTORE" >> "$GITHUB_ENV"
       - name: Build Android release APK
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
           ./gradlew :androidApp:assembleRelease :androidApp:exportNativePluginAbi "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
       - name: Validate release APK and signature
@@ -194,6 +201,12 @@ jobs:
           } finally { $archive.Dispose() }
           python scripts/verify_native_plugin_abi.py dist/MetroFuse-Desktop-Windows.zip --classpath-file desktopApp/build/plugin-abi/classpath.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows Sentry source context
+        if: vars.SENTRY_DSN != '' && vars.SENTRY_ORG != '' && vars.SENTRY_PROJECT != ''
+        uses: ./.github/actions/upload-desktop-sentry
+        with:
+          sentry-auth-token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          source-revision: ${{ needs.prepare.outputs.commit }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrofuse-windows-release

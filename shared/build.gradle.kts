@@ -728,6 +728,16 @@ val generateBuildConfig =
         inputs.property("appName", rootProject.extra["appName"])
         inputs.property("discordAppId", providers.gradleProperty("discordAppId").get().toLong())
         inputs.property("sourceRevision", sourceRevision)
+        val sentryDsn =
+            providers
+                .environmentVariable("SENTRY_DSN")
+                .map(String::trim)
+                .orElse("")
+                .get()
+        require(sentryDsn.isEmpty() || sentryDsn.matches(Regex("https://[A-Za-z0-9]+@[A-Za-z0-9.-]+(?::[0-9]+)?/[0-9]+"))) {
+            "SENTRY_DSN must be an HTTPS Sentry project DSN"
+        }
+        inputs.property("sentryDsn", sentryDsn)
         inputs.property("bundledLanguageTags", bundledLanguageTags.joinToString(","))
 
         inputs.property("debug", debugValue)
@@ -756,6 +766,7 @@ val generateBuildConfig =
                     const val APP_VERSION = "${inputs.properties["appVersion"]}"
                     const val APP_NAME = "${inputs.properties["appName"]}"
                     const val SOURCE_REVISION = "${inputs.properties["sourceRevision"]}"
+                    const val SENTRY_DSN = "${inputs.properties["sentryDsn"]}"
                     const val BUNDLED_LANGUAGE_TAGS = "${inputs.properties["bundledLanguageTags"]}"
                     const val DEBUG = ${inputs.properties["debug"]}
                 }

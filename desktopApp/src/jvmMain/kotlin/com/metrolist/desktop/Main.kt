@@ -906,11 +906,13 @@ private fun runDesktopApp(args: Array<String>) {
                 }
             startup.trace("database")
             SongMetadataState.bind(database, applicationScope)
+            if (settings.desktopOnboardingComplete) SentryManager.initialize()
             MetroFuseHost.configure(
                 File(XdgUtils.getXdgDataHome(), "metrofuse/plugins"),
                 "desktop",
                 applicationScope,
                 desktopCredentialStore(File(XdgUtils.getXdgDataHome(), "metrofuse/plugin-credentials")),
+                onPluginFailure = SentryManager::reportPluginFailure,
             )
             if ("--original-ui" in args) MetroFuseHost.runtime.forceOriginalUi()
             MetroFuseHost.attachLibrary(database)
@@ -990,9 +992,6 @@ private fun runDesktopApp(args: Array<String>) {
 
         backendReady = true
         startup.appFrame.await()
-        applicationScope.launch(Dispatchers.IO) {
-            if (settings.desktopOnboardingComplete) SentryManager.initialize()
-        }
         applicationScope.launch {
             observeDiscordInitialization { DiscordRpcManager.init(GlobalYouTube.client) }
         }

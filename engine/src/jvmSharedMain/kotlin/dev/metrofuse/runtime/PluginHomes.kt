@@ -33,6 +33,7 @@ data class PluginHomeState(
 class PluginHomes(
     private val scope: CoroutineScope,
     private val timeoutMs: Long = 15_000,
+    private val onFailure: (String, String, Throwable) -> Unit = { _, _, _ -> },
 ) {
     val pages = MutableStateFlow<Map<String, PluginHomeState>>(emptyMap())
     private val bindings = ConcurrentHashMap<String, Binding>()
@@ -100,8 +101,10 @@ class PluginHomes(
                     update(owner, binding, revision) { PluginHomeState(page.shelves, loaded = true, continuation = continuation) }
                 } catch (error: CancellationException) {
                     if (error !is TimeoutCancellationException) throw error
+                    notifyPluginFailure(owner, "home.load", error, onFailure)
                     update(owner, binding, revision) { it.copy(loading = false, error = true) }
-                } catch (_: Throwable) {
+                } catch (error: Throwable) {
+                    notifyPluginFailure(owner, "home.load", error, onFailure)
                     update(owner, binding, revision) { it.copy(loading = false, error = true) }
                 }
             }
@@ -128,8 +131,10 @@ class PluginHomes(
                     }
                 } catch (cancelled: CancellationException) {
                     if (cancelled !is TimeoutCancellationException) throw cancelled
+                    notifyPluginFailure(owner, "home.loadMore", cancelled, onFailure)
                     update(owner, binding, revision) { it.copy(loadingMore = false, loadMoreError = true) }
-                } catch (_: Throwable) {
+                } catch (error: Throwable) {
+                    notifyPluginFailure(owner, "home.loadMore", error, onFailure)
                     update(owner, binding, revision) { it.copy(loadingMore = false, loadMoreError = true) }
                 }
             }

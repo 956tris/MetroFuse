@@ -69,6 +69,7 @@ import dev.metrofuse.api.UiPlaybackControls
 import dev.metrofuse.api.UpcomingQueuePlayer
 import dev.metrofuse.runtime.CredentialStore
 import dev.metrofuse.runtime.MetadataMapping
+import dev.metrofuse.runtime.PluginFailure
 import dev.metrofuse.runtime.Runtime
 import dev.metrofuse.runtime.UiFrontendSelectionHost
 import dev.metrofuse.runtime.UiLyricsHost
@@ -141,7 +142,8 @@ object MetroFuseHost : PluginServices {
             (response["url"] as? JsonPrimitive)?.contentOrNull?.takeIf { it.length <= 8192 }
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            current.registry.reportFailure(selected.owner, "artwork.canvas", error)
             null
         }
     }
@@ -208,6 +210,7 @@ object MetroFuseHost : PluginServices {
         platform: String,
         parentScope: CoroutineScope,
         credentialStore: CredentialStore = UnavailableCredentialStore,
+        onPluginFailure: (PluginFailure) -> Unit = {},
     ) {
         if (engine != null) return
         this.platform = platform
@@ -295,7 +298,16 @@ object MetroFuseHost : PluginServices {
                     }
                 override val logger = HostLogger { owner, message -> Logger.i("MetroFuse/$owner", message) }
             }
-        engine = Runtime(directory, platform, scope, services, hostVersion = BuildConfig.APP_VERSION, credentialStore = credentialStore)
+        engine =
+            Runtime(
+                directory,
+                platform,
+                scope,
+                services,
+                hostVersion = BuildConfig.APP_VERSION,
+                credentialStore = credentialStore,
+                onPluginFailure = onPluginFailure,
+            )
         PluginServicesStore.current = this
         SongLikeState.initialize()
         scope.launch {
@@ -785,7 +797,8 @@ object MetroFuseHost : PluginServices {
             (result["metadata"] as? JsonObject) ?: result
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            runtime.registry.reportFailure(owner, "catalog.artistMetadata", error)
             JsonObject(emptyMap())
         }
     }

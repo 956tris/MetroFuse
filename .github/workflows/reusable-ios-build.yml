@@ -52,6 +52,11 @@ on:
       LASTFM_SECRET:
         required: false
 
+env:
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
 jobs:
   build-ios:
     name: Validate iOS
@@ -267,8 +272,8 @@ jobs:
           dsyms="iosApp/build/Metrolist.xcarchive/dSYMs"
           find "$dsyms" -maxdepth 1 -name '*.dSYM' | grep -q . || { echo "No dSYMs in $dsyms" >&2; exit 1; }
           "$cli" debug-files upload \
-            --org metrolistgroup \
-            --project metrolist-kmp \
+            --org "$SENTRY_ORG" \
+            --project "$SENTRY_PROJECT" \
             --include-sources \
             --wait \
             "$dsyms"

@@ -10,6 +10,12 @@ on:
       SENTRY_AUTH_TOKEN:
         required: true
 
+env:
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  SENTRY_REPOSITORY: ${{ vars.SENTRY_REPOSITORY }}
+
 jobs:
   finalize-sentry:
     name: Finalize Sentry releases
@@ -26,13 +32,19 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$SENTRY_AUTH_TOKEN" || { echo "SENTRY_AUTH_TOKEN is required" >&2; exit 1; }
+          test -n "$SENTRY_ORG"
+          test -n "$SENTRY_PROJECT"
           for release in "com.metrolist.music.kmp@$APP_VERSION" "com.metrolist.desktop@$APP_VERSION" "com.metrolist.ios@$APP_VERSION"; do
-            readarray -t release_data < <(python3 - "$release" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$GITHUB_REPOSITORY" "$GITHUB_SHA" <<'PY'
+            readarray -t release_data < <(python3 - "$release" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$GITHUB_SHA" <<'PY'
           import json
+          import os
           import sys
           from urllib.parse import quote
           print(quote(sys.argv[1], safe=""))
-          print(json.dumps({"version": sys.argv[1], "projects": ["metrolist-kmp"], "refs": [{"repository": sys.argv[3], "commit": sys.argv[4]}]}, separators=(",", ":")))
+          release = {"version": sys.argv[1], "projects": [os.environ["SENTRY_PROJECT"]]}
+          if os.environ.get("SENTRY_REPOSITORY"):
+              release["refs"] = [{"repository": os.environ["SENTRY_REPOSITORY"], "commit": sys.argv[3]}]
+          print(json.dumps(release, separators=(",", ":")))
           print(json.dumps({"dateReleased": sys.argv[2]}, separators=(",", ":")))
           PY
             )
@@ -44,7 +56,7 @@ jobs:
               --header "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
               --header 'Content-Type: application/json' \
               --data-binary "${release_data[1]}" \
-              'https://sentry.io/api/0/organizations/metrolistgroup/releases/')"
+              "https://sentry.io/api/0/organizations/$SENTRY_ORG/releases/")"
             [[ "$create_status" == 2* ]] || {
               cat "$response" >&2
               echo "Could not create or find Sentry release $release (HTTP $create_status)" >&2
@@ -56,7 +68,7 @@ jobs:
               --header "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
               --header 'Content-Type: application/json' \
               --data-binary "${release_data[2]}" \
-              "https://sentry.io/api/0/organizations/metrolistgroup/releases/$encoded_release/")"
+              "https://sentry.io/api/0/organizations/$SENTRY_ORG/releases/$encoded_release/")"
             [[ "$finalize_status" == 2* ]] || {
               cat "$response" >&2
               echo "Could not finalize Sentry release $release (HTTP $finalize_status)" >&2

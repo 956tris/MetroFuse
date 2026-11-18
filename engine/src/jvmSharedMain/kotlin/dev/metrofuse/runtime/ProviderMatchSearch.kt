@@ -73,7 +73,8 @@ internal class ProviderMatchSearch(
                                 withTimeoutOrNull(timeoutMillis.coerceIn(1, 8000)) { entry.provider.search(request) }
                             } catch (error: CancellationException) {
                                 throw error
-                            } catch (_: Exception) {
+                            } catch (error: Exception) {
+                                registry.reportFailure(entry.owner, "catalog.matchSearch", error)
                                 null
                             }
                         if (registry.searchProviders().none { it.id == entry.id && it.provider === entry.provider }) {

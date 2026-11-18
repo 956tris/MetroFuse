@@ -46,6 +46,7 @@ class PluginLogins(
     private val credentials: CredentialStore,
     private val timeoutMs: Long = 15_000,
     private val loginTimeoutMs: Long = 90_000,
+    private val onFailure: (String, String, Throwable) -> Unit = { _, _, _ -> },
 ) {
     val states = MutableStateFlow<Map<String, PluginAccountState>>(emptyMap())
     val prompt = MutableStateFlow<PluginLoginPrompt?>(null)
@@ -94,8 +95,10 @@ class PluginLogins(
                 update(owner, binding) { it.copy(ui = ui, uiLoading = false) }
             } catch (error: CancellationException) {
                 if (error !is TimeoutCancellationException) throw error
+                notifyPluginFailure(owner, "login.ui", error, onFailure)
                 update(owner, binding) { it.copy(error = LoginFailure.REQUEST, uiLoading = false, uiFailed = true) }
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                notifyPluginFailure(owner, "login.ui", error, onFailure)
                 update(owner, binding) { it.copy(error = LoginFailure.REQUEST, uiLoading = false, uiFailed = true) }
             }
         }
@@ -112,7 +115,8 @@ class PluginLogins(
                 }
             } catch (error: CancellationException) {
                 throw error
-            } catch (_: Throwable) {
+            } catch (error: Throwable) {
+                notifyPluginFailure(owner, "login.state", error, onFailure)
                 update(owner, binding) { it.copy(error = LoginFailure.AUTHENTICATION) }
             }
         }
@@ -125,8 +129,10 @@ class PluginLogins(
                     update(owner, binding) { it.copy(account = restored, busy = false, revision = accountRevision.incrementAndGet()) }
                 } catch (error: CancellationException) {
                     if (error !is TimeoutCancellationException) throw error
+                    notifyPluginFailure(owner, "login.restore", error, onFailure)
                     update(owner, binding) { it.copy(account = PluginLoginState(), busy = false, error = LoginFailure.AUTHENTICATION) }
-                } catch (_: Throwable) {
+                } catch (error: Throwable) {
+                    notifyPluginFailure(owner, "login.restore", error, onFailure)
                     update(owner, binding) { it.copy(account = PluginLoginState(), busy = false, error = LoginFailure.STORAGE) }
                 }
             }
@@ -226,8 +232,10 @@ class PluginLogins(
                         block(binding)
                     } catch (error: CancellationException) {
                         if (error !is TimeoutCancellationException) throw error
+                        notifyPluginFailure(owner, "login.${failure.name.lowercase()}", error, onFailure)
                         update(owner, binding) { it.copy(error = failure) }
-                    } catch (_: Throwable) {
+                    } catch (error: Throwable) {
+                        notifyPluginFailure(owner, "login.${failure.name.lowercase()}", error, onFailure)
                         // Plugin exceptions may contain secrets. Expose only a host-owned error code.
                         update(owner, binding) { it.copy(error = failure) }
                     } finally {

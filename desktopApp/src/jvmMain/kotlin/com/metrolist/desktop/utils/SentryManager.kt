@@ -9,6 +9,8 @@ import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.utils.redactDiagnosticText
 import com.metrolist.shared.utils.redactDiagnosticUrl
+import dev.metrofuse.runtime.PluginFailure
+import dev.metrofuse.runtime.PluginOperationException
 import io.sentry.Attachment
 import io.sentry.Breadcrumb
 import io.sentry.Sentry
@@ -31,6 +33,11 @@ object SentryManager {
         applyEnabled(Settings.shared.sentryEnabled)
     }
 
+    fun reportPluginFailure(failure: PluginFailure) {
+        if (!isEnabled || !Settings.shared.sentryEnabled) return
+        capturePluginFailure(failure)
+    }
+
     @Synchronized
     fun setEnabled(enabled: Boolean) {
         Settings.shared.sentryEnabled = enabled
@@ -40,8 +47,11 @@ object SentryManager {
         applyEnabled(enabled)
     }
 
-    private fun applyEnabled(enabled: Boolean) {
-        if (!enabled || !isPackagedApplication()) {
+    internal fun applyEnabled(
+        enabled: Boolean,
+        dsn: String = BuildConfig.SENTRY_DSN,
+    ) {
+        if (!enabled || dsn.isBlank() || !isPackagedApplication()) {
             shutdown()
             return
         }
@@ -52,6 +62,7 @@ object SentryManager {
                 options = options,
                 release = desktopSentryRelease(BuildConfig.APP_VERSION),
                 environment = System.getenv("SENTRY_ENVIRONMENT") ?: "production",
+                dsn = dsn,
             )
         }
         isEnabled = Sentry.isEnabled()
@@ -84,6 +95,16 @@ object SentryManager {
 
 private class PreviousDesktopTermination : IllegalStateException("Previous desktop process terminated before clean shutdown")
 
+internal fun capturePluginFailure(failure: PluginFailure): Boolean =
+    Sentry.captureException(PluginOperationException(failure)) { scope ->
+        scope.setTag("error.domain", "plugin")
+        scope.setTag("plugin.id", failure.owner)
+        scope.setTag("plugin.version", failure.version)
+        scope.setTag("plugin.runtime", failure.runtime)
+        scope.setTag("plugin.operation", failure.operation)
+        scope.fingerprint = listOf("plugin", failure.owner, failure.operation, failure.error.javaClass.name)
+    } != SentryId.EMPTY_ID
+
 internal fun capturePreviousDesktopExit(previous: PreviousDesktopExit): Boolean =
     Sentry.captureException(PreviousDesktopTermination()) { scope ->
         scope.level = SentryLevel.ERROR
@@ -96,9 +117,10 @@ internal fun configureDesktopSentry(
     options: SentryOptions,
     release: String,
     environment: String,
+    dsn: String,
     sourceRevision: String = BuildConfig.SOURCE_REVISION,
 ) {
-    options.dsn = "https://fe4474514a54a507252b26c60e229016@o4511744603193344.ingest.de.sentry.io/4511744608436304"
+    options.dsn = dsn
     options.sampleRate = 1.0
     options.tracesSampleRate = 0.0
     options.isDebug = System.getenv("SENTRY_DEBUG").toBoolean()
@@ -112,6 +134,7 @@ internal fun configureDesktopSentry(
     options.isEnableUncaughtExceptionHandler = true
     options.isEnableAutoSessionTracking = false
     options.addInAppInclude("com.metrolist")
+    options.addInAppInclude("dev.metrofuse")
     options.beforeBreadcrumb =
         SentryOptions.BeforeBreadcrumbCallback { breadcrumb, _ ->
             sanitizeBreadcrumb(breadcrumb)

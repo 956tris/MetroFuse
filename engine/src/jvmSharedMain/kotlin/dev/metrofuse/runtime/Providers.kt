@@ -200,6 +200,7 @@ class ProviderPipelines(
                     ) {
                         throw e
                     } catch (e: Exception) {
+                        registry.reportFailure(entry.owner, "metadata.resolve", e)
                         record("metadata.resolve", entry.id, "ERROR:${e::class.simpleName}", start)
                         null
                     }
@@ -312,6 +313,7 @@ class ProviderPipelines(
                 for (attempt in 0..policy.retries.coerceIn(0, 2)) {
                     currentCoroutineContext().ensureActive()
                     val start = System.nanoTime()
+                    var thrownFailure: Throwable? = null
                     val result =
                         try {
                             withTimeoutOrNull(policy.timeoutMillis.coerceIn(1, 30_000)) { entry.provider.resolve(request) }
@@ -321,11 +323,17 @@ class ProviderPipelines(
                         ) {
                             throw e
                         } catch (e: Exception) {
+                            thrownFailure = e
                             AudioResult(error = ProviderError("EXCEPTION", retryable = true))
                         }
                     if (registry.audioSources().none { it.id == entry.id && it.provider === entry.provider }) {
                         record("audio.resolve", entry.id, "DEACTIVATED", start, attempt)
                         break
+                    }
+                    if (result.error !=
+                        null
+                    ) {
+                        registry.reportFailure(entry.owner, "audio.resolve", thrownFailure ?: PluginProviderException())
                     }
                     val stream = result.stream
                     val expires = stream?.expiresAtMillis
@@ -432,6 +440,7 @@ class ProviderPipelines(
                     } catch (
                         error: Exception,
                     ) {
+                        registry.reportFailure(entry.owner, "lyrics.resolve", error)
                         record("lyrics.resolve", entry.id, "ERROR:${error::class.simpleName}", start)
                         null
                     }
@@ -470,6 +479,7 @@ class ProviderPipelines(
                     } catch (
                         error: Exception,
                     ) {
+                        registry.reportFailure(entry.owner, "search.resolve", error)
                         record("search.resolve", entry.id, "ERROR:${error::class.simpleName}", start)
                         null
                     }
@@ -593,6 +603,7 @@ class ProviderPipelines(
                     } catch (
                         error: Exception,
                     ) {
+                        registry.reportFailure(entry.owner, "catalog.resolve", error)
                         record("catalog.resolve", entry.id, "ERROR:${error::class.simpleName}", start)
                         null
                     }

@@ -145,7 +145,13 @@ java {
     }
 }
 
-val sentryAuthToken = providers.environmentVariable("SENTRY_AUTH_TOKEN").filter(String::isNotBlank)
+val sentryOrg = providers.environmentVariable("SENTRY_ORG").filter(String::isNotBlank)
+val sentryProject = providers.environmentVariable("SENTRY_PROJECT").filter(String::isNotBlank)
+val sentryAuthToken =
+    providers.environmentVariable("SENTRY_AUTH_TOKEN").filter {
+        it.isNotBlank() && sentryOrg.isPresent && sentryProject.isPresent &&
+            providers.environmentVariable("SENTRY_DSN").orNull?.isNotBlank() == true
+    }
 val appVersion = providers.gradleProperty("appVersion").get()
 val bundledLanguageTags =
     rootProject
@@ -180,6 +186,10 @@ sentry {
         setOf(
             rootProject.file("shared/src/commonMain/kotlin").absolutePath,
             rootProject.file("shared/src/androidMain/kotlin").absolutePath,
+            rootProject.file("shared/src/jvmSharedMain/kotlin").absolutePath,
+            rootProject.file("engine/src/jvmSharedMain/kotlin").absolutePath,
+            rootProject.file("plugin-sdk/src/commonMain/kotlin").absolutePath,
+            rootProject.file("plugin-sdk/src/androidMain/kotlin").absolutePath,
         ),
     )
     autoInstallation {
@@ -187,8 +197,8 @@ sentry {
     }
     ignoredBuildTypes.set(setOf("debug", "benchmark"))
     tracingInstrumentation.enabled.set(false)
-    org.set("metrolistgroup")
-    projectName.set("metrolist-kmp")
+    org.set(sentryOrg)
+    projectName.set(sentryProject)
     authToken.set(sentryAuthToken)
 }
 
