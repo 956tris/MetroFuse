@@ -1,5 +1,6 @@
 package com.metrolist.shared.repository
 
+import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.api.lyrics.AiModelCatalog
 import com.metrolist.shared.api.lyrics.AiProviderPresets
 import com.metrolist.shared.api.lyrics.LrcredLyricsProvider
@@ -17,8 +18,13 @@ import com.metrolist.shared.model.LyricsProvider
 import com.metrolist.shared.model.LyricsTimingKind
 import com.metrolist.shared.model.LyricsTranslationProgress
 import com.metrolist.shared.model.LyricsWithProvider
+import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.WordTimestamp
+import com.metrolist.shared.model.YTItem
+import com.metrolist.shared.plugins.PluginServices
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.youtube.playback.PlaybackResource
 import com.russhwolf.settings.MapSettings
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
@@ -129,6 +135,51 @@ class LyricsRepositoryTest {
                     assertEquals(!enabled, prefersLyrics(line, words, order, enabled))
                     assertFalse(prefersLyrics(words, line.copy(provider = USER_LYRICS_PROVIDER), order, enabled))
                 }
+            }
+        }
+
+    @Test
+    fun uiLyricsCanReachBuiltInWordTimingsWithSpotifySelected() =
+        runTest {
+            val spotify = LyricsWithProvider("[00:01]First\n[00:03]Second", "spotify.lyrics")
+            val words = LyricsWithProvider(
+                MlxBuilder().line(1_000, 2_000, words = listOf(MlxWord("First", 1_000, 2_000))).build(),
+                "BetterLyrics",
+            )
+            val previous = PluginServicesStore.current
+            PluginServicesStore.current = object : PluginServices {
+                override val hasLyricsProviders = true
+                override suspend fun lyrics(id: String, title: String, artist: String, durationMs: Long?) = spotify
+                override suspend fun resolve(
+                    id: String,
+                    song: SongItem?,
+                    quality: AudioQuality,
+                    refresh: Boolean,
+                    excludedProviders: Set<String>,
+                ): PlaybackResource? = null
+                override suspend fun search(query: String): List<YTItem> = emptyList()
+                override suspend fun metadata(id: String): SongItem? = null
+            }
+            try {
+                HttpClient(MockEngine { error("Unexpected HTTP request") }).use { client ->
+                    val repository = LyricsRepository(
+                        FakeLyricsFetcher(mapOf(LyricsProvider.BETTERLYRICS to words)),
+                        LyricsTranslationClient(client),
+                    )
+                    val providers = listOf(LyricsProvider.BETTERLYRICS)
+                    assertEquals(spotify, repository.getLyrics("track", "Title", "Artist", null, preferredProviders = providers))
+                    assertEquals(
+                        words,
+                        repository.getLyrics(
+                            "track", "Title", "Artist", null,
+                            preferredProviders = providers,
+                            preferWordSynced = true,
+                            includePluginLyrics = false,
+                        ),
+                    )
+                }
+            } finally {
+                PluginServicesStore.current = previous
             }
         }
 

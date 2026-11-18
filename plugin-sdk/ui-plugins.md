@@ -80,8 +80,9 @@ Run `node tests/test_metroflow.mjs` from the [MetroFlow repository](https://gith
 | --- | --- | --- |
 | `ui.home/v1` | Empty object | `shelves` from the selected frontend |
 | `ui.search/v1` | `query`, optional `limit` | `results` with tracks, albums, artists and playlists |
+| `ui.library/v1` | Current frontend `owner`, optional opaque `continuation` and optional `likedSongsOnly` boolean | `owner` and, when supported, a `page` with saved items and a continuation. Requires the `ui` capability. |
 | `ui.collection/v1` | `kind` (album, artist or playlist), `id` | `item` when the provider resolves the collection |
-| `ui.lyrics/v1` | Empty object | `trackId` and optional `lyrics` for the current track |
+| `ui.lyrics/v1` | Empty object | `trackId` and optional `lyrics` for the current track. Prefers word timestamps from enabled MetroFuse lyrics sources and can fall back to plugin lyrics. |
 
 Use provider IDs as returned by the catalog. A lyrics request may finish after the track changes. Compare the returned `trackId` with the current player track before displaying the result.
 

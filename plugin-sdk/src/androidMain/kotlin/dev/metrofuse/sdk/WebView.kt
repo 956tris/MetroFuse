@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.os.Message
 import android.util.Log
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -19,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -40,6 +42,7 @@ import androidx.compose.ui.window.SecureFlagPolicy
 import dev.metrofuse.api.LoginUiContext
 import dev.metrofuse.api.WebLoginRequest
 import kotlinx.coroutines.CancellationException
+import java.net.URI
 
 @SuppressLint("SetJavaScriptEnabled")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,9 +57,13 @@ actual fun WebViewLoginDialog(
     val currentSubmit by rememberUpdatedState(onCredentials)
     val currentContext by rememberUpdatedState(context)
     var webView by remember(request) { mutableStateOf<WebView?>(null) }
-    val popups = remember { mutableSetOf<WebView>() }
+    val popups = remember(request) { mutableSetOf<WebView>() }
+    val spotify =
+        URI(request.url).host == "accounts.spotify.com" &&
+            URI(request.cookieUrl).host == "open.spotify.com"
     var attempt by remember { mutableIntStateOf(0) }
     var pageFailed by remember { mutableStateOf(false) }
+    var pageLoading by remember { mutableStateOf(true) }
     LaunchedEffect(request, webView, attempt) {
         val view = webView ?: return@LaunchedEffect
         pageFailed = false
@@ -64,7 +71,7 @@ actual fun WebViewLoginDialog(
             request.monitorBrowserCredentials(
                 capture = {
                     val url = view.url
-                    if (!request.canCaptureBrowserCookies(url)) {
+                    if (!(spotify && request.completionPath == null) && !request.canCaptureBrowserCookies(url)) {
                         null
                     } else {
                         CookieManager.getInstance().getCookie(request.cookieUrl)
@@ -90,104 +97,139 @@ actual fun WebViewLoginDialog(
         onDispose {
             popups.forEach { it.destroy() }
             popups.clear()
-            webView?.apply {
-                stopLoading()
-                removeAllViews()
-                destroy()
-            }
         }
-    }
-    BackHandler {
-        val view = webView
-        if (view?.canGoBack() == true) view.goBack() else onDismiss()
     }
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false, securePolicy = SecureFlagPolicy.SecureOn),
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnClickOutside = false,
+            decorFitsSystemWindows = false,
+            securePolicy = SecureFlagPolicy.SecureOn,
+        ),
     ) {
-        Scaffold(topBar = {
-            TopAppBar(title = { Text(labels.title) }, navigationIcon = {
-                TextButton(onClick = onDismiss) { Text(labels.cancel) }
-            })
-        }) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                AndroidView(modifier = Modifier.fillMaxSize(), factory = { context ->
-                    WebView(context).apply browser@{
-                        webView = this
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.allowFileAccess = false
-                        settings.allowContentAccess = false
-                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                        settings.setSupportMultipleWindows(true)
-                        settings.userAgentString = WebSettings.getDefaultUserAgent(context).replace("; wv", "").replace(" Version/4.0", "")
-                        CookieManager.getInstance().apply {
-                            setAcceptCookie(true)
-                            setAcceptThirdPartyCookies(this@browser, true)
-                        }
-                        webViewClient =
-                            object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView,
-                                    navigation: WebResourceRequest,
-                                ) = request.blocksBrowserNavigation(navigation.url.toString(), navigation.isForMainFrame)
-
-                                override fun onPageStarted(
-                                    view: WebView,
-                                    url: String?,
-                                    favicon: Bitmap?,
-                                ) {
-                                    pageFailed = false
-                                }
-
-                                override fun onReceivedError(
-                                    view: WebView,
-                                    request: WebResourceRequest,
-                                    error: WebResourceError,
-                                ) {
-                                    if (request.isForMainFrame) pageFailed = true
-                                }
-                            }
-                        webChromeClient =
-                            object : WebChromeClient() {
-                                override fun onCreateWindow(
-                                    view: WebView,
-                                    isDialog: Boolean,
-                                    isUserGesture: Boolean,
-                                    resultMsg: Message,
-                                ): Boolean {
-                                    val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
-                                    val popup = WebView(view.context)
-                                    popups += popup
-                                    popup.webViewClient =
-                                        object : WebViewClient() {
-                                            override fun onPageStarted(
-                                                popupView: WebView,
-                                                url: String?,
-                                                favicon: Bitmap?,
-                                            ) {
-                                                if (url == null || url == "about:blank") return
-                                                if (request.acceptsBrowserNavigation(url)) view.loadUrl(url)
-                                                popups -= popupView
-                                                popupView.destroy()
-                                            }
-                                        }
-                                    transport.webView = popup
-                                    resultMsg.sendToTarget()
-                                    return true
-                                }
-                            }
-                        loadUrl(request.url)
-                    }
+        BackHandler {
+            val view = webView
+            if (view?.canGoBack() == true) view.goBack() else onDismiss()
+        }
+        Surface(Modifier.fillMaxSize()) {
+            Scaffold(topBar = {
+                TopAppBar(title = { Text(labels.title) }, navigationIcon = {
+                    TextButton(onClick = onDismiss) { Text(labels.cancel) }
                 })
-                if (context.busy) CircularProgressIndicator(Modifier.align(Alignment.Center))
-                if (pageFailed || context.failed) {
-                    Column(Modifier.align(Alignment.BottomCenter)) {
-                        Text(labels.error)
-                        TextButton(enabled = !context.busy, onClick = {
-                            attempt++
-                            webView?.loadUrl(request.url)
-                        }) { Text(labels.retry) }
+            }) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding)) {
+                    AndroidView(modifier = Modifier.fillMaxSize(), onRelease = { view ->
+                        if (webView === view) webView = null
+                        view.stopLoading()
+                        view.removeAllViews()
+                        view.destroy()
+                    }, factory = { context ->
+                        WebView(context).apply browser@{
+                            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                            webView = this
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.allowFileAccess = false
+                            settings.allowContentAccess = false
+                            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                            val defaultUserAgent = WebSettings.getDefaultUserAgent(context)
+                            settings.userAgentString =
+                                if (spotify) defaultUserAgent else defaultUserAgent.replace("; wv", "").replace(" Version/4.0", "")
+                            settings.setSupportMultipleWindows(!spotify)
+                            CookieManager.getInstance().apply {
+                                setAcceptCookie(true)
+                                setAcceptThirdPartyCookies(this@browser, true)
+                            }
+                            webViewClient =
+                                object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(
+                                        view: WebView,
+                                        navigation: WebResourceRequest,
+                                    ): Boolean {
+                                        val url = navigation.url
+                                        val host = url.host.orEmpty()
+                                        if (spotify && url.scheme == "https" && (url.port == -1 || url.port == 443) &&
+                                            url.userInfo == null && host.endsWith(".spotify.com", ignoreCase = true)
+                                        ) {
+                                            return false
+                                        }
+                                        val blocked = request.blocksBrowserNavigation(url.toString(), navigation.isForMainFrame)
+                                        if (blocked) {
+                                            Log.w("MetroPluginLogin", "Blocked login navigation to host=$host")
+                                            pageLoading = false
+                                            pageFailed = true
+                                        }
+                                        return blocked
+                                    }
+
+                                    override fun onPageStarted(
+                                        view: WebView,
+                                        url: String?,
+                                        favicon: Bitmap?,
+                                    ) {
+                                        pageFailed = false
+                                        pageLoading = true
+                                    }
+
+                                    override fun onPageFinished(view: WebView, url: String?) {
+                                        pageLoading = false
+                                        Log.i("MetroPluginLogin", "Login page finished at host=${url?.let { runCatching { URI(it).host }.getOrNull() }}")
+                                    }
+
+                                    override fun onReceivedError(
+                                        view: WebView,
+                                        request: WebResourceRequest,
+                                        error: WebResourceError,
+                                    ) {
+                                        if (request.isForMainFrame) {
+                                            Log.w("MetroPluginLogin", "Login page error code=${error.errorCode}")
+                                            pageLoading = false
+                                            pageFailed = true
+                                        }
+                                    }
+                                }
+                            webChromeClient =
+                                if (spotify) WebChromeClient() else object : WebChromeClient() {
+                                    override fun onCreateWindow(
+                                        view: WebView,
+                                        isDialog: Boolean,
+                                        isUserGesture: Boolean,
+                                        resultMsg: Message,
+                                    ): Boolean {
+                                        val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
+                                        val popup = WebView(view.context)
+                                        popups += popup
+                                        popup.webViewClient =
+                                            object : WebViewClient() {
+                                                override fun onPageStarted(
+                                                    popupView: WebView,
+                                                    url: String?,
+                                                    favicon: Bitmap?,
+                                                ) {
+                                                    if (url == null || url == "about:blank") return
+                                                    if (request.acceptsBrowserNavigation(url)) view.loadUrl(url)
+                                                    popups -= popupView
+                                                    popupView.destroy()
+                                                }
+                                            }
+                                        transport.webView = popup
+                                        resultMsg.sendToTarget()
+                                        return true
+                                    }
+                                }
+                            loadUrl(request.url)
+                        }
+                    })
+                    if (context.busy || (pageLoading && !pageFailed)) CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    if (pageFailed || context.failed) {
+                        Column(Modifier.align(Alignment.BottomCenter)) {
+                            Text(labels.error)
+                            TextButton(enabled = !context.busy, onClick = {
+                                attempt++
+                                webView?.loadUrl(request.url)
+                            }) { Text(labels.retry) }
+                        }
                     }
                 }
             }

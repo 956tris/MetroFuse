@@ -4,6 +4,7 @@ import androidx.compose.runtime.snapshotFlow
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.api.SongVote
+import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.model.AlbumItem
@@ -15,6 +16,7 @@ import com.metrolist.shared.model.ArtistPageResult
 import com.metrolist.shared.model.ArtistTiny
 import com.metrolist.shared.model.HomeSection
 import com.metrolist.shared.model.LyricsEntry
+import com.metrolist.shared.model.LyricsProvider
 import com.metrolist.shared.model.LyricsWithProvider
 import com.metrolist.shared.model.MlxDocument
 import com.metrolist.shared.model.MlxMeta
@@ -25,6 +27,7 @@ import com.metrolist.shared.model.RadioQueuePage
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.WordTimestamp
 import com.metrolist.shared.model.YTItem
+import com.metrolist.shared.repository.LyricsRepository
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.SongLikeState
 import com.metrolist.shared.ui.navigation.Navigator
@@ -45,7 +48,10 @@ import dev.metrofuse.api.HostNavigation
 import dev.metrofuse.api.HostServices
 import dev.metrofuse.api.HostSettings
 import dev.metrofuse.api.LibraryRequest
+import dev.metrofuse.api.LyricsLine
 import dev.metrofuse.api.LyricsRequest
+import dev.metrofuse.api.LyricsResult
+import dev.metrofuse.api.LyricsWord
 import dev.metrofuse.api.PlaybackState
 import dev.metrofuse.api.Player
 import dev.metrofuse.api.QualityPreference
@@ -65,6 +71,7 @@ import dev.metrofuse.runtime.CredentialStore
 import dev.metrofuse.runtime.MetadataMapping
 import dev.metrofuse.runtime.Runtime
 import dev.metrofuse.runtime.UiFrontendSelectionHost
+import dev.metrofuse.runtime.UiLyricsHost
 import dev.metrofuse.runtime.UnavailableCredentialStore
 import dev.metrofuse.runtime.pluginHomeSources
 import kotlinx.coroutines.CancellationException
@@ -207,7 +214,40 @@ object MetroFuseHost : PluginServices {
         val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]))
         hostScope = scope
         val services =
-            object : HostServices, UiLibraryHost, UiLocalSearch, UiFrontendSelectionHost {
+            object : HostServices, UiLibraryHost, UiLocalSearch, UiFrontendSelectionHost, UiLyricsHost {
+                override suspend fun resolveUiLyrics(track: Track): LyricsResult? = withContext(Dispatchers.Default) {
+                    val repository = org.koin.core.context.GlobalContext.getOrNull()?.getOrNull<LyricsRepository>()
+                        ?: return@withContext null
+                    val providers = LyricsProvider.preferredProvidersForFetch(
+                        LyricsProvider.parseUserOrderFromStoredCsv(Settings.shared.lyricsProviderOrder),
+                        LyricsProvider.parseEnabledFromStoredCsv(Settings.shared.lyricsEnabledProviders),
+                    ).sortedBy { it != LyricsProvider.METROFUSE && it != LyricsProvider.BETTERLYRICS }
+                    val lyrics = repository.getLyrics(
+                        videoId = track.id,
+                        title = track.title,
+                        artist = track.artist,
+                        duration = track.duration.takeIf { it > 0 },
+                        album = track.album.takeIf { it.isNotBlank() },
+                        preferredProviders = providers,
+                        ignoreVideoIdentity = track.id.startsWith("metrofuse:"),
+                        preferWordSynced = true,
+                        includePluginLyrics = false,
+                    ) ?: return@withContext null
+                    val entries = LyricsUtils.parseLyrics(lyrics.lyrics)
+                    val timed = LyricsUtils.hasPlaybackTiming(entries)
+                    val offset = LyricsUtils.combinedLyricsOffsetMs(
+                        repository.getLyricsOffset(track.id),
+                        Settings.shared.globalLyricsOffsetMs,
+                    )
+                    val lines = entries.map { entry ->
+                        val words = entry.words.orEmpty().filter { !it.isLineTimed && !it.isBackground && it.endTime > it.startTime }.map {
+                            LyricsWord(it.text, ((it.startTime * 1000).toLong() - offset).coerceAtLeast(0), ((it.endTime * 1000).toLong() - offset).coerceAtLeast(0))
+                        }
+                        LyricsLine(entry.text, (entry.time - offset).coerceAtLeast(0).takeIf { timed }, words)
+                    }
+                    LyricsResult(lines, lyrics.provider).takeIf { lines.any { it.text.isNotBlank() } }
+                }
+
                 override suspend fun selectUiFrontend(owner: String) =
                     withContext(Dispatchers.Main.immediate) { selectMusicFrontend(owner) }
 
@@ -239,6 +279,8 @@ object MetroFuseHost : PluginServices {
                             when (key) {
                                 "audio.quality" -> Settings.shared.audioQuality
                                 "music.frontend" -> effectiveMusicFrontendOwner()
+                                "content.language" -> Settings.shared.contentLanguage
+                                "content.country" -> Settings.shared.contentCountry
                                 else -> null
                             }
 
@@ -965,9 +1007,15 @@ private class ControllerPlayer(
                         lastSong = value.currentSong
                         pluginSong = value.currentSong?.also(remember)?.toPluginTrack() ?: Track("", "", "", "")
                     }
+                    val measuredDuration = value.durationMs.takeIf { pluginSong.id.isNotBlank() && it > 0 }
+                    val currentTrack = if (measuredDuration != null && measuredDuration != pluginSong.duration) {
+                        pluginSong.copy(duration = measuredDuration)
+                    } else {
+                        pluginSong
+                    }
                     state.value =
                         PlaybackState(
-                            pluginSong,
+                            currentTrack,
                             value.isPlaying,
                             value.positionMs,
                             pluginQueue,

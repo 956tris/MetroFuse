@@ -29,6 +29,15 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ProviderPipelinesTest {
+    @Test
+    fun metadataKeepsUnknownDurationAsZeroAndPreservesKnownPlaybackDuration() {
+        val track = Track("fixture", "Song", "Artist", "Album")
+        val document = MetadataMapping.fromTrack(track)
+        assertEquals(0L, MetadataMapping.toTrack(document, track).duration)
+        val measured = track.copy(duration = 145_678)
+        assertEquals(145_678L, MetadataMapping.toTrack(document, measured).duration)
+    }
+
     private val query = AudioQuery(TrackIdentity("fixture"), "desktop")
     private fun source(id: String, resolver: suspend () -> AudioResult) = object : AudioSource {
         override val id = id

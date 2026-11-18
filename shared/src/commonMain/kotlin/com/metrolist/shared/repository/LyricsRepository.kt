@@ -368,11 +368,12 @@ class LyricsRepository(
         isVideoContext: Boolean = false,
         preferVideoProviders: Boolean = false,
         ignoreVideoIdentity: Boolean = false,
+        preferWordSynced: Boolean = Settings.shared.preferWordSyncedLyrics,
+        includePluginLyrics: Boolean = true,
         onLyricsAvailable: suspend (LyricsWithProviderModel) -> Unit = {},
     ): LyricsWithProviderModel? {
         getUserLyrics(videoId)?.let { return LyricsWithProviderModel(it, USER_LYRICS_PROVIDER, isUserSelected = true) }
         val lookupVideoId = videoId.takeUnless { ignoreVideoIdentity }
-        val preferWordSynced = Settings.shared.preferWordSyncedLyrics
         val preferredTiming = if (preferWordSynced) LyricsTimingKind.WORD_SYNCED else LyricsTimingKind.LINE_SYNCED
         val providers =
             (preferredProviders + if (isVideoContext) listOf(LyricsProvider.SIMPMUSIC) else emptyList())
@@ -388,6 +389,7 @@ class LyricsRepository(
                 preferredProviders,
                 isVideoContext,
                 preferVideoProviders,
+                preferWordSynced,
             )
         val fetchOrder = lookupKey.providers
         val initialCachedLyrics =
@@ -431,7 +433,7 @@ class LyricsRepository(
             } else {
                 initialCachedLyrics
             }
-        val pluginServices = PluginServicesStore.current
+        val pluginServices = PluginServicesStore.current.takeIf { includePluginLyrics }
         if (!skipCache && cachedMissExpiry(cachedLyrics, lookupKey) != null && pluginServices?.hasLyricsProviders != true) return null
         val cachedResult = cachedLyricsResult(cachedLyrics, providers)
         if (!skipCache && cachedResult != null &&
@@ -724,6 +726,7 @@ class LyricsRepository(
         preferredProviders: List<LyricsProvider>,
         isVideoContext: Boolean,
         preferVideoProviders: Boolean,
+        preferWordSynced: Boolean = Settings.shared.preferWordSyncedLyrics,
     ): LyricsLookupKey {
         val providers =
             (preferredProviders + if (isVideoContext) listOf(LyricsProvider.SIMPMUSIC) else emptyList())
@@ -733,7 +736,7 @@ class LyricsRepository(
                 .let {
                     if (preferVideoProviders) (LyricsProvider.afterUserLyricsFallbacks + it).distinct() else it
                 }
-        return LyricsLookupKey(videoId, title, artist, duration, album, providers, isVideoContext, Settings.shared.preferWordSyncedLyrics)
+        return LyricsLookupKey(videoId, title, artist, duration, album, providers, isVideoContext, preferWordSynced)
     }
 
     @Serializable

@@ -5,6 +5,8 @@ import dev.metrofuse.api.CatalogArtist
 import dev.metrofuse.api.CatalogPlaylist
 import dev.metrofuse.api.CatalogProvider
 import dev.metrofuse.api.HomeItem
+import dev.metrofuse.api.HostServices
+import dev.metrofuse.api.HostSettings
 import dev.metrofuse.api.LibraryPage
 import dev.metrofuse.api.LibraryProvider
 import dev.metrofuse.api.LibraryRequest
@@ -17,6 +19,10 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -31,12 +37,67 @@ class CatalogLibraryTest {
         val respond: suspend (LibraryRequest) -> LibraryPage,
     ) : CatalogProvider,
         LibraryProvider {
+        override val supportsLikedSongs = true
+
         override suspend fun library(request: LibraryRequest) = respond(request)
     }
 
     private val request = LibraryRequest("pt-BR", "BR")
 
     private fun page(token: String? = null) = LibraryPage(listOf(HomeItem(track = Track("song", "Song", "Artist", "Album"))), token)
+
+    @Test
+    fun customShellCanPageThroughTheSelectedProviderLibrary() =
+        runBlocking {
+            var selected = "test.spotify"
+            val host = object : HostServices by EngineTestHost() {
+                override val settings = object : HostSettings {
+                    override fun get(key: String) = when (key) {
+                        "music.frontend" -> selected
+                        "content.language" -> request.language
+                        "content.country" -> request.country
+                        else -> null
+                    }
+
+                    override fun set(key: String, value: String?) = error("Library must leave settings alone")
+                }
+            }
+            val directory = Files.createTempDirectory("metrofuse-ui-library").toFile()
+            val runtime = Runtime(directory, "desktop", this, host)
+            try {
+                runtime.registerUiCatalogServices()
+                val calls = mutableListOf<LibraryRequest>()
+                runtime.registry.catalogProvider("test.spotify", Catalog("test.spotify.catalog") { received ->
+                    calls += received
+                    page("next".takeIf { received.continuation == null && !received.likedSongsOnly })
+                })
+                runtime.registry.catalogProvider("test.ytm", Catalog("test.ytm.catalog") { page() })
+                suspend fun load(owner: String, continuation: String? = null, likedSongsOnly: Boolean = false): LibraryPage {
+                    val result = runtime.registry.invoke(UI_LIBRARY_SERVICE, buildJsonObject {
+                        put("owner", owner)
+                        continuation?.let { put("continuation", it) }
+                        if (likedSongsOnly) put("likedSongsOnly", true)
+                    })
+                    assertEquals(owner, result.getValue("owner").jsonPrimitive.content)
+                    return codec.decodeFromJsonElement(LibraryPage.serializer(), result.getValue("page"))
+                }
+
+                assertFailsWith<IllegalArgumentException> { load("test.ytm") }
+                val first = load("test.spotify")
+                assertEquals("metrofuse:test.spotify:song", first.items.single().track?.id)
+                val continuation = assertNotNull(first.continuation)
+                assertFailsWith<CancellationException> { load("test.spotify", continuation, likedSongsOnly = true) }
+                assertNull(load("test.spotify", continuation).continuation)
+                assertEquals("metrofuse:test.spotify:song", load("test.spotify", likedSongsOnly = true).items.single().track?.id)
+                assertEquals(listOf(request, request.copy(continuation = "next"), request.copy(likedSongsOnly = true)), calls)
+                selected = "test.ytm"
+                assertFailsWith<IllegalArgumentException> { load("test.spotify") }
+                assertEquals("metrofuse:test.ytm:song", load("test.ytm").items.single().track?.id)
+            } finally {
+                runtime.close()
+                directory.deleteRecursively()
+            }
+        }
 
     @Test
     fun libraryKeepsAllObjectKindsAndPinsPagesToTheSelectedPlugin() =

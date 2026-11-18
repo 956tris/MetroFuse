@@ -5,12 +5,17 @@ import dev.metrofuse.api.CatalogArtist
 import dev.metrofuse.api.CatalogPlaylist
 import dev.metrofuse.api.HomeShelf
 import dev.metrofuse.api.JsonService
+import dev.metrofuse.api.LibraryPage
+import dev.metrofuse.api.LibraryRequest
 import dev.metrofuse.api.LyricsRequest
 import dev.metrofuse.api.LyricsResult
 import dev.metrofuse.api.SearchRequest
 import dev.metrofuse.api.SearchResult
+import dev.metrofuse.api.Track
 import dev.metrofuse.api.TrackIdentity
 import dev.metrofuse.api.UiLocalSearch
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -20,13 +25,19 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.util.Locale
 
 /** Optional app-owned selection bridge for shells. */
 interface UiFrontendSelectionHost {
     suspend fun selectUiFrontend(owner: String)
 }
 
+interface UiLyricsHost {
+    suspend fun resolveUiLyrics(track: Track): LyricsResult?
+}
+
 internal const val UI_FRONTENDS_SERVICE = "ui.frontends/v1"
+internal const val UI_LIBRARY_SERVICE = "ui.library/v1"
 
 internal fun Runtime.registerUiCatalogServices() {
     fun register(
@@ -44,6 +55,26 @@ internal fun Runtime.registerUiCatalogServices() {
 
     register("ui.source/v1") {
         uiSourceMetadata(host.settings.get("music.frontend").orEmpty(), plugins.value, logins.states.value)
+    }
+    register(UI_LIBRARY_SERVICE) { request ->
+        val owner = host.settings.get("music.frontend").orEmpty()
+        if (owner.isEmpty()) {
+            buildJsonObject { put("owner", owner) }
+        } else {
+            require((request["owner"] as? JsonPrimitive)?.contentOrNull == owner) { "Library source changed" }
+            val continuation = (request["continuation"] as? JsonPrimitive)?.contentOrNull
+            require((continuation?.length ?: 0) <= 2048)
+            val locale = Locale.getDefault()
+            val language = host.settings.get("content.language")?.takeUnless { it.isBlank() || it == "SYSTEM" } ?: locale.language
+            val country = host.settings.get("content.country")?.takeUnless { it.isBlank() || it == "SYSTEM" } ?: locale.country
+            val likedSongsOnly = (request["likedSongsOnly"] as? JsonPrimitive)?.contentOrNull == "true"
+            val page = pipelines.library(owner, LibraryRequest(language, country, continuation, likedSongsOnly))
+            if (host.settings.get("music.frontend").orEmpty() != owner) throw CancellationException("Library source changed")
+            buildJsonObject {
+                put("owner", owner)
+                if (page != null) put("page", codec.encodeToJsonElement(LibraryPage.serializer(), page))
+            }
+        }
     }
     if (host is UiFrontendSelectionHost) {
         register(UI_FRONTENDS_SERVICE) { request ->
@@ -154,7 +185,21 @@ internal fun Runtime.registerUiCatalogServices() {
             if (track.id.isBlank()) {
                 null
             } else {
-                pipelines.lyrics(LyricsRequest(identity, track.title, track.artist, track.duration))
+                val hostLyrics = try {
+                    withTimeoutOrNull(18_000) { (host as? UiLyricsHost)?.resolveUiLyrics(track) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    null
+                }
+                if (hostLyrics.hasWordTimings()) {
+                    hostLyrics
+                } else {
+                    val pluginLyrics = withTimeoutOrNull(10_000) {
+                        pipelines.lyrics(LyricsRequest(identity, track.title, track.artist, track.duration))
+                    }
+                    pluginLyrics.takeIf { hostLyrics == null || it.hasWordTimings() } ?: hostLyrics
+                }
             }
         buildJsonObject {
             put("trackId", track.id)
@@ -162,6 +207,9 @@ internal fun Runtime.registerUiCatalogServices() {
         }
     }
 }
+
+private fun LyricsResult?.hasWordTimings(): Boolean =
+    this?.lines?.any { line -> line.words.any { it.text.isNotBlank() && it.endMs > it.startMs } } == true
 
 internal fun uiFrontendsSnapshot(
     selected: String,

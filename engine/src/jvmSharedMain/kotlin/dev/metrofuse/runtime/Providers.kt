@@ -44,7 +44,7 @@ object MetadataMapping {
             album = field("album", base.album),
             artwork = field("artwork", base.artwork),
             duration =
-                field("duration", base.duration.toString()).toLongOrNull()?.coerceAtLeast(1) ?: base.duration,
+                field("duration", base.duration.toString()).toLongOrNull()?.takeIf { it > 0 } ?: base.duration,
             extras =
                 base.extras +
                     document.fields.filterKeys { it !in setOf("title", "artist", "album", "artwork", "duration") }.mapValues { (_, v) ->
