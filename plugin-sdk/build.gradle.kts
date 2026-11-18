@@ -50,7 +50,10 @@ kotlin {
                 implementation(libs.jna)
             }
         }
-        getByName("desktopTest").dependencies { implementation(kotlin("test")) }
+        getByName("desktopTest").dependencies {
+            implementation(kotlin("test"))
+            implementation(libs.kotlinx.coroutines.test)
+        }
     }
 }
 

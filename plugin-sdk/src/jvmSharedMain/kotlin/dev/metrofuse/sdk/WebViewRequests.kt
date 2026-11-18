@@ -35,6 +35,32 @@ internal suspend fun awaitBrowserCredentials(capture: suspend () -> Map<String, 
         captured
     }
 
+/** Keep watching after a rejected session so completing sign-in can replace a stale cookie. */
+internal suspend fun WebLoginRequest.monitorBrowserCredentials(
+    capture: () -> String?,
+    isBusy: () -> Boolean,
+    isLoggedIn: () -> Boolean,
+    submit: (Map<String, String>) -> Unit,
+) {
+    var submittedSession: Map<String, String>? = null
+    while (!isLoggedIn()) {
+        if (!isBusy()) {
+            val header = capture()
+            val credentials = header?.let { captureBrowserCookies(it) }
+            if (header != null && credentials != null) {
+                val cookies = parseBrowserCookies(header)
+                // Tracking-cookie changes must not repeatedly submit the same rejected account session.
+                val session = if (requiredCookies.isEmpty()) cookies else cookies.filterKeys { it in requiredCookies }
+                if (session != submittedSession) {
+                    submittedSession = session
+                    submit(credentials)
+                }
+            }
+        }
+        delay(500)
+    }
+}
+
 fun WebLoginRequest.acceptsBrowserNavigation(value: String): Boolean {
     val uri = runCatching { URI(value) }.getOrNull() ?: return false
     return uri.scheme == "https" && (uri.port == -1 || uri.port == 443) && uri.userInfo == null && uri.host in allowedHosts
@@ -47,13 +73,7 @@ internal fun WebLoginRequest.blocksBrowserNavigation(
 
 fun WebLoginRequest.captureBrowserCookies(header: String): Map<String, String>? {
     if (header.isBlank() || header.length > 16384 || '\r' in header || '\n' in header) return null
-    val cookies =
-        header
-            .split(';')
-            .mapNotNull { part ->
-                val index = part.indexOf('=')
-                if (index <= 0) null else part.substring(0, index).trim() to part.substring(index + 1).trim()
-            }.toMap()
+    val cookies = parseBrowserCookies(header)
     if (cookies.none { it.value.isNotBlank() } ||
         (requiredCookies.isNotEmpty() && requiredCookies.none { !cookies[it].isNullOrBlank() })
     ) {
@@ -61,3 +81,9 @@ fun WebLoginRequest.captureBrowserCookies(header: String): Map<String, String>? 
     }
     return mapOf(cookieField to header)
 }
+
+private fun parseBrowserCookies(header: String): Map<String, String> =
+    header.split(';').mapNotNull { part ->
+        val index = part.indexOf('=')
+        if (index <= 0) null else part.substring(0, index).trim() to part.substring(index + 1).trim()
+    }.toMap()

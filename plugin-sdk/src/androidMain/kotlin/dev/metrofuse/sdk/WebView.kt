@@ -58,7 +58,6 @@ import dev.metrofuse.api.LoginUiContext
 import dev.metrofuse.api.WebLoginRequest
 import java.net.URI
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import android.app.Dialog as NativeDialog
 
@@ -106,22 +105,30 @@ actual fun WebViewLoginDialog(
     LaunchedEffect(request, webView, attempt) {
         val view = webView ?: return@LaunchedEffect
         try {
-            val values =
-                awaitBrowserCredentials {
+            request.monitorBrowserCredentials(
+                capture = {
                     val url = view.url
                     if (!request.canCaptureBrowserCookies(url)) {
                         null
                     } else {
-                        request.captureBrowserCookies(cookies(view).getCookie(request.cookieUrl).orEmpty())
+                        cookies(view).getCookie(request.cookieUrl)
                     }
-                }
-            currentSubmit(values)
+                },
+                isBusy = { currentBusy },
+                isLoggedIn = { currentContext.account.loggedIn },
+                submit = { values ->
+                    Log.i("MetroPluginLogin", "Session cookies captured; submitting for account verification")
+                    currentSubmit(values)
+                },
+            )
         } catch (error: CancellationException) {
-            if (error !is TimeoutCancellationException) throw error
-            pageFailed = true
+            throw error
         } catch (_: Exception) {
             pageFailed = true
         }
+    }
+    LaunchedEffect(context.failed) {
+        if (context.failed) Log.w("MetroPluginLogin", "Account verification failed; watching for an updated browser session")
     }
     DisposableEffect(popups) {
         onDispose {
