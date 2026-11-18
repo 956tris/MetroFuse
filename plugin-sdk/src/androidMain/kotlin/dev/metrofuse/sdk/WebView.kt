@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.os.Message
 import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -122,6 +124,10 @@ actual fun WebViewLoginDialog(
                             view.destroy()
                         }, factory = { context ->
                             WebView(context).apply browser@{
+                                // Software painting avoids blank pages in the Compose dialog's WebView compositor.
+                                setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                                layoutParams =
+                                    ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                                 if (isolated) WebViewCompat.setProfile(this, profileName)
                                 webView = this
                                 settings.javaScriptEnabled = true
