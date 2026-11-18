@@ -186,6 +186,10 @@ sentry {
         setOf(
             rootProject.file("shared/src/commonMain/kotlin").absolutePath,
             rootProject.file("shared/src/androidMain/kotlin").absolutePath,
+            rootProject.file("shared/src/jvmSharedMain/kotlin").absolutePath,
+            rootProject.file("engine/src/jvmSharedMain/kotlin").absolutePath,
+            rootProject.file("plugin-sdk/src/commonMain/kotlin").absolutePath,
+            rootProject.file("plugin-sdk/src/androidMain/kotlin").absolutePath,
         ),
     )
     autoInstallation {

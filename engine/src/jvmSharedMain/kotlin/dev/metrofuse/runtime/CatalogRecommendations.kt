@@ -87,7 +87,8 @@ internal class CatalogRecommendations(
                 withTimeoutOrNull(10_000) { provider.recommendations(request) }?.also(::validateRecommendations)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                registry.reportFailure(entry.owner, "catalog.recommendations", error)
                 null
             } ?: return null
         if (requestRevision != revision.get() || epoch != registry.providerEpoch ||

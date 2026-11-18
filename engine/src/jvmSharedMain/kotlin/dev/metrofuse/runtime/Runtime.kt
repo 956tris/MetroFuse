@@ -50,10 +50,22 @@ class Runtime(
     val host: HostServices,
     private val hostVersion: String? = null,
     private val credentialStore: CredentialStore = UnavailableCredentialStore,
+    private val onPluginFailure: (PluginFailure) -> Unit = {},
 ) {
     private val runtimeJob = SupervisorJob(parentScope.coroutineContext[Job])
     val scope = CoroutineScope(parentScope.coroutineContext + runtimeJob)
-    val registry = Registry()
+    val registry = Registry(::reportPluginFailure)
+    private val failureReports = PluginFailureReports()
+
+    internal fun reportPluginFailure(
+        owner: String,
+        operation: String,
+        error: Throwable,
+    ) {
+        val manifest = plugins.value.firstOrNull { it.manifest.id == owner }?.manifest ?: return
+        failureReports.report(PluginFailure(owner, manifest.version, manifest.runtime, operation, error), onPluginFailure)
+    }
+
     val pipelines = ProviderPipelines(registry, trackLookup = host.catalog::identify)
     val libraryAccounts = MutableStateFlow<Map<String, PluginAccountState>>(emptyMap())
     val events = EngineEvents()
@@ -129,6 +141,7 @@ class Runtime(
         owner: String,
         error: Throwable,
     ) {
+        reportPluginFailure(owner, "ui.render", error)
         forceOriginalUi()
         withContext(Dispatchers.IO) {
             uiRecovery.recoverOriginalUi()
@@ -159,8 +172,8 @@ class Runtime(
             uiSafeMode.value = enabled
         }
 
-    val logins = PluginLogins(scope, credentialStore)
-    val homes = PluginHomes(scope)
+    val logins = PluginLogins(scope, credentialStore, onFailure = ::reportPluginFailure)
+    val homes = PluginHomes(scope, onFailure = ::reportPluginFailure)
     val homeSources = plugins.map(::pluginHomeSources).stateIn(scope, SharingStarted.Eagerly, emptyList())
     private val gate = Mutex()
     private val initialization = Mutex()
@@ -820,6 +833,7 @@ class Runtime(
             ids.forEach(::visit)
             registry.order("lifecycle.activate", closure).forEach { enable(it) }
         } catch (e: Exception) {
+            ids.forEach { reportPluginFailure(it, "lifecycle.dependencies", e) }
             ids.forEach { status(it, "Failed", e.toString()) }
             log("host", "Activation graph rejected: $e")
         }
@@ -881,6 +895,7 @@ class Runtime(
                     sessions.remove(id)
                     registry.remove(id)
                     status(id, "Failed", e.toString())
+                    reportPluginFailure(id, "lifecycle.activate", e)
                     log(id, e.stackTraceToString())
                     desiredEnabled = desiredEnabled - id
                     withContext(NonCancellable + Dispatchers.IO) {
@@ -928,6 +943,7 @@ class Runtime(
             e: Throwable,
         ) {
             status(id, "Failed", "Cleanup: $e")
+            reportPluginFailure(id, "lifecycle.dispose", e)
             log(id, "Cleanup: $e")
         } finally {
             registry.remove(id)
@@ -988,6 +1004,7 @@ class Runtime(
         id: String,
         error: Throwable,
     ) = gate.withLock {
+        reportPluginFailure(id, "lifecycle.quarantine", error)
         // Dependents must lose their contributions too if a provider disappears.
         val affected = mutableSetOf(id)
         do {

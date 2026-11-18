@@ -38,7 +38,34 @@ data class ResolutionExplanation(
 )
 
 /** All snapshots are immutable. Equal priorities are resolved by plugin ID, never load order. */
-class Registry {
+class Registry(
+    private val onFailure: (String, String, Throwable) -> Unit = { _, _, _ -> },
+) {
+    internal suspend fun <T> callProvider(
+        owner: String,
+        operation: String,
+        call: suspend () -> T,
+    ): T =
+        try {
+            call()
+        } catch (error: Exception) {
+            reportFailure(owner, operation, error)
+            throw error
+        }
+
+    fun reportFailure(
+        owner: String,
+        operation: String,
+        error: Throwable,
+    ) {
+        if (!isReportablePluginFailure(error)) return
+        try {
+            onFailure(owner, operation, error)
+        } catch (_: Exception) {
+            // Reporting is independent of provider selection and fallback.
+        }
+    }
+
     val state = MutableStateFlow(RegistryState())
     val serviceDiagnostics = MutableStateFlow<List<ProviderDiagnostic>>(emptyList())
     private val services = mutableMapOf<String, List<Owned<JsonService>>>()
@@ -87,7 +114,14 @@ class Registry {
             payload: JsonObject,
         ) {
             val handlers = synchronized(this) { ordered(name, hooks[name to phase].orEmpty()) }
-            handlers.forEach { withTimeout(1500) { it.value.call(payload) } }
+            handlers.forEach {
+                try {
+                    withTimeout(1500) { it.value.call(payload) }
+                } catch (error: Exception) {
+                    reportFailure(it.owner, "service.$name.${phase.name.lowercase()}", error)
+                    throw error
+                }
+            }
         }
         observe(HookPhase.BEFORE, request)
 
@@ -106,6 +140,7 @@ class Registry {
                 }
                 return result
             } catch (e: Exception) {
+                reportFailure(p.owner, "service.$name", e)
                 serviceDiagnostics.update {
                     (
                         it +

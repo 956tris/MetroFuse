@@ -16,6 +16,10 @@ Crash reporting is disabled unless `SENTRY_DSN` is set in the build environment.
 
 For GitHub Actions, configure the repository variables `SENTRY_DSN`, `SENTRY_ORG` and `SENTRY_PROJECT` for MetroFuse's own project, and the `SENTRY_AUTH_TOKEN` secret for symbol uploads. Release uploads and finalization are skipped when those variables are absent. Leave them unset to build without remote crash reporting.
 
+Source bundles include the host runtime and SDK so plugin failure frames can show host source context. Set the optional `SENTRY_REPOSITORY` repository variable after connecting the GitHub repository in Sentry to associate release commits. Release finalization works without that integration.
+
+MetroFuse uses the shared `metrofuse` Sentry project in the `metrofuse` organization for Android, desktop and iOS. The host reports plugin activation, UI, login and provider failures when the user enables crash reporting. Reports identify the plugin, version, runtime and operation. They include exception types and stack frames, but exclude raw plugin exception messages and request or credential payloads. Repeated failures of the same operation and exception type are limited to one report per plugin per minute. Normal coroutine cancellation is not reported.
+
 ## Rejected features
 
 The following list preserves the upstream issue-triage policy. Do not apply it to bugs in existing functionality. MetroFuse's existing plugin architecture remains part of this fork.

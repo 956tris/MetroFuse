@@ -10,6 +10,8 @@ import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.utils.redactDiagnosticText
 import com.metrolist.shared.utils.redactDiagnosticUrl
+import dev.metrofuse.runtime.PluginFailure
+import dev.metrofuse.runtime.PluginOperationException
 import io.sentry.Breadcrumb
 import io.sentry.Sentry
 import io.sentry.SentryEvent
@@ -21,6 +23,18 @@ internal fun androidSentryRelease(version: String): String = "com.metrolist.musi
 
 object SentryManager {
     private lateinit var application: Application
+
+    fun reportPluginFailure(failure: PluginFailure) {
+        if (!Settings.shared.sentryEnabled || BuildConfig.SENTRY_DSN.isBlank() || !Sentry.isEnabled()) return
+        Sentry.captureException(PluginOperationException(failure)) { scope ->
+            scope.setTag("error.domain", "plugin")
+            scope.setTag("plugin.id", failure.owner)
+            scope.setTag("plugin.version", failure.version)
+            scope.setTag("plugin.runtime", failure.runtime)
+            scope.setTag("plugin.operation", failure.operation)
+            scope.fingerprint = listOf("plugin", failure.owner, failure.operation, failure.error.javaClass.name)
+        }
+    }
 
     @Synchronized
     fun initialize(application: Application) {
@@ -57,6 +71,7 @@ object SentryManager {
             options.isTombstoneEnabled = true
             options.isAttachRawTombstone = true
             options.addInAppInclude("com.metrolist")
+            options.addInAppInclude("dev.metrofuse")
             options.beforeBreadcrumb =
                 SentryOptions.BeforeBreadcrumbCallback { breadcrumb, _ ->
                     sanitizeBreadcrumb(breadcrumb)

@@ -98,9 +98,11 @@ internal class CatalogLibrary(
             val requestRevision = revision.get()
             val epoch = registry.providerEpoch
             val succeeded =
-                withTimeoutOrNull(requestTimeoutMillis) {
-                    (entry.provider as LibraryProvider).setSongVote(request)
-                } ?: error("Song vote request timed out")
+                registry.callProvider(entry.owner, "catalog.songVote") {
+                    withTimeoutOrNull(requestTimeoutMillis) {
+                        (entry.provider as LibraryProvider).setSongVote(request)
+                    } ?: error("Song vote request timed out")
+                }
             if (requestRevision != revision.get() || epoch != registry.providerEpoch ||
                 registry.catalogProviders().none { it.id == entry.id && it.owner == owner && it.provider === entry.provider }
             ) {
@@ -117,10 +119,14 @@ internal class CatalogLibrary(
         val requestRevision = revision.get()
         val epoch = registry.providerEpoch
         val result =
-            withTimeoutOrNull(requestTimeoutMillis) { (entry.provider as LibraryProvider).library(request) }
-                ?: error("Library request timed out")
-        validateHome(listOf(HomeShelf(entry.id, result.items)))
-        require((result.continuation?.length ?: 0) <= 16_384)
+            registry.callProvider(entry.owner, "catalog.library") {
+                val page =
+                    withTimeoutOrNull(requestTimeoutMillis) { (entry.provider as LibraryProvider).library(request) }
+                        ?: error("Library request timed out")
+                validateHome(listOf(HomeShelf(entry.id, page.items)))
+                require((page.continuation?.length ?: 0) <= 16_384)
+                page
+            }
         if (requestRevision != revision.get() || epoch != registry.providerEpoch ||
             registry.catalogProviders().none { it.id == entry.id && it.owner == entry.owner && it.provider === entry.provider }
         ) {

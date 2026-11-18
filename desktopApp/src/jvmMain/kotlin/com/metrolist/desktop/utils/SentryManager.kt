@@ -9,6 +9,8 @@ import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.utils.redactDiagnosticText
 import com.metrolist.shared.utils.redactDiagnosticUrl
+import dev.metrofuse.runtime.PluginFailure
+import dev.metrofuse.runtime.PluginOperationException
 import io.sentry.Attachment
 import io.sentry.Breadcrumb
 import io.sentry.Sentry
@@ -29,6 +31,11 @@ object SentryManager {
     @Synchronized
     fun initialize() {
         applyEnabled(Settings.shared.sentryEnabled)
+    }
+
+    fun reportPluginFailure(failure: PluginFailure) {
+        if (!isEnabled || !Settings.shared.sentryEnabled) return
+        capturePluginFailure(failure)
     }
 
     @Synchronized
@@ -88,6 +95,16 @@ object SentryManager {
 
 private class PreviousDesktopTermination : IllegalStateException("Previous desktop process terminated before clean shutdown")
 
+internal fun capturePluginFailure(failure: PluginFailure): Boolean =
+    Sentry.captureException(PluginOperationException(failure)) { scope ->
+        scope.setTag("error.domain", "plugin")
+        scope.setTag("plugin.id", failure.owner)
+        scope.setTag("plugin.version", failure.version)
+        scope.setTag("plugin.runtime", failure.runtime)
+        scope.setTag("plugin.operation", failure.operation)
+        scope.fingerprint = listOf("plugin", failure.owner, failure.operation, failure.error.javaClass.name)
+    } != SentryId.EMPTY_ID
+
 internal fun capturePreviousDesktopExit(previous: PreviousDesktopExit): Boolean =
     Sentry.captureException(PreviousDesktopTermination()) { scope ->
         scope.level = SentryLevel.ERROR
@@ -117,6 +134,7 @@ internal fun configureDesktopSentry(
     options.isEnableUncaughtExceptionHandler = true
     options.isEnableAutoSessionTracking = false
     options.addInAppInclude("com.metrolist")
+    options.addInAppInclude("dev.metrofuse")
     options.beforeBreadcrumb =
         SentryOptions.BeforeBreadcrumbCallback { breadcrumb, _ ->
             sanitizeBreadcrumb(breadcrumb)

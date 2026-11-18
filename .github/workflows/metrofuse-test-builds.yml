@@ -14,6 +14,11 @@ concurrency:
   group: metrofuse-test-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
+env:
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
 jobs:
   windows:
     runs-on: windows-2025

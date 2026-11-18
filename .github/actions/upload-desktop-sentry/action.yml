@@ -76,7 +76,9 @@ runs:
         SENTRY_AUTH_TOKEN: ${{ inputs.sentry-auth-token }}
       run: |
         set -euo pipefail
-        test -n "$SENTRY_AUTH_TOKEN" && test -n "$SENTRY_ORG" && test -n "$SENTRY_PROJECT"
+        test -n "$SENTRY_AUTH_TOKEN"
+        test -n "$SENTRY_ORG"
+        test -n "$SENTRY_PROJECT"
         meta="desktopApp/build/generated/sentry/sentry-debug-meta.properties"
         bundle_id="$(awk -F= '$1 == "io.sentry.bundle-ids" { print $2; exit }' "$meta")"
         source_root="${RUNNER_TEMP}/metrolist-sentry-sources"
@@ -91,9 +93,13 @@ runs:
           desktopApp/src/jvmMain/kotlin \
           shared/src/commonMain/kotlin \
           shared/src/jvmSharedMain/kotlin \
-          shared/src/desktopMain/kotlin; do
+          shared/src/desktopMain/kotlin \
+          engine/src/jvmSharedMain/kotlin \
+          plugin-sdk/src/commonMain/kotlin \
+          plugin-sdk/src/desktopMain/kotlin; do
           test -d "$source"
-          tar -cf - "$source" | tar -C "$source_root" -xf -
+          # Later JVM/platform sources replace expect declarations with the same source path.
+          tar -C "$source" -cf - . | tar -C "$source_root" -xf -
         done
         "$SENTRY_CLI" debug-files bundle-jvm \
           --org "$SENTRY_ORG" \

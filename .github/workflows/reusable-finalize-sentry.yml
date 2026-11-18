@@ -14,6 +14,7 @@ env:
   SENTRY_DSN: ${{ vars.SENTRY_DSN }}
   SENTRY_ORG: ${{ vars.SENTRY_ORG }}
   SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  SENTRY_REPOSITORY: ${{ vars.SENTRY_REPOSITORY }}
 
 jobs:
   finalize-sentry:
@@ -31,15 +32,19 @@ jobs:
         run: |
           set -euo pipefail
           test -n "$SENTRY_AUTH_TOKEN" || { echo "SENTRY_AUTH_TOKEN is required" >&2; exit 1; }
-          test -n "$SENTRY_ORG" && test -n "$SENTRY_PROJECT"
+          test -n "$SENTRY_ORG"
+          test -n "$SENTRY_PROJECT"
           for release in "com.metrolist.music.kmp@$APP_VERSION" "com.metrolist.desktop@$APP_VERSION" "com.metrolist.ios@$APP_VERSION"; do
-            readarray -t release_data < <(python3 - "$release" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$GITHUB_REPOSITORY" "$GITHUB_SHA" <<'PY'
+            readarray -t release_data < <(python3 - "$release" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$GITHUB_SHA" <<'PY'
           import json
           import os
           import sys
           from urllib.parse import quote
           print(quote(sys.argv[1], safe=""))
-          print(json.dumps({"version": sys.argv[1], "projects": [os.environ["SENTRY_PROJECT"]], "refs": [{"repository": sys.argv[3], "commit": sys.argv[4]}]}, separators=(",", ":")))
+          release = {"version": sys.argv[1], "projects": [os.environ["SENTRY_PROJECT"]]}
+          if os.environ.get("SENTRY_REPOSITORY"):
+              release["refs"] = [{"repository": os.environ["SENTRY_REPOSITORY"], "commit": sys.argv[3]}]
+          print(json.dumps(release, separators=(",", ":")))
           print(json.dumps({"dateReleased": sys.argv[2]}, separators=(",", ":")))
           PY
             )

@@ -4,6 +4,7 @@ import com.metrolist.desktop.playback.PlaybackErrorReporter
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.playback.PlaybackErrorContext
 import com.metrolist.shared.playback.PlaybackFailure
+import dev.metrofuse.runtime.PluginFailure
 import io.sentry.Breadcrumb
 import io.sentry.Hint
 import io.sentry.ITransportFactory
@@ -28,6 +29,7 @@ import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -76,6 +78,7 @@ class SentryManagerTest {
         val sent = CountDownLatch(1)
         val nativeSent = CountDownLatch(1)
         val nativeSummary = AtomicReference<String>()
+        val pluginSent = CountDownLatch(1)
         Sentry.init { options ->
             configureDesktopSentry(options, desktopSentryRelease("test"), "test", "https://test@example.invalid/1")
             options.isEnableUncaughtExceptionHandler = false
@@ -97,6 +100,7 @@ class SentryManagerTest {
                                     .getOrNull()
                                     ?.let {
                                         captured.set(it)
+                                        if (it.getTag("error.domain") == "plugin") pluginSent.countDown()
                                         sent.countDown()
                                     }
                             }
@@ -144,6 +148,23 @@ class SentryManagerTest {
             assertTrue(!nativeSummary.get().contains("secret"))
             assertEquals("true", captured.get().getTag("native.hs_err"))
             assertEquals("desktop_termination", captured.get().getTag("error.domain"))
+            assertTrue(
+                capturePluginFailure(
+                    PluginFailure("fixture.plugin", "1.2.3", "javascript", "home.load", IllegalStateException("private-session")),
+                ),
+            )
+            assertTrue(pluginSent.await(5, TimeUnit.SECONDS), "Sentry transport did not receive the plugin failure")
+            val pluginEvent = captured.get()
+            assertEquals("fixture.plugin", pluginEvent.getTag("plugin.id"))
+            assertEquals("1.2.3", pluginEvent.getTag("plugin.version"))
+            assertEquals("home.load", pluginEvent.getTag("plugin.operation"))
+            assertFalse(pluginEvent.exceptions.orEmpty().any { it.value.orEmpty().contains("private-session") })
+            assertNotNull(
+                pluginEvent.exceptions
+                    .orEmpty()
+                    .single()
+                    .stacktrace,
+            )
         } finally {
             Sentry.close()
         }
@@ -228,6 +249,7 @@ object DisabledTelemetryProbe {
         check(!SentryManager.isEnabled)
         SentryManager.applyEnabled(enabled = true, dsn = "")
         check(!SentryManager.isEnabled)
+        SentryManager.reportPluginFailure(PluginFailure("fixture", "1", "javascript", "test", IllegalStateException()))
         SentryManager.shutdown()
         check(!SentryManager.reportPreviousExit(PreviousDesktopExit(null, emptyList())))
         PlaybackErrorReporter.setActivePlayback(
