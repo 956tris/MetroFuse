@@ -1399,6 +1399,9 @@ class Runtime(
                     request: JsonObject,
                 ): JsonObject =
                     owned {
+                        if (name == UI_FRONTENDS_SERVICE && "select" in request) {
+                            require("ui" in p.manifest.capabilities) { "UI capability required to select a frontend" }
+                        }
                         withTimeout(30_000) {
                             val service = requireNotNull(staged.service(name) ?: registry.service(name)) { "Missing service $name" }
                             if (service.owner == id) service.value.call(request) else registry.invoke(name, request)

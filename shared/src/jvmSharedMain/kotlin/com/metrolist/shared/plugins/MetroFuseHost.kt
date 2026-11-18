@@ -64,6 +64,7 @@ import dev.metrofuse.api.UpcomingQueuePlayer
 import dev.metrofuse.runtime.CredentialStore
 import dev.metrofuse.runtime.MetadataMapping
 import dev.metrofuse.runtime.Runtime
+import dev.metrofuse.runtime.UiFrontendSelectionHost
 import dev.metrofuse.runtime.UnavailableCredentialStore
 import dev.metrofuse.runtime.pluginHomeSources
 import kotlinx.coroutines.CancellationException
@@ -206,7 +207,10 @@ object MetroFuseHost : PluginServices {
         val scope = CoroutineScope(parentScope.coroutineContext + SupervisorJob(parentScope.coroutineContext[Job]))
         hostScope = scope
         val services =
-            object : HostServices, UiLibraryHost, UiLocalSearch {
+            object : HostServices, UiLibraryHost, UiLocalSearch, UiFrontendSelectionHost {
+                override suspend fun selectUiFrontend(owner: String) =
+                    withContext(Dispatchers.Main.immediate) { selectMusicFrontend(owner) }
+
                 override suspend fun searchLibrary(
                     query: String,
                     limit: Int,

@@ -13,11 +13,20 @@ import dev.metrofuse.api.TrackIdentity
 import dev.metrofuse.api.UiLocalSearch
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+
+/** Optional app-owned selection bridge for shells. */
+interface UiFrontendSelectionHost {
+    suspend fun selectUiFrontend(owner: String)
+}
+
+internal const val UI_FRONTENDS_SERVICE = "ui.frontends/v1"
 
 internal fun Runtime.registerUiCatalogServices() {
     fun register(
@@ -36,6 +45,18 @@ internal fun Runtime.registerUiCatalogServices() {
     register("ui.source/v1") {
         uiSourceMetadata(host.settings.get("music.frontend").orEmpty(), plugins.value, logins.states.value)
     }
+    if (host is UiFrontendSelectionHost) {
+        register(UI_FRONTENDS_SERVICE) { request ->
+            val selection = request["select"]
+            if (selection != null) {
+                require(selection is JsonPrimitive && selection.isString) { "Expected a frontend ID" }
+                val owner = selection.content
+                require(owner.isEmpty() || pluginHomeSources(plugins.value).any { it.owner == owner }) { "Unavailable frontend" }
+                host.selectUiFrontend(owner)
+            }
+            uiFrontendsSnapshot(host.settings.get("music.frontend").orEmpty(), pluginHomeSources(plugins.value))
+        }
+    }
     register("ui.search/v1") { request ->
         val query =
             request["query"]
@@ -46,8 +67,9 @@ internal fun Runtime.registerUiCatalogServices() {
                 .take(250)
         val limit = (request["limit"]?.jsonPrimitive?.intOrNull ?: 40).coerceIn(1, 100)
         val owner = host.settings.get("music.frontend").orEmpty()
+        val libraryOnly = (request["scope"] as? JsonPrimitive)?.contentOrNull == "library"
         val result =
-            if (query.isBlank() || owner.isEmpty()) {
+            if (query.isBlank() || owner.isEmpty() || libraryOnly) {
                 SearchResult(emptyList())
             } else {
                 pipelines.search(SearchRequest(query, limit), allowedOwners = setOf(owner))
@@ -140,6 +162,27 @@ internal fun Runtime.registerUiCatalogServices() {
         }
     }
 }
+
+internal fun uiFrontendsSnapshot(
+    selected: String,
+    sources: List<PluginHomeSource>,
+): JsonObject =
+    buildJsonObject {
+        put("selected", selected.takeIf { id -> sources.any { it.owner == id } }.orEmpty())
+        put(
+            "sources",
+            buildJsonArray {
+                sources.forEach { source ->
+                    add(
+                        buildJsonObject {
+                            put("id", source.owner)
+                            put("title", source.title)
+                        },
+                    )
+                }
+            },
+        )
+    }
 
 internal fun uiSourceMetadata(
     selected: String,

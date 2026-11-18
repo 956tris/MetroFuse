@@ -88,3 +88,8 @@ Use provider IDs as returned by the catalog. A lyrics request may finish after t
 Native shells can cast `UiContext.extensions` to `UiArtworkEnvironment` to access `platform`, `homeShelves` and the host's cached `Artwork` renderer. JavaScript can listen to `ui_home_changed` and call `ui.home/v1` to refresh its shelves.
 
 For JavaScript, `Adaptive` takes a wide desktop tree followed by a compact tree. It chooses the wide tree when the desktop window reaches `breakpoint` in dp. Use distinct IDs across both branches. `Artwork` takes an HTTP or HTTPS `url` and optional `description`. `LazyRow` scrolls horizontal shelves, and `weight` distributes space within rows or columns. Use `host.patchMany({id: props, ...})` for related changes such as elapsed time and seek position, keeping stable node IDs across updates.
+
+### Source selection service
+
+Hosts with the ui.frontends/v1 service expose enabled Home sources and the selected source. A UI plugin can request a snapshot with an empty object, or pass a select field containing an available source ID. An empty ID selects offline music. Selection requires the ui capability and uses the host selection bridge. Passing scope=library to ui.search/v1 searches only local library content.
+

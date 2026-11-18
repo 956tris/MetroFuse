@@ -91,6 +91,7 @@ import dev.metrofuse.api.UiPluginState
 import dev.metrofuse.api.UiTarget
 import dev.metrofuse.runtime.Runtime
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.stringResource
@@ -277,8 +278,8 @@ internal fun PluginContributionContent(
                 object : UiArtworkEnvironment {
                     override val platform = runtime.platform
                     override val homeShelves =
-                        runtime.homes.pages.map { pages ->
-                            pages[runtime.host.settings.get("music.frontend")]?.shelves.orEmpty()
+                        combine(runtime.homes.pages, musicFrontendOwnerChanges()) { pages, owner ->
+                            pages[owner]?.shelves.orEmpty()
                         }
 
                     @Composable
