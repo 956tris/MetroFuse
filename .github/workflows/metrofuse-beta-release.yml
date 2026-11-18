@@ -10,6 +10,11 @@ on:
         required: true
         default: v10.0.0-kmp-beta.1
         type: string
+      publish:
+        description: Publish after device verification; otherwise stage a draft with checked artifacts
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -227,6 +232,7 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_TITLE: ${{ needs.prepare.outputs.title }}
       RELEASE_NOTES_FILE: ${{ needs.prepare.outputs.notes_file }}
+      PUBLISH_RELEASE: ${{ inputs.publish || false }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -252,5 +258,7 @@ jobs:
             gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TITLE" --notes-file "$RELEASE_NOTES_FILE" --draft --latest=false
           fi
           gh release upload "$RELEASE_TAG" release-assets/MetroFuse-Android-Release.apk release-assets/MetroFuse-Desktop-Windows.zip release-assets/SHA256SUMS.txt --clobber
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          if [[ "$PUBLISH_RELEASE" == "true" ]]; then
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+          fi
           gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,assets
