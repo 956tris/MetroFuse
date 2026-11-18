@@ -39,11 +39,8 @@ def main():
         parser.error("The test bundle must use a separate output path")
     examples = {
         f"examples/{name}.mfp": root / f"build/plugin-examples/{name}.mfp"
-        for name in ("minimal", "metadata", "lyrics", "settings", "jiosaavn")
+        for name in ("minimal", "metadata", "lyrics", "settings")
     }
-    examples.update({
-        "examples/jiosaavn.jar": root / "build/plugin-examples/jiosaavn.jar",
-    })
     examples.update({
         f"examples/native-{name}.jar": root / f"plugins/native-examples/build/outputs/plugins/native-{name}.jar"
         for name in ("minimal", "audio", "settings")

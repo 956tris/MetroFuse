@@ -64,19 +64,12 @@ tasks.withType<Test>().configureEach {
     systemProperty("metrofuse.ytm.native", providers.gradleProperty("metrofuseYtmJar").orNull ?: "")
     systemProperty("metrofuse.ytm.mfp", providers.gradleProperty("metrofuseYtmMfp").orNull ?: "")
     systemProperty("metrofuse.ytm.source", providers.gradleProperty("metrofuseYtmSource").orNull ?: "")
-    systemProperty("metrofuse.jio.package", providers.gradleProperty("metrofuseJioPackage").orNull ?: "")
-}
-
-tasks.named<Test>("desktopTest") {
-    dependsOn(":plugin-jiosaavn-native:packagePluginJar")
 }
 
 val prepareNativeDeviceFixture by tasks.registering(Copy::class) {
     dependsOn(":plugin-native-examples:packageMinimalApk", ":plugin-native-examples:packageAudioApk")
-    dependsOn(":plugin-jiosaavn-native:packagePluginApk")
     from(rootProject.layout.projectDirectory.file("plugins/native-examples/build/outputs/plugins/native-minimal.apk"))
     from(rootProject.layout.projectDirectory.file("plugins/native-examples/build/outputs/plugins/native-audio.apk"))
-    from(rootProject.layout.buildDirectory.file("plugin-examples/jiosaavn.apk"))
     into(layout.projectDirectory.dir("src/androidDeviceTest/assets"))
 }
 

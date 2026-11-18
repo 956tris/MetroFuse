@@ -17,16 +17,6 @@ The `examples` folder contains the plugins and a three-second synthetic audio sa
 | `native-audio.jar` | Offline local WAV search and playback |
 | `native-settings.jar` | Native Compose controls and player action |
 | `settings.mfp` | QuickJS settings and declarative controls |
-| `jiosaavn.mfp` | Optional JioSaavn catalog and full-song audio |
-| `jiosaavn.jar` | Native Kotlin JioSaavn provider for Windows |
-
-## First provider: JioSaavn
-
-Import `examples/jiosaavn.mfp` or `examples/jiosaavn.jar` and enable it. The JAR contains compiled Kotlin provider classes and runs directly through the native loader. Both formats use the same plugin ID; importing the other format replaces the installed implementation and preserves its settings. The `.mfp` can also be manually imported on Android through **Settings → Plugins → Installed**.
-
-Leave **Use JioSaavn's India catalog** enabled for Western-label releases. This restores the original provider's API catalog routing across search, song details, albums, artists and playlists. Turning it off uses the endpoint's network-region catalog, which may return covers instead of originals. Search for `No Idea Don Toliver`, `Blinding Lights The Weeknd` or `goosebumps Travis Scott`, then click **Play** beside the result attributed to the original artist. The main Search page and **Advanced → Search installed providers** both search enabled providers.
-
-This plugin supplies track, album, artist and playlist metadata and resolves full-song audio returned by JioSaavn. High and Auto select up to 320 kbps when the track supports it; Low selects up to 96 kbps. **Allow public previews when full audio is unavailable** controls the optional JioTune preview fallback. Disabling that setting leaves full-song playback and catalog search available. Stream availability depends on the service and your location.
 
 ## Play the local WAV through the native plugin
 
