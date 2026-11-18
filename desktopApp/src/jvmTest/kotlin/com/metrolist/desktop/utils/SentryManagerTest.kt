@@ -24,6 +24,8 @@ import java.net.URLClassLoader
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+import java.util.jar.JarEntry
+import java.util.jar.JarOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -33,6 +35,13 @@ import kotlin.test.assertTrue
 class SentryManagerTest {
     @Test
     fun disabledReportingDoesNotLoadTheSdk() {
+        val managerResource = "com/metrolist/desktop/utils/SentryManager.class"
+        val packagedManager = File.createTempFile("sentry-manager-", ".jar").apply { deleteOnExit() }
+        JarOutputStream(packagedManager.outputStream()).use { archive ->
+            archive.putNextEntry(JarEntry(managerResource))
+            assertNotNull(javaClass.classLoader.getResourceAsStream(managerResource)).use { it.copyTo(archive) }
+            archive.closeEntry()
+        }
         val urls =
             generateSequence(javaClass.classLoader) { it.parent }
                 .filterIsInstance<URLClassLoader>()
@@ -43,7 +52,7 @@ class SentryManagerTest {
         assertTrue(urls.isNotEmpty())
         val blocked = mutableListOf<String>()
         val loader =
-            object : URLClassLoader(urls.toTypedArray(), ClassLoader.getPlatformClassLoader()) {
+            object : URLClassLoader((listOf(packagedManager.toURI().toURL()) + urls).toTypedArray(), ClassLoader.getPlatformClassLoader()) {
                 override fun loadClass(
                     name: String,
                     resolve: Boolean,
@@ -68,7 +77,7 @@ class SentryManagerTest {
         val nativeSent = CountDownLatch(1)
         val nativeSummary = AtomicReference<String>()
         Sentry.init { options ->
-            configureDesktopSentry(options, desktopSentryRelease("test"), "test")
+            configureDesktopSentry(options, desktopSentryRelease("test"), "test", "https://test@example.invalid/1")
             options.isEnableUncaughtExceptionHandler = false
             options.setTransportFactory(
                 ITransportFactory { transportOptions, _ ->
@@ -216,6 +225,8 @@ class SentryManagerTest {
 object DisabledTelemetryProbe {
     @JvmStatic
     fun run() {
+        check(!SentryManager.isEnabled)
+        SentryManager.applyEnabled(enabled = true, dsn = "")
         check(!SentryManager.isEnabled)
         SentryManager.shutdown()
         check(!SentryManager.reportPreviousExit(PreviousDesktopExit(null, emptyList())))

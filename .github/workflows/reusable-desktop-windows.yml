@@ -47,6 +47,11 @@ on:
       LYPRIO_HMAC_KEY:
         required: true
 
+env:
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+
 jobs:
   package:
     name: ${{ matrix.arch }} ZIP

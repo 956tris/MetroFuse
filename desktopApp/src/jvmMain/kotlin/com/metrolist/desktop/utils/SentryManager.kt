@@ -40,8 +40,11 @@ object SentryManager {
         applyEnabled(enabled)
     }
 
-    private fun applyEnabled(enabled: Boolean) {
-        if (!enabled || !isPackagedApplication()) {
+    internal fun applyEnabled(
+        enabled: Boolean,
+        dsn: String = BuildConfig.SENTRY_DSN,
+    ) {
+        if (!enabled || dsn.isBlank() || !isPackagedApplication()) {
             shutdown()
             return
         }
@@ -52,6 +55,7 @@ object SentryManager {
                 options = options,
                 release = desktopSentryRelease(BuildConfig.APP_VERSION),
                 environment = System.getenv("SENTRY_ENVIRONMENT") ?: "production",
+                dsn = dsn,
             )
         }
         isEnabled = Sentry.isEnabled()
@@ -96,9 +100,10 @@ internal fun configureDesktopSentry(
     options: SentryOptions,
     release: String,
     environment: String,
+    dsn: String,
     sourceRevision: String = BuildConfig.SOURCE_REVISION,
 ) {
-    options.dsn = "https://fe4474514a54a507252b26c60e229016@o4511744603193344.ingest.de.sentry.io/4511744608436304"
+    options.dsn = dsn
     options.sampleRate = 1.0
     options.tracesSampleRate = 0.0
     options.isDebug = System.getenv("SENTRY_DEBUG").toBoolean()
