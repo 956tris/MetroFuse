@@ -11,13 +11,18 @@ on:
         default: v10.0.0-kmp-beta.1
         type: string
       publish:
-        description: Publish after device verification; otherwise stage a draft with checked artifacts
+        description: Publish the checked artifacts as a prerelease
         required: false
         default: false
         type: boolean
 
 permissions:
   contents: read
+
+env:
+  SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+  SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+  SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
 
 concurrency:
   group: metrofuse-beta-${{ inputs.tag || github.ref_name }}
@@ -70,7 +75,7 @@ jobs:
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
-          echo "title=MetroFuse KMP Beta" >> "$GITHUB_OUTPUT"
+          echo "title=MetroFuse ${version%.*} Beta" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
 
@@ -117,6 +122,8 @@ jobs:
       - name: Verify Android host regressions
         run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --no-configuration-cache --no-parallel --max-workers=1
       - name: Build Android release APK
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
           ./gradlew :androidApp:assembleRelease :androidApp:exportNativePluginAbi "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
       - name: Validate release APK and signature
@@ -139,6 +146,7 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools/apksigner" verify --verbose release-assets/MetroFuse-Android-Release.apk
           badging="$("$build_tools/aapt" dump badging release-assets/MetroFuse-Android-Release.apk)"
+          grep -Fxq "application-label:'MetroFuse Beta'" <<< "$badging"
           if grep -q '^application-debuggable' <<< "$badging"; then
             echo "The release APK must not be debuggable" >&2
             exit 1
@@ -212,6 +220,12 @@ jobs:
         run: |
           python scripts/desktop_smoke.py dist/MetroFuse-Desktop-Windows.zip --output build/beta-windows-smoke
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload desktop Sentry source context
+        if: vars.SENTRY_DSN != '' && vars.SENTRY_ORG != '' && vars.SENTRY_PROJECT != ''
+        uses: ./.github/actions/upload-desktop-sentry
+        with:
+          sentry-auth-token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          source-revision: ${{ needs.prepare.outputs.commit }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrofuse-windows-release
@@ -232,7 +246,7 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
       RELEASE_TITLE: ${{ needs.prepare.outputs.title }}
       RELEASE_NOTES_FILE: ${{ needs.prepare.outputs.notes_file }}
-      PUBLISH_RELEASE: ${{ inputs.publish || false }}
+      PUBLISH_RELEASE: ${{ github.event_name == 'push' || inputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -255,10 +269,10 @@ jobs:
               exit 1
             }
           else
-            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TITLE" --notes-file "$RELEASE_NOTES_FILE" --draft --latest=false
+            gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TITLE" --notes-file "$RELEASE_NOTES_FILE" --draft --prerelease --latest=false
           fi
           gh release upload "$RELEASE_TAG" release-assets/MetroFuse-Android-Release.apk release-assets/MetroFuse-Desktop-Windows.zip release-assets/SHA256SUMS.txt --clobber
           if [[ "$PUBLISH_RELEASE" == "true" ]]; then
-            gh release edit "$RELEASE_TAG" --draft=false --prerelease=false --latest
+            gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
           fi
           gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,assets

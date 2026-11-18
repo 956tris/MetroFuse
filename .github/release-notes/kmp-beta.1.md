@@ -1,6 +1,6 @@
-# MetroFuse KMP Beta
+# MetroFuse 10.0 Beta
 
-The first production-channel KMP beta for Android and Windows x64 includes offline playback, optional provider and UI plugins, custom-interface startup recovery, Android sign-in loading/retry controls, and music source selection from compatible custom interfaces.
+MetroFuse 10.0 Beta includes offline playback, optional plugins, custom-interface recovery, and Android provider sign-in. Roselight can load saved items from the selected provider, use real word timestamps from the built-in lyrics providers, and read the measured playback duration. Plugin failures use MetroFuse's Sentry project when crash reporting is enabled.
 
 ## Beta warning
 
@@ -16,9 +16,9 @@ MetroFuse works offline without plugins. Open Settings > Integrations > Plugins 
 
 ## Updated plugins
 
-- [Roselight Music 1.0.1](https://github.com/956tris/MetroFuse-Roselight/releases/tag/v1.0.1): APK and JAR, mobile/desktop interface with source selection and animations.
+- [Roselight Music 1.0.9](https://github.com/956tris/MetroFuse-Roselight/releases/tag/v1.0.9) adds provider Library, word-timed lyrics, and album artwork fallback.
 - [MetroFlow Native 1.0.2](https://github.com/956tris/MetroFuse-MetroFlow/releases/tag/v1.0.2): APK and JAR, Spotify-style navigation, playback controls and responsive layout.
-- [Spotify 1.0.1](https://github.com/956tris/MetroFuse-Spotify/releases/tag/v1.0.1): APK, JAR and MFP, sign-in completion fix.
+- The [Spotify plugin](https://github.com/956tris/MetroFuse-Spotify/releases/latest) includes Android sign-in and listening history fixes.
 - [JioSaavn 1.3.0](https://github.com/956tris/MetroFuse-JioSaavn/releases/tag/v1.3.0): APK, JAR and MFP, discovery and search improvements.
 - [Deezer 1.0.3](https://github.com/956tris/Metrofuse-Deezer/releases/tag/v1.0.3): APK and JAR, Android source/quality picker fix.
 
