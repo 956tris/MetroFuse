@@ -55,6 +55,7 @@ import com.metrolist.shared.ui.components.ContainedLoadingIndicator
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.onboarding.OnboardingPage
 import com.metrolist.shared.ui.onboarding.OnboardingPageContent
+import com.metrolist.shared.ui.onboarding.PluginOnboardingDetails
 import org.jetbrains.compose.resources.stringResource
 import com.metrolist.shared.BuildConfig as SharedBuildConfig
 import com.metrolist.shared.ui.onboarding.OnboardingContent as SharedOnboardingContent
@@ -99,6 +100,7 @@ internal fun OnboardingContent(
         },
         featureContent = { page ->
             if (page == OnboardingPage.LANGUAGE_LYRICS || page == OnboardingPage.PLAYBACK) preferences(page)
+            PluginOnboardingDetails(page)
             EditorialFeature(page, accounts, onRestore)
             if (content.isWorking) {
                 ContainedLoadingIndicator(Modifier.padding(top = 28.dp).size(48.dp))

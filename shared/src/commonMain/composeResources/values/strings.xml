@@ -8,7 +8,7 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Bottom navigation -->
     <!-- Translators: Label for app name in the multiple app screens. -->
-    <string name="app_name" translatable="false">Metrofuse Alpha</string>
+    <string name="app_name" translatable="false">MetroFuse</string>
     <string name="account_menu_license" translatable="false">GPL-3.0 MetrolistGroup</string>
     <!-- Translators: Apple mobile platform name displayed in application information. -->
     <!-- Translators: Navigation label for home in the multiple app screens. -->
@@ -5578,4 +5578,12 @@
     <string name="spotify_artist_playlists">Artist playlists</string>
     <string name="spotify_concerts">Concerts</string>
     <string name="spotify_merch">Merchandise</string>
+    <string name="onboarding_metrofuse_welcome_title">Welcome to MetroFuse</string>
+    <string name="onboarding_metrofuse_welcome_description">Play your offline music without an account. Add optional plugins when you want more.</string>
+    <string name="onboarding_metrofuse_finish_description">Your setup is complete. Start with your library, restore a backup, or add plugins later.</string>
+    <string name="onboarding_plugins_providers">Provider plugins add music catalogs and account sign-in. Choose the providers you want; none are bundled or required for offline playback.</string>
+    <string name="onboarding_plugins_interfaces">UI plugins change the interface. You can always return to the built-in interface from Plugins.</string>
+    <string name="onboarding_plugins_import">Open Settings &gt; Integrations &gt; Plugins to import and enable packages. Android plugin APKs must be imported inside MetroFuse, not installed with Android. Desktop plugins use JARs; supported universal plugins use MFPs.</string>
+    <string name="onboarding_plugins_compatibility">Use plugins built for this KMP Beta. Native plugins must match the host API and Compose version; older packages may be incompatible.</string>
+    <string name="onboarding_plugins_beta_warning">This beta may crash and has incomplete features. Back up your library and settings before migrating: migration may lose data. Keep your original backup until you have checked the new library.</string>
 </resources>

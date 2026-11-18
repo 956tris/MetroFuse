@@ -34,11 +34,13 @@ import com.metrolist.shared.generated.resources.onboarding_begin_setup
 import com.metrolist.shared.generated.resources.onboarding_continue_without_migration
 import com.metrolist.shared.generated.resources.onboarding_crash_reports_description
 import com.metrolist.shared.generated.resources.onboarding_crash_reports_title
-import com.metrolist.shared.generated.resources.onboarding_finish_description
 import com.metrolist.shared.generated.resources.onboarding_finish_title
 import com.metrolist.shared.generated.resources.onboarding_language_lyrics_description
 import com.metrolist.shared.generated.resources.onboarding_library_migrated_description
 import com.metrolist.shared.generated.resources.onboarding_library_migrated_title
+import com.metrolist.shared.generated.resources.onboarding_metrofuse_finish_description
+import com.metrolist.shared.generated.resources.onboarding_metrofuse_welcome_description
+import com.metrolist.shared.generated.resources.onboarding_metrofuse_welcome_title
 import com.metrolist.shared.generated.resources.onboarding_migrate_library
 import com.metrolist.shared.generated.resources.onboarding_migration_complete_description
 import com.metrolist.shared.generated.resources.onboarding_migration_complete_title
@@ -50,10 +52,8 @@ import com.metrolist.shared.generated.resources.onboarding_notifications_denied
 import com.metrolist.shared.generated.resources.onboarding_notifications_description
 import com.metrolist.shared.generated.resources.onboarding_notifications_title
 import com.metrolist.shared.generated.resources.onboarding_playback_description
-import com.metrolist.shared.generated.resources.onboarding_welcome_description
 import com.metrolist.shared.generated.resources.settings_localization
 import com.metrolist.shared.generated.resources.settings_playback
-import com.metrolist.shared.generated.resources.side_menu_welcome
 import com.metrolist.shared.generated.resources.yes
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.icons.MetrolistIcons
@@ -382,7 +382,7 @@ internal fun OnboardingScreen(
 private fun OnboardingPage.title(): String =
     stringResource(
         when (this) {
-            OnboardingPage.WELCOME -> Res.string.side_menu_welcome
+            OnboardingPage.WELCOME -> Res.string.onboarding_metrofuse_welcome_title
             OnboardingPage.MIGRATION -> Res.string.onboarding_migration_title
             OnboardingPage.MIGRATION_COMPLETE -> Res.string.onboarding_migration_complete_title
             OnboardingPage.CRASH_REPORTS -> Res.string.onboarding_crash_reports_title
@@ -397,14 +397,14 @@ private fun OnboardingPage.title(): String =
 private fun OnboardingPage.description(): String =
     stringResource(
         when (this) {
-            OnboardingPage.WELCOME -> Res.string.onboarding_welcome_description
+            OnboardingPage.WELCOME -> Res.string.onboarding_metrofuse_welcome_description
             OnboardingPage.MIGRATION -> Res.string.onboarding_migration_description
             OnboardingPage.MIGRATION_COMPLETE -> Res.string.onboarding_migration_complete_description
             OnboardingPage.CRASH_REPORTS -> Res.string.onboarding_crash_reports_description
             OnboardingPage.NOTIFICATIONS -> Res.string.onboarding_notifications_description
             OnboardingPage.LANGUAGE_LYRICS -> Res.string.onboarding_language_lyrics_description
             OnboardingPage.PLAYBACK -> Res.string.onboarding_playback_description
-            OnboardingPage.FINISH -> Res.string.onboarding_finish_description
+            OnboardingPage.FINISH -> Res.string.onboarding_metrofuse_finish_description
         },
     )
 

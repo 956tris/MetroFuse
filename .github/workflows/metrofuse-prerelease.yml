@@ -183,21 +183,21 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/Metrofuse-Alpha-Desktop-Windows.zip'))
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/MetroFuse-Desktop-Windows.zip'))
           try {
             $entries = $archive.Entries.FullName
-            if ('Metrofuse Alpha.exe' -notin $entries) { throw 'The Windows launcher is missing' }
+            if ('MetroFuse.exe' -notin $entries) { throw 'The Windows launcher is missing' }
             if ($entries | Where-Object { $_ -match '\.(mfp|apk)$|(^|/)plugins/' }) { throw 'The ZIP contains a provider package' }
             $reader = [System.IO.StreamReader]::new($archive.GetEntry('install-manifest.json').Open())
             try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
             if ($manifest.version -ne $env:RELEASE_VERSION -or $manifest.architecture -ne 'x86_64') { throw 'Windows release metadata does not match' }
           } finally { $archive.Dispose() }
-          python scripts/verify_native_plugin_abi.py dist/Metrofuse-Alpha-Desktop-Windows.zip --classpath-file desktopApp/build/plugin-abi/classpath.txt
+          python scripts/verify_native_plugin_abi.py dist/MetroFuse-Desktop-Windows.zip --classpath-file desktopApp/build/plugin-abi/classpath.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrofuse-windows-release
-          path: dist/Metrofuse-Alpha-Desktop-Windows.zip
+          path: dist/MetroFuse-Desktop-Windows.zip
           if-no-files-found: error
           retention-days: 14
 
@@ -228,8 +228,8 @@ jobs:
         run: |
           set -euo pipefail
           test -s release-assets/Metrolist.apk
-          test -s release-assets/Metrofuse-Alpha-Desktop-Windows.zip
-          (cd release-assets && sha256sum Metrolist.apk Metrofuse-Alpha-Desktop-Windows.zip > SHA256SUMS.txt)
+          test -s release-assets/MetroFuse-Desktop-Windows.zip
+          (cd release-assets && sha256sum Metrolist.apk MetroFuse-Desktop-Windows.zip > SHA256SUMS.txt)
           if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/release-is-draft"; then
             test "$(cat "$RUNNER_TEMP/release-is-draft")" = true || {
               echo "This prerelease is already published" >&2
@@ -238,6 +238,6 @@ jobs:
           else
             gh release create "$RELEASE_TAG" --verify-tag --title "$RELEASE_TITLE" --notes-file "$RELEASE_NOTES_FILE" --draft --prerelease --latest=false
           fi
-          gh release upload "$RELEASE_TAG" release-assets/Metrolist.apk release-assets/Metrofuse-Alpha-Desktop-Windows.zip release-assets/SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" release-assets/Metrolist.apk release-assets/MetroFuse-Desktop-Windows.zip release-assets/SHA256SUMS.txt --clobber
           gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
           gh release view "$RELEASE_TAG" --json url,isDraft,isPrerelease,assets

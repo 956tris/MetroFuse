@@ -146,10 +146,10 @@ jobs:
           NATIVE_ARCH: ${{ matrix.native_arch }}
         run: |
           set -euo pipefail
-          app="desktopApp/build/compose/binaries/main-release/app/Metrofuse Alpha.app"
+          app="desktopApp/build/compose/binaries/main-release/app/MetroFuse.app"
           test -d "$app"
-          test -x "$app/Contents/MacOS/Metrofuse Alpha"
-          lipo "$app/Contents/MacOS/Metrofuse Alpha" -verify_arch "$NATIVE_ARCH"
+          test -x "$app/Contents/MacOS/MetroFuse"
+          lipo "$app/Contents/MacOS/MetroFuse" -verify_arch "$NATIVE_ARCH"
 
       - name: Verify x64 DMG native architectures
         if: matrix.arch == 'x64'
@@ -162,7 +162,7 @@ jobs:
           mount_dir="$(mktemp -d "$RUNNER_TEMP/metrolist-x64.XXXXXX")"
           trap 'status=$?; hdiutil detach "$mount_dir" -force || status=1; exit "$status"' EXIT
           hdiutil attach "${files[0]}" -mountpoint "$mount_dir" -readonly -nobrowse
-          python3 .github/scripts/verify_macos_arch.py "$mount_dir/Metrofuse Alpha.app" x86_64
+          python3 .github/scripts/verify_macos_arch.py "$mount_dir/MetroFuse.app" x86_64
 
       - name: Upload desktop Sentry source context
         if: inputs.upload-sentry

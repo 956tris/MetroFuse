@@ -92,4 +92,3 @@ For JavaScript, `Adaptive` takes a wide desktop tree followed by a compact tree.
 ### Source selection service
 
 Hosts with the ui.frontends/v1 service expose enabled Home sources and the selected source. A UI plugin can request a snapshot with an empty object, or pass a select field containing an available source ID. An empty ID selects offline music. Selection requires the ui capability and uses the host selection bridge. Passing scope=library to ui.search/v1 searches only local library content.
-

@@ -180,8 +180,8 @@ jobs:
             -Pmetrolist.desktop.arch=${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }} \
             --no-daemon \
             --no-configuration-cache
-          if [[ "dist/Metrofuse-Alpha-Desktop-Windows.zip" != "$PACKAGE_ZIP" ]]; then
-            mv dist/Metrofuse-Alpha-Desktop-Windows.zip "$PACKAGE_ZIP"
+          if [[ "dist/MetroFuse-Desktop-Windows.zip" != "$PACKAGE_ZIP" ]]; then
+            mv dist/MetroFuse-Desktop-Windows.zip "$PACKAGE_ZIP"
           fi
 
       # The artifact quota can be full, so failed test details go to the log.
@@ -214,11 +214,11 @@ jobs:
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $archive))
           try {
             $manifest = $zip.Entries | Where-Object FullName -eq "install-manifest.json"
-            $launcher = $zip.Entries | Where-Object FullName -eq "Metrofuse Alpha.exe"
+            $launcher = $zip.Entries | Where-Object FullName -eq "MetroFuse.exe"
             $helper = @($zip.Entries | Where-Object { $_.FullName -match '(^|/)resources/(windows/)?metro-wv2-helper\.exe$' })
             $helperChecksum = @($zip.Entries | Where-Object { $_.FullName -match '(^|/)resources/(windows/)?metro-wv2-helper\.exe\.sha256$' })
             if ($null -eq $manifest) { throw "Portable ZIP is missing install-manifest.json" }
-            if ($null -eq $launcher) { throw "Portable ZIP is missing Metrofuse Alpha.exe" }
+            if ($null -eq $launcher) { throw "Portable ZIP is missing MetroFuse.exe" }
             if ($helper.Count -ne 1) { throw "Portable ZIP must contain exactly one Windows login helper, found $($helper.Count)" }
             if ($helperChecksum.Count -ne 1) { throw "Portable ZIP must contain exactly one Windows login helper checksum, found $($helperChecksum.Count)" }
             $jvm = $zip.Entries | Where-Object { $_.FullName -match '(^|/)runtime/bin/server/jvm\.dll$' }

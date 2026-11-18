@@ -66,7 +66,7 @@ def packaged_command(package, work, system, stdout):
         app = work / "app"
         with zipfile.ZipFile(package) as archive:
             archive.extractall(app)
-        yield [str(app / "Metrofuse Alpha.exe")]
+        yield [str(app / "MetroFuse.exe")]
     elif system == "darwin" and package.suffix == ".zip":
         app = work / "app"
         with zipfile.ZipFile(package) as archive:
@@ -74,7 +74,7 @@ def packaged_command(package, work, system, stdout):
             for entry in archive.infolist():
                 if entry.external_attr >> 16 and not entry.is_dir():
                     (app / entry.filename).chmod((entry.external_attr >> 16) & 0o777)
-        yield [str(app / "Metrofuse Alpha.app/Contents/MacOS/Metrofuse Alpha")]
+        yield [str(app / "MetroFuse.app/Contents/MacOS/MetroFuse")]
     elif system == "darwin":
         mount = work / "dmg"
         mount.mkdir()
@@ -83,7 +83,7 @@ def packaged_command(package, work, system, stdout):
                 ["hdiutil", "attach", str(package), "-mountpoint", str(mount), "-readonly", "-nobrowse"],
                 check=True, timeout=30, stdout=stdout, stderr=subprocess.STDOUT,
             )
-            yield [str(mount / "Metrofuse Alpha.app/Contents/MacOS/Metrofuse Alpha")]
+            yield [str(mount / "MetroFuse.app/Contents/MacOS/MetroFuse")]
         finally:
             subprocess.run(
                 ["hdiutil", "detach", "-force", str(mount)], check=True, timeout=15,

@@ -118,7 +118,7 @@ jobs:
           while IFS='=' read -r key value; do
             if [[ "$key" == "appVersion" ]]; then version="$value"; break; fi
           done < gradle.properties
-          source="dist/Metrofuse-Alpha.AppImage"
+          source="dist/MetroFuse.AppImage"
           test -x "$source" || { echo "Linux AppImage was not produced or is not executable" >&2; exit 1; }
           description="$(file -b "$source")"
           case "${{ matrix.arch }}" in

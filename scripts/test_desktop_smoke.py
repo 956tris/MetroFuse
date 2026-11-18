@@ -32,7 +32,7 @@ class DesktopSmokeTest(unittest.TestCase):
                             "sentryEnabled=false", "enableLogging=true"):
                 self.assertIn(setting + "\n", settings)
             self.assertIn(f'"-Duser.home={profile}"', env["_JAVA_OPTIONS"])
-            self.assertIn(f'"-XX:ErrorFile={profile}/state/metrolist/logs/hs_err_pid%p.log"', env["_JAVA_OPTIONS"])
+            self.assertIn(f'"-XX:ErrorFile={profile / "state/metrolist/logs"}/hs_err_pid%p.log"', env["_JAVA_OPTIONS"])
 
     def test_parses_applogger_levels_tags_and_multiline_native_errors(self):
         harmless = (
@@ -166,7 +166,7 @@ while True:
                     if missing:
                         (logs/"native_err_pid1.log").write_text("MissingJNIRegistrationError")
                     return Mock(returncode=0)
-                with patch.object(smoke,"packaged_command",return_value=nullcontext(["Metrofuse Alpha.exe"])), patch.object(smoke.subprocess,"run",side_effect=run):
+                with patch.object(smoke,"packaged_command",return_value=nullcontext(["MetroFuse.exe"])), patch.object(smoke.subprocess,"run",side_effect=run):
                     self.assertEqual(int(missing),smoke.native_backend_smoke(Path("native.zip"),output,"win32"))
 
     def test_windows_uses_the_extracted_zip_launcher(self):
@@ -174,10 +174,10 @@ while True:
             work = Path(directory)
             package = work / "portable.zip"
             with zipfile.ZipFile(package, "w") as archive:
-                archive.writestr("Metrofuse Alpha.exe", b"launcher")
+                archive.writestr("MetroFuse.exe", b"launcher")
                 archive.writestr("runtime/bin/server/jvm.dll", b"runtime")
             with smoke.packaged_command(package, work, "win32", None) as command:
-                self.assertEqual([str(work / "app/Metrofuse Alpha.exe")], command)
+                self.assertEqual([str(work / "app/MetroFuse.exe")], command)
                 self.assertEqual(b"launcher", Path(command[0]).read_bytes())
                 self.assertTrue((work / "app/runtime/bin/server/jvm.dll").is_file())
 
@@ -188,7 +188,7 @@ while True:
                 with patch.object(smoke.subprocess, "run") as run:
                     try:
                         with smoke.packaged_command(work / "final.dmg", work, "darwin", None) as command:
-                            self.assertEqual([str(work / "dmg/Metrofuse Alpha.app/Contents/MacOS/Metrofuse Alpha")], command)
+                            self.assertEqual([str(work / "dmg/MetroFuse.app/Contents/MacOS/MetroFuse")], command)
                             if failure:
                                 raise RuntimeError("launch failed")
                     except RuntimeError:
@@ -217,10 +217,10 @@ while True:
         process = Mock(pid=123, returncode=0)
         process.poll.return_value = 0
         with patch.object(smoke.subprocess, "run") as run:
-            smoke.quit_app(process, r"C:\app\Metrofuse Alpha.exe", "win32")
+            smoke.quit_app(process, r"C:\app\MetroFuse.exe", "win32")
         script = run.call_args.args[0][-1]
         self.assertIn("CloseMainWindow()", script)
-        self.assertIn(r"C:\app\Metrofuse Alpha.exe", script)
+        self.assertIn(r"C:\app\MetroFuse.exe", script)
         self.assertNotIn("Stop-Process", script)
         process.wait.assert_called_once_with(timeout=smoke.SHUTDOWN_SECONDS)
 
@@ -229,10 +229,10 @@ while True:
             with self.subTest(java_trace=trace):
                 process = Mock(pid=123)
                 process.poll.return_value = None
-                process.wait.side_effect = [subprocess.TimeoutExpired("Metrofuse Alpha.exe", 2), None]
+                process.wait.side_effect = [subprocess.TimeoutExpired("MetroFuse.exe", 2), None]
                 with patch.object(smoke.subprocess, "run") as run:
                     with self.assertRaises(subprocess.TimeoutExpired):
-                        smoke.quit_app(process, r"C:\app\Metrofuse Alpha.exe", "win32", java_trace=trace)
+                        smoke.quit_app(process, r"C:\app\MetroFuse.exe", "win32", java_trace=trace)
                 self.assertEqual(["taskkill", "/PID", "123", "/T", "/F"], run.call_args.args[0])
                 if trace:
                     self.assertIn("Get-Process -Id 123", run.call_args_list[0].args[0][-1])

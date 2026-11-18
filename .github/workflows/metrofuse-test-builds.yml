@@ -42,7 +42,7 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrofuse-windows-x64
-          path: dist/Metrofuse-Alpha-Desktop-Windows-Debug.zip
+          path: dist/MetroFuse-Desktop-Windows-Debug.zip
           if-no-files-found: error
       - name: Package JioSaavn JavaScript test fixture
         shell: pwsh

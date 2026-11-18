@@ -64,21 +64,21 @@ import com.metrolist.shared.generated.resources.onboarding_backup_restore_failed
 import com.metrolist.shared.generated.resources.onboarding_begin_setup
 import com.metrolist.shared.generated.resources.onboarding_crash_reports_description
 import com.metrolist.shared.generated.resources.onboarding_crash_reports_title
-import com.metrolist.shared.generated.resources.onboarding_finish_description
 import com.metrolist.shared.generated.resources.onboarding_finish_title
 import com.metrolist.shared.generated.resources.onboarding_language_lyrics_description
+import com.metrolist.shared.generated.resources.onboarding_metrofuse_finish_description
+import com.metrolist.shared.generated.resources.onboarding_metrofuse_welcome_description
+import com.metrolist.shared.generated.resources.onboarding_metrofuse_welcome_title
 import com.metrolist.shared.generated.resources.onboarding_playback_description
 import com.metrolist.shared.generated.resources.onboarding_sentry_diagnostics
 import com.metrolist.shared.generated.resources.onboarding_sentry_opt_in
 import com.metrolist.shared.generated.resources.onboarding_sentry_private
 import com.metrolist.shared.generated.resources.onboarding_settings_hint
 import com.metrolist.shared.generated.resources.onboarding_step_of
-import com.metrolist.shared.generated.resources.onboarding_welcome_privacy_description
 import com.metrolist.shared.generated.resources.privacy_policy
 import com.metrolist.shared.generated.resources.restore_from_backup
 import com.metrolist.shared.generated.resources.settings_localization
 import com.metrolist.shared.generated.resources.settings_playback
-import com.metrolist.shared.generated.resources.side_menu_welcome
 import com.metrolist.shared.generated.resources.yes
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.components.ContainedLoadingIndicator
@@ -88,6 +88,7 @@ import com.metrolist.shared.ui.onboarding.OnboardingPage
 import com.metrolist.shared.ui.onboarding.OnboardingPageContent
 import com.metrolist.shared.ui.onboarding.OnboardingPreferences
 import com.metrolist.shared.ui.onboarding.OnboardingTransition
+import com.metrolist.shared.ui.onboarding.PluginOnboardingDetails
 import com.metrolist.shared.ui.settings.SettingsHostChoice
 import com.metrolist.shared.ui.settings.SettingsPageId
 import com.metrolist.shared.ui.settings.SettingsPlatform
@@ -176,7 +177,7 @@ fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean) -> Unit) {
             page = page,
             title =
                 when (page) {
-                    OnboardingPage.WELCOME -> stringResource(Res.string.side_menu_welcome)
+                    OnboardingPage.WELCOME -> stringResource(Res.string.onboarding_metrofuse_welcome_title)
                     OnboardingPage.CRASH_REPORTS -> stringResource(Res.string.onboarding_crash_reports_title)
                     OnboardingPage.LANGUAGE_LYRICS -> stringResource(Res.string.settings_localization)
                     OnboardingPage.PLAYBACK -> stringResource(Res.string.settings_playback)
@@ -186,7 +187,7 @@ fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean) -> Unit) {
             description =
                 when (page) {
                     OnboardingPage.WELCOME -> {
-                        stringResource(Res.string.onboarding_welcome_privacy_description)
+                        stringResource(Res.string.onboarding_metrofuse_welcome_description)
                     }
 
                     OnboardingPage.CRASH_REPORTS -> {
@@ -202,7 +203,7 @@ fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean) -> Unit) {
                     }
 
                     OnboardingPage.FINISH -> {
-                        stringResource(Res.string.onboarding_finish_description)
+                        stringResource(Res.string.onboarding_metrofuse_finish_description)
                     }
                 },
             icon =
@@ -254,6 +255,7 @@ fun DesktopOnboarding(onComplete: (sendCrashReports: Boolean) -> Unit) {
     val previousContent = if (pageIndex > 0) pageContent(pageIndex - 1) else null
 
     DesktopOnboardingCard(content, previousContent) { targetPage ->
+        PluginOnboardingDetails(targetPage)
         if (targetPage == OnboardingPage.LANGUAGE_LYRICS || targetPage == OnboardingPage.PLAYBACK) {
             OnboardingPreferences(
                 page = targetPage,
