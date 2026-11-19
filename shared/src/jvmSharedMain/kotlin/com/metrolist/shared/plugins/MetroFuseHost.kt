@@ -5,6 +5,7 @@ import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.api.SongVote
 import com.metrolist.shared.api.lyrics.LyricsUtils
+import com.metrolist.shared.api.lyrics.toMlxJson
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.entities.toSongItem
 import com.metrolist.shared.model.AlbumItem
@@ -95,7 +96,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -566,27 +566,7 @@ object MetroFuseHost : PluginServices {
         if (effectiveMusicFrontendOwner().isEmpty()) return null
         val result =
             runtime.pipelines.lyrics(LyricsRequest(identities[id] ?: trackIdentity(id), title, artist, durationMs ?: 0)) ?: return null
-        val document =
-            MlxDocument(
-                meta = MlxMeta(lyricSource = result.source, provider = result.source),
-                song = MlxSong(title = title, artist = artist, durationMs = durationMs, language = result.language),
-                lines =
-                    result.lines.map { line ->
-                        LyricsEntry(
-                            time = line.timeMs ?: 0,
-                            text = line.text,
-                            words =
-                                line.words.takeIf { it.isNotEmpty() }?.map { word ->
-                                    WordTimestamp(
-                                        word.text,
-                                        word.startMs / 1000.0,
-                                        word.endMs / 1000.0,
-                                    )
-                                },
-                        )
-                    },
-            )
-        return LyricsWithProvider(Json.encodeToString(document), result.source)
+        return result.toHostLyrics(title, artist, durationMs)
     }
 
     override suspend fun search(query: String): List<YTItem> {
@@ -896,6 +876,30 @@ object MetroFuseHost : PluginServices {
         identities[id] = resolved.identity
         return MetadataMapping.toTrack(resolved, track).toSongItem(song).also(::remember)
     }
+}
+
+internal fun LyricsResult.toHostLyrics(
+    title: String,
+    artist: String,
+    durationMs: Long?,
+): LyricsWithProvider {
+    val document =
+        MlxDocument(
+            meta = MlxMeta(lyricSource = source, provider = source),
+            song = MlxSong(title = title, artist = artist, durationMs = durationMs, language = language),
+            lines =
+                lines.map { line ->
+                    LyricsEntry(
+                        time = line.timeMs ?: 0,
+                        text = line.text,
+                        words =
+                            line.words.map { word ->
+                                WordTimestamp(word.text, word.startMs / 1000.0, word.endMs / 1000.0)
+                            }.takeIf { it.isNotEmpty() },
+                    )
+                },
+        )
+    return LyricsWithProvider(document.toMlxJson().toString(), source)
 }
 
 private fun SongItem.toPluginTrack() =

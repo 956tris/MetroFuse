@@ -518,10 +518,10 @@ private fun editorDocument(
     }
     val doc = MlxParser.parse(raw)
     require(!importing || raw.isBlank() || doc.lines.isNotEmpty())
-    return doc.toEditorJson()
+    return doc.toMlxJson()
 }
 
-private fun MlxDocument.toEditorJson(): JsonObject =
+internal fun MlxDocument.toMlxJson(): JsonObject =
     buildJsonObject {
         put("version", JsonPrimitive(2))
         put("song", Json.encodeToJsonElement(song))
