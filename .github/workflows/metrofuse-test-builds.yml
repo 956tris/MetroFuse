@@ -43,7 +43,15 @@ jobs:
           dotnet publish metro-wv2-helper/metro-wv2-helper.csproj -c Release -r win-x64 --self-contained true -o desktopApp/src/desktopMain/resources/windows -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
       - name: Build Windows portable ZIP
         shell: pwsh
-        run: .\gradlew.bat :desktopApp:assembleWindowsDebug '-Pmetrolist.desktop.arch=x86_64' --no-daemon --no-configuration-cache
+        run: |
+          .\gradlew.bat :desktopApp:assembleWindowsDebug '-Pmetrolist.desktop.arch=x86_64' --no-daemon --no-configuration-cache
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $archives = @(Get-ChildItem -LiteralPath dist -File -Filter '*-Desktop-Windows-Debug.zip')
+          if ($archives.Count -ne 1) { throw "Expected one Windows debug ZIP, found $($archives.Count)" }
+          $artifactName = 'MetroFuse-Desktop-Windows-Debug.zip'
+          if ($archives[0].Name -cne $artifactName) {
+            Rename-Item -LiteralPath $archives[0].FullName -NewName $artifactName
+          }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrofuse-windows-x64
