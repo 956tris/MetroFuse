@@ -20,6 +20,12 @@ Source bundles include the host runtime and SDK so plugin failure frames can sho
 
 MetroFuse uses the shared `metrofuse` Sentry project in the `metrofuse` organization for Android, desktop and iOS. The host reports plugin activation, UI, login and provider failures when the user enables crash reporting. Reports identify the plugin, version, runtime and operation. They include exception types and stack frames, but exclude raw plugin exception messages and request or credential payloads. Repeated failures of the same operation and exception type are limited to one report per plugin per minute. Normal coroutine cancellation is not reported.
 
+## Spicy Lyrics
+
+Set `SPICY_LYRICS_CLIENT_KEY` in the build environment, Gradle properties or `local.properties` to the application's publishable key. Enable **Allow requests with no Origin header** for that key in the Spicy Lyrics dashboard for native calls. The KMP beta workflow reads the key from a repository Actions variable of the same name.
+
+Without a configured publishable key, lookup skips Spicy Lyrics and continues to the next provider.
+
 ## Rejected features
 
 The following list preserves the upstream issue-triage policy. Do not apply it to bugs in existing functionality. MetroFuse's existing plugin architecture remains part of this fork.

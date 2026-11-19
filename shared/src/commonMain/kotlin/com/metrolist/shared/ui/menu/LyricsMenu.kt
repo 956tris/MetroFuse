@@ -93,6 +93,7 @@ fun LyricsMenu(
     val queryArtist = lyricsUiState.queryArtist ?: song.artists.joinToString { it.name }
     var editText by remember(lyricsUiState.rawLyrics) { mutableStateOf(TextFieldValue(lyricsUiState.rawLyrics.orEmpty())) }
     val snackbarHostState = remember { SnackbarHostState() }
+    val canCopyLyrics = remember(lyricsUiState.rawLyrics) { LyricsUtils.canExportLyrics(lyricsUiState.rawLyrics) }
     val copiedMessage = stringResource(Res.string.copied)
     var romanizationEnabled by remember { mutableStateOf(Settings.shared.lyricsRomanizationEnabled) }
     var manualAiTranslationChecked by remember(lyricsUiState.manualAiTranslationEnabled) {
@@ -284,33 +285,37 @@ fun LyricsMenu(
                         } else {
                             null
                         },
-                        Material3MenuItemData(
-                            title = { Text(stringResource(Res.string.copy)) },
-                            description = {
-                                Text(
-                                    lyricsUiState.lyrics
-                                        .firstOrNull()
-                                        ?.text
-                                        .orEmpty(),
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            },
-                            icon = {
-                                Icon(
-                                    imageVector = MetrolistIcons.Outlined.ContentCopy,
-                                    contentDescription = null,
-                                )
-                            },
-                            onClick = {
-                                val textToCopy =
-                                    LyricsUtils.toPlainText(lyricsUiState.lyrics)
-                                coroutineScope.launch {
-                                    clipboard.setText(textToCopy)
-                                    snackbarHostState.showSnackbar(copiedMessage)
-                                }
-                            },
-                        ),
+                        if (canCopyLyrics) {
+                            Material3MenuItemData(
+                                title = { Text(stringResource(Res.string.copy)) },
+                                description = {
+                                    Text(
+                                        lyricsUiState.lyrics
+                                            .firstOrNull()
+                                            ?.text
+                                            .orEmpty(),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                icon = {
+                                    Icon(
+                                        imageVector = MetrolistIcons.Outlined.ContentCopy,
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    val textToCopy =
+                                        LyricsUtils.toPlainText(lyricsUiState.lyrics)
+                                    coroutineScope.launch {
+                                        clipboard.setText(textToCopy)
+                                        snackbarHostState.showSnackbar(copiedMessage)
+                                    }
+                                },
+                            )
+                        } else {
+                            null
+                        },
                     ),
             )
 

@@ -31,6 +31,7 @@ class LegacySettingsMigrationTest {
                 LyricsProvider.UNISON,
                 LyricsProvider.PAXSENIX,
                 LyricsProvider.LRCRED,
+                LyricsProvider.SPICYLYRICS,
                 LyricsProvider.METROFUSE,
             )
         val order = LyricsProvider.parseUserOrderFromStoredCsv(settings.lyricsProviderOrder)
@@ -57,6 +58,15 @@ class LegacySettingsMigrationTest {
             LyricsProvider.parseEnabledFromStoredCsv("BETTERLYRICS,UNISON,LRCLIB,KUGOU,PAXSENIX,LYRICSPLUS"),
         )
         assertEquals(LyricsProvider.userConfigurable, LyricsProvider.parseUserOrderFromStoredCsv("LyricsPlus,ZEMER"))
+    }
+
+    @Test
+    fun oldDefaultMovesToNewLyricsPriority() {
+        val previousDefault = "LYPRIO,METROFUSE,BETTERLYRICS,LRCRED,UNISON,LRCLIB,KUGOU,PAXSENIX"
+        val newPriority = listOf(LyricsProvider.BETTERLYRICS, LyricsProvider.SPICYLYRICS, LyricsProvider.METROFUSE)
+        assertEquals(newPriority, LyricsProvider.parseUserOrderFromStoredCsv("").take(3))
+        assertEquals(newPriority, LyricsProvider.parseUserOrderFromStoredCsv(previousDefault).take(3))
+        assertTrue(LyricsProvider.SPICYLYRICS in LyricsProvider.parseEnabledFromStoredCsv(previousDefault))
     }
 
     @Test

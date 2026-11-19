@@ -5,6 +5,7 @@
 
 package com.metrolist.shared.api.lyrics
 
+import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.model.LyricsProvider
 import com.metrolist.shared.model.LyricsWithProvider
 import com.metrolist.shared.network.QuietHttpFailures
@@ -43,6 +44,7 @@ class LyricsClient(
 ) : LyricsFetcher {
     private val metroFuseLyricsProvider = MetroFuseLyricsProvider(httpClient)
     private val betterLyricsProvider = BetterLyricsProvider(httpClient)
+    private val spicyLyricsProvider = SpicyLyricsProvider(httpClient, BuildConfig.SPICY_LYRICS_CLIENT_KEY)
     private val unisonLyricsProvider = UnisonProvider(httpClient)
     private val lrcLibProvider = LrcLibLyricsProvider(httpClient)
     private val lrcredLyricsProvider = LrcredLyricsProvider(httpClient)
@@ -91,6 +93,10 @@ class LyricsClient(
 
             LyricsProvider.BETTERLYRICS -> {
                 result("BetterLyrics") { betterLyricsProvider.getLyrics(title, artist, duration, album) }
+            }
+
+            LyricsProvider.SPICYLYRICS -> {
+                result(SPICY_LYRICS_PROVIDER) { spicyLyricsProvider.getLyrics(title, artist, duration, album) }
             }
 
             LyricsProvider.LRCRED -> {

@@ -73,6 +73,10 @@ data class MlxMeta(
     val lyricsCurator: String? = null,
     val lyricsCuratorId: String? = null,
     val copyright: String? = null,
+    val lyricsUploader: String? = null,
+    val lyricsUploaderUrl: String? = null,
+    val lyricsMaker: String? = null,
+    val lyricsMakerUrl: String? = null,
 )
 
 @Serializable
@@ -212,7 +216,7 @@ val LyricsProvider.supportedTimingKinds: Set<LyricsTimingKind>
                 setOf(LyricsTimingKind.LINE_SYNCED, LyricsTimingKind.UNSYNCED)
             }
 
-            LyricsProvider.USER, LyricsProvider.METROFUSE, LyricsProvider.LYPRIO, LyricsProvider.UNISON -> {
+            LyricsProvider.USER, LyricsProvider.METROFUSE, LyricsProvider.LYPRIO, LyricsProvider.UNISON, LyricsProvider.SPICYLYRICS -> {
                 setOf(LyricsTimingKind.LINE_SYNCED, LyricsTimingKind.WORD_SYNCED, LyricsTimingKind.UNSYNCED)
             }
 

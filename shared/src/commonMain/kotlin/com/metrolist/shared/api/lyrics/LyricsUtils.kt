@@ -34,10 +34,14 @@ object LyricsUtils {
         }
     }
 
+    fun canExportLyrics(rawLyrics: String?): Boolean =
+        rawLyrics == null || parseMlxDocument(rawLyrics)?.meta?.sourceFormat != SPICY_LYRICS_SOURCE_FORMAT
+
     fun lyricsForEditing(
         rawLyrics: String?,
         entries: List<LyricsEntry>,
     ): String {
+        if (!canExportLyrics(rawLyrics)) return ""
         val raw = rawLyrics.orEmpty()
         val original = parseLyrics(raw)
         if (original.size != entries.size || original.indices.any { original[it].text != entries[it].text }) return raw

@@ -505,6 +505,7 @@ enum class LyricsProvider {
     METROFUSE,
     LYPRIO,
     BETTERLYRICS,
+    SPICYLYRICS,
     LRCRED,
     UNISON,
     SIMPMUSIC,
@@ -519,7 +520,7 @@ enum class LyricsProvider {
         val alwaysLastFallbacks: List<LyricsProvider> = listOf(YOUTUBESUBTITLE, YOUTUBE)
 
         val userConfigurable: List<LyricsProvider> =
-            listOf(LYPRIO, METROFUSE, BETTERLYRICS, LRCRED, UNISON, LRCLIB, KUGOU, PAXSENIX)
+            listOf(BETTERLYRICS, SPICYLYRICS, METROFUSE, LYPRIO, LRCRED, UNISON, LRCLIB, KUGOU, PAXSENIX)
 
         private val legacyDefaultUserOrders =
             listOf(
@@ -527,6 +528,7 @@ enum class LyricsProvider {
                 listOf("BETTERLYRICS", "UNISON", "LRCLIB", "KUGOU", "PAXSENIX", "LYRICSPLUS", "ZEMER"),
                 listOf("LYPRIO", "BETTERLYRICS", "UNISON", "LRCLIB", "KUGOU", "PAXSENIX", "LYRICSPLUS", "ZEMER"),
                 listOf("LYPRIO", "BETTERLYRICS", "LRCRED", "UNISON", "LRCLIB", "KUGOU", "PAXSENIX"),
+                listOf("LYPRIO", "METROFUSE", "BETTERLYRICS", "LRCRED", "UNISON", "LRCLIB", "KUGOU", "PAXSENIX"),
                 listOf("METROFUSE", "LYPRIO", "BETTERLYRICS", "LRCRED", "UNISON", "LRCLIB", "KUGOU", "PAXSENIX"),
             )
 
@@ -541,6 +543,7 @@ enum class LyricsProvider {
                 "MetroFuse", "Metrofuse" -> METROFUSE
                 "Lyprio" -> LYPRIO
                 "BetterLyrics" -> BETTERLYRICS
+                "Spicy Lyrics" -> SPICYLYRICS
                 "lrc.red" -> LRCRED
                 "Unison" -> UNISON
                 "LrcLib" -> LRCLIB

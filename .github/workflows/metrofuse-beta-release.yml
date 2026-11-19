@@ -23,6 +23,7 @@ env:
   SENTRY_DSN: ${{ vars.SENTRY_DSN }}
   SENTRY_ORG: ${{ vars.SENTRY_ORG }}
   SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+  SPICY_LYRICS_CLIENT_KEY: ${{ vars.SPICY_LYRICS_CLIENT_KEY }}
 
 concurrency:
   group: metrofuse-beta-${{ inputs.tag || github.ref_name }}
@@ -75,7 +76,7 @@ jobs:
           echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "version_code=$version_code" >> "$GITHUB_OUTPUT"
-          echo "title=MetroFuse ${version%.*} Beta" >> "$GITHUB_OUTPUT"
+          echo "title=MetroFuse ${version%.*} Beta $beta_number" >> "$GITHUB_OUTPUT"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
           echo "notes_file=$notes_file" >> "$GITHUB_OUTPUT"
 

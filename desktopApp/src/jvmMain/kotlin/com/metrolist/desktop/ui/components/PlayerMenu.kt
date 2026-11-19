@@ -50,8 +50,6 @@ import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.db.MusicDatabase
-import dev.metrofuse.api.UiTarget
-import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.add_romanization_below_lyrics
 import com.metrolist.shared.generated.resources.ai_translation
@@ -92,6 +90,7 @@ import com.metrolist.shared.generated.resources.tempo_and_pitch
 import com.metrolist.shared.generated.resources.view_song_info
 import com.metrolist.shared.listentogether.ListenTogetherRoomRole
 import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.plugins.pluginMenuActions
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.settings.displayName
 import com.metrolist.shared.ui.components.AlertDialog
@@ -118,6 +117,7 @@ import com.metrolist.shared.ui.menu.suggestToHostMenuAction
 import com.metrolist.shared.ui.menu.tempoPitchMenuAction
 import com.metrolist.shared.ui.playback.LocalPlaybackController
 import com.metrolist.shared.utils.ShareUrls
+import dev.metrofuse.api.UiTarget
 import org.jetbrains.compose.resources.stringResource
 import org.koin.core.context.GlobalContext
 
@@ -135,6 +135,7 @@ fun LyricsActionsMenuCard(
     var aiTranslationChecked by remember(LyricsState.manualAiTranslationEnabled) { mutableStateOf(LyricsState.manualAiTranslationEnabled) }
     var showTranslationsChecked by remember { mutableStateOf(Settings.shared.lyricsShowTranslations) }
 
+    val canCopyLyrics = remember(LyricsState.currentLyrics) { LyricsUtils.canExportLyrics(LyricsState.currentLyrics) }
     var showEditDialog by remember { mutableStateOf(false) }
     var editText by remember { mutableStateOf("") }
     var editingTrack by remember { mutableStateOf<SongItem?>(null) }
@@ -232,17 +233,19 @@ fun LyricsActionsMenuCard(
                 ) {
                     showSearchDialog = true
                 }
-                LyricsActionChip(
-                    icon = MetrolistIcons.Outlined.ContentCopy,
-                    label = stringResource(Res.string.copy),
-                    colorScheme = colorScheme,
-                    modifier = Modifier.weight(1f),
-                ) {
-                    val text = LyricsUtils.toPlainText(LyricsState.currentLyricsEntries)
-                    if (text.isNotBlank()) {
-                        AppState.copyToClipboard(text)
+                if (canCopyLyrics) {
+                    LyricsActionChip(
+                        icon = MetrolistIcons.Outlined.ContentCopy,
+                        label = stringResource(Res.string.copy),
+                        colorScheme = colorScheme,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        val text = LyricsUtils.toPlainText(LyricsState.currentLyricsEntries)
+                        if (text.isNotBlank()) {
+                            AppState.copyToClipboard(text)
+                        }
+                        onDismiss()
                     }
-                    onDismiss()
                 }
             }
 

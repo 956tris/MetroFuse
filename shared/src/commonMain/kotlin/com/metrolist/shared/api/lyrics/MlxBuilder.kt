@@ -24,6 +24,10 @@ class MlxBuilder {
         lyricsCurator: String? = null,
         lyricsCuratorId: String? = null,
         sourceFormat: String? = null,
+        lyricsUploader: String? = null,
+        lyricsUploaderUrl: String? = null,
+        lyricsMaker: String? = null,
+        lyricsMakerUrl: String? = null,
     ): MlxBuilder {
         metaLines.clear()
         metaLines.appendLine("mlx_version=$version")
@@ -35,6 +39,10 @@ class MlxBuilder {
         lyricsCurator?.let { metaLines.appendLine("lyrics_curator=$it") }
         lyricsCuratorId?.let { metaLines.appendLine("lyrics_curator_id=$it") }
         sourceFormat?.let { metaLines.appendLine("source_format=$it") }
+        lyricsUploader?.let { metaLines.appendLine("lyrics_uploader=$it") }
+        lyricsUploaderUrl?.let { metaLines.appendLine("lyrics_uploader_url=$it") }
+        lyricsMaker?.let { metaLines.appendLine("lyrics_maker=$it") }
+        lyricsMakerUrl?.let { metaLines.appendLine("lyrics_maker_url=$it") }
         return this
     }
 

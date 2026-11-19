@@ -112,11 +112,15 @@ import androidx.compose.ui.unit.sp
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.api.lyrics.LyricsUtils.lyricsPositionForOffset
 import com.metrolist.shared.api.lyrics.LyricsUtils.lyricsSeekPositionForOffset
+import com.metrolist.shared.api.lyrics.SPICY_LYRICS_SOURCE_FORMAT
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.cancel
 import com.metrolist.shared.generated.resources.lyrics_curated_by
 import com.metrolist.shared.generated.resources.lyrics_share_limit
 import com.metrolist.shared.generated.resources.lyrics_share_selected_count
+import com.metrolist.shared.generated.resources.lyrics_source_unknown
+import com.metrolist.shared.generated.resources.lyrics_synced_by
+import com.metrolist.shared.generated.resources.lyrics_uploaded_by
 import com.metrolist.shared.generated.resources.lyrics_written_by
 import com.metrolist.shared.generated.resources.share
 import com.metrolist.shared.model.AgentInfo
@@ -152,6 +156,21 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeSource
+
+private fun AnnotatedString.Builder.appendLyricsCredit(
+    label: String,
+    name: String?,
+    url: String?,
+) {
+    append('\n')
+    val labelStart = length
+    append(label)
+    if (name == null || url == null || !url.startsWith("https://")) return
+    val nameStart = label.indexOf(name)
+    if (nameStart >= 0) {
+        addLink(LinkAnnotation.Url(url, TextLinkStyles()), labelStart + nameStart, labelStart + nameStart + name.length)
+    }
+}
 
 private const val LYRICS_ANCHOR_RATIO = 0.5f
 private const val MAX_PRE_CENTER_STAGGER_LINES = 4
@@ -300,8 +319,24 @@ fun LyricsView(
         remember(songwriters) {
             songwriters.filter { it.isNotBlank() }.distinct()
         }
+    val shareSelection = onShareSelection.takeUnless { lyricsMeta?.sourceFormat == SPICY_LYRICS_SOURCE_FORMAT }
+    val spicyLyricsAttribution =
+        if (lyricsMeta?.sourceFormat == SPICY_LYRICS_SOURCE_FORMAT) {
+            val source = lyricsMeta.lyricSource ?: stringResource(Res.string.lyrics_source_unknown)
+            val uploader = lyricsMeta.lyricsUploader
+            val maker = lyricsMeta.lyricsMaker
+            val uploadedBy = uploader?.let { stringResource(Res.string.lyrics_uploaded_by, it) }
+            val syncedBy = maker?.let { stringResource(Res.string.lyrics_synced_by, it) }
+            buildAnnotatedString {
+                append(lyricsProvidedBy(source))
+                if (uploadedBy != null) appendLyricsCredit(uploadedBy, uploader, lyricsMeta.lyricsUploaderUrl)
+                if (syncedBy != null) appendLyricsCredit(syncedBy, maker, lyricsMeta.lyricsMakerUrl)
+            }
+        } else {
+            null
+        }
     val lyricsAttribution =
-        lyricsMeta
+        spicyLyricsAttribution ?: lyricsMeta
             ?.lyricsCurator
             ?.takeIf(String::isNotBlank)
             ?.let { curator ->
@@ -1201,7 +1236,7 @@ fun LyricsView(
                                             Modifier
                                                 .fillMaxWidth()
                                                 .then(
-                                                    if (onShareSelection != null && entry.text.isNotBlank()) {
+                                                    if (shareSelection != null && entry.text.isNotBlank()) {
                                                         Modifier
                                                             .combinedClickable(
                                                                 onClick = { if (isSelectionMode) selection.toggle(index) },
@@ -1242,7 +1277,9 @@ fun LyricsView(
                                             }
                                             if (!provider.isNullOrEmpty()) {
                                                 Text(
-                                                    text = lyricsProvidedBy(provider),
+                                                    text =
+                                                        spicyLyricsAttribution
+                                                            ?: buildAnnotatedString { append(lyricsProvidedBy(provider)) },
                                                     style = MaterialTheme.typography.labelMedium,
                                                     color = secondaryTextColor,
                                                     modifier =
@@ -1432,7 +1469,7 @@ fun LyricsView(
                                                     lineEndTimesByIndex.getOrNull(idx)?.takeIf { it >= 0L }
                                                 val isInteractive =
                                                     (!isSelectionMode && Settings.shared.lyricsClickToSeek) ||
-                                                        (entry.text.isNotBlank() && (isSelectionMode || onShareSelection != null))
+                                                        (entry.text.isNotBlank() && (isSelectionMode || shareSelection != null))
 
                                                 val seekLine =
                                                     remember(
@@ -1448,7 +1485,7 @@ fun LyricsView(
                                                         index,
                                                         onSeek,
                                                         onToggleSelection,
-                                                        onShareSelection,
+                                                        shareSelection,
                                                     ) {
                                                         {
                                                             if (isSelectionMode) {
@@ -1477,7 +1514,7 @@ fun LyricsView(
                                                                         ),
                                                                     ),
                                                                 )
-                                                            } else if (onShareSelection != null) {
+                                                            } else if (shareSelection != null) {
                                                                 selection.select(idx)
                                                             }
                                                         }
@@ -1500,7 +1537,7 @@ fun LyricsView(
                                                             isLrcSynced = true,
                                                             onSeek = seekLine,
                                                             onLongClick =
-                                                                if (onShareSelection != null &&
+                                                                if (shareSelection != null &&
                                                                     entry.text.isNotBlank()
                                                                 ) {
                                                                     ({ selection.select(idx) })
@@ -1637,7 +1674,7 @@ fun LyricsView(
                         TextButton(onClick = selection::clear, shapes = ButtonDefaults.shapes()) { Text(stringResource(Res.string.cancel)) }
                         TextButton(
                             onClick = {
-                                onShareSelection?.invoke(
+                                shareSelection?.invoke(
                                     selectedLyricsText(
                                         lyrics,
                                         selectedIndices,

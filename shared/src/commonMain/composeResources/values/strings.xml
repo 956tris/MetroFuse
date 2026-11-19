@@ -1163,6 +1163,11 @@
     <string name="sources">Sources</string>
     <!-- Translators: Supporting text beneath the upstream providers option in the lyrics. -->
     <!-- Translators: Supporting text beneath the provider better lyrics option in the lyrics. -->
+    <string name="brand_spicy_lyrics" translatable="false">Spicy Lyrics</string>
+    <string name="lyrics_provider_spicy_lyrics_description">Line and syllable sync matched by track metadata</string>
+    <string name="lyrics_uploaded_by">Uploaded by %1$s</string>
+    <string name="lyrics_synced_by">Synced by %1$s</string>
+    <string name="lyrics_source_unknown">Unknown source</string>
     <string name="lyrics_provider_better_lyrics_description">Word-synced TTML with singer roles, background vocals, and transliterations when available</string>
     <!-- Translators: Supporting text beneath the provider unison option in the lyrics. -->
     <string name="lyrics_provider_unison_description">This crowdsourced source matches by YouTube ID or metadata. It can return word-synced, line-synced or plain lyrics.</string>

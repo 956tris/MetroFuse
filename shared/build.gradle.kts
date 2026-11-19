@@ -716,6 +716,17 @@ val generateBuildConfig =
         inputs.property("lastFmSecret", lastFmSecret)
         inputs.property("lyprioBaseUrl", lyprioBaseUrl)
         inputs.property("lyprioHmacKey", lyprioHmacKey)
+        val spicyLyricsClientKey =
+            providers
+                .gradleProperty("SPICY_LYRICS_CLIENT_KEY")
+                .orElse(providers.environmentVariable("SPICY_LYRICS_CLIENT_KEY"))
+                .orElse(providers.provider { localProperties.getProperty("SPICY_LYRICS_CLIENT_KEY").orEmpty() })
+                .get()
+                .trim()
+        require(spicyLyricsClientKey.isEmpty() || spicyLyricsClientKey.matches(Regex("sl_pk_[A-Za-z0-9_-]+"))) {
+            "SPICY_LYRICS_CLIENT_KEY must be a publishable Spicy Lyrics key"
+        }
+        inputs.property("spicyLyricsClientKey", spicyLyricsClientKey)
         val sourceRevision =
             providers
                 .gradleProperty("metrolist.sourceRevision")
@@ -763,6 +774,7 @@ val generateBuildConfig =
                     const val LASTFM_SECRET = "${inputs.properties["lastFmSecret"]}"
                     const val LYPRIO_BASE_URL = "${inputs.properties["lyprioBaseUrl"]}"
                     const val LYPRIO_HMAC_KEY = "${inputs.properties["lyprioHmacKey"]}"
+                    const val SPICY_LYRICS_CLIENT_KEY = "${inputs.properties["spicyLyricsClientKey"]}"
                     const val APP_VERSION = "${inputs.properties["appVersion"]}"
                     const val APP_NAME = "${inputs.properties["appName"]}"
                     const val SOURCE_REVISION = "${inputs.properties["sourceRevision"]}"

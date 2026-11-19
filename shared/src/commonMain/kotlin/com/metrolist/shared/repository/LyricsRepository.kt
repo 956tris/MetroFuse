@@ -10,6 +10,7 @@ import com.metrolist.shared.api.lyrics.LyricsTranslationFailure
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.api.lyrics.METROFUSE_LYRICS_SOURCE_FORMAT
 import com.metrolist.shared.api.lyrics.MusicVideoLyricsRetimer
+import com.metrolist.shared.api.lyrics.SPICY_LYRICS_PROVIDER
 import com.metrolist.shared.api.lyrics.YouTubeLyricsApi
 import com.metrolist.shared.api.lyrics.YouTubeLyricsProvider
 import com.metrolist.shared.api.lyrics.YouTubeSubtitleLyricsProvider
@@ -301,7 +302,7 @@ class LyricsRepository(
                         preferredProviders = listOf(provider),
                     ).firstOrNull { it.timingKind != LyricsTimingKind.UNSYNCED }
                 }
-            synced.also { previewLyrics = it }
+            synced.also { if (it?.provider != LyricsProvider.SPICYLYRICS) previewLyrics = it }
         }
 
     suspend fun getSongwriters(videoId: String): List<String> {
@@ -525,7 +526,9 @@ class LyricsRepository(
 
         val selectedResult = finalResult
         if (skipCache && selectedResult == null && !cachedLyrics?.lyrics.isNullOrBlank()) return null
-        if (databaseDao != null && selectedResult?.isComplete != false && (selectedResult != null || !hadProviderFailure)) {
+        if (databaseDao != null && selectedResult?.provider != SPICY_LYRICS_PROVIDER &&
+            selectedResult?.isComplete != false && (selectedResult != null || !hadProviderFailure)
+        ) {
             currentCoroutineContext().ensureActive()
             val offsetMs = savedLyricsOffset(videoId)
             var expected = cachedLyrics
@@ -759,6 +762,7 @@ class LyricsRepository(
             databaseDao?.restoreStashedUserLyrics(videoId)
             return getUserLyrics(videoId)?.let(::userProviderResult) ?: result
         }
+        if (result.provider == LyricsProvider.SPICYLYRICS) return result
         // An explicit provider choice replaces the User fork; keep it so the User entry can restore it.
         databaseDao?.stashUserLyrics(videoId)
         databaseDao?.saveLyrics(

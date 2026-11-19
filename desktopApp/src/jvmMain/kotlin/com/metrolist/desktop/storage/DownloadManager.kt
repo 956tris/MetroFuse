@@ -1025,5 +1025,5 @@ internal suspend fun LyricsRepository.prefetchDownloadLyrics(
     artist = song.artists.joinToString(", ") { it.name },
     duration = song.duration?.times(1000L),
     album = song.album?.name,
-    preferredProviders = preferredProviders,
+    preferredProviders = preferredProviders - LyricsProvider.SPICYLYRICS,
 )

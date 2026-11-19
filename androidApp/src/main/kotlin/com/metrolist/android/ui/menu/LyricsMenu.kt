@@ -103,6 +103,7 @@ fun LyricsMenu(
     val clipboard = LocalClipboard.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val canCopyLyrics = remember(rawLyrics) { LyricsUtils.canExportLyrics(rawLyrics) }
     val copiedMessage = stringResource(Res.string.copied)
     var showSearchDialog by rememberSaveable { mutableStateOf(false) }
     var editorSong by remember { mutableStateOf(songId to songTitle) }
@@ -215,16 +216,20 @@ fun LyricsMenu(
                                     },
                                 )
                             },
-                            PlayerMenuAction(
-                                icon = MetrolistIcons.Outlined.ContentCopy,
-                                title = stringResource(Res.string.copy),
-                                onClick = {
-                                    scope.launch {
-                                        clipboard.setText(LyricsUtils.toPlainText(lyrics))
-                                        Toast.makeText(context, copiedMessage, Toast.LENGTH_SHORT).show()
-                                    }
-                                },
-                            ),
+                            if (canCopyLyrics) {
+                                PlayerMenuAction(
+                                    icon = MetrolistIcons.Outlined.ContentCopy,
+                                    title = stringResource(Res.string.copy),
+                                    onClick = {
+                                        scope.launch {
+                                            clipboard.setText(LyricsUtils.toPlainText(lyrics))
+                                            Toast.makeText(context, copiedMessage, Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                )
+                            } else {
+                                null
+                            },
                         ),
                 )
             }

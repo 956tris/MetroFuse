@@ -47,6 +47,7 @@ import com.metrolist.shared.generated.resources.retry
 import com.metrolist.shared.model.AgentInfo
 import com.metrolist.shared.model.LyricsEntry
 import com.metrolist.shared.model.LyricsProviderResult
+import com.metrolist.shared.model.MlxMeta
 import com.metrolist.shared.playback.PlaybackSeekSource
 import com.metrolist.shared.repository.LYRICS_PREVIEW_DURATION_MS
 import com.metrolist.shared.repository.LYRICS_PREVIEW_VIDEO_ID
@@ -92,6 +93,7 @@ fun PlayerLyricsSettingsPreview(
         currentAgents = state.lyricsAgents,
         currentSongwriters = state.lyricsSongwriters,
         currentProvider = state.lyricsProvider,
+        currentLyricsMeta = state.lyricsMeta,
         currentPosition = viewModel.currentPosition,
         positionReader = viewModel::currentPositionMs,
         playbackSpeed = viewModel.playbackSpeed.collectAsState().value,
@@ -111,6 +113,7 @@ fun LyricsSettingsPreview(
     currentAgents: Map<String, AgentInfo> = emptyMap(),
     currentSongwriters: List<String> = emptyList(),
     currentProvider: String? = null,
+    currentLyricsMeta: MlxMeta? = null,
     currentPosition: StateFlow<Long>? = null,
     positionReader: (() -> Long)? = null,
     playbackSpeed: Float = Settings.shared.playbackSpeed,
@@ -164,7 +167,7 @@ fun LyricsSettingsPreview(
     val autoScroll = stringResource(Res.string.lyrics_auto_scroll_btn)
     val provider = if (useCurrentLyrics) currentProvider else result?.providerName
     val displayedProvider = if (isLocalLyricsProvider(provider)) stringResource(Res.string.local) else provider
-    val providerText = displayedProvider?.let { stringResource(Res.string.lyrics_provided_by, it) }.orEmpty()
+    val providerTemplate = stringResource(Res.string.lyrics_provided_by, "%s")
     val loadingText = stringResource(Res.string.loading)
     Surface(modifier, shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
         Column {
@@ -208,11 +211,12 @@ fun LyricsSettingsPreview(
                         LyricsView(
                             noLyricsText = noLyrics,
                             autoScrollText = autoScroll,
-                            lyricsProvidedBy = { providerText },
+                            lyricsProvidedBy = { providerTemplate.replace("%s", it) },
                             lyrics = if (useCurrentLyrics) currentLyrics else lyrics,
                             agents = if (useCurrentLyrics) currentAgents else document?.agents.orEmpty(),
                             songwriters = if (useCurrentLyrics) currentSongwriters else document?.song?.songwriters.orEmpty(),
                             provider = displayedProvider,
+                            lyricsMeta = if (useCurrentLyrics) currentLyricsMeta else document?.meta,
                             currentPosition = position,
                             currentPositionFlow = if (useCurrentLyrics) currentPosition else null,
                             positionReader = if (useCurrentLyrics) positionReader else null,

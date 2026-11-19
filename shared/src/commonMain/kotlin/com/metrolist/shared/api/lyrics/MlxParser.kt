@@ -245,6 +245,10 @@ object MlxParser {
             curator = kv["curator"]?.takeIf { it.isNotBlank() },
             lyricsCurator = kv["lyrics_curator"]?.takeIf { it.isNotBlank() },
             lyricsCuratorId = kv["lyrics_curator_id"]?.takeIf { it.isNotBlank() },
+            lyricsUploader = kv["lyrics_uploader"]?.takeIf { it.isNotBlank() },
+            lyricsUploaderUrl = kv["lyrics_uploader_url"]?.takeIf { it.isNotBlank() },
+            lyricsMaker = kv["lyrics_maker"]?.takeIf { it.isNotBlank() },
+            lyricsMakerUrl = kv["lyrics_maker_url"]?.takeIf { it.isNotBlank() },
             copyright = kv["copyright"]?.takeIf { it.isNotBlank() },
         )
     }

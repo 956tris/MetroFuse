@@ -278,6 +278,7 @@ private fun lyricsProviderLabel(provider: LyricsProvider): String =
         LyricsProvider.METROFUSE -> stringResource(Res.string.brand_metrofuse_lyrics)
         LyricsProvider.LYPRIO -> stringResource(Res.string.brand_lyprio)
         LyricsProvider.BETTERLYRICS -> stringResource(Res.string.brand_better_lyrics)
+        LyricsProvider.SPICYLYRICS -> stringResource(Res.string.brand_spicy_lyrics)
         LyricsProvider.LRCRED -> stringResource(Res.string.brand_lrcred)
         LyricsProvider.UNISON -> stringResource(Res.string.brand_unison)
         LyricsProvider.LRCLIB -> stringResource(Res.string.brand_lrclib)
@@ -293,6 +294,7 @@ private fun lyricsProviderDescription(provider: LyricsProvider): String =
             LyricsProvider.METROFUSE -> Res.string.lyrics_provider_metrofuse_description
             LyricsProvider.LYPRIO -> Res.string.lyrics_provider_lyrics_plus_description
             LyricsProvider.BETTERLYRICS -> Res.string.lyrics_provider_better_lyrics_description
+            LyricsProvider.SPICYLYRICS -> Res.string.lyrics_provider_spicy_lyrics_description
             LyricsProvider.LRCRED -> Res.string.lyrics_provider_lrcred_description
             LyricsProvider.UNISON -> Res.string.lyrics_provider_unison_description
             LyricsProvider.LRCLIB -> Res.string.lyrics_provider_lrclib_description

@@ -56,6 +56,7 @@ import com.metrolist.desktop.ui.components.rememberMetroEqProfilePicker
 import com.metrolist.desktop.utils.AppLogger
 import com.metrolist.desktop.utils.DesktopFontManager
 import com.metrolist.desktop.utils.SentryManager
+import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.app_font_active
 import com.metrolist.shared.generated.resources.app_font_checking
@@ -358,6 +359,10 @@ fun SettingsOverlay(colorScheme: ColorScheme) {
                                 currentAgents = LyricsState.currentLyricsAgents,
                                 currentSongwriters = LyricsState.currentLyricsSongwriters,
                                 currentProvider = LyricsState.currentLyricsProvider,
+                                currentLyricsMeta =
+                                    remember(LyricsState.currentLyrics) {
+                                        LyricsState.currentLyrics?.let(LyricsUtils::parseMlxDocument)?.meta
+                                    },
                                 currentPosition = PlayerState.playbackPosition,
                                 positionReader = PlayerState::currentMediaPositionMs,
                                 playbackSpeed =
@@ -506,6 +511,7 @@ fun SettingsOverlay(colorScheme: ColorScheme) {
                                 SettingsPageId.UPDATES -> {
                                     UpdatesSettingsScreen(colorScheme)
                                 }
+
                                 SettingsPageId.PLUGINS -> {
                                     PluginsSettingsScreen()
                                 }

@@ -48,6 +48,7 @@ import com.metrolist.shared.generated.resources.brand_lrcred
 import com.metrolist.shared.generated.resources.brand_lyprio
 import com.metrolist.shared.generated.resources.brand_metrofuse_lyrics
 import com.metrolist.shared.generated.resources.brand_paxsenix
+import com.metrolist.shared.generated.resources.brand_spicy_lyrics
 import com.metrolist.shared.generated.resources.brand_unison
 import com.metrolist.shared.generated.resources.choose_lyrics
 import com.metrolist.shared.generated.resources.close
@@ -290,6 +291,7 @@ private fun providerName(provider: LyricsProvider): String =
             LyricsProvider.METROFUSE -> Res.string.brand_metrofuse_lyrics
             LyricsProvider.LYPRIO -> Res.string.brand_lyprio
             LyricsProvider.BETTERLYRICS -> Res.string.brand_better_lyrics
+            LyricsProvider.SPICYLYRICS -> Res.string.brand_spicy_lyrics
             LyricsProvider.LRCRED -> Res.string.brand_lrcred
             LyricsProvider.UNISON -> Res.string.brand_unison
             LyricsProvider.LRCLIB -> Res.string.brand_lrclib
