@@ -112,9 +112,12 @@ import androidx.compose.ui.unit.sp
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.api.lyrics.LyricsUtils.lyricsPositionForOffset
 import com.metrolist.shared.api.lyrics.LyricsUtils.lyricsSeekPositionForOffset
+import com.metrolist.shared.api.lyrics.SPICY_LYRICS_PROVIDER
 import com.metrolist.shared.api.lyrics.SPICY_LYRICS_SOURCE_FORMAT
 import com.metrolist.shared.generated.resources.Res
+import com.metrolist.shared.generated.resources.brand_spicy_lyrics
 import com.metrolist.shared.generated.resources.cancel
+import com.metrolist.shared.generated.resources.lyrics_catalogue_from
 import com.metrolist.shared.generated.resources.lyrics_curated_by
 import com.metrolist.shared.generated.resources.lyrics_share_limit
 import com.metrolist.shared.generated.resources.lyrics_share_selected_count
@@ -322,13 +325,23 @@ fun LyricsView(
     val shareSelection = onShareSelection.takeUnless { lyricsMeta?.sourceFormat == SPICY_LYRICS_SOURCE_FORMAT }
     val spicyLyricsAttribution =
         if (lyricsMeta?.sourceFormat == SPICY_LYRICS_SOURCE_FORMAT) {
-            val source = lyricsMeta.lyricSource ?: stringResource(Res.string.lyrics_source_unknown)
+            val providerText = lyricsProvidedBy(stringResource(Res.string.brand_spicy_lyrics))
+            val sourceText =
+                when (val source = lyricsMeta.lyricSource) {
+                    SPICY_LYRICS_PROVIDER -> null
+                    null -> stringResource(Res.string.lyrics_source_unknown)
+                    else -> stringResource(Res.string.lyrics_catalogue_from, source)
+                }
             val uploader = lyricsMeta.lyricsUploader
             val maker = lyricsMeta.lyricsMaker
             val uploadedBy = uploader?.let { stringResource(Res.string.lyrics_uploaded_by, it) }
             val syncedBy = maker?.let { stringResource(Res.string.lyrics_synced_by, it) }
             buildAnnotatedString {
-                append(lyricsProvidedBy(source))
+                append(providerText)
+                if (sourceText != null) {
+                    append('\n')
+                    append(sourceText)
+                }
                 if (uploadedBy != null) appendLyricsCredit(uploadedBy, uploader, lyricsMeta.lyricsUploaderUrl)
                 if (syncedBy != null) appendLyricsCredit(syncedBy, maker, lyricsMeta.lyricsMakerUrl)
             }

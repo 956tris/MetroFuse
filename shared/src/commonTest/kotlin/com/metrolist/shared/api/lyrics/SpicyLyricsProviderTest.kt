@@ -53,12 +53,40 @@ class SpicyLyricsProviderTest {
                 val raw = assertNotNull(SpicyLyricsProvider(client, "sl_pk_test").getLyrics("Song & Night", "Artist", 196_125, "Album"))
                 val document = assertNotNull(LyricsUtils.parseMlxDocument(raw))
                 assertEquals("Uploader", document.meta.lyricsUploader)
+                assertEquals("https://spicylyrics.org/uid/1", document.meta.lyricsUploaderUrl)
+                assertEquals("Maker", document.meta.lyricsMaker)
                 assertEquals("https://spicylyrics.org/uid/2", document.meta.lyricsMakerUrl)
                 assertEquals(TRACK_ID, document.meta.sourceId)
                 val line = document.lines.single()
                 assertEquals("Hello world", line.text)
                 assertEquals(1_250L, line.time)
                 assertEquals(listOf(1.25, 1.5, 2.0), line.words?.map { it.startTime })
+            }
+        }
+
+    @Test
+    fun keepsCommercialCatalogueMetadataWithoutCommunityCredits() =
+        runTest {
+            HttpClient(
+                MockEngine { request ->
+                    if (request.url.encodedPath == "/v1/tracks/search") {
+                        respond(search("exact"))
+                    } else {
+                        respond(
+                            """
+                            {"Body":{"Type":"Line","source":"apple_music",
+                              "Content":[{"Type":"Vocal","StartTime":1,"EndTime":2,"Text":"Hello world"}]}}
+                            """.trimIndent(),
+                        )
+                    }
+                },
+            ).use { client ->
+                val raw = assertNotNull(SpicyLyricsProvider(client, "sl_pk_test").getLyrics("Song", "Artist", null, null))
+                val document = assertNotNull(LyricsUtils.parseMlxDocument(raw))
+                assertEquals(SPICY_LYRICS_SOURCE_FORMAT, document.meta.sourceFormat)
+                assertEquals("Apple Music", document.meta.lyricSource)
+                assertNull(document.meta.lyricsUploader)
+                assertNull(document.meta.lyricsMaker)
             }
         }
 
