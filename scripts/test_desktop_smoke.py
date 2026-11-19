@@ -3,6 +3,7 @@
 
 from contextlib import redirect_stderr, nullcontext
 import io
+import json
 import os
 from pathlib import Path
 import re
@@ -173,13 +174,20 @@ while True:
         with tempfile.TemporaryDirectory() as directory:
             work = Path(directory)
             package = work / "portable.zip"
+            launcher = "MetroFuse Beta.exe"
             with zipfile.ZipFile(package, "w") as archive:
-                archive.writestr("MetroFuse.exe", b"launcher")
+                archive.writestr(launcher, b"launcher")
+                archive.writestr("install-manifest.json", json.dumps({"launcher": launcher}))
                 archive.writestr("runtime/bin/server/jvm.dll", b"runtime")
             with smoke.packaged_command(package, work, "win32", None) as command:
-                self.assertEqual([str(work / "app/MetroFuse.exe")], command)
+                self.assertEqual([str(work / "app" / launcher)], command)
                 self.assertEqual(b"launcher", Path(command[0]).read_bytes())
                 self.assertTrue((work / "app/runtime/bin/server/jvm.dll").is_file())
+                process = Mock(returncode=0)
+                process.poll.return_value = 0
+                with patch.object(smoke.subprocess, "run") as run:
+                    smoke.quit_app(process, command[0], "win32")
+                self.assertIn("Get-Process -Name 'MetroFuse Beta'", run.call_args.args[0][-1])
 
     def test_macos_launches_from_final_dmg_and_detaches_on_failure(self):
         for failure in (False, True):

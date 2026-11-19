@@ -199,6 +199,7 @@ jobs:
         run: |
           .\gradlew.bat :desktopApp:assembleWindowsRelease :desktopApp:exportNativePluginAbi '-Pmetrolist.desktop.arch=x86_64' "-Pmetrolist.sourceRevision=$env:RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Move-Item -LiteralPath 'dist/MetroFuse-Beta-Desktop-Windows.zip' -Destination 'dist/MetroFuse-Desktop-Windows.zip'
       - name: Validate Windows release ZIP
         shell: pwsh
         run: |
@@ -207,18 +208,28 @@ jobs:
           $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path 'dist/MetroFuse-Desktop-Windows.zip'))
           try {
             $entries = $archive.Entries.FullName
-            if ('MetroFuse.exe' -notin $entries) { throw 'The Windows launcher is missing' }
             if ($entries | Where-Object { $_ -match '\.(mfp|apk)$|(^|/)plugins/' }) { throw 'The ZIP contains a provider package' }
             $reader = [System.IO.StreamReader]::new($archive.GetEntry('install-manifest.json').Open())
             try { $manifest = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            if ($manifest.launcher -notmatch '\A[A-Za-z][A-Za-z0-9 ]*\.exe\z' -or $null -eq $archive.GetEntry($manifest.launcher)) {
+              throw 'The Windows launcher is missing or invalid'
+            }
             if ($manifest.version -ne $env:RELEASE_VERSION -or $manifest.architecture -ne 'x86_64') { throw 'Windows release metadata does not match' }
           } finally { $archive.Dispose() }
           python scripts/verify_native_plugin_abi.py dist/MetroFuse-Desktop-Windows.zip --classpath-file desktopApp/build/plugin-abi/classpath.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Manual dispatch can build a tag that predates the smoke test fix.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          sparse-checkout: scripts/desktop_smoke.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - name: Smoke-test Windows launcher
         shell: pwsh
         run: |
-          python scripts/desktop_smoke.py dist/MetroFuse-Desktop-Windows.zip --output build/beta-windows-smoke
+          python release-tools/scripts/desktop_smoke.py dist/MetroFuse-Desktop-Windows.zip --output build/beta-windows-smoke
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload desktop Sentry source context
         if: vars.SENTRY_DSN != '' && vars.SENTRY_ORG != '' && vars.SENTRY_PROJECT != ''
@@ -250,7 +261,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ needs.prepare.outputs.commit }}
+          ref: ${{ github.workflow_sha }}
+          sparse-checkout: .github/release-notes
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:

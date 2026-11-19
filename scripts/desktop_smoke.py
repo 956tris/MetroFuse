@@ -4,6 +4,7 @@
 import argparse
 import base64
 from contextlib import contextmanager, nullcontext
+import json
 import os
 from pathlib import Path
 import re
@@ -65,8 +66,13 @@ def packaged_command(package, work, system, stdout):
     elif system == "win32":
         app = work / "app"
         with zipfile.ZipFile(package) as archive:
+            with archive.open("install-manifest.json") as manifest:
+                launcher = json.load(manifest).get("launcher")
+            if not isinstance(launcher, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9 ]*\.exe", launcher):
+                raise ValueError("The Windows launcher name is missing or invalid")
+            archive.getinfo(launcher)
             archive.extractall(app)
-        yield [str(app / "MetroFuse.exe")]
+        yield [str(app / launcher)]
     elif system == "darwin" and package.suffix == ".zip":
         app = work / "app"
         with zipfile.ZipFile(package) as archive:
@@ -186,10 +192,11 @@ def quit_app(process, launcher, system, java_trace=False):
             if java_trace:
                 close = f"$app = Get-Process -Id {process.pid}; if (-not $app.CloseMainWindow()) {{ throw 'Window close failed' }}"
             else:
+                name = Path(launcher).stem
                 path = launcher.replace("'", "''")
                 # jpackage can keep a parent launcher waiting for the GUI process.
                 close = (
-                    f"$apps = @(Get-Process Metrolist | Where-Object {{ $_.Path -eq '{path}' -and $_.MainWindowHandle -ne 0 }}); "
+                    f"$apps = @(Get-Process -Name '{name}' | Where-Object {{ $_.Path -eq '{path}' -and $_.MainWindowHandle -ne 0 }}); "
                     "if ($apps.Count -eq 0) { throw 'Packaged app has no main window to close' }; "
                     "foreach ($app in $apps) { if (-not $app.CloseMainWindow()) { throw 'Window close failed' } }"
                 )

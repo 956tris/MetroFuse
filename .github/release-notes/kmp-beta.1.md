@@ -10,7 +10,7 @@ This beta may crash, contain incomplete features, or fail with incompatible plug
 
 Android: install the main app APK, MetroFuse-Android-Release.apk. It uses com.metrofuse.music and the existing MetroFuse signing key. Update a matching installation in place. Do not uninstall to resolve a signature mismatch without backing up first. Debug and legacy packages are separate installations; their data is not automatically shared. Use Backup & import for supported exports and restores.
 
-Windows x64: extract MetroFuse-Desktop-Windows.zip into a new folder and run MetroFuse.exe. Back up the library and close the old app first. Keep the previous program folder until the beta opens your library successfully. The ZIP includes Java. Windows ARM64, macOS and iOS packages are not included in this release.
+Windows x64: extract MetroFuse-Desktop-Windows.zip into a new folder and run MetroFuse Beta.exe. Back up the library and close the old app first. Keep the previous program folder until the beta opens your library successfully. The ZIP includes Java. Windows ARM64, macOS and iOS packages are not included in this release.
 
 MetroFuse works offline without plugins. Open Settings > Integrations > Plugins > Import or update plugin to choose a downloaded package. Plugin APKs must be imported inside MetroFuse, NOT installed through Android's package installer. Use native APKs on Android, native JARs on desktop, or supported JavaScript MFP alternatives. Do not enable duplicate versions of a provider. Native packages must match API 1.1.0 and Compose ABI kotlin-2.4.21_compose-1.13.0-beta02_api-1.1.0. Enable the provider after import, choose it on Home, and recheck sign-in after migration.
 
