@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.update
@@ -44,14 +45,13 @@ data class DiscordErrorInfo(
 object DiscordRpcManager {
     private const val TAG = "DiscordSvc"
     private const val DISCORD_APP_ID = "${DiscordDefaults.DISCORD_APP_ID}"
+    private const val GATEWAY_READY_TIMEOUT_MS = 15_000L
 
     @Volatile private var initialized: Boolean = false
 
     @Volatile private var shuttingDown: Boolean = false
 
     @Volatile private var ready: Boolean = false
-
-    @Volatile private var authorized: Boolean = false
 
     @Volatile private var accessToken: String? = null
 
@@ -199,7 +199,6 @@ object DiscordRpcManager {
         lastActivity = null
         needsPresenceResend = pendingActivity != null
         ready = false
-        authorized = false
         flushDiscordPresenceBeforeClose(finalFrame != null) { clearPresence ->
             gateway?.suspendConnection(finalFrameJson = finalFrame.takeIf { clearPresence })
         }
@@ -207,7 +206,7 @@ object DiscordRpcManager {
     }
 
     private fun startEventCollection() {
-        scope.launch {
+        scope.launch(start = CoroutineStart.UNDISPATCHED) {
             gateway?.events?.collect { event -> handleGatewayEvent(event) }
         }
     }
@@ -256,22 +255,36 @@ object DiscordRpcManager {
         _connectionStatus.value = Status.Authorizing
         presenceSender?.setReady(false)
         ready = false
-        authorized = false
         try {
-            gateway?.close(4000, "re-authorizing")
-            if (gateway?.connect() != true) return
+            val activeGateway = checkNotNull(gateway)
+            activeGateway.close()
+            activeGateway.resetForFreshIdentify()
+            if (!activeGateway.connect()) {
+                if (current()) failConnectionAttempt()
+                return
+            }
             if (!current()) return
-            gateway?.identify("Bearer $token")
-            authorized = true
+            activeGateway.identify("Bearer $token")
+            val resolved =
+                withTimeoutOrNull(GATEWAY_READY_TIMEOUT_MS.milliseconds) {
+                    connectionStatus.first { it != Status.Authorizing }
+                }
+            if (resolved == null && current() && failConnectionAttempt()) {
+                activeGateway.close(4000, "authorization timed out")
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Throwable) {
             if (!current()) return
             Logger.e(TAG, "Failed to connect", e)
-            _connectionStatus.value = Status.Disconnected
-            ready = false
-            setError("discord_error_connection_failed", e.message)
+            failConnectionAttempt()
         }
+    }
+
+    private fun failConnectionAttempt(): Boolean {
+        if (!_connectionStatus.compareAndSet(Status.Authorizing, Status.Disconnected)) return false
+        setError("discord_error_connection_failed")
+        return true
     }
 
     suspend fun fetchCurrentUser(token: String): DiscordUser? {
@@ -525,7 +538,6 @@ object DiscordRpcManager {
                 }
 
                 refreshBackoff.reset()
-                gateway?.resetForFreshIdentify()
                 performConnection(accessToken ?: return@withLock, generation)
             }
         }
@@ -561,7 +573,6 @@ object DiscordRpcManager {
             is GatewayEvent.Ready, is GatewayEvent.Resumed -> {
                 gateway?.markReady()
                 ready = true
-                authorized = true
                 _connectionStatus.value = Status.Connected
                 clearLastError()
                 needsPresenceResend = true
@@ -582,7 +593,7 @@ object DiscordRpcManager {
                 ready = false
                 presenceSender?.setReady(false)
                 needsPresenceResend = pendingActivity != null
-                _connectionStatus.value = Status.Disconnected
+                if (!failConnectionAttempt()) _connectionStatus.value = Status.Disconnected
             }
 
             is GatewayEvent.Fatal -> {
@@ -597,7 +608,6 @@ object DiscordRpcManager {
 
     fun disconnect() {
         ready = false
-        authorized = false
         needsPresenceResend = pendingActivity != null
         _connectionStatus.value = Status.Disconnected
         presenceSender?.setReady(false)
@@ -617,7 +627,6 @@ object DiscordRpcManager {
         refreshRetryJob?.cancel()
         refreshRetryJob = null
         ready = false
-        authorized = false
         val activeGateway = gateway
         presenceSender?.stop()
         presenceSender = null
@@ -679,7 +688,6 @@ object DiscordRpcManager {
         Settings.shared.discordAvatar = ""
         _connectionStatus.value = Status.Disconnected
         ready = false
-        authorized = false
         pendingActivity = null
         pendingPresence = null
         lastActivity = null

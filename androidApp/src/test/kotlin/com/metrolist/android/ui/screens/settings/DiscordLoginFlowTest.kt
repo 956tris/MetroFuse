@@ -29,7 +29,14 @@ class DiscordLoginFlowTest {
             )
             assertTrue(DiscordLoginFlow.isActive)
             assertTrue(
-                DiscordLoginFlow.handleCallback(Intent(Intent.ACTION_VIEW, "$redirect?state=expected&error=denied".toUri())),
+                DiscordLoginFlow.handleCallback(
+                    Intent(Intent.ACTION_VIEW, "${DiscordDefaults.DISCORD_CALLBACK_SCHEME}://foreign/authorize/callback?state=expected".toUri()),
+                ),
+            )
+            assertTrue(DiscordLoginFlow.isActive)
+            val callback = "${DiscordDefaults.DISCORD_CALLBACK_SCHEME}:/authorize/callback?state=expected&error=denied"
+            assertTrue(
+                DiscordLoginFlow.handleCallback(Intent(Intent.ACTION_VIEW, callback.toUri())),
             )
             assertFalse(DiscordLoginFlow.isActive)
         } finally {

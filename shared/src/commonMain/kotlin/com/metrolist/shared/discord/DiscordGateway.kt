@@ -108,7 +108,7 @@ class DiscordGateway(
         heartbeatJob?.cancel()
         heartbeatJob = null
 
-        val connectedDeferred = CompletableDeferred<Unit>()
+        val receivedHello = CompletableDeferred<Boolean>()
 
         val connectionJob =
             externalScope.launch {
@@ -117,20 +117,19 @@ class DiscordGateway(
                         header("User-Agent", DiscordSuperProperties.USER_AGENT)
                     }) {
                         if (!connectionGeneration.isCurrent(generation) || !connectionAllowed()) {
-                            connectedDeferred.completeExceptionally(CancellationException("Superseded Discord connection"))
+                            receivedHello.completeExceptionally(CancellationException("Superseded Discord connection"))
                             close(CloseReason(4000, "superseded"))
                             return@webSocket
                         }
                         session = this
                         isOpen = true
                         lastAckAtMs = MetrolistClock.nowMs()
-                        connectedDeferred.complete(Unit)
 
                         try {
                             for (frame in incoming) {
                                 if (!connectionGeneration.isCurrent(generation)) break
                                 if (frame is Frame.Text) {
-                                    handleFrame(frame.readText())
+                                    handleFrame(frame.readText(), receivedHello)
                                 }
                             }
                         } catch (e: CancellationException) {
@@ -139,6 +138,7 @@ class DiscordGateway(
                             logDiscordFailure("WebSocket incoming loop failed", e)
                             Logger.e(TAG, "WebSocket incoming loop error", e)
                         } finally {
+                            receivedHello.complete(false)
                             val reason = closeReason.await()
                             handleClose(reason?.code?.toInt() ?: 1000, generation = generation)
                         }
@@ -154,25 +154,23 @@ class DiscordGateway(
                 } catch (e: Throwable) {
                     logDiscordFailure("WebSocket connection failed", e)
                     Logger.e(TAG, "WebSocket connection failed", e)
-                    if (!connectedDeferred.isCompleted) {
-                        connectedDeferred.completeExceptionally(e)
-                    }
+                    receivedHello.completeExceptionally(e)
                     handleClose(4000, generation = generation, force = true)
                 }
             }
         connectionJob.invokeOnCompletion { error ->
-            if (error != null) connectedDeferred.completeExceptionally(error)
+            if (error != null) receivedHello.completeExceptionally(error)
         }
         this.connectionJob = connectionJob
 
         return try {
-            val connected = withTimeoutOrNull(15000.milliseconds) { connectedDeferred.await() } != null
-            if (!connected) {
+            val connected = withTimeoutOrNull(15000.milliseconds) { receivedHello.await() }
+            if (connected == null) {
                 logDiscordFailure("WebSocket connection timed out", IllegalStateException("Handshake timed out"))
                 connectionJob.cancelAndJoin()
                 externalScope.launch { handleClose(4000, generation = generation, force = true) }
             }
-            connected
+            connected == true
         } catch (e: CancellationException) {
             connectionJob.cancel()
             throw e
@@ -331,7 +329,10 @@ class DiscordGateway(
         send(root.toString())
     }
 
-    private suspend fun handleFrame(text: String) {
+    private suspend fun handleFrame(
+        text: String,
+        receivedHello: CompletableDeferred<Boolean>,
+    ) {
         val json =
             try {
                 Json.parseToJsonElement(text).jsonObject
@@ -353,6 +354,7 @@ class DiscordGateway(
                 val interval = ((d as? JsonObject)?.get("heartbeat_interval") as? JsonPrimitive)?.longOrNull ?: DEFAULT_HEARTBEAT_MS
                 Logger.d(TAG, "HELLO received, heartbeatInterval=${interval}ms")
                 startHeartbeat(interval)
+                receivedHello.complete(true)
             }
 
             OP_HEARTBEAT_ACK -> {

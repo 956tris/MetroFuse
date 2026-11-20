@@ -185,7 +185,9 @@ class MainActivity : ComponentActivity() {
 
         @Suppress("DEPRECATION")
         val pendingIntent =
-            if (savedInstanceState?.containsKey("incomingIntent") == true) {
+            if (DiscordLoginFlow.isCallback(intent)) {
+                intent
+            } else if (savedInstanceState?.containsKey("incomingIntent") == true) {
                 savedInstanceState.getParcelable<Intent>("incomingIntent")
             } else {
                 intent
@@ -315,7 +317,7 @@ class MainActivity : ComponentActivity() {
                     if (onboardingComplete) {
                         MetrolistApp(
                             navigationSaveKey = navigationRestoration.saveKey,
-                            incomingIntent = incomingIntentState.value,
+                            incomingIntent = incomingIntentState.value?.takeUnless(DiscordLoginFlow::isCallback),
                             incomingPlaybackSong = incomingPlaybackSong,
                             onExitApp = ::finish,
                             onIncomingIntentConsumed = { consumed ->
