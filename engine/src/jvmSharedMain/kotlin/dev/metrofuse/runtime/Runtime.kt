@@ -63,7 +63,15 @@ class Runtime(
         error: Throwable,
     ) {
         val manifest = plugins.value.firstOrNull { it.manifest.id == owner }?.manifest ?: return
-        failureReports.report(PluginFailure(owner, manifest.version, manifest.runtime, operation, error), onPluginFailure)
+        failureReports.report(PluginFailure(owner, manifest.version, manifest.runtime, operation, error)) { failure ->
+            failure.audioDiagnostic?.let { detail ->
+                log(
+                    owner,
+                    "${failure.operation} ${detail.code}, attempt ${detail.attempt}, ${detail.durationMillis} ms, retryable=${detail.retryable}",
+                )
+            }
+            onPluginFailure(failure)
+        }
     }
 
     val pipelines = ProviderPipelines(registry, trackLookup = host.catalog::identify)

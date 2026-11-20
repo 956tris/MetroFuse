@@ -102,7 +102,14 @@ internal fun capturePluginFailure(failure: PluginFailure): Boolean =
         scope.setTag("plugin.version", failure.version)
         scope.setTag("plugin.runtime", failure.runtime)
         scope.setTag("plugin.operation", failure.operation)
-        scope.fingerprint = listOf("plugin", failure.owner, failure.operation, failure.error.javaClass.name)
+        val diagnostic = failure.audioDiagnostic
+        if (diagnostic != null) {
+            scope.setTag("plugin.audio.code", diagnostic.code)
+            scope.setTag("plugin.audio.retryable", diagnostic.retryable.toString())
+            scope.setExtra("plugin.audio.attempt", diagnostic.attempt.toString())
+            scope.setExtra("plugin.audio.duration_ms", diagnostic.durationMillis.toString())
+        }
+        scope.fingerprint = listOfNotNull("plugin", failure.owner, failure.operation, failure.error.javaClass.name, diagnostic?.code)
     } != SentryId.EMPTY_ID
 
 internal fun capturePreviousDesktopExit(previous: PreviousDesktopExit): Boolean =

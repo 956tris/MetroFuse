@@ -80,6 +80,21 @@ class PluginFailureReportingTest {
     }
 
     @Test
+    fun approvedAudioFailuresAreGroupedByCodeAndUnknownCodesAreRedacted() {
+        val sent = mutableListOf<PluginFailure>()
+        val reports = PluginFailureReports { 0L }
+        val failure = PluginFailure("fixture", "1.0.0", "kotlin", "audio.resolve", PluginProviderException("TIMEOUT", true, 1, 250))
+        reports.report(failure, sent::add)
+        reports.report(failure, sent::add)
+        reports.report(failure.copy(error = PluginProviderException("LOGIN_REQUIRED", false, 1, 10)), sent::add)
+        val unknown = failure.copy(error = PluginProviderException("PRIVATE_API_KEY", false, 2, 15))
+        reports.report(unknown, sent::add)
+        assertEquals(listOf("TIMEOUT", "LOGIN_REQUIRED", "PROVIDER_ERROR"), sent.map { it.audioDiagnostic?.code })
+        assertEquals(PluginAudioDiagnostic("TIMEOUT", true, 1, 250), sent.first().audioDiagnostic)
+        assertFalse(PluginOperationException(unknown).message.orEmpty().contains("PRIVATE_API_KEY"))
+    }
+
+    @Test
     fun realJavaScriptActivationFailureIncludesInstalledPluginMetadata() =
         runBlocking {
             val storage = Files.createTempDirectory("metrofuse-reporting-").toFile()

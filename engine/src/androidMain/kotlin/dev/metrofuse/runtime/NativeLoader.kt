@@ -2,7 +2,6 @@ package dev.metrofuse.runtime
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.content.res.AssetManager
 import android.os.Build
 import dalvik.system.DexClassLoader
 import dev.metrofuse.api.NativePlugin
@@ -41,7 +40,7 @@ actual fun loadNative(path: String, entryClass: String): NativeHandle {
     val directory = File(application.codeCacheDir, "metrofuse-${UUID.randomUUID()}")
     require(directory.mkdir())
     val artifact = File(directory, "plugin.apk")
-    var ownedAssets: AssetManager? = null
+    var resourceLoadStarted = false
     try {
         artifact.outputStream().use { output ->
             require(artifact.setReadOnly()) { "Cannot mark Android plugin executable read-only" }
@@ -58,8 +57,8 @@ actual fun loadNative(path: String, entryClass: String): NativeHandle {
         require(applicationInfo.minSdkVersion <= Build.VERSION.SDK_INT) { "Plugin requires Android API ${applicationInfo.minSdkVersion}; this device provides ${Build.VERSION.SDK_INT}" }
         applicationInfo.sourceDir = artifact.absolutePath
         applicationInfo.publicSourceDir = artifact.absolutePath
+        resourceLoadStarted = true
         val resources = packageManager.getResourcesForApplication(applicationInfo)
-        ownedAssets = resources.assets
         val libraryDirectory = File(directory, "lib")
         ZipFile(artifact).use { zip ->
             val abi = Build.SUPPORTED_ABIS.firstOrNull { supported -> zip.entries().asSequence().any { it.name.startsWith("lib/$supported/") && it.name.endsWith(".so") } }
@@ -91,15 +90,12 @@ actual fun loadNative(path: String, entryClass: String): NativeHandle {
             },
             platformResources = resources,
             requiresRestartForReplacement = libraryDirectory.isDirectory,
-            close = {
-                resources.assets.close()
-                // ART owns DEX and native class lifetime. Delete only these private copies.
-                if (!libraryDirectory.isDirectory) directory.deleteRecursively()
-            },
+            // Android may refresh its cached resources after this handle closes.
+            // Keep the APK available until the next process's cache cleanup.
+            close = {},
         )
     } catch (error: Throwable) {
-        try { ownedAssets?.close() } catch (cleanupError: Throwable) { error.addSuppressed(cleanupError) }
-        directory.deleteRecursively()
+        if (!resourceLoadStarted) directory.deleteRecursively()
         throw error
     }
 }

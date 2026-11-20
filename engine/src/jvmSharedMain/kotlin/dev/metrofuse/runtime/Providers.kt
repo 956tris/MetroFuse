@@ -330,11 +330,6 @@ class ProviderPipelines(
                         record("audio.resolve", entry.id, "DEACTIVATED", start, attempt)
                         break
                     }
-                    if (result.error !=
-                        null
-                    ) {
-                        registry.reportFailure(entry.owner, "audio.resolve", thrownFailure ?: PluginProviderException())
-                    }
                     val stream = result.stream
                     val expires = stream?.expiresAtMillis
                     val bitrate = stream?.bitrate
@@ -376,12 +371,24 @@ class ProviderPipelines(
                         }
                         return ownedResult
                     }
+                    val error = result.error
+                    val outcome = error?.code ?: if (stream == null) "NO_MATCH" else "INVALID_DESCRIPTOR"
+                    if (error != null || stream != null) {
+                        registry.reportFailure(
+                            entry.owner,
+                            "audio.resolve",
+                            thrownFailure ?: PluginProviderException(
+                                outcome,
+                                error?.retryable == true,
+                                attempt + 1,
+                                (System.nanoTime() - start) / 1_000_000,
+                            ),
+                        )
+                    }
                     record(
                         "audio.resolve",
                         entry.id,
-                        result.error?.code?.takeIf {
-                            it.matches(Regex("[A-Z0-9_]{1,64}"))
-                        } ?: "INVALID_DESCRIPTOR",
+                        audioDiagnosticCode(outcome),
                         start,
                         attempt,
                     )
