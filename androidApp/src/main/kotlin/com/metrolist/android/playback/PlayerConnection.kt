@@ -617,6 +617,7 @@ class PlayerConnection(
         scope.launch {
             player.currentPlaybackResource.collect {
                 _currentPlaybackResource.value = it
+                sourceAudioFormatState.value = player.sourceAudioFormat
                 updateProgress()
             }
         }

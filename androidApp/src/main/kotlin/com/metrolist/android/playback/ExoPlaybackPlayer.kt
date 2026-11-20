@@ -609,11 +609,19 @@ class ExoPlaybackPlayer(
     private val onEOFPlaybackInstanceState = MutableSharedFlow<Long>(extraBufferCapacity = 1)
     private val streamFailureState = MutableSharedFlow<AndroidPlaybackRecoveryRequest>(extraBufferCapacity = 1)
     override val sourceAudioFormat: Format?
-        get() =
-            exo.audioFormat.takeIf {
-                controllerClock == null && !playbackTransitions.pending.value &&
-                    exo.playbackState == Player.STATE_READY
+        get() {
+            if (controllerClock != null || playbackTransitions.pending.value || exo.playbackState != Player.STATE_READY) {
+                return null
             }
+            val format = exo.audioFormat ?: return null
+            if (format.sampleRate > 0 && format.averageBitrate > 0) return format
+            val resource = currentResource?.takeIf { it == _currentPlaybackResource.value } ?: return format
+            val audioFileSize =
+                resource.contentLengthBytes?.takeIf {
+                    resource.clientName == "local" && !exo.currentTracks.containsType(C.TRACK_TYPE_VIDEO)
+                }
+            return format.withSourceAudioRates(resource, audioFileSize, exo.duration)
+        }
 
     override val currentSong: StateFlow<SongItem?> = _currentSong.asStateFlow()
     override val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()

@@ -111,6 +111,8 @@ Use the player for previous, play/pause, next, seeking and the current queue. Ar
 
 The audio-format label reports known metadata for the playing source: codec, original bit depth, sample rate and bitrate. Missing fields are omitted. A lossy source's decoded PCM depth does not establish its original bit depth. The label describes source audio, so it does not guarantee the quality of a Bluetooth connection, cast receiver or physical output device. On Android, the label appears below the artist in the built-in player; tap it for details. It stays hidden while loading or playing through Cast or a remote Device Connect session. Desktop tooltips show exact sample-rate and bitrate values where available.
 
+Android uses playback source metadata when the decoder omits the sample rate or bitrate. For audio-only local or cached files, Android can estimate average bitrate from file size and playback duration.
+
 For offline listening, use local files or audio already downloaded or cached by the app. A song visible in a provider catalog is not necessarily saved for offline playback. Test with **Offline** selected before travelling without a connection.
 
 ## Fix common problems
