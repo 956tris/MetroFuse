@@ -2,6 +2,7 @@
 
 package com.metrolist.shared.plugins
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,18 +16,18 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.metrolist.shared.generated.resources.*
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.ui.components.ExpressiveFilterChip
 import com.metrolist.shared.ui.components.ExpressiveSwitch
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.settings.LocalSettingsPageBottomPadding
@@ -71,6 +73,7 @@ import dev.metrofuse.api.SettingType
 import dev.metrofuse.api.Track
 import dev.metrofuse.runtime.LifecyclePhase
 import dev.metrofuse.runtime.PluginStatus
+import dev.metrofuse.runtime.ProviderEntry
 import dev.metrofuse.runtime.Runtime
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -78,6 +81,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.stringResource
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
@@ -100,22 +104,26 @@ fun PluginManagerScreen(
     val scope = rememberCoroutineScope()
     var operationInProgress by remember { mutableStateOf(false) }
     val busy = operationInProgress || importInProgress
+    val pluginsById = remember(plugins) { plugins.associateBy { it.manifest.id } }
     val orderedPlugins =
-        runtime.registry
-            .order("plugins", plugins.map { it.manifest.id })
-            .mapNotNull { id -> plugins.firstOrNull { it.manifest.id == id } }
-    val providers =
-        listOf(
-            "audio.resolve" to
-                runtime.registry
-                    .audioSources()
-                    .filter { it.owner != "builtin" }
-                    .map { it.id },
-            "metadata.resolve" to runtime.registry.metadataSources().map { it.id },
-            "lyrics.resolve" to runtime.registry.lyricsProviders().map { it.id },
-            "search.resolve" to runtime.registry.searchProviders().map { it.id },
-        )
-    val listState = rememberLazyListState()
+        remember(registry, pluginsById) {
+            runtime.registry.order("plugins", pluginsById.keys).mapNotNull(pluginsById::get)
+        }
+    val pluginIds = remember(orderedPlugins) { orderedPlugins.map { it.manifest.id } }
+    val providerGroups: List<Triple<String, StringResource, List<ProviderEntry<*>>>> =
+        remember(runtime, registry, pluginsById) {
+            listOf(
+                Triple("audio.resolve", Res.string.plugins_provider_audio, runtime.registry.audioSources().filter { it.owner != "builtin" }),
+                Triple("metadata.resolve", Res.string.plugins_provider_metadata, runtime.registry.metadataSources()),
+                Triple("lyrics.resolve", Res.string.plugins_provider_lyrics, runtime.registry.lyricsProviders()),
+                Triple("search.resolve", Res.string.plugins_provider_search, runtime.registry.searchProviders()),
+            ).filter { it.third.isNotEmpty() }
+        }
+    var section by rememberSaveable { mutableStateOf(0) }
+    val installedListState = rememberLazyListState()
+    val marketplaceListState = rememberLazyListState()
+    val orderListState = rememberLazyListState()
+    val advancedListState = rememberLazyListState()
 
     fun moveOrder(
         point: String?,
@@ -123,25 +131,24 @@ fun PluginManagerScreen(
         from: Int,
         to: Int,
     ) {
-        if (busy || from !in ids.indices || to !in ids.indices) return
+        if (busy || from == to || from !in ids.indices || to !in ids.indices) return
         runtime.registry.reorderVisible(point, ids.toMutableList().apply { add(to, removeAt(from)) })
     }
     val reorderState =
-        rememberReorderableLazyListState(listState) { from, to ->
+        rememberReorderableLazyListState(orderListState) { from, to ->
             val fromKey = from.key as? String ?: return@rememberReorderableLazyListState
             val toKey = to.key as? String ?: return@rememberReorderableLazyListState
-            val ids = orderedPlugins.map { it.manifest.id }
-            if (fromKey in ids && toKey in ids) {
-                moveOrder(null, ids, ids.indexOf(fromKey), ids.indexOf(toKey))
+            if (fromKey.startsWith("plugin:") && toKey.startsWith("plugin:")) {
+                moveOrder(null, pluginIds, pluginIds.indexOf(fromKey.removePrefix("plugin:")), pluginIds.indexOf(toKey.removePrefix("plugin:")))
             } else {
-                providers.forEach { (point, order) ->
+                providerGroups.forEach { (point, _, entries) ->
+                    val order = entries.map { it.id }
                     val keys = order.map { "$point:$it" }
                     if (fromKey in keys && toKey in keys) moveOrder(point, order, keys.indexOf(fromKey), keys.indexOf(toKey))
                 }
             }
         }
     var error by remember { mutableStateOf<String?>(null) }
-    var section by rememberSaveable { mutableStateOf(0) }
     var advancedSection by rememberSaveable { mutableStateOf<String?>(null) }
     var query by rememberSaveable { mutableStateOf("") }
     var searchResults by remember { mutableStateOf<List<Track>>(emptyList()) }
@@ -169,21 +176,24 @@ fun PluginManagerScreen(
     LaunchedEffect(runtime) { runtime.initialize() }
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(Modifier.widthIn(max = 840.dp).fillMaxSize()) {
-            ScrollableTabRow(
-                selectedTabIndex = section,
-                edgePadding = 16.dp,
-                containerColor = MaterialTheme.colorScheme.surface,
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                listOf(Res.string.plugins_installed, Res.string.plugins_marketplace, Res.string.plugins_advanced).forEachIndexed {
-                    index,
-                    label,
-                    ->
-                    Tab(selected = section == index, onClick = { section = index }, text = { Text(stringResource(label)) })
+                val sections = listOf(Res.string.plugins_installed, Res.string.plugins_marketplace, Res.string.plugin_order_title, Res.string.plugins_advanced)
+                sections.forEachIndexed { index, label ->
+                    ExpressiveFilterChip(selected = section == index, onClick = { section = index }, label = { Text(stringResource(label)) })
                 }
             }
             if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
             LazyColumn(
-                state = listState,
+                state = when (section) {
+                    0 -> installedListState
+                    1 -> marketplaceListState
+                    2 -> orderListState
+                    else -> advancedListState
+                },
                 modifier = Modifier.fillMaxSize(),
                 contentPadding =
                     PaddingValues(
@@ -193,7 +203,7 @@ fun PluginManagerScreen(
                         bottom =
                             24.dp + LocalSettingsPageBottomPadding.current,
                     ),
-                verticalArrangement = Arrangement.spacedBy(if (section == 0 || advancedSection == "providers") 4.dp else 16.dp),
+                verticalArrangement = Arrangement.spacedBy(if (section == 0 || section == 2) 4.dp else 16.dp),
             ) {
                 (error ?: importError)?.let { message ->
                     item { PluginNotice(message, isError = true) }
@@ -242,11 +252,6 @@ fun PluginManagerScreen(
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(
-                                    stringResource(Res.string.plugin_order_summary),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                Text(
                                     stringResource(
                                         Res.string.plugins_installed_summary,
                                         plugins.count { it.phase == LifecyclePhase.ACTIVE },
@@ -275,27 +280,7 @@ fun PluginManagerScreen(
                             }
                         }
                         items(orderedPlugins, key = { it.manifest.id }) { plugin ->
-                            ReorderableItem(reorderState, key = plugin.manifest.id, enabled = !busy) { dragging ->
-                                val index = orderedPlugins.indexOf(plugin)
-                                val ids = orderedPlugins.map { it.manifest.id }
-                                InstalledPluginCard(
-                                    runtime,
-                                    plugin,
-                                    busy,
-                                    ::operation,
-                                    shape = segmentedGroupShape(index == 0, index == orderedPlugins.lastIndex, dragging),
-                                    orderHandle = {
-                                        PluginOrderHandle(
-                                            plugin.manifest.name,
-                                            index,
-                                            ids.size,
-                                            !busy,
-                                            Modifier.longPressDraggableHandle(),
-                                            onMove = { target -> moveOrder(null, ids, index, target) },
-                                        )
-                                    },
-                                )
-                            }
+                            InstalledPluginCard(runtime, plugin, busy, ::operation)
                         }
                         item {
                             Text(
@@ -311,6 +296,54 @@ fun PluginManagerScreen(
                         pluginMarketplace(marketplace, runtime, plugins, busy, ::operation)
                     }
 
+                    2 -> {
+                        item(key = "plugin-order-heading") {
+                            PluginOrderHeading(
+                                stringResource(Res.string.plugins_your_plugins),
+                                stringResource(Res.string.plugin_order_summary),
+                            )
+                        }
+                        if (orderedPlugins.isEmpty()) {
+                            item { PluginNotice(stringResource(Res.string.plugins_empty_title)) }
+                        }
+                        items(orderedPlugins, key = { "plugin:${it.manifest.id}" }) { plugin ->
+                            val index = pluginIds.indexOf(plugin.manifest.id)
+                            ReorderableItem(reorderState, key = "plugin:${plugin.manifest.id}", enabled = !busy) { dragging ->
+                                PluginOrderRow(plugin.manifest.name, null, index, pluginIds.size, dragging) {
+                                    PluginOrderHandle(
+                                        plugin.manifest.name, index, pluginIds.size, !busy,
+                                        Modifier.longPressDraggableHandle(),
+                                    ) { target -> moveOrder(null, pluginIds, index, target) }
+                                }
+                            }
+                        }
+                        item(key = "provider-order-heading") {
+                            PluginOrderHeading(
+                                stringResource(Res.string.plugins_providers),
+                                stringResource(Res.string.plugin_order_provider_summary),
+                            )
+                        }
+                        if (providerGroups.isEmpty()) {
+                            item { PluginNotice(stringResource(Res.string.plugins_no_providers)) }
+                        }
+                        providerGroups.forEach { (point, label, entries) ->
+                            item(key = "heading:$point") { PluginOrderHeading(stringResource(label)) }
+                            val ids = entries.map { it.id }
+                            items(entries, key = { "$point:${it.id}" }) { provider ->
+                                val index = ids.indexOf(provider.id)
+                                val name = pluginsById[provider.owner]?.manifest?.name ?: provider.id
+                                val detail = provider.id.takeUnless { it == name }
+                                ReorderableItem(reorderState, key = "$point:${provider.id}", enabled = !busy) { dragging ->
+                                    PluginOrderRow(name, detail, index, ids.size, dragging) {
+                                        PluginOrderHandle(name, index, ids.size, !busy, Modifier.longPressDraggableHandle()) { target ->
+                                            moveOrder(point, ids, index, target)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     else -> {
                         item {
                             Text(
@@ -322,7 +355,6 @@ fun PluginManagerScreen(
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 listOf(
-                                    Triple("providers", Res.string.plugins_providers, MetrolistIcons.Outlined.Tune),
                                     Triple("search", Res.string.plugins_search, MetrolistIcons.Outlined.Search),
                                     Triple("diagnostics", Res.string.plugins_diagnostics, MetrolistIcons.Outlined.Info),
                                 ).forEachIndexed { index, (id, label, icon) ->
@@ -331,7 +363,7 @@ fun PluginManagerScreen(
                                         title = stringResource(label),
                                         icon = icon,
                                         first = index == 0,
-                                        last = index == 2,
+                                        last = index == 1,
                                         onClick = { advancedSection = if (expanded) null else id },
                                         trailingContent = {
                                             Icon(
@@ -348,63 +380,6 @@ fun PluginManagerScreen(
                             }
                         }
                         when (advancedSection) {
-                            "providers" -> {
-                                item {
-                                    Text(
-                                        stringResource(Res.string.plugin_order_provider_summary),
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    if (providers.all { it.second.isEmpty() }) {
-                                        Text(
-                                            stringResource(Res.string.plugins_no_providers),
-                                            Modifier.padding(top = 12.dp),
-                                        )
-                                    }
-                                }
-                                providers.filter { it.second.isNotEmpty() }.forEach { (point, ids) ->
-                                    item(key = "heading:$point") {
-                                        Text(
-                                            stringResource(
-                                                when (point) {
-                                                    "audio.resolve" -> Res.string.plugins_provider_audio
-                                                    "metadata.resolve" -> Res.string.plugins_provider_metadata
-                                                    "lyrics.resolve" -> Res.string.plugins_provider_lyrics
-                                                    else -> Res.string.plugins_provider_search
-                                                },
-                                            ),
-                                            modifier = Modifier.padding(top = 12.dp, bottom = 8.dp).semantics { heading() },
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                    items(ids, key = { "$point:$it" }) { id ->
-                                        ReorderableItem(reorderState, key = "$point:$id", enabled = !busy) { dragging ->
-                                            val index = ids.indexOf(id)
-                                            Surface(
-                                                shape = segmentedGroupShape(index == 0, index == ids.lastIndex, dragging),
-                                                color = MaterialTheme.colorScheme.surfaceContainer,
-                                            ) {
-                                                Row(
-                                                    Modifier.fillMaxWidth().padding(16.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                ) {
-                                                    Text(id, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
-                                                    PluginOrderHandle(
-                                                        id,
-                                                        index,
-                                                        ids.size,
-                                                        !busy,
-                                                        Modifier.longPressDraggableHandle(),
-                                                        onMove = { target -> moveOrder(point, ids, index, target) },
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
                             "search" -> {
                                 item {
                                     PluginSurface {
@@ -489,6 +464,56 @@ private fun PluginImportCard(
 }
 
 @Composable
+private fun PluginOrderHeading(title: String, description: String? = null) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, Modifier.semantics { heading() }, style = MaterialTheme.typography.titleMedium)
+        description?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun PluginOrderRow(
+    title: String,
+    detail: String?,
+    index: Int,
+    count: Int,
+    dragging: Boolean,
+    handle: @Composable () -> Unit,
+) {
+    Surface(
+        shape = segmentedGroupShape(index == 0, index == count - 1, dragging),
+        color = if (dragging) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+        shadowElevation = if (dragging) 6.dp else 0.dp,
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (count > 1) {
+                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                    Box(Modifier.size(32.dp), contentAlignment = Alignment.Center) {
+                        Text((index + 1).toString(), style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                detail?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (count > 1) handle()
+        }
+    }
+}
+
+@Composable
 internal fun PluginSurface(
     shape: Shape = MaterialTheme.shapes.extraLarge,
     content: @Composable () -> Unit,
@@ -517,8 +542,6 @@ private fun InstalledPluginCard(
     plugin: PluginStatus,
     busy: Boolean,
     operation: (suspend () -> Unit) -> Unit,
-    shape: Shape,
-    orderHandle: @Composable () -> Unit,
 ) {
     val manifest = plugin.manifest
     val registry by runtime.registry.state.collectAsState()
@@ -529,7 +552,8 @@ private fun InstalledPluginCard(
     val settings = contributions.filter { it.point.startsWith("settings.") || it.point.endsWith(".settings") }
     val enabled = plugin.phase == LifecyclePhase.ACTIVE
     val toggleLabel = stringResource(if (enabled) Res.string.plugins_disable else Res.string.plugins_enable)
-    PluginSurface(shape) {
+    val configurable = manifest.settings.isNotEmpty() || settings.isNotEmpty()
+    PluginSurface {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val icon =
                 manifest.icon?.let { File(plugin.directory, it) }?.takeIf {
@@ -550,19 +574,19 @@ private fun InstalledPluginCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            orderHandle()
+            ExpressiveSwitch(
+                checked = enabled,
+                onCheckedChange = { active ->
+                    operation { if (active) runtime.enableOrdered(setOf(manifest.id)) else runtime.disable(manifest.id) }
+                },
+                enabled = !busy && plugin.phase != LifecyclePhase.LOADING,
+                modifier = Modifier.semantics { contentDescription = toggleLabel },
+            )
             Box {
                 IconButton(onClick = { menuOpen = true }, enabled = !busy) {
                     Icon(MetrolistIcons.Outlined.MoreVert, stringResource(Res.string.plugins_actions))
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    if (manifest.settings.isNotEmpty() || settings.isNotEmpty()) {
-                        DropdownMenuItem(text = { Text(stringResource(Res.string.plugins_settings)) }, onClick = {
-                            menuOpen = false
-                            showSettings =
-                                !showSettings
-                        })
-                    }
                     DropdownMenuItem(text = { Text(stringResource(Res.string.details)) }, onClick = {
                         menuOpen = false
                         showDetails =
@@ -622,14 +646,17 @@ private fun InstalledPluginCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            ExpressiveSwitch(
-                checked = enabled,
-                onCheckedChange = { active ->
-                    operation { if (active) runtime.enableOrdered(setOf(manifest.id)) else runtime.disable(manifest.id) }
-                },
-                enabled = !busy && plugin.phase != LifecyclePhase.LOADING,
-                modifier = Modifier.semantics { contentDescription = toggleLabel },
-            )
+            if (configurable) {
+                FilledTonalButton(onClick = { showSettings = !showSettings }, enabled = !busy) {
+                    Icon(MetrolistIcons.Outlined.Settings, null, Modifier.size(18.dp))
+                    Text(stringResource(Res.string.plugins_settings), Modifier.padding(start = 8.dp))
+                    Icon(
+                        if (showSettings) MetrolistIcons.Outlined.KeyboardArrowUp else MetrolistIcons.Outlined.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.padding(start = 4.dp).size(18.dp),
+                    )
+                }
+            }
         }
         plugin.error?.let { PluginNotice(it, isError = true) }
         if (showDetails) {
@@ -657,10 +684,13 @@ private fun InstalledPluginCard(
                 )
             }
         }
-        if (showSettings) {
-            Text(stringResource(Res.string.plugins_settings), style = MaterialTheme.typography.titleSmall)
-            PluginDefinedSettings(runtime, manifest.id, manifest.version, manifest.settings, busy, operation)
-            settings.forEach { PluginContributionContent(it, runtime) }
+        if (showSettings && configurable) {
+            Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PluginDefinedSettings(runtime, manifest.id, manifest.version, manifest.settings, busy, operation)
+                    settings.forEach { PluginContributionContent(it, runtime) }
+                }
+            }
         }
         contributions.filter { it.point.startsWith(PLUGIN_SCREEN_POINT_PREFIX) }.distinctBy { it.point }.forEach { contribution ->
             val route = PluginScreenRoute(manifest.id, contribution.point)

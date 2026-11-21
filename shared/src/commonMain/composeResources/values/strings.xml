@@ -5493,7 +5493,7 @@
     <string name="plugins_import_summary">Import a new plugin or update one you already have. Universal .mfp files work on Android and desktop.</string>
     <string name="plugins_author_version">%1$s · %2$s</string>
     <string name="plugins_actions">Plugin actions</string>
-    <string name="plugins_advanced_summary">Adjust provider order, try a search or inspect recent plugin activity.</string>
+    <string name="plugins_advanced_summary">Try a search or inspect recent plugin activity.</string>
     <string name="plugins_priority_summary">Providers with a higher priority run first. Enable a plugin to see its providers here.</string>
     <string name="plugins_no_providers">No providers are active.</string>
     <string name="plugins_no_diagnostics">No recent plugin activity.</string>
@@ -5574,7 +5574,8 @@
     <string name="music_frontend_switch">Choose music frontend</string>
     <string name="music_frontend_offline_summary">Only local and downloaded music can play in Offline.</string>
     <string name="swap_artwork_lyrics_sides">Swap artwork and lyrics sides</string>
-    <string name="plugin_order_summary">Hold and drag a handle to change plugin order. Earlier plugins take priority, after their dependencies.</string>
+    <string name="plugin_order_title">Order</string>
+    <string name="plugin_order_summary">Drag a handle or open its move actions. Plugins at the top get priority after their dependencies.</string>
     <string name="plugin_order_provider_summary">Hold and drag a handle within a provider group. Providers are tried from top to bottom, after their dependencies. This overrides the plugin order for that group.</string>
     <string name="plugin_order_handle">Reorder %1$s, position %2$d of %3$d. Open for move actions, or use Alt and the arrow keys.</string>
     <string name="plugin_order_move_up">Move earlier</string>
