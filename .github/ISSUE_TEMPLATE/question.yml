@@ -1,11 +1,11 @@
 name: Ask a question
-description: Ask about Metrolist
+description: Ask about MetroFuse
 labels: [question]
 body:
   - type: markdown
     attributes:
       value: |
-        Writing this with an LLM? Check [rejected features](https://github.com/MetrolistGroup/Metrolist/blob/main/AGENTS.md#rejected-features) and existing issues first, apply [unslop](https://github.com/MetrolistGroup/Metrolist/blob/main/skills/unslop/SKILL.md) to the text and keep it short.
+        The [MetroFuse user guide](https://github.com/956tris/MetroFuse/blob/main/docs/user-guide.md) covers getting started and using plugins.
   - type: dropdown
     id: device
     attributes:

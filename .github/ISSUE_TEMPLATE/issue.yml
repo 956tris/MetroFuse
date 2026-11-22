@@ -1,18 +1,18 @@
 name: Report a bug
-description: Report a problem with Metrolist
+description: Report a problem with MetroFuse
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Writing this with an LLM? Check [rejected features](https://github.com/MetrolistGroup/Metrolist/blob/main/AGENTS.md#rejected-features) and existing issues first, apply [unslop](https://github.com/MetrolistGroup/Metrolist/blob/main/skills/unslop/SKILL.md) to the text and keep it short.
+        If a plugin is involved, include its name and version. Remove account details, tokens, and cookies from any logs.
   - type: checkboxes
     id: checklist
     attributes:
       label: Checklist
       description: Issues that skip these checks or duplicate an existing issue are closed without a response.
       options:
-        - label: I can reproduce this on the [latest release](https://github.com/MetrolistGroup/Metrolist/releases).
+        - label: I can reproduce this on the [current MetroFuse beta](https://github.com/956tris/MetroFuse/releases).
           required: true
         - label: I searched open and closed issues and found no duplicate.
           required: true
