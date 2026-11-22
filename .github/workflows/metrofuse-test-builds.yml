@@ -84,6 +84,9 @@ jobs:
           name: metrofuse-android-debug
           path: androidApp/build/outputs/apk/debug/**/*.apk
           if-no-files-found: error
+      - uses: ./.github/actions/prepare-robolectric-sdks
+        with:
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Verify Android host
         run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --no-configuration-cache
       - name: Upload Android verification reports

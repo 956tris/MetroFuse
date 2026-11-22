@@ -6,6 +6,8 @@ The public [plugin authoring guide](https://github.com/956tris/MetroFuse-Plugin-
 
 Android and desktop share the SDK's [native host API rules](../plugin-sdk/native-host-api.pro). KMP release jobs check packaged Ktor/IO class, method and field definitions against the resolved host libraries before upload. Native plugins must use matching dependency versions and keep host-provided libraries compile-only.
 
+KMP beta releases build the selected tag with icon dependencies, Android test SDK preparation and Windows smoke tests from the workflow's own revision. Manual retries preserve the beta number and application source revision. Android host tests use checksum-verified SDKs cached from Maven Central's Google mirror, with Central as a second download source.
+
 The application retains its [README](../README.md) and [installation index](install/README.md). Technical references from before documentation cleanup remain available at [the previous source revision](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs). Local development notes stay outside Git tracking.
 
 Required legal and build inputs remain available as [translation attribution](translation-attribution), [fixture provenance](test-fixtures), [release history](changelog) and [security policy](../SECURITY). Provider packages carry their SOURCE files and license notices.
