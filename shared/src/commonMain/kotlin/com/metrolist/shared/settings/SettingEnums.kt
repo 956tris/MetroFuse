@@ -62,6 +62,11 @@ enum class PlayerBackgroundStyle {
     GRADIENT,
     ANIMATED_GRADIENT,
     LIQUID,
+    GALAXY,
+    GALAXY_BLUR,
+    ;
+
+    val isGalaxy: Boolean get() = this == GALAXY || this == GALAXY_BLUR
 }
 
 enum class ThemePaletteStyle {

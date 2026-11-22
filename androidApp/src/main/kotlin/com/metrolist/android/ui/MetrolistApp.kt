@@ -1180,6 +1180,10 @@ fun MetrolistApp(
                                 navigator.navigate(Screen.BackupRestore)
                             }
 
+                            IncomingDestination.Plugins -> {
+                                navigator.navigate(Screen.Plugins)
+                            }
+
                             IncomingDestination.Recognition -> {
                                 navigator.navigate(Screen.Recognition)
                             }
@@ -2204,6 +2208,8 @@ sealed class IncomingDestination {
 
     object BackupRestore : IncomingDestination()
 
+    object Plugins : IncomingDestination()
+
     object Recognition : IncomingDestination()
 
     object Player : IncomingDestination()
@@ -2288,6 +2294,7 @@ fun Intent.toIncomingDestination(): IncomingDestination? {
         MainActivity.ACTION_LOGIN -> IncomingDestination.Login
         Intent.ACTION_APPLICATION_PREFERENCES -> IncomingDestination.Settings
         MainActivity.ACTION_BACKUP_RESTORE -> IncomingDestination.BackupRestore
+        MainActivity.ACTION_OPEN_PLUGINS -> IncomingDestination.Plugins
         MainActivity.ACTION_RECOGNITION -> IncomingDestination.Recognition
         else -> null
     }

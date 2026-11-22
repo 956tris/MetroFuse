@@ -26,17 +26,22 @@ object ProviderFallbackMatcher : TrackMatcher {
     private val nonAlphaNumeric = Regex("""[^\p{L}\p{N}]+""")
 
     override fun selectSafeCandidates(metadata: Track, candidates: List<MatchCandidate>, providerOrder: List<String>, maximumCandidates: Int): List<MatchCandidate> {
-        require(candidates.size <= 4096 && providerOrder.size <= 512) { "Matching input exceeds limits" }
+        val ranked = rankSafeCandidates(metadata, candidates, providerOrder)
         if (maximumCandidates <= 0) return emptyList()
+        return ranked
+            .distinctBy { it.provider }
+            .take(maximumCandidates.coerceAtMost(512))
+            .toList()
+    }
+
+    internal fun rankSafeCandidates(metadata: Track, candidates: List<MatchCandidate>, providerOrder: List<String>): Sequence<MatchCandidate> {
+        require(candidates.size <= 4096 && providerOrder.size <= 512) { "Matching input exceeds limits" }
         val providerRank = providerOrder.withIndex().associate { it.value to it.index }
         return candidates.asSequence()
             .distinctBy { it.provider to it.track.id }
             .mapNotNull { candidate -> confidence(metadata, candidate.track)?.let { candidate to it } }
             .sortedWith(compareByDescending<Pair<MatchCandidate, Int>> { it.second }.thenBy { providerRank[it.first.provider] ?: Int.MAX_VALUE })
-            .distinctBy { it.first.provider }
-            .take(maximumCandidates.coerceAtMost(512))
             .map { it.first }
-            .toList()
     }
 
     private fun confidence(metadata: Track, candidate: Track): Int? {

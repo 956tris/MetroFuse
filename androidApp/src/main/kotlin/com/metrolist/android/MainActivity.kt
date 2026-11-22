@@ -112,6 +112,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_UPDATES = "com.metrolist.music.action.UPDATES"
         const val ACTION_LOGIN = "com.metrolist.music.action.LOGIN"
         const val ACTION_BACKUP_RESTORE = "com.metrolist.music.action.BACKUP_RESTORE"
+        internal const val ACTION_OPEN_PLUGINS = "com.metrolist.music.action.OPEN_PLUGINS"
         const val ACTION_RECOGNITION = "com.metrolist.music.action.RECOGNITION"
         const val ACTION_OPEN_WIDGET_TARGET = "com.metrolist.music.action.OPEN_WIDGET_TARGET"
         const val EXTRA_WIDGET_TARGET_TYPE = "widget_target_type"
@@ -339,6 +340,7 @@ class MainActivity : ComponentActivity() {
                                         incomingIntentState.value =
                                             when (destination) {
                                                 OnboardingDestination.HOME -> incomingIntentState.value
+                                                OnboardingDestination.PLUGINS -> Intent(ACTION_OPEN_PLUGINS)
                                                 OnboardingDestination.BACKUP_RESTORE -> Intent(ACTION_BACKUP_RESTORE)
                                             }
                                         prepareIncomingPlayback()

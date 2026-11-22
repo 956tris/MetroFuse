@@ -4,6 +4,7 @@ import android.content.Intent
 import android.nfc.NfcAdapter
 import android.text.SpannedString
 import androidx.core.net.toUri
+import com.metrolist.android.MainActivity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -14,6 +15,11 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class IncomingIntentTest {
+    @Test
+    fun onboardingCanOpenPluginSettings() {
+        assertEquals(IncomingDestination.Plugins, Intent(MainActivity.ACTION_OPEN_PLUGINS).toIncomingDestination())
+    }
+
     @Test
     fun sharedPodcastShowOpensFromViewAndSend() {
         val url = "https://music.youtube.com/browse/MPSP_show?si=shared"

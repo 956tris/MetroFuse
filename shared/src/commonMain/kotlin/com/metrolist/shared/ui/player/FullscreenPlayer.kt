@@ -180,7 +180,7 @@ fun FullscreenPlayerContent(
     Box(
         modifier = Modifier.fillMaxSize(),
     ) {
-        if (currentSong?.displayThumbnail != null) {
+        if (currentSong?.displayThumbnail != null && !Settings.shared.playerBackgroundStyle.isGalaxy) {
             AsyncImage(
                 url = currentSong.displayThumbnail,
                 contentDescription = null,

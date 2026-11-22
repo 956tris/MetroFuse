@@ -200,6 +200,15 @@ class LegacySettingsMigrationTest {
     }
 
     @Test
+    fun restoresLegacyGalaxyPlayerStylesByName() {
+        for (style in listOf(PlayerBackgroundStyle.GALAXY, PlayerBackgroundStyle.GALAXY_BLUR)) {
+            val backing = MapSettings("playerBackgroundStyle" to style.name)
+            assertEquals(style, Settings(StrictTypedSettings(backing)).playerBackgroundStyle)
+            assertEquals(style.ordinal, backing.getInt("playerBackgroundStyle", -1))
+        }
+    }
+
+    @Test
     fun migratesCanvasThumbnailStyleToToggle() {
         val backing =
             MapSettings(

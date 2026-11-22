@@ -306,13 +306,12 @@ private fun AppHeaderCard(
             Surface(
                 onClick = onLogoClick,
                 shape = RoundedCornerShape(28.dp),
-                color = colorScheme.primaryContainer,
+                color = Color(0xFF2F2F2F),
                 modifier = Modifier.size(112.dp),
             ) {
                 Image(
                     painter = logo,
                     contentDescription = stringResource(Res.string.app_name),
-                    colorFilter = ColorFilter.tint(colorScheme.onPrimaryContainer, BlendMode.SrcIn),
                     modifier = Modifier.padding(12.dp),
                 )
             }

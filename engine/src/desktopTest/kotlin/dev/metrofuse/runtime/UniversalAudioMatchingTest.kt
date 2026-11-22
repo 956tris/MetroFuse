@@ -201,6 +201,51 @@ class UniversalAudioMatchingTest {
         }
 
     @Test
+    fun flacFailureFallsBackToAnotherSafeYouTubeMusicMatch() =
+        runTest {
+            val registry = Registry()
+            val attempts = mutableListOf<Pair<String, String>>()
+            registry.audioSource(
+                "flac",
+                source("flac.audio") {
+                    attempts += "flac.audio" to it.identity.canonicalId
+                    AudioResult(error = ProviderError("RELAY_UNAVAILABLE"))
+                },
+            )
+            registry.priority("flac", 10)
+            registry.audioSource(
+                "ytm",
+                source("ytm.audio") {
+                    val id = it.identity.canonicalId
+                    attempts += "ytm.audio" to id
+                    if (id == "playable") stream() else unavailable()
+                },
+            )
+            registry.searchProvider(
+                "ytm",
+                search("ytm.search") {
+                    listOf(
+                        metadata.copy(id = original.canonicalId),
+                        metadata.copy(id = "unplayable"),
+                        metadata.copy(id = "playable"),
+                    )
+                },
+            )
+            val result = ProviderPipelines(registry, trackLookup = { metadata }).audio(query)
+            assertEquals("ytm.audio", result.stream?.attributes?.get("providerId"))
+            assertEquals("playable", result.stream?.attributes?.get("resolvedMediaId"))
+            assertEquals(
+                listOf(
+                    "flac.audio" to original.canonicalId,
+                    "ytm.audio" to original.canonicalId,
+                    "ytm.audio" to "unplayable",
+                    "ytm.audio" to "playable",
+                ),
+                attempts,
+            )
+        }
+
+    @Test
     fun directResolutionDoesNotSearchOrLookUpMetadata() =
         runTest {
             val registry = Registry()

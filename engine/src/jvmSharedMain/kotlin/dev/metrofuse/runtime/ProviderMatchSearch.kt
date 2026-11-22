@@ -9,6 +9,7 @@ import dev.metrofuse.api.AudioSource
 import dev.metrofuse.api.MatchCandidate
 import dev.metrofuse.api.SearchRequest
 import dev.metrofuse.api.Track
+import dev.metrofuse.api.TrackIdentity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -37,6 +38,7 @@ internal class ProviderMatchSearch(
 
     suspend fun search(
         metadata: Track,
+        originalIdentity: TrackIdentity,
         audioSources: List<ProviderEntry<AudioSource>>,
         timeoutMillis: Long,
     ): List<MatchCandidate> {
@@ -52,7 +54,18 @@ internal class ProviderMatchSearch(
                     }
                 }
             }
-        return ProviderFallbackMatcher.selectSafeCandidates(metadata, candidates, audioSources.map { it.id }, audioSources.size)
+        val originalOwner = originalIdentity.identifiers["pluginOwner"] ?: originalIdentity.identifiers["plugin"]
+        val sourcesById = audioSources.associateBy { it.id }
+        val untried =
+            candidates.filterNot { candidate ->
+                candidate.track.id == originalIdentity.canonicalId &&
+                    (originalOwner == null || originalOwner == sourcesById[candidate.provider]?.owner)
+            }
+        val ranked = ProviderFallbackMatcher.rankSafeCandidates(metadata, untried, audioSources.map { it.id })
+        val seenProviders = mutableSetOf<String>()
+        // Try each provider's best match before spending attempts on its other results.
+        val (bestByProvider, alternatives) = ranked.partition { seenProviders.add(it.provider) }
+        return bestByProvider + alternatives
     }
 
     private suspend fun searchProviders(

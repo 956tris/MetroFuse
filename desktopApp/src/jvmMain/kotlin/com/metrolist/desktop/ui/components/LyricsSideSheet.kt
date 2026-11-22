@@ -56,6 +56,7 @@ import com.metrolist.shared.generated.resources.lyrics
 import com.metrolist.shared.generated.resources.lyrics_menu
 import com.metrolist.shared.model.LyricsProvider
 import com.metrolist.shared.settings.PlayerBackgroundStyle
+import com.metrolist.shared.ui.player.GalaxyPlayerBackground
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.components.LiquidBackground
 import com.metrolist.shared.ui.components.images.AsyncImage
@@ -118,6 +119,8 @@ internal fun DesktopLyricsContent(
                 PlayerBackgroundStyle.GRADIENT,
                 PlayerBackgroundStyle.ANIMATED_GRADIENT,
                 PlayerBackgroundStyle.LIQUID,
+                PlayerBackgroundStyle.GALAXY,
+                PlayerBackgroundStyle.GALAXY_BLUR,
                 -> Color.White
 
                 PlayerBackgroundStyle.SOLID -> colorScheme.onSurface
@@ -141,7 +144,7 @@ internal fun DesktopLyricsContent(
         tonalElevation = 1.dp,
     ) {
         val drawerContent = @Composable {
-            if (isImmersiveBg) {
+            if (isImmersiveBg && !Settings.shared.playerBackgroundStyle.isGalaxy) {
                 val style = Settings.shared.playerBackgroundStyle
                 val hasArtwork = style == PlayerBackgroundStyle.BLURRED_ARTWORK || style == PlayerBackgroundStyle.LIQUID
                 LyricsContrastScrim(
@@ -318,6 +321,18 @@ internal fun DesktopLyricsContent(
                         artworkUrl = PlayerState.currentArtworkUrl,
                         isPlaying = PlayerState.isPlaying,
                         visible = true,
+                    )
+                    drawerContent()
+                }
+
+                PlayerBackgroundStyle.GALAXY,
+                PlayerBackgroundStyle.GALAXY_BLUR,
+                -> {
+                    GalaxyPlayerBackground(
+                        artworkUrl = PlayerState.currentArtworkUrl,
+                        artworkColor = activeSeedColor,
+                        blurredArtwork = Settings.shared.playerBackgroundStyle == PlayerBackgroundStyle.GALAXY_BLUR,
+                        active = isVisible && PlayerState.isPlaying && !PlayerState.isExpanded,
                     )
                     drawerContent()
                 }

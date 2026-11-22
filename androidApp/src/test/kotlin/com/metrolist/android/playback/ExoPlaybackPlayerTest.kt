@@ -1186,8 +1186,16 @@ class ExoPlaybackPlayerTest {
     @Test
     fun screenOffFocusRecoveryRetainsRecoveryWithoutCompetingMusic() = verifyScreenOffFocusRecovery(otherMusicActive = false)
 
-    private fun verifyScreenOffFocusRecovery(otherMusicActive: Boolean) {
-        shadowOf(RuntimeEnvironment.getApplication().getSystemService(PowerManager::class.java)).turnScreenOn(false)
+    @Test
+    fun screenOffFocusRecoveryResumesAfterScreenTurnsBackOnBeforeRetry() =
+        verifyScreenOffFocusRecovery(otherMusicActive = false, wakeBeforeRetry = true)
+
+    private fun verifyScreenOffFocusRecovery(
+        otherMusicActive: Boolean,
+        wakeBeforeRetry: Boolean = false,
+    ) {
+        val screen = shadowOf(RuntimeEnvironment.getApplication().getSystemService(PowerManager::class.java))
+        screen.turnScreenOn(false)
         val primary = underlyingPlayer()
         primary.pause()
         shadowOf(Looper.getMainLooper()).idle()
@@ -1205,6 +1213,7 @@ class ExoPlaybackPlayerTest {
         val recovery = ExoPlaybackPlayer::class.java.getDeclaredField("pendingFocusRecovery").apply { isAccessible = true }
         assertNotNull(recovery.get(player))
         shadowOf(RuntimeEnvironment.getApplication().getSystemService(AudioManager::class.java)).setIsMusicActive(otherMusicActive)
+        if (wakeBeforeRetry) screen.turnScreenOn(true)
 
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(1))
 

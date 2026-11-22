@@ -44,6 +44,7 @@ import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.migrated
 import com.metrolist.shared.generated.resources.onboarding_account_picture
 import com.metrolist.shared.generated.resources.onboarding_no_saved_accounts
+import com.metrolist.shared.generated.resources.onboarding_plugins_open
 import com.metrolist.shared.generated.resources.onboarding_restore_backup
 import com.metrolist.shared.generated.resources.onboarding_settings_hint
 import com.metrolist.shared.generated.resources.ready_to_migrate
@@ -65,6 +66,7 @@ internal fun OnboardingContent(
     content: OnboardingPageContent,
     preferences: @Composable (OnboardingPage) -> Unit,
     accounts: List<OnboardingAccount>,
+    onOpenPlugins: () -> Unit,
     onRestore: () -> Unit,
     previousContent: OnboardingPageContent? = null,
 ) {
@@ -100,8 +102,8 @@ internal fun OnboardingContent(
         },
         featureContent = { page ->
             if (page == OnboardingPage.LANGUAGE_LYRICS || page == OnboardingPage.PLAYBACK) preferences(page)
+            EditorialFeature(page, accounts, onOpenPlugins, onRestore)
             PluginOnboardingDetails(page)
-            EditorialFeature(page, accounts, onRestore)
             if (content.isWorking) {
                 ContainedLoadingIndicator(Modifier.padding(top = 28.dp).size(48.dp))
             }
@@ -113,6 +115,7 @@ internal fun OnboardingContent(
 private fun EditorialFeature(
     page: OnboardingPage,
     accounts: List<OnboardingAccount>,
+    onOpenPlugins: () -> Unit,
     onRestore: () -> Unit,
 ) {
     when (page) {
@@ -123,7 +126,7 @@ private fun EditorialFeature(
         }
 
         OnboardingPage.FINISH -> {
-            FinishActions(onRestore)
+            FinishActions(onOpenPlugins, onRestore)
         }
 
         OnboardingPage.LANGUAGE_LYRICS,
@@ -138,12 +141,21 @@ private fun EditorialFeature(
 
 @Composable
 private fun FinishActions(
+    onOpenPlugins: () -> Unit,
     onRestore: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxWidth().padding(top = 32.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        OutlinedButton(
+            onClick = onOpenPlugins,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+            shapes = ButtonDefaults.shapes(),
+        ) {
+            Icon(MetrolistIcons.Outlined.Download, contentDescription = null)
+            Text(stringResource(Res.string.onboarding_plugins_open), modifier = Modifier.padding(start = 10.dp))
+        }
         OutlinedButton(
             onClick = onRestore,
             modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),

@@ -206,6 +206,10 @@ internal fun LyricsPlayerBackground(
             )
         }
 
+        PlayerBackgroundStyle.GALAXY,
+        PlayerBackgroundStyle.GALAXY_BLUR,
+        -> Unit // The shared backdrop stays mounted through the lyrics transition.
+
         PlayerBackgroundStyle.LIQUID -> {
             if (thumbnailUrl != null) {
                 LiquidBackground(
@@ -337,7 +341,7 @@ internal fun FullscreenThumbnailBackground(
                 IntSize(maxWidth.roundToPx().coerceAtLeast(1), (maxHeight * seam).roundToPx().coerceAtLeast(1))
             }
         // Animated artwork keeps the cropped full-bleed layout; only static covers get the uncropped bleed.
-        val usesArtworkBleed = !hasVideo && !canvasTall
+        val usesArtworkBleed = !hasVideo && !canvasTall && !playerBackground.isGalaxy
         if (!usesArtworkBleed) {
             when (playerBackground) {
                 PlayerBackgroundStyle.GRADIENT,
@@ -367,6 +371,8 @@ internal fun FullscreenThumbnailBackground(
 
                 PlayerBackgroundStyle.SOLID,
                 PlayerBackgroundStyle.BLURRED_ARTWORK,
+                PlayerBackgroundStyle.GALAXY,
+                PlayerBackgroundStyle.GALAXY_BLUR,
                 -> {}
             }
         }
@@ -382,7 +388,7 @@ internal fun FullscreenThumbnailBackground(
                 return@PlayerBackgroundArtwork
             }
             val backdropBitmap = if (canvasTall) null else canvasFrame ?: artworkBitmap
-            if (backdropBitmap != null && hasVideo) {
+            if (backdropBitmap != null && hasVideo && !playerBackground.isGalaxy) {
                 FullscreenBlurredBackdropCanvas(
                     artwork = backdropBitmap,
                     scrimAlpha = BLURRED_ARTWORK_SCRIM_ALPHA,
@@ -543,7 +549,7 @@ private fun LandscapeFullscreenThumbnailBackground(
                 .fillMaxSize()
                 .clipToBounds()
                 .alpha(alpha)
-                .background(backgroundColor),
+                .background(if (playerBackground.isGalaxy) Color.Transparent else backgroundColor),
     ) {
         val density = LocalDensity.current
         val fullWidthPx = with(density) { maxWidth.roundToPx().coerceAtLeast(1) }
@@ -576,7 +582,7 @@ private fun LandscapeFullscreenThumbnailBackground(
         PlayerBackgroundArtwork(thumbnailUrl, artworkCrossfade) { currentUrl ->
             val artworkBitmap = rememberFullscreenArtworkBitmap(currentUrl, artworkSize)
             val backdropBitmap = canvasFrame ?: artworkBitmap
-            if (backdropBitmap != null) {
+            if (backdropBitmap != null && !playerBackground.isGalaxy) {
                 val bw = backdropBitmap.width.toFloat()
                 val bh = backdropBitmap.height.toFloat()
                 val cropOverride =

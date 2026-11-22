@@ -312,13 +312,13 @@ internal fun effectivePlaybackVolume(
 ): Float = if (audioOutputEnabled) userVolume else 0f
 
 internal fun shouldRecoverPlaybackAfterScreenOffFocusLoss(
-    isInteractive: Boolean,
+    wasScreenInteractiveAtFocusLoss: Boolean,
     audioMode: Int,
     isCasting: Boolean,
     isMusicActive: Boolean,
 ): Boolean =
     !isMusicActive &&
-        !isInteractive &&
+        !wasScreenInteractiveAtFocusLoss &&
         audioMode != AudioManager.MODE_IN_CALL &&
         audioMode != AudioManager.MODE_IN_COMMUNICATION &&
         audioMode != AudioManager.MODE_RINGTONE &&
@@ -1490,6 +1490,8 @@ class ExoPlaybackPlayer(
     ) {
         cancelScreenOffFocusRecovery()
         if (!wasPlaybackRequested || playWhenReady || reason != Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS) return
+        // The user can unlock before the delayed retry runs.
+        val wasScreenInteractiveAtFocusLoss = powerManager.isInteractive
         val interruptedPlayer = exo
         val interruptedInstance = currentInstance
         val interruptedRequest = requestCounter
@@ -1504,7 +1506,7 @@ class ExoPlaybackPlayer(
                 if (interruptedPlayer.playWhenReady) return@Runnable
                 val audioManager = context.getSystemService(AudioManager::class.java)
                 if (shouldRecoverPlaybackAfterScreenOffFocusLoss(
-                        powerManager.isInteractive,
+                        wasScreenInteractiveAtFocusLoss,
                         audioManager.mode,
                         isCasting(),
                         audioManager.isMusicActive,

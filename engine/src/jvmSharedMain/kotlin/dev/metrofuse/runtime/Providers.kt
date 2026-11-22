@@ -415,11 +415,9 @@ class ProviderPipelines(
                             it.startsWith("platform:") && it != "platform:${query.platform}"
                         }
                     }
-                val matches = matchSearch.search(sourceTrack, matchingSources, policy.timeoutMillis)
+                val matches = matchSearch.search(sourceTrack, query.identity, matchingSources, policy.timeoutMillis)
                 for (match in matches) {
                     val entry = matchingSources.firstOrNull { it.id == match.provider } ?: continue
-                    val originalOwner = query.identity.identifiers["pluginOwner"] ?: query.identity.identifiers["plugin"]
-                    if (query.identity.canonicalId == match.track.id && (originalOwner == null || originalOwner == entry.owner)) continue
                     val identity =
                         TrackIdentity(
                             match.track.id,

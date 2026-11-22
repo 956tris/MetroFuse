@@ -719,7 +719,7 @@ fun FrameWindowScope.DesktopMenuBar(
                 text = stringResource(Res.string.menu_report_issue),
                 onClick = {
                     try {
-                        Desktop.getDesktop().browse(URI("https://github.com/MetrolistGroup/Metrolist/issues"))
+                        Desktop.getDesktop().browse(URI("https://github.com/956tris/MetroFuse/issues"))
                     } catch (_: Exception) {
                     }
                 },

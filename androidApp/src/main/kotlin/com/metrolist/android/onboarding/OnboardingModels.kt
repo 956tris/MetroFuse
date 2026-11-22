@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 
 internal enum class OnboardingDestination {
     HOME,
+    PLUGINS,
     BACKUP_RESTORE,
 }
 

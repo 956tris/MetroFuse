@@ -100,6 +100,7 @@ import com.metrolist.shared.generated.resources.up_next
 import com.metrolist.shared.model.RepeatMode
 import com.metrolist.shared.model.previewThumbnailUrl
 import com.metrolist.shared.settings.PlayerBackgroundStyle
+import com.metrolist.shared.ui.player.GalaxyPlayerBackground
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.components.ContainedLoadingIndicator
 import com.metrolist.shared.ui.components.LiquidBackground
@@ -216,10 +217,21 @@ fun FullscreenPlayerView(
                         )
                     }
 
+                    PlayerBackgroundStyle.GALAXY,
+                    PlayerBackgroundStyle.GALAXY_BLUR,
+                    -> {
+                        GalaxyPlayerBackground(
+                            artworkUrl = PlayerState.currentArtworkUrl,
+                            artworkColor = seedColor,
+                            blurredArtwork = playerBackgroundStyle == PlayerBackgroundStyle.GALAXY_BLUR,
+                            active = PlayerState.isExpanded && PlayerState.isPlaying && !immersive && !UiState.videoFullscreenObscuresPlayer,
+                        )
+                    }
+
                     PlayerBackgroundStyle.SOLID -> {
                     }
                 }
-                if (!isSolid) {
+                if (!isSolid && !playerBackgroundStyle.isGalaxy) {
                     val hasArtwork =
                         playerBackgroundStyle == PlayerBackgroundStyle.BLURRED_ARTWORK ||
                             playerBackgroundStyle == PlayerBackgroundStyle.LIQUID

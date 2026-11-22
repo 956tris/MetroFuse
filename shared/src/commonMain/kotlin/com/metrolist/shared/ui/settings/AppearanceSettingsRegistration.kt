@@ -572,6 +572,8 @@ internal fun SettingsUiRegistryBuilder.registerAppearanceSettings(host: SharedSe
                 add(SettingsChoice(PlayerBackgroundStyle.GRADIENT.name, stringResource(Res.string.gradient)))
                 add(SettingsChoice(PlayerBackgroundStyle.ANIMATED_GRADIENT.name, stringResource(Res.string.animated_gradient)))
                 add(SettingsChoice(PlayerBackgroundStyle.LIQUID.name, stringResource(Res.string.liquid)))
+                add(SettingsChoice(PlayerBackgroundStyle.GALAXY.name, stringResource(Res.string.player_background_galaxy)))
+                add(SettingsChoice(PlayerBackgroundStyle.GALAXY_BLUR.name, stringResource(Res.string.player_background_galaxy_blur)))
             }
         val selectedBackground = settings.playerBackgroundStyle
         val selectedSliderStyle =

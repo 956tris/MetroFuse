@@ -377,7 +377,7 @@ class PlayerViewModel(
             ) { (id, thumbnail), style ->
                 id to
                     thumbnail.takeIf {
-                        style == PlayerBackgroundStyle.GRADIENT || style == PlayerBackgroundStyle.ANIMATED_GRADIENT
+                        style == PlayerBackgroundStyle.GRADIENT || style == PlayerBackgroundStyle.ANIMATED_GRADIENT || style.isGalaxy
                     }
             }.distinctUntilChanged().collectLatestWhileVisible(artworkVisible) { (id, thumbnail) ->
                 extractColors(id, thumbnail)

@@ -755,6 +755,8 @@ fun PlayerScreen(
 
                     PlayerBackgroundStyle.GRADIENT,
                     PlayerBackgroundStyle.ANIMATED_GRADIENT,
+                    PlayerBackgroundStyle.GALAXY,
+                    PlayerBackgroundStyle.GALAXY_BLUR,
                     -> Color.White
 
                     PlayerBackgroundStyle.SOLID -> MaterialTheme.colorScheme.onSurface
@@ -805,6 +807,10 @@ fun PlayerScreen(
             PlayerBackgroundStyle.SOLID,
             PlayerBackgroundStyle.LIQUID,
             -> MaterialTheme.colorScheme.surfaceContainer
+
+            PlayerBackgroundStyle.GALAXY,
+            PlayerBackgroundStyle.GALAXY_BLUR,
+            -> Color.Black
         }
 
     val (sideButtonContainerColor, sideButtonContentColor) =
@@ -1000,6 +1006,16 @@ fun PlayerScreen(
                                 .background(backgroundColor),
                     )
 
+                    if (playerBackground.isGalaxy && isPlayerContentVisible && !isInPipMode && !queueCoversPlayer) {
+                        GalaxyPlayerBackground(
+                            artworkUrl = currentSong?.displayThumbnail,
+                            artworkColor = uiState.dominantColor,
+                            blurredArtwork = playerBackground == PlayerBackgroundStyle.GALAXY_BLUR,
+                            active = LocalPlayerBackgroundAnimating.current && !showVideoSurface && !isCanvasBackdropVisible,
+                            artworkCrossfade = artworkCrossfade,
+                        )
+                    }
+
                     if (isPlayerContentVisible && !isInPipMode && !isFullscreen) {
                         Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (queueCoversPlayer) 0f else 1f }) {
                             if (playerBackground == PlayerBackgroundStyle.BLURRED_ARTWORK && currentSong?.displayThumbnail != null) {
@@ -1018,7 +1034,7 @@ fun PlayerScreen(
                                     modifier = Modifier.fillMaxSize(),
                                     animate = LocalPlayerBackgroundAnimating.current,
                                 )
-                            } else if (uiState.isLyricsVisible) {
+                            } else if (uiState.isLyricsVisible && !playerBackground.isGalaxy) {
                                 LyricsPlayerBackground(
                                     playerBackground = playerBackground,
                                     thumbnailUrl = currentSong?.displayThumbnail,
@@ -1028,7 +1044,7 @@ fun PlayerScreen(
                                     artworkCrossfade = artworkCrossfade,
                                 )
                             }
-                            if (playerBackground != PlayerBackgroundStyle.SOLID) {
+                            if (playerBackground != PlayerBackgroundStyle.SOLID && !playerBackground.isGalaxy) {
                                 val hasArtwork =
                                     playerBackground == PlayerBackgroundStyle.BLURRED_ARTWORK ||
                                         playerBackground == PlayerBackgroundStyle.LIQUID
@@ -1085,6 +1101,7 @@ fun PlayerScreen(
                                     }
                                 } else if (
                                     playerBackground != PlayerBackgroundStyle.BLURRED_ARTWORK &&
+                                    !playerBackground.isGalaxy &&
                                     usesFullscreenThumbnail && showVideoSurface && currentSong?.displayThumbnail != null
                                 ) {
                                     PlayerBackgroundArtwork(currentSong.displayThumbnail!!, artworkCrossfade) { backgroundUrl ->
