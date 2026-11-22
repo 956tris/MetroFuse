@@ -5599,4 +5599,10 @@
     <string name="player_background_galaxy_blur">Galaxy Blur</string>
     <string name="onboarding_plugins_compatibility">Choose a plugin built for your MetroFuse version and platform. Android uses APKs, desktop uses JARs, and supported universal plugins use MFPs.</string>
     <string name="onboarding_plugins_beta_warning">This beta may crash and has incomplete features. Back up your library and settings before migrating: migration may lose data. Keep your original backup until you have checked the new library.</string>
+    <string name="manual_audio_match">Match track</string>
+    <string name="audio_match_automatic">Automatic matching</string>
+    <string name="audio_match_automatic_description">Use your audio source order and automatic matching.</string>
+    <string name="audio_match_empty">No matches found. Try a different title or artist.</string>
+    <string name="audio_match_failed">Could not search audio sources. Try again.</string>
+    <string name="audio_match_unplayable">This recording could not be played. Choose another match.</string>
 </resources>

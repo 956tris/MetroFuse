@@ -28,6 +28,120 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class UniversalAudioMatchingTest {
+    @Test
+    fun aFailedStreamCanTryAnotherRecordingFromTheSameProvider() =
+        runTest {
+            val registry = Registry()
+            registry.audioSource(
+                "destination",
+                source("destination.audio") { request ->
+                    if (request.identity.canonicalId in setOf("first", "second")) stream() else unavailable()
+                },
+            )
+            registry.searchProvider(
+                "destination",
+                search("destination.search") {
+                    listOf(metadata.copy(id = "first"), metadata.copy(id = "second", duration = metadata.duration + 1000))
+                },
+            )
+            val pipelines = ProviderPipelines(registry, trackLookup = { metadata })
+            val first = pipelines.audio(query).stream!!
+            assertEquals("first", first.attributes["resolvedMediaId"])
+            val second = pipelines.audio(query, excludedProviders = setOf(first.attributes.getValue("matchProfile"))).stream!!
+            assertEquals("destination.audio", second.attributes["providerId"])
+            assertEquals("second", second.attributes["resolvedMediaId"])
+        }
+
+    @Test
+    fun manualSelectionDoesNotSilentlyTryOtherProvidersOrRecordings() =
+        runTest {
+            val registry = Registry()
+            var otherSourceCalled = false
+            var searchCalled = false
+            registry.audioSource("selected", source("selected.audio") { unavailable() })
+            registry.audioSource(
+                "other",
+                source("other.audio") {
+                    otherSourceCalled = true
+                    stream()
+                },
+            )
+            registry.searchProvider(
+                "selected",
+                search("selected.search") {
+                    searchCalled = true
+                    listOf(metadata.copy(id = "another-recording"))
+                },
+            )
+            val pipelines = ProviderPipelines(registry, trackLookup = { metadata })
+            pipelines.audioPolicy.value = AudioPolicy(manualSourceFallback = true)
+            val selected =
+                AudioQuery(TrackIdentity("manual-id", mapOf("pluginOwner" to "selected")), "desktop", sourceId = "selected.audio")
+            assertNull(pipelines.audioExact(selected).stream)
+            assertFalse(otherSourceCalled)
+            assertFalse(searchCalled)
+        }
+
+    @Test
+    fun cleanedQueriesRecoverDecoratedUploadsAndUnsupportedRecordingCodeSearches() =
+        runTest {
+            val registry = Registry()
+            val terms = mutableListOf<String>()
+            val upload =
+                Track(
+                    "upload",
+                    "Artist - Song (Official Audio)",
+                    "Uploader",
+                    "Album",
+                    180_000,
+                    extras = mapOf("isrc" to "USUM72401234"),
+                )
+            registry.audioSource(
+                "destination",
+                source("destination.audio") { request ->
+                    if (request.identity.canonicalId == "recording") stream() else unavailable()
+                },
+            )
+            registry.searchProvider(
+                "destination",
+                search("destination.search") { request ->
+                    terms += request.query
+                    when {
+                        request.query.startsWith("isrc:") -> error("Recording-code search unsupported")
+                        request.query == "song Artist" -> listOf(Track("recording", "Song", "Artist", "Album", 181_000))
+                        else -> emptyList()
+                    }
+                },
+            )
+            val pipelines = ProviderPipelines(registry, trackLookup = { upload })
+            val resolved = pipelines.audio(AudioQuery(TrackIdentity("upload"), "desktop"))
+            assertEquals("recording", resolved.stream?.attributes?.get("resolvedMediaId"))
+            assertTrue("isrc:USUM72401234" in terms)
+            assertTrue("song Artist" in terms)
+        }
+
+    @Test
+    fun manualSearchAllowsUserChosenVariantsAndKeepsCustomQueriesSeparate() =
+        runTest {
+            val registry = Registry()
+            val terms = mutableListOf<String>()
+            registry.audioSource("destination", source("destination.audio") { stream() })
+            registry.searchProvider(
+                "destination",
+                search("destination.search") { request ->
+                    terms += request.query
+                    listOf(metadata.copy(id = request.query, title = "Different recording (Live)", artist = "Other artist"))
+                },
+            )
+            val pipelines = ProviderPipelines(registry, trackLookup = { metadata })
+            val first = pipelines.audioMatches(metadata, original, "desktop", "first query")
+            val second = pipelines.audioMatches(metadata, original, "desktop", "second query")
+            assertEquals(listOf("first query"), first.map { it.track.id })
+            assertEquals(listOf("second query"), second.map { it.track.id })
+            pipelines.audioMatches(metadata, original, "desktop", "first query")
+            assertEquals(listOf("first query", "second query"), terms)
+        }
+
     private val metadata = Track("ytm:original", "Café del Mar", "José", "Album", 180_000)
     private val original = TrackIdentity("abcdefghijk", mapOf("youtube" to "abcdefghijk", "pluginOwner" to "ytm", "host" to metadata.id))
     private val query = AudioQuery(original, "desktop", QualityPreference(maxBitrate = 160_000))
@@ -94,7 +208,14 @@ class UniversalAudioMatchingTest {
                     ?.attributes
                     ?.get("providerId"),
             )
-            assertEquals("matched-id", pipelines.audio(query).stream?.attributes?.get("resolvedMediaId"))
+            assertEquals(
+                "matched-id",
+                pipelines
+                    .audio(query)
+                    .stream
+                    ?.attributes
+                    ?.get("resolvedMediaId"),
+            )
             val matched = calls.last()
             assertEquals("matched-id", matched.identity.canonicalId)
             assertEquals("destination", matched.identity.identifiers["pluginOwner"])

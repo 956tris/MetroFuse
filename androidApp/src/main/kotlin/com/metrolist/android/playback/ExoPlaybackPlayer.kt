@@ -1600,6 +1600,11 @@ class ExoPlaybackPlayer(
         if (BuildConfig.DEBUG) player.removeAnalyticsListener(eventLogger)
     }
 
+    override fun rematchCurrentAudio(songId: String) {
+        val song = queue.currentSong()?.takeIf { it.id == songId } ?: return
+        request(song, getRealtimePositionMs(), wantsPlayback)
+    }
+
     override fun retryPendingQueuePlayback(
         positionMs: Long,
         resumePlayback: Boolean,

@@ -74,6 +74,9 @@ class DesktopPlaybackController(
     override fun togglePlayPause() = PlayerState.togglePlay()
 
     override val supportsVolume: Boolean get() = true
+    override val supportsManualAudioMatching: Boolean get() = PlayerState.canRematchAudio
+
+    override fun rematchCurrentAudio(songId: String) = PlayerState.rematchCurrentAudio(songId)
 
     override fun setVolume(volume: Float) = PlayerState.setVolumeLevel(volume)
 

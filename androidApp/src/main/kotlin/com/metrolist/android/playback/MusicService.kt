@@ -117,6 +117,7 @@ import com.metrolist.shared.playback.findPlaybackHttpStatusCode
 import com.metrolist.shared.playback.observePlaybackCheckpoints
 import com.metrolist.shared.playback.shouldSkipAfterPlaybackFailure
 import com.metrolist.shared.playback.sponsorblock.observeSponsorBlockSkipping
+import com.metrolist.shared.plugins.hasManualAudioMatch
 import com.metrolist.shared.scrobble.ScrobbleManager
 import com.metrolist.shared.scrobble.ScrobbleSessions
 import com.metrolist.shared.settings.BlockedContent
@@ -821,6 +822,30 @@ class MusicService :
             updateWidgetProgress()
         }
     }
+
+    private var audioMatchReloadRequest: Pair<Long, String>? = null
+
+    val canRematchAudio: Boolean
+        get() =
+            !AndroidListenTogetherManager.isGuestPlaybackLocked && !AndroidDeviceConnect.manager.remote.isActive &&
+                !castManager.state.value.isConnected
+
+    fun rematchCurrentAudio(songId: String) {
+        if (!canRematchAudio || player.queueState.value.entries
+                .getOrNull(player.queueState.value.currentIndex)
+                ?.song
+                ?.id != songId
+        ) {
+            return
+        }
+        transitions.cancelAndroidCrossfade()
+        transitions.cancelNextTrackPreload()
+        audioMatchReloadRequest = (player.latestQueuePlaybackRequestId + 1) to songId
+        player.rematchCurrentAudio(songId)
+    }
+
+    private fun canUseAudioCache(songId: String): Boolean =
+        audioMatchReloadRequest != (player.latestQueuePlaybackRequestId to songId) && !hasManualAudioMatch(songId)
 
     fun seekTo(
         positionMs: Long,
@@ -1690,7 +1715,7 @@ class MusicService :
         val started =
             withQueueLoading(isPlaybackLoading = true) {
                 val cachedAudio =
-                    if (!wantVideo && sourceSong.canSwitchToAudioTrack) {
+                    if (!wantVideo && sourceSong.canSwitchToAudioTrack && canUseAudioCache(sourceSong.id)) {
                         audioCacheManager.getCachedPlaybackResource(sourceSong)
                     } else {
                         null
@@ -1702,7 +1727,8 @@ class MusicService :
                         wantVideo = wantVideo,
                         cachedAudio = cachedAudio,
                         allowCounterpartLookup =
-                            PlaybackNetworkStateStore.current.connected && !AndroidListenTogetherManager.isGuestPlaybackLocked,
+                            PlaybackNetworkStateStore.current.connected && !AndroidListenTogetherManager.isGuestPlaybackLocked &&
+                                canUseAudioCache(sourceSong.id),
                         isCounterpartAllowed = { !BlockedContent.isBlocked(it) },
                         resolveMusicTrack = musicVideoResolver::resolveMusicTrack,
                     )
@@ -2688,8 +2714,9 @@ class MusicService :
     ): PlaybackFetchResult =
         withContext(Dispatchers.IO) {
             val connected = PlaybackNetworkStateStore.current.connected
-            cachedAudioResource(wantVideo && connected) { audioCacheManager.getCachedPlaybackResource(song) }
-                ?.let { return@withContext PlaybackFetchResult(resource = it) }
+            cachedAudioResource(wantVideo && connected) {
+                if (canUseAudioCache(song.id)) audioCacheManager.getCachedPlaybackResource(song) else null
+            }?.let { return@withContext PlaybackFetchResult(resource = it) }
             if (!connected && !song.isLocal && !song.id.startsWith("local_")) return@withContext PlaybackFetchResult()
             val hints = song.toAndroidContentHints(wantVideo = wantVideo)
             Timber.tag(MUSIC_VIDEO_TAG).d(
@@ -2702,12 +2729,21 @@ class MusicService :
             )
             try {
                 val resource =
-                    streamResolver.resolve(
-                        song.id,
-                        hints,
-                        playbackAudioQuality(),
-                        sourceSong = song,
-                    )
+                    if (!canUseAudioCache(song.id)) {
+                        streamResolver.resolveRemote(
+                            song.id,
+                            hints,
+                            playbackAudioQuality(),
+                            sourceSong = song,
+                        )
+                    } else {
+                        streamResolver.resolve(
+                            song.id,
+                            hints,
+                            playbackAudioQuality(),
+                            sourceSong = song,
+                        )
+                    }
                 Timber.tag(MUSIC_VIDEO_TAG).d(
                     "resource resolve success videoId=%s wantVideo=%s client=%s profile=%s hasVideo=%s directVideo=%s sabrVideo=%s audioItag=%s videoItag=%s videoMime=%s videoCodec=%s videoSize=%sx%s availableHeights=%s",
                     song.id,
@@ -2733,7 +2769,7 @@ class MusicService :
                 Timber.tag(MUSIC_VIDEO_TAG).w(e, "resource resolve failed videoId=%s wantVideo=%s", song.id, wantVideo)
                 if (wantVideo) {
                     cachedAudioResource(wantVideo = true, videoResolutionFailed = true) {
-                        audioCacheManager.getCachedPlaybackResource(song)
+                        if (canUseAudioCache(song.id)) audioCacheManager.getCachedPlaybackResource(song) else null
                     }?.let { return@withContext PlaybackFetchResult(resource = it) }
                     try {
                         Timber.tag(MUSIC_VIDEO_TAG).d("resource audio fallback start videoId=%s", song.id)

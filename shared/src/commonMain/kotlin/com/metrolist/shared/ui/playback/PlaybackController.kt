@@ -66,6 +66,9 @@ interface PlaybackController {
     val canSkipPrevious: Boolean get() = state.value.canSkipPrevious
     val supportsVideoPlayback: Boolean get() = true
     val supportsCasting: Boolean get() = true
+    val supportsManualAudioMatching: Boolean get() = false
+
+    fun rematchCurrentAudio(songId: String) = Unit
 
     fun currentPositionMs(): Long = state.value.positionMs
 
@@ -88,7 +91,7 @@ interface PlaybackController {
 
     val supportsVolume: Boolean get() = false
 
-    fun setVolume(volume: Float) { throw UnsupportedOperationException("Volume control is unavailable") }
+    fun setVolume(volume: Float): Unit = throw UnsupportedOperationException("Volume control is unavailable")
 
     fun stop() {
         if (state.value.isPlaying) togglePlayPause()

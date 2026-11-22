@@ -35,6 +35,7 @@ import com.metrolist.shared.constants.AppleMusicArtistVideoResolutionKey
 import com.metrolist.shared.constants.AppleMusicArtistVideosKey
 import com.metrolist.shared.constants.ArtistNameAliasesJsonKey
 import com.metrolist.shared.constants.AudioBoostDbKey
+import com.metrolist.shared.constants.AudioMatchOverridesJsonKey
 import com.metrolist.shared.constants.AudioTrackPlaybackParamsKey
 import com.metrolist.shared.constants.AutoPureBlackKey
 import com.metrolist.shared.constants.BlockAiSlopArtistsKey
@@ -546,6 +547,7 @@ class Settings(
     var defaultOpenTab by preference(DefaultOpenTabKey, "HOME")
     var desktopMusicFolders by preference(DesktopMusicFoldersKey, "")
     var musicFrontendOwner by preference(MusicFrontendOwnerKey, "offline")
+    var audioMatchOverridesJson by preference(AudioMatchOverridesJsonKey, "")
     var showBottomNavHome by preference(ShowBottomNavHomeKey, true)
     var showBottomNavSearch by preference(ShowBottomNavSearchKey, true)
     var showBottomNavLibrary by preference(ShowBottomNavLibraryKey, true)

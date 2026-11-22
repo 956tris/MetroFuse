@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.*
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
 
 object MetadataMapping {
@@ -70,7 +71,7 @@ object MetadataMapping {
         }
     }
 
-    fun normalizeIsrc(value: String) = value.uppercase().replace(Regex("[^A-Z0-9]"), "")
+    fun normalizeIsrc(value: String) = value.uppercase(Locale.ROOT).replace(Regex("[^A-Z0-9]"), "")
 
     fun meaningful(value: JsonElement): Boolean =
         when (value) {
@@ -283,6 +284,21 @@ class ProviderPipelines(
         query: AudioQuery,
         includeBuiltin: Boolean = true,
         excludedProviders: Set<String> = emptySet(),
+    ): AudioResult = audioInternal(query, includeBuiltin, excludedProviders, allowFallback = true)
+
+    suspend fun audioExact(
+        query: AudioQuery,
+        excludedMatches: Set<String> = emptySet(),
+    ): AudioResult {
+        require(!query.sourceId.isNullOrBlank()) { "Exact audio matching requires a source" }
+        return audioInternal(query, includeBuiltin = false, excludedProviders = excludedMatches, allowFallback = false)
+    }
+
+    private suspend fun audioInternal(
+        query: AudioQuery,
+        includeBuiltin: Boolean,
+        excludedProviders: Set<String>,
+        allowFallback: Boolean = true,
     ): AudioResult =
         withContext(Dispatchers.Default) {
             val policy = audioPolicy.value
@@ -293,7 +309,7 @@ class ProviderPipelines(
                             ?: policy.preferredSource
                     )?.let { source ->
                         val selected = entries.filter { it.id == source }
-                        if (policy.manualSourceFallback) selected + entries.filterNot { it.id == source } else selected
+                        if (policy.manualSourceFallback && allowFallback) selected + entries.filterNot { it.id == source } else selected
                     } ?: entries
                 }
 
@@ -308,8 +324,13 @@ class ProviderPipelines(
                     return null
                 }
                 val request = query.copy(identity = identity, configuration = policy.configurations[entry.id] ?: query.configuration)
+                val requestedMediaId = identity.identifiers["youtube"] ?: identity.canonicalId
+                if (audioMatchProfile(entry.id, requestedMediaId) in excludedProviders) return null
                 val cacheKey = "${cacheRevision.get()}:${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
-                audioCache.get(cacheKey, now())?.let { return it }
+                audioCache.get(cacheKey, now())?.let { cached ->
+                    if (cached.stream?.attributes?.get("matchProfile") !in excludedProviders) return cached
+                    return null
+                }
                 for (attempt in 0..policy.retries.coerceIn(0, 2)) {
                     currentCoroutineContext().ensureActive()
                     val start = System.nanoTime()
@@ -345,6 +366,14 @@ class ProviderPipelines(
                             stream.transport in entry.provider.capabilities.transports &&
                             (expires == null || expires > now() + 1000) && (maximum == null || bitrate == null || bitrate <= maximum)
                     if (valid) {
+                        val resolvedMediaId =
+                            stream.attributes["resolvedMediaId"]?.takeIf { it.isNotBlank() && it.length <= 2048 }
+                                ?: requestedMediaId
+                        val profile = audioMatchProfile(entry.id, resolvedMediaId)
+                        if (profile in excludedProviders) {
+                            record("audio.resolve", entry.id, "EXCLUDED_MATCH", start, attempt)
+                            return null
+                        }
                         record("audio.resolve", entry.id, "SUCCESS", start, attempt)
                         val ownedResult =
                             result.copy(
@@ -354,7 +383,8 @@ class ProviderPipelines(
                                             stream.attributes +
                                                 mapOf(
                                                     "providerId" to entry.id,
-                                                    "resolvedMediaId" to (identity.identifiers["youtube"] ?: identity.canonicalId),
+                                                    "resolvedMediaId" to resolvedMediaId,
+                                                    "matchProfile" to profile,
                                                 ),
                                     ),
                             )
@@ -400,6 +430,7 @@ class ProviderPipelines(
             for (entry in candidates) {
                 resolve(entry, query.identity)?.let { return@withContext it }
             }
+            if (!allowFallback) return@withContext AudioResult(error = ProviderError("NO_SOURCE"))
             val sourceTrack =
                 try {
                     withTimeoutOrNull(8000) { trackLookup(query.identity) }
@@ -429,6 +460,22 @@ class ProviderPipelines(
             }
             AudioResult(error = ProviderError("NO_SOURCE", "No configured audio provider succeeded"))
         }
+
+    suspend fun audioMatches(
+        metadata: Track,
+        identity: TrackIdentity,
+        platform: String,
+        query: String? = null,
+    ): List<MatchCandidate> {
+        val sources =
+            registry.audioSources().filter { entry ->
+                entry.owner != "builtin" &&
+                    entry.provider.capabilities.requirements.none {
+                        it.startsWith("platform:") && it != "platform:$platform"
+                    }
+            }
+        return matchSearch.search(metadata, identity, sources, audioPolicy.value.timeoutMillis, query, manual = true)
+    }
 
     suspend fun lyrics(request: LyricsRequest): LyricsResult? =
         withContext(Dispatchers.Default) {

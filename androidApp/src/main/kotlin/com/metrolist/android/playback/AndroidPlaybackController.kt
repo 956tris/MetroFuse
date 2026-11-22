@@ -74,6 +74,9 @@ class AndroidPlaybackController(
     override fun togglePlayPause() = connection.togglePlayPause()
 
     override val supportsVolume: Boolean get() = true
+    override val supportsManualAudioMatching: Boolean get() = connection.canRematchAudio
+
+    override fun rematchCurrentAudio(songId: String) = connection.rematchCurrentAudio(songId)
 
     override fun setVolume(volume: Float) = connection.setVolume(volume)
 

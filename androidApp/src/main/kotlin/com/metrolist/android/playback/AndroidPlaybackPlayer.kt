@@ -226,6 +226,8 @@ interface AndroidPlaybackPlayer {
         resumePlayback: Boolean = true,
     ): Boolean
 
+    fun rematchCurrentAudio(songId: String)
+
     fun setPendingPlaybackIntent(
         requestId: Long,
         resumePlayback: Boolean,

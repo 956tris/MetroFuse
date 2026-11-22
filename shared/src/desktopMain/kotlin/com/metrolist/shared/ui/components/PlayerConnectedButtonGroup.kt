@@ -128,6 +128,7 @@ actual fun PlayerConnectedButtonGroup(
     val darkTheme = Settings.shared.getCurrentThemeIsDark()
     val height = if (compact) 36.dp else touchTarget
     val iconSize = if (compact) 20.dp else 24.dp
+    val audioMatchAction = rememberAudioMatchAction()
     val leftActions =
         listOfNotNull(
             PlayerControlAction(
@@ -136,6 +137,7 @@ actual fun PlayerConnectedButtonGroup(
                 onQueueClick,
                 isQueueActive,
             ),
+            audioMatchAction,
             onLyricsClick?.let {
                 PlayerControlAction(
                     MetrolistIcons.Default.Lyrics,

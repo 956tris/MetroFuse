@@ -106,6 +106,7 @@ import com.metrolist.shared.playback.shouldSkipAfterPlaybackFailure
 import com.metrolist.shared.playback.songsShareAlbum
 import com.metrolist.shared.playback.sponsorblock.observeSponsorBlockSkipping
 import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
+import com.metrolist.shared.plugins.hasManualAudioMatch
 import com.metrolist.shared.plugins.musicFrontendOwnerChanges
 import com.metrolist.shared.scrobble.ScrobbleManager
 import com.metrolist.shared.settings.BlockedContent
@@ -2780,7 +2781,7 @@ object PlayerState {
                     val resolver =
                         GlobalYouTubeRepository.streamResolver
                             ?: throw IllegalStateException("Stream resolver is not available")
-                    if (forceRemote) {
+                    if (forceRemote || !canUseAudioCache(videoId)) {
                         resolver.resolveRemote(videoId, hints, audioQuality ?: playbackAudioQuality(), sourceSong = sourceSong)
                     } else {
                         resolver.resolve(videoId, hints, audioQuality ?: playbackAudioQuality(), sourceSong = sourceSong)
@@ -2820,15 +2821,32 @@ object PlayerState {
 
     private suspend fun playbackFetchErrorMessage(error: Throwable): String = getString(error.playbackErrorResource(AuthState.isSignedIn))
 
+    private var audioMatchReloadRequest: Pair<Long, String>? = null
+
+    val canRematchAudio: Boolean
+        get() = !keepsCanonicalMedia() && !castManager.state.value.isConnected
+
+    fun rematchCurrentAudio(songId: String) {
+        val song = queue.currentItem()?.takeIf { it.id == songId } ?: return
+        if (!canRematchAudio) return
+        pendingResumePosition = songId to currentMediaPositionMs().coerceAtLeast(0L)
+        playTrackInternal(song, list = emptyList(), startPaused = !desiredPlayback.value, forceAudioRefresh = true)
+    }
+
+    private fun canUseAudioCache(songId: String): Boolean =
+        audioMatchReloadRequest != (playbackTransitionGeneration to songId) && !hasManualAudioMatch(songId)
+
     internal fun playTrackInternal(
         track: SongItem,
         list: List<SongItem>? = null,
         startPaused: Boolean = false,
         songsOnly: Boolean = false,
+        forceAudioRefresh: Boolean = false,
     ) {
         cancelCrossfadeForManualAction()
         val restorePosition = pendingResumePosition?.takeIf { list?.isEmpty() == true && it.first == track.id }
         val generation = beginPlaybackTransition(resumePosition = restorePosition)
+        if (forceAudioRefresh) audioMatchReloadRequest = generation to track.id
         desiredPlayback.value = !startPaused
         playbackTransitionJob =
             scope.launch {
@@ -2864,10 +2882,16 @@ object PlayerState {
                 val forcedClientId = forcedPlaybackClientId()
                 val localResource =
                     withContext(Dispatchers.IO) {
-                        if (forcedClientId == null) DownloadManager.getLocalPlaybackResource(playableTrack.id, playableTrack) else null
+                        if (forcedClientId == null &&
+                            canUseAudioCache(playableTrack.id)
+                        ) {
+                            DownloadManager.getLocalPlaybackResource(playableTrack.id, playableTrack)
+                        } else {
+                            null
+                        }
                     }
                 val cachedResource =
-                    if (forcedClientId == null && localResource == null) {
+                    if (forcedClientId == null && localResource == null && canUseAudioCache(playableTrack.id)) {
                         withContext(
                             Dispatchers.IO,
                         ) { runCatching { SongCacheManager.getCachedPlaybackResource(playableTrack.id, playableTrack) }.getOrNull() }
@@ -2999,10 +3023,14 @@ object PlayerState {
             val forcedClientId = forcedPlaybackClientId()
             val localResource =
                 withContext(Dispatchers.IO) {
-                    if (forcedClientId == null) DownloadManager.getLocalPlaybackResource(playableTrack.id, playableTrack) else null
+                    if (forcedClientId == null && canUseAudioCache(playableTrack.id)) {
+                        DownloadManager.getLocalPlaybackResource(playableTrack.id, playableTrack)
+                    } else {
+                        null
+                    }
                 }
             val cachedResource =
-                if (forcedClientId == null && localResource == null) {
+                if (forcedClientId == null && localResource == null && canUseAudioCache(playableTrack.id)) {
                     withContext(
                         Dispatchers.IO,
                     ) { runCatching { SongCacheManager.getCachedPlaybackResource(playableTrack.id, playableTrack) }.getOrNull() }

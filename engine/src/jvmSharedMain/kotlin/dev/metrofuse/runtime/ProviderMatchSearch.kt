@@ -25,6 +25,8 @@ internal class ProviderMatchSearch(
         val sources: List<Pair<String, String>>,
         val epoch: Long,
         val timeoutMillis: Long,
+        val query: String?,
+        val manual: Boolean,
     )
 
     private data class CachedSearch(
@@ -41,12 +43,14 @@ internal class ProviderMatchSearch(
         originalIdentity: TrackIdentity,
         audioSources: List<ProviderEntry<AudioSource>>,
         timeoutMillis: Long,
+        query: String? = null,
+        manual: Boolean = false,
     ): List<MatchCandidate> {
         if (metadata.title.isBlank() || audioSources.isEmpty()) return emptyList()
-        val key = SearchKey(metadata, audioSources.map { it.owner to it.id }, registry.providerEpoch, timeoutMillis)
+        val key = SearchKey(metadata, audioSources.map { it.owner to it.id }, registry.providerEpoch, timeoutMillis, query, manual)
         val cached = synchronized(cache) { cache[key]?.takeIf { it.until > now() }?.candidates }
         val candidates =
-            cached ?: searchProviders(metadata, audioSources, timeoutMillis).also { result ->
+            cached ?: searchProviders(metadata, audioSources, timeoutMillis, query, manual).also { result ->
                 if (registry.providerEpoch == key.epoch && result.isNotEmpty()) {
                     synchronized(cache) {
                         cache[key] = CachedSearch(now() + 90_000, result)
@@ -55,6 +59,7 @@ internal class ProviderMatchSearch(
                 }
             }
         val originalOwner = originalIdentity.identifiers["pluginOwner"] ?: originalIdentity.identifiers["plugin"]
+        if (manual) return candidates
         val sourcesById = audioSources.associateBy { it.id }
         val untried =
             candidates.filterNot { candidate ->
@@ -72,10 +77,12 @@ internal class ProviderMatchSearch(
         metadata: Track,
         audioSources: List<ProviderEntry<AudioSource>>,
         timeoutMillis: Long,
+        query: String?,
+        manual: Boolean,
     ): List<MatchCandidate> =
         coroutineScope {
             val owners = audioSources.map { it.owner }.toSet()
-            val request = SearchRequest(listOf(metadata.title, metadata.artist).filter { it.isNotBlank() }.joinToString(" "), 4)
+            val queries = query?.trim()?.takeIf(String::isNotBlank)?.let(::listOf) ?: ProviderFallbackMatcher.searchQueries(metadata)
             registry
                 .searchProviders()
                 .filter { it.owner in owners }
@@ -83,7 +90,50 @@ internal class ProviderMatchSearch(
                     async {
                         val result =
                             try {
-                                withTimeoutOrNull(timeoutMillis.coerceIn(1, 8000)) { entry.provider.search(request) }
+                                withTimeoutOrNull(timeoutMillis.coerceIn(1, 8000)) {
+                                    var tracks = emptyList<Track>()
+                                    for (term in queries) {
+                                        val response =
+                                            try {
+                                                entry.provider.search(SearchRequest(term, 8))
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
+                                            } catch (error: Exception) {
+                                                registry.reportFailure(entry.owner, "catalog.matchSearch", error)
+                                                continue
+                                            }
+                                        val found =
+                                            response.tracks.take(8).filter { track ->
+                                                track.id.isNotBlank() && track.id.length <= 2048 && track.title.isNotBlank() &&
+                                                    track.title.length <= 8192 && track.artist.length <= 8192 && track.extras.size <= 64
+                                            }
+                                        tracks = (tracks + found).distinctBy { it.id }
+                                        if ((manual && found.isNotEmpty()) ||
+                                            ProviderFallbackMatcher
+                                                .rankSafeCandidates(
+                                                    metadata,
+                                                    found.map { MatchCandidate(entry.id, it) },
+                                                    listOf(entry.id),
+                                                ).any()
+                                        ) {
+                                            break
+                                        }
+                                    }
+                                    if (manual) {
+                                        tracks.take(8)
+                                    } else {
+                                        val safe =
+                                            ProviderFallbackMatcher
+                                                .rankSafeCandidates(
+                                                    metadata,
+                                                    tracks.map { MatchCandidate(entry.id, it) },
+                                                    listOf(entry.id),
+                                                ).map { it.track }
+                                                .take(8)
+                                                .toList()
+                                        safe
+                                    }
+                                }
                             } catch (error: CancellationException) {
                                 throw error
                             } catch (error: Exception) {
@@ -94,9 +144,8 @@ internal class ProviderMatchSearch(
                             emptyList()
                         } else {
                             result
-                                ?.tracks
                                 .orEmpty()
-                                .take(request.limit)
+                                .take(8)
                                 .filter { track ->
                                     track.id.isNotBlank() && track.id.length <= 2048 && track.title.isNotBlank() &&
                                         track.title.length <= 8192 && track.artist.length <= 8192 && track.extras.size <= 64
@@ -108,5 +157,6 @@ internal class ProviderMatchSearch(
                 }.awaitAll()
                 .flatten()
                 .distinctBy { it.provider to it.track.id }
+                .take(4096)
         }
 }

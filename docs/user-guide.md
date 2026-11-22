@@ -97,6 +97,10 @@ Use **Settings & plugins** in the JavaScript interface, or **Settings** and **Pl
 
 ## Playback, quality and lyrics
 
+If automatic matching plays the wrong recording, choose **Match track** beside the player's queue and lyrics controls. Search by title or artist, compare the provider, album and duration, then select the recording you want. MetroFuse checks that the provider can resolve it before saving the choice. The queue, playback position and paused state are preserved. Choose **Automatic matching** to clear that song's saved choice.
+
+Automatic fallback uses recording codes when available, then compares title, artist, version and duration. It can try another eligible recording from the same provider after a matched stream fails. Manual choices are saved per song and used again on later plays.
+
 ### Spotify metadata and account
 
 The separate [Spotify plugin](https://github.com/956tris/MetroFuse-Spotify/releases) supplies Home, search, collections, library, likes, artist details, lyrics and available Canvas metadata. Import one `.mfp`, desktop `.jar` or Android plugin `.apk` variant and sign in through its account screen. It requires the patched host release; choose an audio provider separately for playback.

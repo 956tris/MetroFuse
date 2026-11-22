@@ -81,6 +81,7 @@ actual fun PlayerConnectedButtonGroup(
 ) {
     val iconSize = if (compact) 20.dp else 24.dp
     val buttonWidth = touchTarget + 2.dp
+    val audioMatchAction = rememberAudioMatchAction()
 
     val actions =
         listOfNotNull(
@@ -90,6 +91,7 @@ actual fun PlayerConnectedButtonGroup(
                 onClick = onQueueClick,
                 checked = isQueueActive,
             ),
+            audioMatchAction,
             onSleepTimerClick?.let {
                 PlayerControlAction(
                     icon = MetrolistIcons.Default.Bedtime,

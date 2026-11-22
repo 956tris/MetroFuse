@@ -17,6 +17,7 @@ import com.metrolist.shared.model.isPodcast
 import com.metrolist.shared.model.isVideoSong
 import com.metrolist.shared.playback.NoPlayableSourceException
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.ui.playback.PlaybackController
 import com.metrolist.shared.youtube.playback.LocalAudioSource
 import com.metrolist.shared.youtube.playback.PlaybackResource
 import com.metrolist.shared.youtube.playback.StreamResolver
@@ -25,6 +26,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 /** Optional platform bridge. Platforms without a plugin runtime retain upstream behavior. */
 interface PluginServices {
     suspend fun awaitReady() {}
+
+    val canMatchAudio: Boolean get() = false
+    val audioMatchingController: PlaybackController? get() = null
+
+    fun audioMatch(id: String): AudioMatchCandidate? = null
+
+    suspend fun audioMatches(
+        song: SongItem,
+        query: String? = null,
+    ): List<AudioMatchCandidate> = emptyList()
+
+    suspend fun setAudioMatch(
+        id: String,
+        candidate: AudioMatchCandidate?,
+    ): Boolean = false
 
     suspend fun canvas(
         title: String,
@@ -149,7 +165,7 @@ class PluginStreamResolver(
         allowLocal: Boolean = true,
     ): PlaybackResource {
         if (hints.wantVideo || hints.playbackClientOverrideId != null) throw NoPlayableSourceException()
-        if (allowLocal) {
+        if (allowLocal && (offlineOnly() || PluginServicesStore.current?.audioMatch(id) == null)) {
             localAudioSource?.resolve(id, song)?.let {
                 if (offlineOnly() && it.networkUrl != null) throw NoPlayableSourceException()
                 return it

@@ -152,12 +152,16 @@ object MetroFuseHost : PluginServices {
     private var hostScope: CoroutineScope? = null
     private val ready = CompletableDeferred<Unit>()
     private val playbackAdapter = ControllerPlayer(::songFor)
+    private var matchingController: PlaybackController? = null
+    override val audioMatchingController: PlaybackController? get() = matchingController
     private val navigation = ApplicationNavigation()
     private val songs = ConcurrentHashMap<String, SongItem>()
     private val identities = ConcurrentHashMap<String, TrackIdentity>()
     private val albums = ConcurrentHashMap<String, CatalogAlbum>()
     private val artists = ConcurrentHashMap<String, CatalogArtist>()
     private val playlists = ConcurrentHashMap<String, CatalogPlaylist>()
+    private val supportedAudioTransports =
+        setOf(StreamTransport.DIRECT, StreamTransport.RANGE_HTTP, StreamTransport.HLS, StreamTransport.SABR_UMP)
     private var platform = "desktop"
     private var libraryDatabase: MusicDatabase? = null
     private var sharedLibraryViewModel: LibraryViewModel? = null
@@ -218,38 +222,55 @@ object MetroFuseHost : PluginServices {
         hostScope = scope
         val services =
             object : HostServices, UiLibraryHost, UiLocalSearch, UiFrontendSelectionHost, UiLyricsHost {
-                override suspend fun resolveUiLyrics(track: Track): LyricsResult? = withContext(Dispatchers.Default) {
-                    val repository = org.koin.core.context.GlobalContext.getOrNull()?.getOrNull<LyricsRepository>()
-                        ?: return@withContext null
-                    val providers = LyricsProvider.preferredProvidersForFetch(
-                        LyricsProvider.parseUserOrderFromStoredCsv(Settings.shared.lyricsProviderOrder),
-                        LyricsProvider.parseEnabledFromStoredCsv(Settings.shared.lyricsEnabledProviders),
-                    ).sortedBy { it != LyricsProvider.METROFUSE && it != LyricsProvider.BETTERLYRICS }
-                    val lyrics = repository.getLyrics(
-                        videoId = track.id,
-                        title = track.title,
-                        artist = track.artist,
-                        duration = track.duration.takeIf { it > 0 },
-                        album = track.album.takeIf { it.isNotBlank() },
-                        preferredProviders = providers,
-                        ignoreVideoIdentity = track.id.startsWith("metrofuse:"),
-                        preferWordSynced = true,
-                        includePluginLyrics = false,
-                    ) ?: return@withContext null
-                    val entries = LyricsUtils.parseLyrics(lyrics.lyrics)
-                    val timed = LyricsUtils.hasPlaybackTiming(entries)
-                    val offset = LyricsUtils.combinedLyricsOffsetMs(
-                        repository.getLyricsOffset(track.id),
-                        Settings.shared.globalLyricsOffsetMs,
-                    )
-                    val lines = entries.map { entry ->
-                        val words = entry.words.orEmpty().filter { !it.isLineTimed && !it.isBackground && it.endTime > it.startTime }.map {
-                            LyricsWord(it.text, ((it.startTime * 1000).toLong() - offset).coerceAtLeast(0), ((it.endTime * 1000).toLong() - offset).coerceAtLeast(0))
-                        }
-                        LyricsLine(entry.text, (entry.time - offset).coerceAtLeast(0).takeIf { timed }, words)
+                override suspend fun resolveUiLyrics(track: Track): LyricsResult? =
+                    withContext(Dispatchers.Default) {
+                        val repository =
+                            org.koin.core.context.GlobalContext
+                                .getOrNull()
+                                ?.getOrNull<LyricsRepository>()
+                                ?: return@withContext null
+                        val providers =
+                            LyricsProvider
+                                .preferredProvidersForFetch(
+                                    LyricsProvider.parseUserOrderFromStoredCsv(Settings.shared.lyricsProviderOrder),
+                                    LyricsProvider.parseEnabledFromStoredCsv(Settings.shared.lyricsEnabledProviders),
+                                ).sortedBy { it != LyricsProvider.METROFUSE && it != LyricsProvider.BETTERLYRICS }
+                        val lyrics =
+                            repository.getLyrics(
+                                videoId = track.id,
+                                title = track.title,
+                                artist = track.artist,
+                                duration = track.duration.takeIf { it > 0 },
+                                album = track.album.takeIf { it.isNotBlank() },
+                                preferredProviders = providers,
+                                ignoreVideoIdentity = track.id.startsWith("metrofuse:"),
+                                preferWordSynced = true,
+                                includePluginLyrics = false,
+                            ) ?: return@withContext null
+                        val entries = LyricsUtils.parseLyrics(lyrics.lyrics)
+                        val timed = LyricsUtils.hasPlaybackTiming(entries)
+                        val offset =
+                            LyricsUtils.combinedLyricsOffsetMs(
+                                repository.getLyricsOffset(track.id),
+                                Settings.shared.globalLyricsOffsetMs,
+                            )
+                        val lines =
+                            entries.map { entry ->
+                                val words =
+                                    entry.words.orEmpty().filter { !it.isLineTimed && !it.isBackground && it.endTime > it.startTime }.map {
+                                        LyricsWord(
+                                            it.text,
+                                            ((it.startTime * 1000).toLong() - offset).coerceAtLeast(0),
+                                            (
+                                                (it.endTime * 1000).toLong() -
+                                                    offset
+                                            ).coerceAtLeast(0),
+                                        )
+                                    }
+                                LyricsLine(entry.text, (entry.time - offset).coerceAtLeast(0).takeIf { timed }, words)
+                            }
+                        LyricsResult(lines, lyrics.provider).takeIf { lines.any { it.text.isNotBlank() } }
                     }
-                    LyricsResult(lines, lyrics.provider).takeIf { lines.any { it.text.isNotBlank() } }
-                }
 
                 override suspend fun selectUiFrontend(owner: String) =
                     withContext(Dispatchers.Main.immediate) { selectMusicFrontend(owner) }
@@ -273,8 +294,7 @@ object MetroFuseHost : PluginServices {
                     object : TrackCatalog {
                         override val tracks: List<Track> get() = playbackAdapter.state.value.queue
 
-                        override suspend fun identify(identity: TrackIdentity): Track? =
-                            songs[identity.identifiers["host"] ?: identity.canonicalId]?.toPluginTrack()
+                        override suspend fun identify(identity: TrackIdentity): Track? = matchingTrack(identity)
                     }
                 override val settings =
                     object : HostSettings {
@@ -416,6 +436,7 @@ object MetroFuseHost : PluginServices {
     }
 
     fun attachController(controller: PlaybackController) {
+        matchingController = controller
         playbackAdapter.attach(controller, checkNotNull(hostScope), ::remember)
         checkNotNull(hostScope).launch {
             combine(musicFrontendOwnerChanges(), controller.state) { owner, state -> owner to state }.collect { (owner, state) ->
@@ -462,6 +483,7 @@ object MetroFuseHost : PluginServices {
             engine?.close()
             hostScope?.cancel()
             playbackAdapter.detach()
+            matchingController = null
             sharedLibraryViewModel = null
         }
 
@@ -474,6 +496,108 @@ object MetroFuseHost : PluginServices {
         }
         songs[song.id] = song
     }
+
+    private fun matchingTrack(identity: TrackIdentity): Track? {
+        val id = identity.identifiers["host"] ?: identity.canonicalId
+        val track = songs[id]?.toPluginTrack() ?: return null
+        val isrc = identity.isrc ?: identities[id]?.isrc ?: identities[id]?.identifiers?.get("isrc")
+        return if (isrc == null) track else track.copy(extras = track.extras + ("isrc" to isrc))
+    }
+
+    override val canMatchAudio: Boolean
+        get() =
+            engine?.let { current ->
+                val owners =
+                    current.registry
+                        .searchProviders()
+                        .map { it.owner }
+                        .toSet()
+                current.registry.audioSources().any { entry ->
+                    entry.owner in owners && entry.owner != "builtin" &&
+                        entry.provider.capabilities.requirements.none {
+                            it.startsWith("platform:") && it != "platform:$platform"
+                        }
+                }
+            } == true
+
+    override fun audioMatch(id: String): AudioMatchCandidate? = AudioMatchOverrides.decode(Settings.shared.audioMatchOverridesJson)[id]
+
+    override suspend fun audioMatches(
+        song: SongItem,
+        query: String?,
+    ): List<AudioMatchCandidate> {
+        ready.await()
+        if (effectiveMusicFrontendOwner().isEmpty()) return emptyList()
+        require(query == null || query.length <= 8192) { "Search query exceeds limits" }
+        remember(song)
+        val identity = identities[song.id] ?: trackIdentity(song.id)
+        val track = matchingTrack(identity) ?: song.toPluginTrack()
+        return runtime.pipelines.audioMatches(track, identity, platform, query).mapNotNull { match ->
+            val entry = runtime.registry.audioSources().firstOrNull { it.id == match.provider } ?: return@mapNotNull null
+            AudioMatchCandidate(
+                provider = entry.id,
+                owner = entry.owner,
+                trackId = match.track.id,
+                title = match.track.title,
+                artist = match.track.artist,
+                providerName =
+                    runtime.plugins.value
+                        .firstOrNull { it.manifest.id == entry.owner }
+                        ?.manifest
+                        ?.name ?: entry.id,
+                album = match.track.album,
+                durationMs = match.track.duration,
+                artwork = match.track.artwork,
+                isrc = match.track.extras["isrc"],
+            )
+        }
+    }
+
+    override suspend fun setAudioMatch(
+        id: String,
+        candidate: AudioMatchCandidate?,
+    ): Boolean {
+        ready.await()
+        if (id.isBlank()) return false
+        if (candidate != null) {
+            if (!AudioMatchOverrides.valid(candidate) || effectiveMusicFrontendOwner().isEmpty()) return false
+            val source =
+                runtime.registry.audioSources().firstOrNull { it.id == candidate.provider && it.owner == candidate.owner } ?: return false
+            val identity = rememberAudioMatch(candidate)
+            val result = runtime.pipelines.audioExact(AudioQuery(identity, platform, audioQualityPreference(), source.id))
+            val stream = result.stream ?: return false
+            if (stream.transport !in supportedAudioTransports) return false
+            pluginSabrBootstrap(stream, stream.attributes.getValue("resolvedMediaId"))
+        }
+        withContext(Dispatchers.Main.immediate) {
+            val matches = AudioMatchOverrides.decode(Settings.shared.audioMatchOverridesJson).toMutableMap()
+            if (candidate == null) matches.remove(id) else matches[id] = candidate
+            Settings.shared.audioMatchOverridesJson = AudioMatchOverrides.encode(matches)
+        }
+        return true
+    }
+
+    private fun rememberAudioMatch(candidate: AudioMatchCandidate): TrackIdentity {
+        val rawId = candidate.trackId.removePrefix("metrofuse:${candidate.owner}:")
+        val id = "metrofuse:${candidate.owner}:$rawId"
+        songFor(
+            Track(
+                id,
+                candidate.title,
+                candidate.artist,
+                candidate.album,
+                candidate.durationMs,
+                candidate.artwork,
+                extras = candidate.isrc?.let { mapOf("isrc" to it) }.orEmpty(),
+            ),
+        )
+        return checkNotNull(identities[id])
+    }
+
+    private fun audioQualityPreference(): QualityPreference =
+        QualityPreference(
+            preset = runCatching { QualityPreset.valueOf(Settings.shared.audioQuality) }.getOrDefault(QualityPreset.AUTO),
+        )
 
     override suspend fun resolve(
         id: String,
@@ -498,7 +622,14 @@ object MetroFuseHost : PluginServices {
                     },
             )
         val result =
-            runtime.pipelines.audio(
+            audioMatch(id)?.let { match ->
+                if (match.provider in excludedProviders ||
+                    runtime.registry.audioSources().none { it.id == match.provider && it.owner == match.owner }
+                ) {
+                    return null
+                }
+                runtime.pipelines.audioExact(AudioQuery(rememberAudioMatch(match), platform, preference, match.provider), excludedProviders)
+            } ?: runtime.pipelines.audio(
                 AudioQuery(identity, platform, preference),
                 includeBuiltin = false,
                 excludedProviders = excludedProviders,
@@ -507,13 +638,7 @@ object MetroFuseHost : PluginServices {
         if (effectiveMusicFrontendOwner().isEmpty()) return null
         val provider = descriptor.attributes["providerId"] ?: error("Audio provider identity missing")
         require(
-            descriptor.transport in
-                setOf(
-                    StreamTransport.DIRECT,
-                    StreamTransport.RANGE_HTTP,
-                    StreamTransport.HLS,
-                    StreamTransport.SABR_UMP,
-                ),
+            descriptor.transport in supportedAudioTransports,
         ) {
             "Unsupported plugin stream transport"
         }
@@ -549,7 +674,7 @@ object MetroFuseHost : PluginServices {
             sampleRate = descriptor.sampleRate,
             durationSeconds = descriptor.durationSeconds ?: sabr?.durationMs?.div(1000) ?: song?.duration,
             clientName = provider,
-            profileId = provider,
+            profileId = descriptor.attributes["matchProfile"] ?: provider,
             requireBoundedRange = descriptor.transport == StreamTransport.RANGE_HTTP,
             useRangeChunks = descriptor.transport == StreamTransport.RANGE_HTTP,
             sabrBootstrap = sabr,
@@ -893,9 +1018,10 @@ internal fun LyricsResult.toHostLyrics(
                         time = line.timeMs ?: 0,
                         text = line.text,
                         words =
-                            line.words.map { word ->
-                                WordTimestamp(word.text, word.startMs / 1000.0, word.endMs / 1000.0)
-                            }.takeIf { it.isNotEmpty() },
+                            line.words
+                                .map { word ->
+                                    WordTimestamp(word.text, word.startMs / 1000.0, word.endMs / 1000.0)
+                                }.takeIf { it.isNotEmpty() },
                     )
                 },
         )
@@ -910,6 +1036,12 @@ private fun SongItem.toPluginTrack() =
         album?.name.orEmpty(),
         (duration ?: 0) * 1000,
         thumbnail.orEmpty(),
+        extras =
+            artists
+                .firstOrNull()
+                ?.name
+                ?.let { mapOf("primaryArtist" to it) }
+                .orEmpty(),
     )
 
 private fun trackIdentity(
@@ -919,7 +1051,7 @@ private fun trackIdentity(
     val namespace = id.removePrefix("metrofuse:")
     val owner = namespace.substringBefore(':', missingDelimiterValue = "")
     val providerId = namespace.substringAfter(':', missingDelimiterValue = "")
-    if (namespace == id || owner.isBlank() || providerId.isBlank()) return TrackIdentity(id, identifiers)
+    if (namespace == id || owner.isBlank() || providerId.isBlank()) return TrackIdentity(id, identifiers, identifiers["isrc"])
     return TrackIdentity(
         providerId,
         identifiers +
@@ -929,6 +1061,7 @@ private fun trackIdentity(
                 "plugin" to owner,
                 "host" to id,
             ),
+        isrc = identifiers["isrc"],
     )
 }
 
@@ -1025,11 +1158,12 @@ private class ControllerPlayer(
                         pluginSong = value.currentSong?.also(remember)?.toPluginTrack() ?: Track("", "", "", "")
                     }
                     val measuredDuration = value.durationMs.takeIf { pluginSong.id.isNotBlank() && it > 0 }
-                    val currentTrack = if (measuredDuration != null && measuredDuration != pluginSong.duration) {
-                        pluginSong.copy(duration = measuredDuration)
-                    } else {
-                        pluginSong
-                    }
+                    val currentTrack =
+                        if (measuredDuration != null && measuredDuration != pluginSong.duration) {
+                            pluginSong.copy(duration = measuredDuration)
+                        } else {
+                            pluginSong
+                        }
                     state.value =
                         PlaybackState(
                             currentTrack,

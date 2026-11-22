@@ -999,6 +999,12 @@ class PlayerConnection(
         }
     }
 
+    val canRematchAudio: Boolean get() = musicService?.canRematchAudio == true
+
+    fun rematchCurrentAudio(songId: String) {
+        musicService?.rematchCurrentAudio(songId)
+    }
+
     override fun seekTo(position: Long) = seekTo(position, PlaybackSeekSource.Other)
 
     override fun seekTo(
