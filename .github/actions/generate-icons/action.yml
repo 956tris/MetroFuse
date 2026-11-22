@@ -17,5 +17,6 @@ runs:
         PYTHON="${RUNNER_TEMP}/metrolist-icon-venv/bin/python"
         [[ -x "$PYTHON" ]] || PYTHON="${RUNNER_TEMP}/metrolist-icon-venv/Scripts/python.exe"
         "$PYTHON" -m pip install \
-          --disable-pip-version-check --no-deps --no-cache-dir --only-binary=:all: Pillow==13.0.0
+          --disable-pip-version-check --no-deps --no-cache-dir --only-binary=:all: \
+          --require-hashes -r scripts/requirements-icons.txt
         "$PYTHON" scripts/gen_icons.py
