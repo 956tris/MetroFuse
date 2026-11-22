@@ -19,7 +19,7 @@ object ProviderFallbackMatcher : TrackMatcher {
     private const val MAX_DURATION_DIFFERENCE_RATIO = 0.25
     private val versionDescriptor =
         Regex(
-        """\b(sped\s*up|speed\s*up|slowed(?:\s*(?:and|&)\s*reverb)?|nightcore|tiktok(?:\s*version)?|official(?:\s+(?:music\s+)?(?:audio|video))?|lyrics?|visuali[sz]er|remaster(?:ed)?|edit|version)\b""",
+            """\b(sped\s*up|speed\s*up|slowed(?:\s*(?:and|&)\s*reverb)?|nightcore|tiktok(?:\s*version)?|official(?:\s+(?:music\s+)?(?:audio|video))?|lyrics?|visuali[sz]er|remaster(?:ed)?|edit|version)\b""",
             RegexOption.IGNORE_CASE,
         )
     private val bracketedText = Regex("""\(([^)]*)\)|\[([^]]*)]""")
@@ -37,6 +37,9 @@ object ProviderFallbackMatcher : TrackMatcher {
             RegexOption.IGNORE_CASE,
         )
     private val speedVersion = Regex("""\b(sped\s*up|speed\s*up|slowed|nightcore)\b""", RegexOption.IGNORE_CASE)
+    private val titleSeparator = Regex("""\s+[-–—|]\s+""")
+    private val latinLetters = Regex("""\p{IsLatin}""")
+    private val otherLetters = Regex("""[\p{L}&&[^\p{IsLatin}]]""")
     private val recordingSuffix =
         Regex(
             """\s+[-–—|]\s+.*\b(?:live|remix|acoustic|instrumental|karaoke|cover|demo|mashup|radio\s+edit|sped\s*up|speed\s*up|slowed|nightcore)\b.*$""",
@@ -45,8 +48,8 @@ object ProviderFallbackMatcher : TrackMatcher {
 
     internal fun searchQueries(metadata: Track): List<String> {
         val creditedArtist = titleArtistCredit(metadata)
-        val artist = creditedArtist ?: metadata.extras["primaryArtist"]?.takeIf(String::isNotBlank) ?: metadata.artist
-        val title = metadata.title.removePrefix(creditedArtist?.let { "$it - " }.orEmpty())
+        val artist = creditedArtist?.artist ?: metadata.extras["primaryArtist"]?.takeIf(String::isNotBlank) ?: metadata.artist
+        val title = creditedArtist?.title ?: metadata.title
         val cleanTitle = normalizeTitle(title)
         val queries =
             listOfNotNull(
@@ -104,16 +107,19 @@ object ProviderFallbackMatcher : TrackMatcher {
             return 1000 + durationScore(metadata, candidate)
         }
         val titleCredit = titleArtistCredit(metadata)
-        val wantedTitle = normalizeTitle(metadata.title.removePrefix(titleCredit?.let { "$it - " }.orEmpty()))
-        val candidateTitle = normalizeTitle(candidate.title)
-        if (wantedTitle.isBlank() || candidateTitle.isBlank()) return null
-        val wantedTokens = wantedTitle.tokens()
-        val candidateTokens = candidateTitle.tokens()
-        if (candidateTokens.isEmpty()) return null
-        val titleCoverage = candidateTokens.count(wantedTokens::contains).toDouble() / candidateTokens.size
-        val wantedCoverage = wantedTokens.count(candidateTokens::contains).toDouble() / wantedTokens.size
-        val titleContained = wantedTitle.contains(candidateTitle) || candidateTitle.contains(wantedTitle)
-        val exactTitle = wantedTitle == candidateTitle
+        val wantedTitles = titleVariants(titleCredit?.title ?: metadata.title)
+        val candidateTitles = titleVariants(candidate.title)
+        if (wantedTitles.isEmpty() || candidateTitles.isEmpty()) return null
+        val titlePairs = wantedTitles.flatMap { wanted -> candidateTitles.map { candidate -> wanted to candidate } }
+        val titleContained = titlePairs.any { (wanted, candidate) -> wanted.contains(candidate) || candidate.contains(wanted) }
+        val exactTitle = titlePairs.any { (wanted, candidate) -> wanted == candidate }
+        val titleCoverageMatches =
+            titlePairs.any { (wanted, candidate) ->
+                val wantedTokens = wanted.tokens()
+                val candidateTokens = candidate.tokens()
+                candidateTokens.count(wantedTokens::contains).toDouble() / candidateTokens.size >= MIN_TITLE_COVERAGE &&
+                    wantedTokens.count(candidateTokens::contains).toDouble() / wantedTokens.size >= MIN_TITLE_COVERAGE
+            }
         val versionedSource = speedVersion.containsMatchIn(metadata.title)
         val wantedArtistTokens = normalizeArtist(metadata.artist).tokens()
         val candidateArtistTokens = normalizeArtist(candidate.artist).tokens()
@@ -129,10 +135,15 @@ object ProviderFallbackMatcher : TrackMatcher {
             val reverseCoverage = if (wanted.isEmpty()) 0.0 else wanted.count(candidateArtistTokens::contains).toDouble() / wanted.size
             return coverage >= MIN_TITLE_COVERAGE || reverseCoverage >= MIN_TITLE_COVERAGE
         }
-        val titleArtistTokens = titleCredit?.let(::normalizeArtist)?.tokens().orEmpty()
+        val titleArtistTokens =
+            titleCredit
+                ?.artist
+                ?.let(::normalizeArtist)
+                ?.tokens()
+                .orEmpty()
         val artistMatches = if (titleArtistTokens.isNotEmpty()) matchesArtist(titleArtistTokens) else matchesArtist(wantedArtistTokens)
         if ((wantedArtistTokens.isNotEmpty() || titleArtistTokens.isNotEmpty()) && !artistMatches) return null
-        if (!(exactTitle || (titleCoverage >= MIN_TITLE_COVERAGE && wantedCoverage >= MIN_TITLE_COVERAGE && artistMatches))) return null
+        if (!(exactTitle || (titleCoverageMatches && artistMatches))) return null
         val wantedVersions = versions(metadata.title)
         val candidateVersions = versions(candidate.title)
         if (wantedVersions != candidateVersions) return null
@@ -155,17 +166,59 @@ object ProviderFallbackMatcher : TrackMatcher {
         return base + durationScore(metadata, candidate) + albumScore + speedScore
     }
 
-    private fun titleArtistCredit(track: Track): String? =
-        track.title
-            .takeIf { title ->
-                title.contains(" - ") && (
-                    speedVersion.containsMatchIn(title) || noiseSuffix.containsMatchIn(title) ||
-                        bracketedText.findAll(title).any { versionDescriptor.containsMatchIn(it.value) }
-                )
-            }?.takeIf { title ->
-                versionDescriptor.replace(title.substringAfter(" - "), " ").any(Char::isLetter)
-            }?.substringBefore(" - ")
-            ?.takeIf(String::isNotBlank)
+    private data class ArtistCredit(
+        val artist: String,
+        val title: String,
+    )
+
+    private fun titleArtistCredit(track: Track): ArtistCredit? {
+        // A dash inside a version or featured-artist label is not an artist/title separator.
+        val unbracketed = bracketedText.replace(track.title) { " ".repeat(it.value.length) }
+        val separator = titleSeparator.find(unbracketed) ?: return null
+        if (!speedVersion.containsMatchIn(track.title) && !noiseSuffix.containsMatchIn(track.title) &&
+            bracketedText.findAll(track.title).none { versionDescriptor.containsMatchIn(it.value) }
+        ) {
+            return null
+        }
+        val title = track.title.substring(separator.range.last + 1).trim()
+        if (versionDescriptor.replace(title, " ").none(Char::isLetter)) return null
+        val artist =
+            track.title
+                .substring(0, separator.range.first)
+                .trim()
+                .takeIf(String::isNotBlank) ?: return null
+        return ArtistCredit(artist, title)
+    }
+
+    private fun titleVariants(value: String): Set<String> {
+        val variants = linkedSetOf(normalizeTitle(value))
+        val parts = titleSeparator.split(value).map(::normalizeTitle).filter(String::isNotBlank)
+        if (parts.size == 2 && differentScripts(parts[0], parts[1])) variants.addAll(parts)
+        for (translation in bracketedText.findAll(value)) {
+            val text =
+                translation.groupValues
+                    .drop(1)
+                    .firstOrNull(String::isNotBlank)
+                    .orEmpty()
+            val base = normalizeTitle(value.replaceRange(translation.range, " "))
+            val translated = normalizeTitle(text)
+            if (differentScripts(base, translated)) {
+                variants += base
+                variants += translated
+            }
+        }
+        return variants.filterTo(linkedSetOf(), String::isNotBlank)
+    }
+
+    private fun differentScripts(
+        first: String,
+        second: String,
+    ): Boolean {
+        fun latin(value: String) = latinLetters.containsMatchIn(value) && !otherLetters.containsMatchIn(value)
+
+        fun other(value: String) = otherLetters.containsMatchIn(value) && !latinLetters.containsMatchIn(value)
+        return (latin(first) && other(second)) || (other(first) && latin(second))
+    }
 
     private fun normalizedIsrc(track: Track): String? =
         track.extras["isrc"]

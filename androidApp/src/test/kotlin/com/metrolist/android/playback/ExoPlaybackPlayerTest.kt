@@ -43,8 +43,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -99,20 +99,26 @@ class ExoPlaybackPlayerTest {
     }
 
     @Test
-    fun manualRematchKeepsTheSelectedQueueOccurrencePositionAndPausedIntent() = runBlocking {
-        val songs = listOf(song().copy(playlistSetVideoId = "first"), song().copy(playlistSetVideoId = "second"), song().copy(id = "last"))
-        player.setQueue(songs, startIndex = 1, preparePlayback = false)
-        assertTrue(player.prepareAndPlay(songs[1], downloadedResource(), positionMs = 6_183L, resumePlayback = false))
-        val queue = player.queueSnapshot()
-        val position = player.getRealtimePositionMs()
-        val request = async(start = CoroutineStart.UNDISPATCHED) { player.queuePlaybackRequests.first() }
-        player.rematchCurrentAudio(songs[1].id)
-        val replay = withTimeout(5_000) { request.await() }
-        assertEquals(queue, player.queueSnapshot())
-        assertEquals(songs[1], replay.song)
-        assertEquals(position, replay.startPositionMs)
-        assertFalse(replay.resumePlayback)
-    }
+    fun manualRematchKeepsTheSelectedQueueOccurrencePositionAndPausedIntent() =
+        runBlocking {
+            val songs =
+                listOf(
+                    song().copy(playlistSetVideoId = "first"),
+                    song().copy(playlistSetVideoId = "second"),
+                    song().copy(id = "last"),
+                )
+            player.setQueue(songs, startIndex = 1, preparePlayback = false)
+            assertTrue(player.prepareAndPlay(songs[1], downloadedResource(), positionMs = 6_183L, resumePlayback = false))
+            val queue = player.queueSnapshot()
+            val position = player.getRealtimePositionMs()
+            val request = async(start = CoroutineStart.UNDISPATCHED) { player.queuePlaybackRequests.first() }
+            player.rematchCurrentAudio(songs[1].id)
+            val replay = withTimeout(5_000) { request.await() }
+            assertEquals(queue, player.queueSnapshot())
+            assertEquals(songs[1], replay.song)
+            assertEquals(position, replay.positionMs)
+            assertFalse(replay.resumePlayback)
+        }
 
     @Test
     fun terminalSabrFailureStartsRecoveryBeforeBufferedBytesDrain() =

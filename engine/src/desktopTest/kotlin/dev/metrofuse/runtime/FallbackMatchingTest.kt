@@ -8,6 +8,54 @@ import kotlin.test.assertTrue
 
 class FallbackMatchingTest {
     @Test
+    fun bilingualTitlesMatchTheirOtherScriptWithoutAcceptingLongerRecordings() {
+        val source = Track("original", "Shinunoga E-Wa", "Fujii Kaze", "", 185_000)
+        val result =
+            ProviderFallbackMatcher.selectSafeCandidates(
+                source,
+                listOf(
+                    candidate("a", "longer", "死ぬのがいいわ - Shinunoga E-Wa", "Fujii Kaze", 255_000),
+                    candidate("b", "correct", "死ぬのがいいわ - Shinunoga E-Wa", "Fujii Kaze", 186_000),
+                    candidate("c", "different-title", "Another Song - Shinunoga E-Wa", "Fujii Kaze", 185_000),
+                ),
+                listOf("a", "b", "c"),
+            )
+        assertEquals(listOf("correct"), result.map { it.track.id })
+    }
+
+    @Test
+    fun translatedParenthesesPreferTheRecordingWithAKnownMatchingDuration() {
+        val source = Track("original", "Neon", "YUKIKA", "", 220_795)
+        val result =
+            ProviderFallbackMatcher.selectSafeCandidates(
+                source,
+                listOf(
+                    candidate("a", "unknown-duration", "Neon", "YUKIKA", 0),
+                    candidate("a", "translated", "NEON(네온)", "YUKIKA", 221_000),
+                    candidate("b", "different-edition", "NEON 1989", "YUKIKA", 146_000),
+                ),
+                listOf("a", "b"),
+            )
+        assertEquals(listOf("translated"), result.map { it.track.id })
+    }
+
+    @Test
+    fun aDashInsideRadioEditCreditsDoesNotReplaceTheActualArtist() {
+        val source = Track("original", "Get Lucky (Radio Edit - feat. Pharrell Williams and Nile Rodgers)", "Daft Punk", "", 248_000)
+        val result =
+            ProviderFallbackMatcher.selectSafeCandidates(
+                source,
+                listOf(
+                    candidate("a", "studio", "Get Lucky", "Daft Punk", 367_000),
+                    candidate("b", "radio", source.title, "Daft Punk, Pharrell Williams, Nile Rodgers", 249_000),
+                ),
+                listOf("a", "b"),
+            )
+        assertEquals(listOf("radio"), result.map { it.track.id })
+        assertTrue(ProviderFallbackMatcher.searchQueries(source).any { it == "get lucky Daft Punk" })
+    }
+
+    @Test
     fun versionedUploadUsesExplicitTitleArtistCredit() {
         val source = Track("upload", "Fujii Kaze - Shinunoga E-Wa (Sped Up) (tiktok version)", "Andrew", "", 138_000)
         val result =
@@ -22,10 +70,15 @@ class FallbackMatchingTest {
     @Test
     fun uploaderCreditDoesNotOutrankTheArtistNamedInTheUploadTitle() {
         val source = Track("upload", "Fujii Kaze - Shinunoga E-Wa (Sped Up)", "Andrew", "", 138_000)
-        val result = ProviderFallbackMatcher.selectSafeCandidates(source, listOf(
-            candidate("a", "uploader-cover", "Shinunoga E-Wa", "Andrew", 138_000),
-            candidate("b", "recording", "Shinunoga E-Wa", "Fujii Kaze", 185_000),
-        ), listOf("a", "b"))
+        val result =
+            ProviderFallbackMatcher.selectSafeCandidates(
+                source,
+                listOf(
+                    candidate("a", "uploader-cover", "Shinunoga E-Wa", "Andrew", 138_000),
+                    candidate("b", "recording", "Shinunoga E-Wa", "Fujii Kaze", 185_000),
+                ),
+                listOf("a", "b"),
+            )
         assertEquals(listOf("recording"), result.map { it.track.id })
     }
 
