@@ -8,7 +8,7 @@ on:
       tag:
         description: Existing KMP beta tag to build, verify and publish
         required: true
-        default: v10.0.0-kmp-beta.1
+        default: v10.0.0-kmp-beta.6
         type: string
       publish:
         description: Publish the checked artifacts as a prerelease
@@ -103,6 +103,16 @@ jobs:
           ref: ${{ needs.prepare.outputs.commit }}
           submodules: recursive
           persist-credentials: false
+      - name: Check out Android release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          sparse-checkout: |
+            .github/actions/prepare-robolectric-sdks
+            .github/scripts/prepare-robolectric-sdks.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - uses: ./.github/actions/prepare-ci-gradle
         with:
           cache-scope: metrofuse-release-android
@@ -120,8 +130,22 @@ jobs:
         env:
           PREPARED_KEYSTORE: ${{ steps.signing.outputs.keystore_path }}
         run: echo "KEYSTORE_PATH=$PREPARED_KEYSTORE" >> "$GITHUB_ENV"
+      - uses: ./release-tools/.github/actions/prepare-robolectric-sdks
       - name: Verify Android host regressions
+        id: android_host_tests
+        env:
+          ROBOLECTRIC_SDK_DIR: ${{ runner.temp }}/robolectric-sdks
+          # Older beta tags predate the Gradle environment-variable support.
+          JAVA_TOOL_OPTIONS: -Drobolectric.dependency.dir=${{ runner.temp }}/robolectric-sdks
         run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+      - name: Upload Android host test reports
+        if: failure() && steps.android_host_tests.outcome == 'failure'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: android-host-test-reports
+          path: |
+            androidApp/build/test-results/testDebugUnitTest/
+            shared/build/test-results/testAndroidHostTest/
       - name: Build Android release APK
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
@@ -177,11 +201,24 @@ jobs:
           ref: ${{ needs.prepare.outputs.commit }}
           submodules: recursive
           persist-credentials: false
+      - name: Check out Windows release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          sparse-checkout: |
+            .github/actions/generate-icons
+            scripts/requirements-icons.txt
+            scripts/desktop_smoke.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
       - uses: ./.github/actions/prepare-ci-gradle
         with:
           cache-scope: metrofuse-release-windows
           persist-configuration-cache: 'false'
-      - uses: ./.github/actions/generate-icons
+      - uses: ./release-tools/.github/actions/generate-icons
+        with:
+          requirements-file: release-tools/scripts/requirements-icons.txt
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
         with:
           global-json-file: metro-wv2-helper/global.json
@@ -219,14 +256,6 @@ jobs:
           } finally { $archive.Dispose() }
           python scripts/verify_native_plugin_abi.py dist/MetroFuse-Desktop-Windows.zip --classpath-file desktopApp/build/plugin-abi/classpath.txt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      # Manual dispatch can build a tag that predates the smoke test fix.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.workflow_sha }}
-          path: release-tools
-          sparse-checkout: scripts/desktop_smoke.py
-          sparse-checkout-cone-mode: false
-          persist-credentials: false
       - name: Smoke-test Windows launcher
         shell: pwsh
         run: |

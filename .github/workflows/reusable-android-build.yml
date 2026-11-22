@@ -165,6 +165,12 @@ jobs:
           echo "Android release signing credentials are required" >&2
           exit 1
 
+      - name: Prepare Robolectric SDKs
+        if: inputs.variant == 'debug'
+        uses: ./.github/actions/prepare-robolectric-sdks
+        with:
+          cache-read-only: ${{ inputs.cache-read-only }}
+
       - name: Build Android
         shell: bash
         env:

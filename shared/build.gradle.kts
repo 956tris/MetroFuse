@@ -998,6 +998,9 @@ tasks.withType<Test>().configureEach {
     jvmArgs("--enable-native-access=ALL-UNNAMED", "--sun-misc-unsafe-memory-access=allow")
     if (name == "testAndroidHostTest") {
         systemProperty("robolectric.dependency.repo.url", "https://repo.maven.apache.org/maven2")
+        providers.environmentVariable("ROBOLECTRIC_SDK_DIR").orNull?.let {
+            systemProperty("robolectric.dependency.dir", it)
+        }
     }
     javaLauncher.set(
         javaToolchainService.launcherFor {

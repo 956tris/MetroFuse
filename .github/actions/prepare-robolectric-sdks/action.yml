@@ -1,0 +1,38 @@
+name: Prepare Robolectric SDKs
+description: Cache verified Android test SDKs before starting host tests
+
+inputs:
+  cache-read-only:
+    description: Restore SDKs without saving a cache entry
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Fingerprint Robolectric SDK configuration
+      id: sdk-cache
+      shell: bash
+      run: |
+        script="$GITHUB_ACTION_PATH/../../scripts/prepare-robolectric-sdks.sh"
+        echo "key=robolectric-sdks-v1-$(sha256sum "$script" | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Robolectric SDKs
+      if: inputs.cache-read-only != 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ runner.temp }}/robolectric-sdks
+        key: ${{ steps.sdk-cache.outputs.key }}
+
+    - name: Restore Robolectric SDKs (read-only)
+      if: inputs.cache-read-only == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      with:
+        path: ${{ runner.temp }}/robolectric-sdks
+        key: ${{ steps.sdk-cache.outputs.key }}
+
+    - name: Download and verify Robolectric SDKs
+      shell: bash
+      run: |
+        bash "$GITHUB_ACTION_PATH/../../scripts/prepare-robolectric-sdks.sh" "$RUNNER_TEMP/robolectric-sdks"
+        echo "ROBOLECTRIC_SDK_DIR=$RUNNER_TEMP/robolectric-sdks" >> "$GITHUB_ENV"

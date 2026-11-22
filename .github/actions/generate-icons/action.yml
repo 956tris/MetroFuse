@@ -1,6 +1,12 @@
 name: Generate installer icons
 description: Generate installer icons in an isolated Python environment
 
+inputs:
+  requirements-file:
+    description: Pinned dependencies for the icon generator
+    required: false
+    default: scripts/requirements-icons.txt
+
 runs:
   using: composite
   steps:
@@ -11,6 +17,8 @@ runs:
 
     - name: Generate installer icons
       shell: bash
+      env:
+        ICON_REQUIREMENTS_FILE: ${{ inputs.requirements-file }}
       run: |
         rm -rf "${RUNNER_TEMP}/metrolist-icon-venv"
         python -m venv "${RUNNER_TEMP}/metrolist-icon-venv"
@@ -18,5 +26,5 @@ runs:
         [[ -x "$PYTHON" ]] || PYTHON="${RUNNER_TEMP}/metrolist-icon-venv/Scripts/python.exe"
         "$PYTHON" -m pip install \
           --disable-pip-version-check --no-deps --no-cache-dir --only-binary=:all: \
-          --require-hashes -r scripts/requirements-icons.txt
+          --require-hashes -r "$ICON_REQUIREMENTS_FILE"
         "$PYTHON" scripts/gen_icons.py
