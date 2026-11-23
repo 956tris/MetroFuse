@@ -354,7 +354,14 @@ actual class VideoPlayer actual constructor(
             return false
         }
         currentVideoId = Regex("[?&]v=([a-zA-Z0-9_-]+)").find(url)?.groupValues?.get(1) ?: ""
-        val useRangeStream = shouldUseRangeStreamForVideoUrl(url)
+        val isLoopingVideoUrl =
+            looping &&
+                url.toHttpUrlOrNull()?.encodedPath?.let {
+                    it.endsWith(".mp4", ignoreCase = true) ||
+                        it.endsWith(".webm", ignoreCase = true) ||
+                        it.endsWith(".m3u8", ignoreCase = true)
+                } == true
+        val useRangeStream = !isLoopingVideoUrl && shouldUseRangeStreamForVideoUrl(url)
         streamSourceDescription =
             when {
                 useRangeStream -> "HTTP Range (Direct Chunked)"
@@ -363,7 +370,9 @@ actual class VideoPlayer actual constructor(
             }
         var rangeInput: HttpRangeInputStream? = null
         val grabberInput: SeekableMediaSource? =
-            if (useRangeStream) {
+            if (isLoopingVideoUrl) {
+                LoopingVideoInput(url, headers)
+            } else if (useRangeStream) {
                 val clen =
                     Regex("[?&]clen=([0-9]+)")
                         .find(url)
@@ -382,12 +391,6 @@ actual class VideoPlayer actual constructor(
                         }
                     },
                 ).also { rangeInput = it }
-            } else if (looping && url.toHttpUrlOrNull()?.encodedPath?.let {
-                    it.endsWith(".mp4", ignoreCase = true) || it.endsWith(".webm", ignoreCase = true) ||
-                        it.endsWith(".m3u8", ignoreCase = true)
-                } == true
-            ) {
-                LoopingVideoInput(url, headers)
             } else {
                 null
             }
@@ -1201,7 +1204,12 @@ internal fun advancedClockPositionMs(
     playbackSpeed: Float,
 ): Long = anchorPositionMs + scaledClockElapsedMs(elapsedNanos, playbackSpeed)
 
-internal fun shouldUseRangeStreamForVideoUrl(url: String): Boolean = url.toHttpUrlOrNull()?.let(::isTrustedDirectMediaEndpoint) == true
+internal fun shouldUseRangeStreamForVideoUrl(url: String): Boolean =
+    url.toHttpUrlOrNull()?.let {
+        isTrustedDirectMediaEndpoint(it) &&
+            !it.encodedPath.endsWith(".m3u8", ignoreCase = true) &&
+            !it.encodedPath.endsWith(".mpd", ignoreCase = true)
+    } == true
 
 internal fun restartLoop(grabber: FFmpegFrameGrabber): Frame? {
     try {

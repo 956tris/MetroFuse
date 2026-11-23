@@ -12,21 +12,24 @@ import kotlin.test.assertTrue
 
 class VideoPlayerSourceTest {
     @Test
-    fun `HLS playlists use FFmpeg URL decoding`() {
+    fun `HLS and DASH playlists use FFmpeg URL decoding`() {
         assertFalse(shouldUseRangeStreamForVideoUrl("https://example.com/cover.m3u8"))
         assertFalse(shouldUseRangeStreamForVideoUrl("https://example.com/COVER.M3U8?token=abc"))
+        assertFalse(shouldUseRangeStreamForVideoUrl("https://example.com/manifest.mpd"))
     }
 
     @Test
-    fun `YouTube direct media uses the range stream`() {
-        assertTrue(shouldUseRangeStreamForVideoUrl("https://rr1.googlevideo.com/videoplayback?token=abc"))
-        assertTrue(shouldUseRangeStreamForVideoUrl("https://www.youtube.com/videoplayback"))
+    fun `any public HTTPS direct media uses the range stream`() {
+        assertTrue(shouldUseRangeStreamForVideoUrl("https://media.example.com/videoplayback?token=abc"))
+        assertTrue(shouldUseRangeStreamForVideoUrl("https://cdn.example.org/streams/media"))
+        assertTrue(shouldUseRangeStreamForVideoUrl("https://cdn.example.net/image/video.mp4"))
+        assertTrue(shouldUseRangeStreamForVideoUrl("https://cdn.example.com/media/stream.flac"))
     }
 
     @Test
-    fun `non-YouTube direct media uses FFmpeg URL decoding`() {
-        assertFalse(shouldUseRangeStreamForVideoUrl("https://is1-ssl.mzstatic.com/image/video.mp4"))
+    fun `insecure HTTP direct media uses FFmpeg URL decoding`() {
         assertFalse(shouldUseRangeStreamForVideoUrl("http://example.com/video.webm?token=abc"))
+        assertFalse(shouldUseRangeStreamForVideoUrl("https://localhost/video.mp4"))
     }
 
     @Test

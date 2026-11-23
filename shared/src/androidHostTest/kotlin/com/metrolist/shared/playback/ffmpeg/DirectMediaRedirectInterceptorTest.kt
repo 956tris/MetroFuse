@@ -12,37 +12,86 @@ import kotlin.test.assertFailsWith
 
 class DirectMediaRedirectInterceptorTest {
     @Test
-    fun followsCdnRedirectsWithoutLosingTheBoundedRange() {
+    fun allowsAnyPublicHttpsDomainAndPath() {
+        for (url in listOf(
+            "https://media.example.com/streams/track-123",
+            "https://cdn.example.com:8443/tracks/song.flac",
+            "https://stream.example.org/audio/playback",
+        )) {
+            val requests = mutableListOf<Request>()
+            val client = client(requests, url, redirect = false)
+            val initial =
+                Request
+                    .Builder()
+                    .url(url)
+                    .header("Range", "bytes=0-3")
+                    .header("Authorization", "Bearer secret-key")
+                    .header("Cookie", "session=abc")
+                    .build()
+            client.newCall(initial).execute().use { response ->
+                assertEquals(206, response.code)
+                assertEquals("media", response.body.string())
+            }
+            assertEquals(1, requests.size)
+            assertEquals("Bearer secret-key", requests.single().header("Authorization"))
+            assertEquals("session=abc", requests.single().header("Cookie"))
+        }
+    }
+
+    @Test
+    fun followsCrossDomainCdnRedirectsPreservingRangeAndStrippingAuthHeaders() {
         val requests = mutableListOf<Request>()
-        val client = client(requests, "https://rr2.googlevideo.com/videoplayback?redirected=1")
-        client.newCall(request()).execute().use { response ->
+        val client = client(requests, "https://cdn2.example.net/audio/track.flac?redirected=1")
+        val initial =
+            Request
+                .Builder()
+                .url("https://origin.example.com/media/token")
+                .header("Range", "bytes=10-14")
+                .header("Authorization", "Bearer stream-key")
+                .header("Cookie", "sid=123")
+                .build()
+        client.newCall(initial).execute().use { response ->
             assertEquals(206, response.code)
             assertEquals("media", response.body.string())
         }
-        assertEquals(listOf("rr1.googlevideo.com", "rr2.googlevideo.com"), requests.map { it.url.host })
+        assertEquals(listOf("origin.example.com", "cdn2.example.net"), requests.map { it.url.host })
         assertEquals(listOf("bytes=10-14", "bytes=10-14"), requests.map { it.header("Range") })
+        assertEquals("Bearer stream-key", requests[0].header("Authorization"))
+        assertEquals("sid=123", requests[0].header("Cookie"))
+        assertEquals(null, requests[1].header("Authorization"))
+        assertEquals(null, requests[1].header("Cookie"))
     }
 
     @Test
-    fun youtubeMediaEndpointsCanRedirectToTheCdn() {
+    fun preservesAuthHeadersOnSameOriginRedirects() {
         val requests = mutableListOf<Request>()
-        val client = client(requests, "https://rr2.googlevideo.com/videoplayback?redirected=1")
-        client.newCall(request().newBuilder().url("https://www.youtube.com/videoplayback").build()).execute().use {
-            assertEquals(206, it.code)
+        val client = client(requests, "https://origin.example.com/media/step2?redirected=1")
+        val initial =
+            Request
+                .Builder()
+                .url("https://origin.example.com/media/step1")
+                .header("Range", "bytes=0-7")
+                .header("Authorization", "Bearer stream-key")
+                .header("Cookie", "sid=123")
+                .build()
+        client.newCall(initial).execute().use { response ->
+            assertEquals(206, response.code)
         }
-        assertEquals(listOf("www.youtube.com", "rr2.googlevideo.com"), requests.map { it.url.host })
+        assertEquals(listOf("Bearer stream-key", "Bearer stream-key"), requests.map { it.header("Authorization") })
+        assertEquals(listOf("sid=123", "sid=123"), requests.map { it.header("Cookie") })
     }
 
     @Test
-    fun rejectsUntrustedRedirectsBeforeSendingHeadersToTheTarget() {
+    fun rejectsInsecureOrLocalTargetsBeforeSendingHeaders() {
         for (target in listOf(
-            "https://googlevideo.com.evil.test/videoplayback",
-            "https://youtube.com.evil.test/videoplayback",
-            "http://rr2.googlevideo.com/videoplayback",
-            "https://rr2.googlevideo.com:444/videoplayback",
-            "https://user@rr2.googlevideo.com/videoplayback",
-            "https://rr2.googlevideo.com/another-path",
-            "https://127.0.0.1/videoplayback",
+            "http://cdn.example.com/audio.flac",
+            "https://user@cdn.example.com/audio.flac",
+            "https://user:pass@cdn.example.com/audio.flac",
+            "https://127.0.0.1/audio.flac",
+            "https://localhost/audio.flac",
+            "https://sub.localhost/audio.flac",
+            "https://[::1]/audio.flac",
+            "https://169.254.169.254/latest/meta-data",
         )) {
             val requests = mutableListOf<Request>()
             val client = client(requests, target)
@@ -54,7 +103,7 @@ class DirectMediaRedirectInterceptorTest {
     @Test
     fun redirectLoopsAreBounded() {
         val requests = mutableListOf<Request>()
-        val client = client(requests, "https://rr1.googlevideo.com/videoplayback")
+        val client = client(requests, "https://cdn.example.com/track.flac")
         assertFailsWith<IOException> { client.newCall(request()).execute().close() }
         assertEquals(6, requests.size)
     }
@@ -62,13 +111,14 @@ class DirectMediaRedirectInterceptorTest {
     private fun request() =
         Request
             .Builder()
-            .url("https://rr1.googlevideo.com/videoplayback")
+            .url("https://cdn.example.com/track.flac")
             .header("Range", "bytes=10-14")
             .build()
 
     private fun client(
         requests: MutableList<Request>,
         target: String,
+        redirect: Boolean = true,
     ) = OkHttpClient
         .Builder()
         .followRedirects(false)
@@ -77,15 +127,15 @@ class DirectMediaRedirectInterceptorTest {
         .addInterceptor { chain ->
             val request = chain.request()
             requests += request
-            val redirected = request.url.queryParameter("redirected") == "1"
+            val isFinal = !redirect || request.url.queryParameter("redirected") == "1"
             Response
                 .Builder()
                 .request(request)
                 .protocol(Protocol.HTTP_1_1)
-                .code(if (redirected) 206 else 302)
-                .message(if (redirected) "Partial Content" else "Redirect")
+                .code(if (isFinal) 206 else 302)
+                .message(if (isFinal) "Partial Content" else "Redirect")
                 .header("Location", target)
-                .body((if (redirected) "media" else "").toResponseBody())
+                .body((if (isFinal) "media" else "").toResponseBody())
                 .build()
         }.build()
 }
