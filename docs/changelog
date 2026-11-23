@@ -1,3 +1,14 @@
+---v10.0.0
+# MetroFuse 10.0.0 — Stable
+
+MetroFuse 10.0.0 is the first stable Kotlin Multiplatform release of MetroFuse, featuring offline-first playback on Android and Windows Desktop alongside the dual JavaScript (`.mfp`) and native Kotlin (`.apk` / `.jar`) plugin architecture.
+
+## Highlights
+- Fixed UI plugin LazyColumn unbounded scroll crashes, Android 11 native activation failures, Windows JAR file locking during reloads/updates, and QuickJS concurrent evaluation slot collisions.
+- Added **Plugin API 1.2.0** (`definePlugin(...)`, `host.json()`, `MetroFusePlugin` Kotlin DSL, fast `tooling/metrofuse-plugin.py` CLI, and cached DEX incremental packaging) while maintaining 100% backward compatibility with existing **Plugin API 1.1.0** plugins.
+- Optimized startup latency, image saturation filters, artwork color extraction locking, ExoPlayer wake-lock scoping, HTTP range prefetching, FFmpeg native disposal, and desktop shader activity.
+- Refined playback error filtering (suppressing expected `NO_MATCH` and offline/missing local errors from Sentry), updated Sentry release/source context identification, and updated MetroFuse 10.0.0 stable branding.
+
 ---v14.0.0
 # First public multiplatform release
 Metrolist 14.0.0 replaces the standalone Android app with Metrolist-KMP.

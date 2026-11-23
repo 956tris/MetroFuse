@@ -9,10 +9,19 @@ import kotlin.coroutines.resume
 
 actual suspend fun clearWebCookies() =
     withContext(Dispatchers.Main) {
-        suspendCancellableCoroutine<Unit> { continuation ->
-            CookieManager.getInstance().removeAllCookies { continuation.resume(Unit) }
+        val cookieManager = runCatching { CookieManager.getInstance() }.getOrNull()
+        if (cookieManager != null) {
+            suspendCancellableCoroutine<Unit> { continuation ->
+                runCatching {
+                    cookieManager.removeAllCookies {
+                        if (continuation.isActive) continuation.resume(Unit)
+                    }
+                }.onFailure {
+                    if (continuation.isActive) continuation.resume(Unit)
+                }
+            }
+            runCatching { cookieManager.flush() }
         }
-        CookieManager.getInstance().flush()
         try {
             WebStorage.getInstance().deleteAllData()
         } catch (_: Exception) {

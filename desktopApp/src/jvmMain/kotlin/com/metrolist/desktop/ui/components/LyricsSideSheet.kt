@@ -290,7 +290,7 @@ internal fun DesktopLyricsContent(
                     PlayerGradientBackground(
                         getGradientColors(activeSeedColor),
                         animate = true,
-                        active = PlayerState.isPlaying,
+                        active = isVisible && PlayerState.isPlaying,
                     ) {
                         drawerContent()
                     }
@@ -320,7 +320,7 @@ internal fun DesktopLyricsContent(
                     LiquidBackground(
                         artworkUrl = PlayerState.currentArtworkUrl,
                         isPlaying = PlayerState.isPlaying,
-                        visible = true,
+                        visible = isVisible,
                     )
                     drawerContent()
                 }

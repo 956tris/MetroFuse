@@ -53,7 +53,7 @@ import dev.metrofuse.runtime.SemVer
 import kotlinx.coroutines.CancellationException
 import org.jetbrains.compose.resources.stringResource
 
-private val marketplaceClient by lazy { MarketplaceClient() }
+internal val sharedMarketplaceClient by lazy { MarketplaceClient() }
 
 internal class PluginMarketplaceState(
     savedUrl: String,
@@ -61,7 +61,7 @@ internal class PluginMarketplaceState(
 ) {
     var registryUrl by mutableStateOf(savedUrl)
     var catalogUrl by mutableStateOf(savedUrl)
-    var catalog by mutableStateOf(marketplaceClient.cached(savedUrl))
+    var catalog by mutableStateOf(sharedMarketplaceClient.cached(savedUrl))
     var query by mutableStateOf("")
     var category by mutableStateOf<String?>(null)
     var platformFilter by mutableStateOf(platform.takeIf { it == "android" || it == "desktop" })
@@ -72,7 +72,7 @@ internal class PluginMarketplaceState(
         val url = registryUrl.trim()
         error = null
         try {
-            catalog = marketplaceClient.fetch(url)
+            catalog = sharedMarketplaceClient.fetch(url)
             catalogUrl = url
             Settings.shared.pluginMarketplaceUrl = url
         } catch (cancelled: CancellationException) {
@@ -194,7 +194,7 @@ internal fun LazyListScope.pluginMarketplace(
                         operation {
                             error = null
                             try {
-                                marketplaceClient.install(runtime, entry)
+                                sharedMarketplaceClient.install(runtime, entry)
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (failure: Exception) {

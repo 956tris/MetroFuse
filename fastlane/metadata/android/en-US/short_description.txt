@@ -1,1 +1,1 @@
-Material 3 YouTube Music client for Android
+Offline-first Material 3 music player with optional provider and UI plugins

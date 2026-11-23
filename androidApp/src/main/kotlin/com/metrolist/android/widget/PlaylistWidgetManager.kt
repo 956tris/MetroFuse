@@ -38,6 +38,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
@@ -50,6 +53,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.time.Duration.Companion.milliseconds
 
 class PlaylistWidgetManager(
@@ -356,17 +360,24 @@ class PlaylistWidgetManager(
             views.setViewVisibility(slot.containerId, visibility)
         }
 
+        val bitmaps =
+            coroutineScope {
+                visiblePicks
+                    .map { item ->
+                        async(Dispatchers.IO) {
+                            withTimeoutOrNull(2_500L) {
+                                item.thumbnailUrl
+                                    ?.let { loadBitmap(it, 180) }
+                                    ?.let { getRoundedCornerBitmap(it) }
+                            } ?: getFallbackArtwork(item)
+                        }
+                    }.awaitAll()
+            }
         visiblePicks.forEachIndexed { index, item ->
             val slot = cardSlots[index]
             views.setTextViewText(slot.titleId, item.title)
             views.setImageViewResource(slot.playIconId, R.drawable.ic_widget_play_low)
-            views.setImageViewBitmap(
-                slot.artworkId,
-                item.thumbnailUrl
-                    ?.let { loadBitmap(it, 180) }
-                    ?.let { getRoundedCornerBitmap(it) }
-                    ?: getFallbackArtwork(item),
-            )
+            views.setImageViewBitmap(slot.artworkId, bitmaps[index])
             views.setOnClickPendingIntent(slot.containerId, getOpenTargetIntent(item))
             views.setOnClickPendingIntent(slot.playContainerId, getPlayTargetIntent(item))
         }

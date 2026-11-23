@@ -23,12 +23,19 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 val codec =
     Json {
         ignoreUnknownKeys = false
         prettyPrint = true
         encodeDefaults = true
+    }
+
+internal val bridgeCodec =
+    Json(codec) {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
     }
 
 data class PluginStatus(
@@ -873,7 +880,7 @@ class Runtime(
                     ) { "Dependencies must be enabled" }
                     if (p.manifest.runtime == "javascript") session.startJs()
                     if (p.manifest.runtime == "kotlin") {
-                        require(p.manifest.composeAbi == COMPOSE_ABI) { "Native Compose ABI mismatch: rebuild plugin with $COMPOSE_ABI" }
+                        require(isSupportedComposeAbi(p.manifest.composeAbi)) { "Native Compose ABI mismatch: rebuild plugin with $COMPOSE_ABI" }
                         val file = File(p.directory, if (platform == "desktop") "native/plugin.jar" else "native/plugin.apk")
                         session.native = loadNative(file.absolutePath, requireNotNull(p.manifest.entryClass))
                         if (session.native!!.requiresRestartForReplacement) nativeRestartRequiredIds.add(id)
@@ -1088,7 +1095,17 @@ class Runtime(
         val observers = CoroutineScope(job + Dispatchers.Default)
         val jsGate = Mutex()
         private val bridgeWaiters = AtomicInteger()
+        private val evalSeq = AtomicLong()
         private val uiSubscriptions = MutableStateFlow(emptySet<String>())
+
+        private suspend fun <T> withBridgeWait(block: suspend () -> T): T {
+            bridgeWaiters.incrementAndGet()
+            return try {
+                block()
+            } finally {
+                bridgeWaiters.decrementAndGet()
+            }
+        }
         private val sockets =
             PluginSockets(observers) { name, payload ->
                 try {
@@ -1114,7 +1131,7 @@ class Runtime(
                             val now = System.nanoTime()
                             if (bridgeWaiters.get() == 0) activeNanos += now - previous
                             previous = now
-                            if (activeNanos > 500_000_000L) {
+                            if (activeNanos > 2_000_000_000L) {
                                 js?.interruptEvaluation()
                                 break
                             }
@@ -1156,12 +1173,12 @@ class Runtime(
                                 }
                             when (
                                 val response =
-                                    codec.parseToJsonElement(
+                                    bridgeCodec.parseToJsonElement(
                                         evaluate("JSON.stringify(await globalThis.__home?.($arguments) ?? [])"),
                                     )
                             ) {
-                                is JsonArray -> HomePage(codec.decodeFromJsonElement<List<HomeShelf>>(response))
-                                else -> codec.decodeFromJsonElement<HomePage>(response)
+                                is JsonArray -> HomePage(bridgeCodec.decodeFromJsonElement<List<HomeShelf>>(response))
+                                else -> bridgeCodec.decodeFromJsonElement<HomePage>(response)
                             }
                         } else if (provider is PagedHomePlugin) {
                             provider.getHomePage(request, continuation)
@@ -1185,7 +1202,7 @@ class Runtime(
                         if (js !=
                             null
                         ) {
-                            codec.decodeFromString<LoginRequest?>(evaluate("JSON.stringify(await globalThis.__login?.request?.() ?? null)"))
+                            bridgeCodec.decodeFromString<LoginRequest?>(evaluate("JSON.stringify(await globalThis.__login?.request?.() ?? null)"))
                         } else {
                             provider?.loginRequest()
                         }
@@ -1197,7 +1214,7 @@ class Runtime(
                             null
                         ) {
                             val result =
-                                codec.decodeFromString<PluginLoginState>(
+                                bridgeCodec.decodeFromString<PluginLoginState>(
                                     evaluate(
                                         "JSON.stringify(await globalThis.__login?.login?.(${codec.encodeToString(
                                             credentials,
@@ -1222,13 +1239,12 @@ class Runtime(
                         } else {
                             provider?.logout()
                         }
-                        Unit
                     }
                 },
                 webRequest = {
                     owned {
                         if (js != null) {
-                            codec.decodeFromString<WebLoginRequest?>(evaluate("JSON.stringify(await globalThis.__login?.web?.() ?? null)"))
+                            bridgeCodec.decodeFromString<WebLoginRequest?>(evaluate("JSON.stringify(await globalThis.__login?.web?.() ?? null)"))
                         } else {
                             (provider as? WebLoginPlugin)?.webLoginRequest()
                         }
@@ -1237,12 +1253,12 @@ class Runtime(
                 accountUi = {
                     owned {
                         if (js != null) {
-                            codec
+                            bridgeCodec
                                 .decodeFromString<WebViewLoginUi?>(
                                     evaluate("JSON.stringify(await globalThis.__login?.ui?.() ?? null)"),
                                 )?.let { ui ->
                                     val form =
-                                        codec.decodeFromString<LoginRequest?>(
+                                        bridgeCodec.decodeFromString<LoginRequest?>(
                                             evaluate("JSON.stringify(await globalThis.__login?.request?.() ?? null)"),
                                         )
                                     ui.request.validate(requireNotNull(form))
@@ -1430,6 +1446,9 @@ class Runtime(
                         if (name == UI_LIBRARY_SERVICE) {
                             require("ui" in p.manifest.capabilities) { "UI capability required to read frontend library" }
                         }
+                        if (name == UI_SETTINGS_SERVICE || name == UI_PLUGINS_SERVICE) {
+                            require("ui" in p.manifest.capabilities) { "UI capability required to access host administration services" }
+                        }
                         withTimeout(30_000) {
                             val service = requireNotNull(staged.service(name) ?: registry.service(name)) { "Missing service $name" }
                             if (service.owner == id) service.value.call(request) else registry.invoke(name, request)
@@ -1600,10 +1619,12 @@ class Runtime(
                 null
             }
             q.asyncFunction("__libraryPage") { args ->
-                requireActive()
-                val offset = (args[0] as Number).toInt().coerceAtLeast(0)
-                val limit = (args[1] as Number).toInt().coerceIn(1, 200)
-                codec.encodeToString((host as? UiLibraryHost)?.library(offset, limit)?.first() ?: emptyList())
+                withBridgeWait {
+                    requireActive()
+                    val offset = (args[0] as Number).toInt().coerceAtLeast(0)
+                    val limit = (args[1] as Number).toInt().coerceIn(1, 200)
+                    codec.encodeToString((host as? UiLibraryHost)?.library(offset, limit)?.first() ?: emptyList())
+                }
             }
             q.function("__destination") { _ -> host.navigation.destination.value }
             q.function("__pluginStates") { _ -> codec.encodeToString(pluginUiStates()) }
@@ -1810,8 +1831,10 @@ class Runtime(
                 }
             }
             q.asyncFunction("__event") { args ->
-                events.publish(args[0] as String, codec.parseToJsonElement(args[1] as String).jsonObject)
-                null
+                withBridgeWait {
+                    events.publish(args[0] as String, codec.parseToJsonElement(args[1] as String).jsonObject)
+                    null
+                }
             }
             q.function("__contract") { args ->
                 context.registerContract(codec.decodeFromString<ServiceContract>(args[0] as String))
@@ -1840,7 +1863,7 @@ class Runtime(
                         override val id = sourceId
 
                         override suspend fun resolve(request: MetadataRequest): MetadataContribution? =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate("JSON.stringify(await __metadataSources[${quote(sourceId)}](${codec.encodeToString(request)}))"),
                             )
                     },
@@ -1849,14 +1872,14 @@ class Runtime(
             }
             q.function("__audioSource") { args ->
                 val sourceId = args[0] as String
-                val caps = codec.decodeFromString<AudioCapabilities>(args[1] as String)
+                val caps = bridgeCodec.decodeFromString<AudioCapabilities>(args[1] as String)
                 context.registerAudioSource(
                     object : AudioSource {
                         override val id = sourceId
                         override val capabilities = caps
 
                         override suspend fun resolve(request: AudioQuery): AudioResult =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate("JSON.stringify(await __audioSources[${quote(sourceId)}](${codec.encodeToString(request)}))"),
                             )
                     },
@@ -1870,7 +1893,7 @@ class Runtime(
                         override val id = providerId
 
                         override suspend fun lyrics(request: LyricsRequest): LyricsResult? =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate("JSON.stringify(await __lyricsProviders[${quote(providerId)}](${codec.encodeToString(request)}))"),
                             )
                     },
@@ -1884,7 +1907,7 @@ class Runtime(
                         override val id = providerId
 
                         override suspend fun search(request: SearchRequest): SearchResult =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate("JSON.stringify(await __searchProviders[${quote(providerId)}](${codec.encodeToString(request)}))"),
                             )
                     },
@@ -1898,17 +1921,17 @@ class Runtime(
                         override val id = providerId
 
                         override suspend fun album(id: String): CatalogAlbum? =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate("JSON.stringify(await (__catalogProviders[${quote(providerId)}].album?.(${quote(id)}) ?? null))"),
                             )
 
                         override suspend fun artist(id: String): CatalogArtist? =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate("JSON.stringify(await (__catalogProviders[${quote(providerId)}].artist?.(${quote(id)}) ?? null))"),
                             )
 
                         override suspend fun playlist(id: String): CatalogPlaylist? =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate(
                                     "JSON.stringify(await (__catalogProviders[${quote(providerId)}].playlist?.(${quote(id)}) ?? null))",
                                 ),
@@ -1918,7 +1941,7 @@ class Runtime(
                     if (args.getOrNull(1) == true) {
                         object : RecommendationProvider {
                             override suspend fun recommendations(request: RecommendationRequest): RecommendationResult =
-                                codec.decodeFromString(
+                                bridgeCodec.decodeFromString(
                                     evaluate(
                                         "JSON.stringify(await __catalogProviders[${quote(
                                             providerId,
@@ -1937,7 +1960,7 @@ class Runtime(
                             override val supportsLikedSongs = args.getOrNull(4) == true
 
                             override suspend fun library(request: LibraryRequest): LibraryPage =
-                                codec.decodeFromString(
+                                bridgeCodec.decodeFromString(
                                     evaluate(
                                         "JSON.stringify(await __catalogProviders[${quote(
                                             providerId,
@@ -1946,7 +1969,7 @@ class Runtime(
                                 )
 
                             override suspend fun setSongVote(request: SongVoteRequest): Boolean =
-                                codec.decodeFromString(
+                                bridgeCodec.decodeFromString(
                                     evaluate(
                                         "JSON.stringify(await __catalogProviders[${quote(
                                             providerId,
@@ -1975,7 +1998,7 @@ class Runtime(
                 context.registerMetadata(
                     object : MetadataProvider {
                         override suspend fun resolve(track: Track): Track =
-                            codec.decodeFromString(evaluate("JSON.stringify(await __metadataFn(${codec.encodeToString(track)}))"))
+                            bridgeCodec.decodeFromString(evaluate("JSON.stringify(await __metadataFn(${codec.encodeToString(track)}))"))
                     },
                 )
                 null
@@ -1989,7 +2012,7 @@ class Runtime(
                         override val platformRequirements = emptySet<String>()
 
                         override suspend fun resolve(request: AudioRequest): AudioResolution =
-                            codec.decodeFromString(
+                            bridgeCodec.decodeFromString(
                                 evaluate("JSON.stringify(await __audioFns[${quote(name)}](${codec.encodeToString(request)}))"),
                             )
                     },
@@ -2066,10 +2089,19 @@ class Runtime(
         private suspend fun evaluateRaw(code: String): String =
             jsGate.withLock {
                 check(alive)
-                // Module top-level await cannot return directly; serialize through a global result.
+                val slot = "__r_${evalSeq.incrementAndGet()}"
+                // Module top-level await cannot return directly; isolate each call in its own slot.
                 jsBudget {
-                    js!!.evaluate<Any?>("globalThis.__result = $code;", asModule = true)
-                    js!!.evaluate<String>("__result ?? 'null'")
+                    try {
+                        js!!.evaluate<Any?>("globalThis.$slot = $code;", asModule = true)
+                        js!!.evaluate<String>(
+                            "(() => { const v = globalThis.$slot; delete globalThis.$slot; return v ?? 'null'; })()",
+                        )
+                    } finally {
+                        runCatching {
+                            if (alive && js != null) js?.evaluate<Any?>("delete globalThis.$slot;")
+                        }
+                    }
                 }
             }
 
@@ -2138,6 +2170,22 @@ class Runtime(
             globalThis.__services = {}; globalThis.__actions = {}; globalThis.__events = {}; globalThis.__audioFns = {}; globalThis.__metadataSources = {}; globalThis.__audioSources = {}; globalThis.__hooks = {}; globalThis.__lyricsProviders = {}; globalThis.__searchProviders = {}; globalThis.__catalogProviders = {};
             const requireFunction = fn => { if (typeof fn !== 'function') throw Error('Provider or callback must be a function'); return fn; };
             globalThis.__emit = async (event, data) => { for (const fn of (__events[event] || [])) await fn(data); };
+            const fetchText = async (url, opts = {}) => {
+              const res = await host.http({
+                url: String(url),
+                method: opts.method || 'GET',
+                headers: opts.headers || {},
+                body: opts.body ?? null,
+                bodyEncoding: opts.bodyEncoding || 'text',
+                responseType: 'text',
+                maxBytes: opts.maxBytes ?? 2 * 1024 * 1024,
+                timeoutMs: opts.timeoutMs ?? 15000
+              });
+              if ((res.status < 200 || res.status >= 300) && !opts.allowError) {
+                throw Error('HTTP ' + res.status + ' for ' + url);
+              }
+              return res.body;
+            };
             globalThis.host = Object.freeze({
               ui: (point, tree, layer='REPLACE') => __ui(point, JSON.stringify(tree), layer),
               patch: (id, props) => __patch(id, JSON.stringify(props)),
@@ -2170,6 +2218,8 @@ class Runtime(
               loginState: state => __loginState(JSON.stringify(state)),
               home: callback => { globalThis.__home=requireFunction(callback); },
               http: async request => JSON.parse(await __http(JSON.stringify(request))),
+              text: fetchText,
+              json: async (url, opts = {}) => JSON.parse(await fetchText(url, opts)),
               socket: Object.freeze({open: async request => __socket('open',JSON.stringify(request)), send: async (id,text) => __socket('send',String(id),String(text)), receive: async (id,timeoutMs=10000) => JSON.parse(await __socket('receive',String(id),timeoutMs)), close: async id => __socket('close',String(id))}),
               track: async identity => JSON.parse(await __catalog(JSON.stringify(identity))),
               service: (name, fn) => { __services[name] = requireFunction(fn); __service(name); },
@@ -2185,6 +2235,41 @@ class Runtime(
               catalog: (id, provider) => { if(!provider || !['album','artist','playlist','recommendations','library'].some(key=>typeof provider[key]==='function'))throw Error('Catalog requires a lookup callback');for(const key of ['album','artist','playlist','recommendations','library','setSongVote'])if(provider[key]!=null)requireFunction(provider[key]);__catalogProviders[id]=provider;__catalogProvider(id,typeof provider.recommendations==='function',typeof provider.library==='function',typeof provider.setSongVote==='function',provider.supportsLikedSongs===true); },
               audio: (name, fn) => { __audioFns[name] = requireFunction(fn); __audio(name); }
             });
+            globalThis.definePlugin = spec => {
+              if (!spec || typeof spec !== 'object') throw Error('definePlugin requires an object specification');
+              globalThis.plugin = {
+                async init(h) {
+                  if (spec.metadata) h.metadata(spec.metadata);
+                  if (spec.metadataSources) for (const [id, fn] of Object.entries(spec.metadataSources)) h.metadataSource(id, fn);
+                  if (spec.audio) for (const [id, fn] of Object.entries(spec.audio)) h.audio(id, fn);
+                  if (spec.audioSources) {
+                    for (const [id, entry] of Object.entries(spec.audioSources)) {
+                      if (typeof entry === 'function') h.audioSource(id, {transports: ['DIRECT', 'RANGE_HTTP']}, entry);
+                      else h.audioSource(id, entry.capabilities || {transports: ['DIRECT', 'RANGE_HTTP']}, entry.resolve);
+                    }
+                  }
+                  if (spec.lyrics) for (const [id, fn] of Object.entries(spec.lyrics)) h.lyrics(id, fn);
+                  if (spec.search) for (const [id, fn] of Object.entries(spec.search)) h.search(id, fn);
+                  if (spec.catalog) for (const [id, provider] of Object.entries(spec.catalog)) h.catalog(id, provider);
+                  if (spec.home) h.home(spec.home);
+                  if (spec.login) h.login(spec.login);
+                  if (spec.services) for (const [name, fn] of Object.entries(spec.services)) h.service(name, fn);
+                  if (spec.actions) for (const [id, fn] of Object.entries(spec.actions)) h.action(id, fn);
+                  if (spec.events) for (const [event, fn] of Object.entries(spec.events)) h.on(event, fn);
+                  if (spec.ui) {
+                    for (const [point, entry] of Object.entries(spec.ui)) {
+                      if (entry && entry.tree) h.ui(point, entry.tree, entry.layer || 'REPLACE');
+                      else h.ui(point, entry, 'REPLACE');
+                    }
+                  }
+                  if (typeof spec.setup === 'function') await spec.setup(h);
+                },
+                async dispose() {
+                  if (typeof spec.dispose === 'function') await spec.dispose();
+                }
+              };
+              return globalThis.plugin;
+            };
             """.trimIndent()
     }
 }

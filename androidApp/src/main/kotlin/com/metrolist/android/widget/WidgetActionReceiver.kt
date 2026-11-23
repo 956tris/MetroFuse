@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.core.context.GlobalContext
 import timber.log.Timber
 import java.util.UUID
@@ -54,67 +55,69 @@ class WidgetActionReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                val app = context.applicationContext as App
-                app.startup.await()
-                if (!app.onboardingManager.isComplete) return@launch
-                if (serviceAction == MusicWidgetReceiver.ACTION_UPDATE_WIDGET) {
-                    if (MusicService.isRunning) {
-                        context.startService(Intent(context, MusicService::class.java).setAction(serviceAction))
-                    } else {
-                        val widgets = AppWidgetManager.getInstance(context)
-                        val manager = GlobalContext.get().get<MetrolistWidgetManager>()
-                        manager.updateIdleMusicWidgets(widgets.getAppWidgetIds(ComponentName(context, MusicWidgetReceiver::class.java)))
-                        manager.updateIdleTurntableWidgets(
-                            widgets.getAppWidgetIds(ComponentName(context, TurntableWidgetReceiver::class.java)),
-                        )
-                    }
-                    return@launch
-                }
-                val connection = GlobalContext.get().get<PlayerConnection>()
-                when (serviceAction) {
-                    MusicWidgetReceiver.ACTION_PLAY_PAUSE -> {
-                        connection.togglePlayPauseFromWidget()
-                    }
-
-                    MusicWidgetReceiver.ACTION_NEXT -> {
-                        connection.skipToNext()
-                    }
-
-                    MusicWidgetReceiver.ACTION_PREVIOUS -> {
-                        connection.skipToPrevious()
-                    }
-
-                    MusicWidgetReceiver.ACTION_LIKE -> {
-                        connection.awaitConnected()
-                        connection.currentSong.value?.let(SongLikeState::toggleLike)
-                    }
-
-                    PlaylistWidgetReceiver.ACTION_PLAY_TARGET -> {
-                        val id = intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_ID) ?: return@launch
-                        val title = intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_TITLE)
-                        val type =
-                            intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_TYPE)
-                        if (type == PlaylistWidgetReceiver.TARGET_TYPE_ONLINE && BuiltinPlaylist.fromId(id) == null) {
-                            connection.playPlaylist(id, title.orEmpty())
+                withTimeoutOrNull(8_000L) {
+                    val app = context.applicationContext as App
+                    app.startup.await()
+                    if (!app.onboardingManager.isComplete) return@withTimeoutOrNull
+                    if (serviceAction == MusicWidgetReceiver.ACTION_UPDATE_WIDGET) {
+                        if (MusicService.isRunning) {
+                            context.startService(Intent(context, MusicService::class.java).setAction(serviceAction))
                         } else {
-                            val songs =
-                                withContext(Dispatchers.IO) {
-                                    val database = GlobalContext.get().get<MusicDatabase>()
-                                    val builtin = widgetBuiltinPlaylist(type, id)
-                                    if (builtin != null) {
-                                        database.widgetBuiltinSongs(builtin)
-                                    } else if (type == PlaylistWidgetReceiver.TARGET_TYPE_LOCAL) {
-                                        database.refreshHistoryPlaylist(id)
-                                        database
-                                            .dao()
-                                            .playlistSongs(id)
-                                            .first()
-                                            .map { it.song.toSongItem() }
-                                    } else {
-                                        emptyList()
+                            val widgets = AppWidgetManager.getInstance(context)
+                            val manager = GlobalContext.get().get<MetrolistWidgetManager>()
+                            manager.updateIdleMusicWidgets(widgets.getAppWidgetIds(ComponentName(context, MusicWidgetReceiver::class.java)))
+                            manager.updateIdleTurntableWidgets(
+                                widgets.getAppWidgetIds(ComponentName(context, TurntableWidgetReceiver::class.java)),
+                            )
+                        }
+                        return@withTimeoutOrNull
+                    }
+                    val connection = GlobalContext.get().get<PlayerConnection>()
+                    when (serviceAction) {
+                        MusicWidgetReceiver.ACTION_PLAY_PAUSE -> {
+                            connection.togglePlayPauseFromWidget()
+                        }
+
+                        MusicWidgetReceiver.ACTION_NEXT -> {
+                            connection.skipToNext()
+                        }
+
+                        MusicWidgetReceiver.ACTION_PREVIOUS -> {
+                            connection.skipToPrevious()
+                        }
+
+                        MusicWidgetReceiver.ACTION_LIKE -> {
+                            connection.awaitConnected()
+                            connection.currentSong.value?.let(SongLikeState::toggleLike)
+                        }
+
+                        PlaylistWidgetReceiver.ACTION_PLAY_TARGET -> {
+                            val id = intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_ID) ?: return@withTimeoutOrNull
+                            val title = intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_TITLE)
+                            val type =
+                                intent.getStringExtra(PlaylistWidgetReceiver.EXTRA_TARGET_TYPE)
+                            if (type == PlaylistWidgetReceiver.TARGET_TYPE_ONLINE && BuiltinPlaylist.fromId(id) == null) {
+                                connection.playPlaylist(id, title.orEmpty())
+                            } else {
+                                val songs =
+                                    withContext(Dispatchers.IO) {
+                                        val database = GlobalContext.get().get<MusicDatabase>()
+                                        val builtin = widgetBuiltinPlaylist(type, id)
+                                        if (builtin != null) {
+                                            database.widgetBuiltinSongs(builtin)
+                                        } else if (type == PlaylistWidgetReceiver.TARGET_TYPE_LOCAL) {
+                                            database.refreshHistoryPlaylist(id)
+                                            database
+                                                .dao()
+                                                .playlistSongs(id)
+                                                .first()
+                                                .map { it.song.toSongItem() }
+                                        } else {
+                                            emptyList()
+                                        }
                                     }
-                                }
-                            if (songs.isNotEmpty()) connection.playQueue(songs, queueTitle = title, finite = true)
+                                if (songs.isNotEmpty()) connection.playQueue(songs, queueTitle = title, finite = true)
+                            }
                         }
                     }
                 }

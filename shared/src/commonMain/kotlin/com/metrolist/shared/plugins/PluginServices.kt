@@ -164,20 +164,30 @@ class PluginStreamResolver(
         excludedProviders: Set<String> = emptySet(),
         allowLocal: Boolean = true,
     ): PlaybackResource {
-        if (hints.wantVideo || hints.playbackClientOverrideId != null) throw NoPlayableSourceException()
+        if (hints.wantVideo || hints.playbackClientOverrideId != null) {
+            throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
+        }
         if (allowLocal && (offlineOnly() || PluginServicesStore.current?.audioMatch(id) == null)) {
             localAudioSource?.resolve(id, song)?.let {
-                if (offlineOnly() && it.networkUrl != null) throw NoPlayableSourceException()
+                if (offlineOnly() && it.networkUrl != null) {
+                    throw NoPlayableSourceException(NoPlayableSourceException.Reason.OFFLINE_MODE)
+                }
                 return it
             }
         }
         if (Settings.shared.musicFrontendOwner.toHomeSelection() is HomeSelection.Plugin) PluginServicesStore.current?.awaitReady()
-        if (offlineOnly() || hints.isLocal == true || song?.isLocal == true) throw NoPlayableSourceException()
+        if (offlineOnly()) throw NoPlayableSourceException(NoPlayableSourceException.Reason.OFFLINE_MODE)
+        if (hints.isLocal == true || song?.isLocal == true) {
+            throw NoPlayableSourceException(NoPlayableSourceException.Reason.LOCAL_FILE_MISSING)
+        }
 
+        val currentServices =
+            PluginServicesStore.current
+                ?: throw NoPlayableSourceException(NoPlayableSourceException.Reason.NO_AUDIO_PROVIDER)
         val resolved =
-            PluginServicesStore.current?.resolve(id, song, quality, refresh, excludedProviders)
-                ?: throw NoPlayableSourceException()
-        if (offlineOnly()) throw NoPlayableSourceException()
+            currentServices.resolve(id, song, quality, refresh, excludedProviders)
+                ?: throw NoPlayableSourceException(NoPlayableSourceException.Reason.NO_PROVIDER_SUCCEEDED)
+        if (offlineOnly()) throw NoPlayableSourceException(NoPlayableSourceException.Reason.OFFLINE_MODE)
         return resolved
     }
 }

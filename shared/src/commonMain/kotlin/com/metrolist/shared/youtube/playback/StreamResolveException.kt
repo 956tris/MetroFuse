@@ -1,6 +1,7 @@
 package com.metrolist.shared.youtube.playback
 
 import com.metrolist.innertubex.extraction.StreamResolveException
+import com.metrolist.shared.playback.NoPlayableSourceException
 import com.metrolist.shared.playback.PlaybackErrorContext
 import com.metrolist.shared.playback.PlaybackFailureCategory
 import io.ktor.client.network.sockets.ConnectTimeoutException
@@ -47,6 +48,11 @@ fun Throwable.shouldReportPlaybackFailure(context: PlaybackErrorContext): Boolea
         if (current is HttpRequestTimeoutException || current is ConnectTimeoutException || current is SocketTimeoutException) return false
         // Platform connectivity exceptions are not available in common code.
         if (current::class.simpleName in TRANSIENT_CONNECTIVITY_FAILURES) return false
+        if (current is NoPlayableSourceException && current.reason != NoPlayableSourceException.Reason.NO_PROVIDER_SUCCEEDED) {
+            return false
+        }
+        val isLocalContext = context.song?.isLocal == true || context.sourceName == "local"
+        if (isLocalContext && current::class.simpleName == "UnrecognizedInputFormatException") return false
         if (current is StreamResolveException &&
             current.reason in
             setOf(

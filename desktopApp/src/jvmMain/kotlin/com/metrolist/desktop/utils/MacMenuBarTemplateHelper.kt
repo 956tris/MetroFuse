@@ -92,7 +92,7 @@ import javax.imageio.ImageIO
 import kotlin.time.Duration.Companion.milliseconds
 
 object MacMenuBarTemplateHelper {
-    private val scope = CoroutineScope(Dispatchers.IO + Job())
+    private val scope = CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob())
     private var syncJob: Job? = null
 
     private var cachedAvatarUrl: String? = null

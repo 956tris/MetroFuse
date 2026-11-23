@@ -549,7 +549,10 @@ private fun InstalledPluginCard(
     var showDetails by rememberSaveable(manifest.id) { mutableStateOf(false) }
     var showSettings by rememberSaveable(manifest.id) { mutableStateOf(false) }
     val contributions = registry.ui.filter { it.owner == manifest.id }
-    val settings = contributions.filter { it.point.startsWith("settings.") || it.point.endsWith(".settings") }
+    val settings =
+        contributions.filter {
+            (it.point.startsWith("settings.") || it.point.endsWith(".settings")) && it.point != "ui.settings"
+        }
     val enabled = plugin.phase == LifecyclePhase.ACTIVE
     val toggleLabel = stringResource(if (enabled) Res.string.plugins_disable else Res.string.plugins_enable)
     val configurable = manifest.settings.isNotEmpty() || settings.isNotEmpty()

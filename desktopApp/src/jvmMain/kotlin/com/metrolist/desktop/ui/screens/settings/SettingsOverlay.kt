@@ -147,38 +147,46 @@ fun SettingsOverlay(colorScheme: ColorScheme) {
     val appLanguageChoices = appLanguageChoices()
     val deviceLanguageLabel = stringResource(Res.string.device_language)
     val lyricsTargetLanguageChoices =
-        listOf(SettingsChoice("device", deviceLanguageLabel)) + appLanguageChoices.filterNot { it.id == GlobalYouTube.SYSTEM }
+        remember(deviceLanguageLabel, appLanguageChoices) {
+            listOf(SettingsChoice("device", deviceLanguageLabel)) + appLanguageChoices.filterNot { it.id == GlobalYouTube.SYSTEM }
+        }
+    val youtubeLabel = stringResource(Res.string.settings_artist_source_youtube)
+    val itunesLabel = stringResource(Res.string.settings_artist_source_itunes)
+    val lastfmLabel = stringResource(Res.string.settings_artist_source_lastfm)
+    val customLabel = stringResource(Res.string.settings_artist_source_custom)
     val artistSourceChoices =
-        ArtistSource.entries.map { source ->
-            SettingsChoice(
-                id = source.name,
-                label =
-                    stringResource(
+        remember(youtubeLabel, itunesLabel, lastfmLabel, customLabel) {
+            ArtistSource.entries.map { source ->
+                SettingsChoice(
+                    id = source.name,
+                    label =
                         when (source) {
-                            ArtistSource.YOUTUBE -> Res.string.settings_artist_source_youtube
-                            ArtistSource.ITUNES -> Res.string.settings_artist_source_itunes
-                            ArtistSource.LASTFM -> Res.string.settings_artist_source_lastfm
-                            ArtistSource.CUSTOM -> Res.string.settings_artist_source_custom
+                            ArtistSource.YOUTUBE -> youtubeLabel
+                            ArtistSource.ITUNES -> itunesLabel
+                            ArtistSource.LASTFM -> lastfmLabel
+                            ArtistSource.CUSTOM -> customLabel
                         },
-                    ),
-            )
+                )
+            }
         }
     val contentCountryChoices =
-        listOf(SettingsChoice(GlobalYouTube.SYSTEM, systemDefaultLabel)) +
-            contentCountryCodes
-                .asSequence()
-                .map { code ->
-                    SettingsChoice(
-                        code,
-                        Locale
-                            .Builder()
-                            .setRegion(code)
-                            .build()
-                            .getDisplayCountry(systemLocale)
-                            .ifBlank { code },
-                    )
-                }.sortedBy(SettingsChoice::label)
-                .toList()
+        remember(systemLocale, systemDefaultLabel) {
+            listOf(SettingsChoice(GlobalYouTube.SYSTEM, systemDefaultLabel)) +
+                contentCountryCodes
+                    .asSequence()
+                    .map { code ->
+                        SettingsChoice(
+                            code,
+                            Locale
+                                .Builder()
+                                .setRegion(code)
+                                .build()
+                                .getDisplayCountry(systemLocale)
+                                .ifBlank { code },
+                        )
+                    }.sortedBy(SettingsChoice::label)
+                    .toList()
+        }
     val homeSections =
         HomeShelfBuilder.build(HomeState.uiState, homeContentText(), 1000.dp, includeHidden = true).map { section ->
             SettingsHomeSection(

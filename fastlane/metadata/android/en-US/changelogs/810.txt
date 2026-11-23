@@ -1,0 +1,5 @@
+MetroFuse 10.0.0 — Stable
+- Fixed UI plugin LazyColumn unbounded scroll crash, Android 11 native plugin activation, Windows JAR file locking, and QuickJS concurrent evaluation slot collisions.
+- Added Plugin API 1.2.0 simplified authoring (JS definePlugin + Kotlin MetroFusePlugin DSL + fast CLI tooling) with 100% Plugin API 1.1.0 backward compatibility.
+- Optimized startup latency, image saturation filters, artwork palette locking, wake-lock scoping, HTTP range prefetching, and FFmpeg native disposal.
+- Improved playback failure filtering, Sentry release identification, and MetroFuse 10.0.0 branding.

@@ -171,7 +171,10 @@ jobs:
           build_tools="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
           "$build_tools/apksigner" verify --verbose release-assets/MetroFuse-Android-Release.apk
           badging="$("$build_tools/aapt" dump badging release-assets/MetroFuse-Android-Release.apk)"
-          grep -Fxq "application-label:'MetroFuse Beta'" <<< "$badging"
+          grep -Eq "^application-label:'MetroFuse( Beta)?'$" <<< "$badging" || {
+            echo "Unexpected application-label in APK badging" >&2
+            exit 1
+          }
           if grep -q '^application-debuggable' <<< "$badging"; then
             echo "The release APK must not be debuggable" >&2
             exit 1
@@ -237,7 +240,12 @@ jobs:
         run: |
           .\gradlew.bat :desktopApp:assembleWindowsRelease :desktopApp:exportNativePluginAbi '-Pmetrolist.desktop.arch=x86_64' "-Pmetrolist.sourceRevision=$env:RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Move-Item -LiteralPath 'dist/MetroFuse-Beta-Desktop-Windows.zip' -Destination 'dist/MetroFuse-Desktop-Windows.zip'
+          if (Test-Path 'dist/MetroFuse-Beta-Desktop-Windows.zip') {
+            Move-Item -LiteralPath 'dist/MetroFuse-Beta-Desktop-Windows.zip' -Destination 'dist/MetroFuse-Desktop-Windows.zip' -Force
+          }
+          if (-not (Test-Path 'dist/MetroFuse-Desktop-Windows.zip')) {
+            throw 'Missing dist/MetroFuse-Desktop-Windows.zip after assembleWindowsRelease'
+          }
       - name: Validate Windows release ZIP
         shell: pwsh
         run: |

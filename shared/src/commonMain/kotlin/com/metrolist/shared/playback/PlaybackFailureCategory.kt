@@ -21,7 +21,17 @@ enum class PlaybackFailureCategory {
     UNKNOWN,
 }
 
-class NoPlayableSourceException : Exception()
+class NoPlayableSourceException(
+    val reason: Reason = Reason.NO_PROVIDER_SUCCEEDED,
+) : Exception() {
+    enum class Reason {
+        OFFLINE_MODE,
+        NO_AUDIO_PROVIDER,
+        VIDEO_UNSUPPORTED,
+        LOCAL_FILE_MISSING,
+        NO_PROVIDER_SUCCEEDED,
+    }
+}
 
 class PlaybackNetworkChangedException : Exception()
 

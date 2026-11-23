@@ -41,7 +41,7 @@ class HostPluginNetwork :
         withContext(Dispatchers.IO) {
             require(request.url.startsWith("https://") || request.url.startsWith("http://")) { "HTTP URL required" }
             require(request.method in setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")) { "Unsupported HTTP method" }
-            require(request.maxBytes in 1..2 * 1024 * 1024 && request.timeoutMs in 1..30000)
+            require(request.maxBytes in 1..8 * 1024 * 1024 && request.timeoutMs in 1..30000)
             require(
                 request.responseType in setOf("text", "base64") && request.bodyEncoding in setOf("text", "base64"),
             ) { "Unsupported HTTP encoding" }
@@ -58,7 +58,17 @@ class HostPluginNetwork :
                     }
                 }
             require(requestBytes == null || requestBytes.size <= 2 * 1024 * 1024)
-            val contentType = if (request.bodyEncoding == "base64") "application/octet-stream" else "application/json; charset=utf-8"
+            val headerContentType =
+                request.headers.entries
+                    .firstOrNull { (key, _) -> key.equals("Content-Type", ignoreCase = true) }
+                    ?.value
+                    ?.takeIf(String::isNotBlank)
+            val contentType =
+                headerContentType ?: if (request.bodyEncoding == "base64") {
+                    "application/octet-stream"
+                } else {
+                    "application/json; charset=utf-8"
+                }
             val body =
                 requestBytes?.toRequestBody(contentType.toMediaType())
                     ?: if (request.method in setOf("POST", "PUT", "PATCH")) ByteArray(0).toRequestBody() else null

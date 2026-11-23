@@ -240,7 +240,7 @@ fun LoginScreen(
 
     suspend fun extractAuthData(webView: WebView?): AuthData? {
         val view = webView ?: return null
-        val cookie = CookieManager.getInstance().getCookie(view.url)
+        val cookie = runCatching { CookieManager.getInstance().getCookie(view.url) }.getOrNull()
 
         val visitorDataDeferred = CompletableDeferred<String?>()
         val dataSyncIdDeferred = CompletableDeferred<String?>()
@@ -487,7 +487,13 @@ fun LoginScreen(
                                 },
                             ),
                     factory = { webViewContext ->
-                        WebView(webViewContext).apply {
+                        val created = runCatching { WebView(webViewContext) }.getOrNull()
+                        if (created == null) {
+                            isLoading = false
+                            errorMessage = "WebView unavailable"
+                            return@AndroidView View(webViewContext)
+                        }
+                        created.apply {
                             if (isTv) {
                                 isFocusable = true
                                 isFocusableInTouchMode = true
@@ -541,7 +547,7 @@ fun LoginScreen(
                                         return action != LoginNavigationAction.LOAD_IN_CURRENT_WEBVIEW
                                     }
                                 }
-                            settings.configureForLogin(WebSettings.getDefaultUserAgent(webViewContext))
+                            settings.configureForLogin(runCatching { WebSettings.getDefaultUserAgent(webViewContext) }.getOrDefault(""))
                             webChromeClient =
                                 object : WebChromeClient() {
                                     override fun onCreateWindow(
@@ -552,7 +558,7 @@ fun LoginScreen(
                                     ): Boolean {
                                         val transport = resultMsg.obj as? WebView.WebViewTransport ?: return false
                                         val popup =
-                                            WebView(view.context).apply {
+                                            runCatching { WebView(view.context) }.getOrNull()?.apply {
                                                 settings.configureForLogin(view.settings.userAgentString)
                                                 webViewClient =
                                                     object : WebViewClient() {
@@ -585,7 +591,7 @@ fun LoginScreen(
                                                             )
                                                         }
                                                     }
-                                            }
+                                            } ?: return false
                                         popupWebViews += popup
                                         transport.webView = popup
                                         resultMsg.sendToTarget()

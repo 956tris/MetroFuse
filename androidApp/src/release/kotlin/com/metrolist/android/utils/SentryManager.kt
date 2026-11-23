@@ -19,13 +19,38 @@ import io.sentry.SentryOptions
 import io.sentry.android.core.SentryAndroid
 import io.sentry.protocol.Request
 
-internal fun androidSentryRelease(version: String): String = "com.metrolist.music.kmp@$version"
+internal fun androidSentryRelease(
+    version: String,
+    versionCode: Int = com.metrolist.android.BuildConfig.VERSION_CODE,
+): String = "com.metrofuse.music@$version+$versionCode"
+
+internal fun isTransientPluginNetworkFailure(error: Throwable): Boolean {
+    var current: Throwable? = error
+    while (current != null) {
+        val name = current::class.simpleName.orEmpty()
+        if (name in TRANSIENT_PLUGIN_NETWORK_ERRORS) return true
+        current = current.cause?.takeUnless { it === current }
+    }
+    return false
+}
+
+private val TRANSIENT_PLUGIN_NETWORK_ERRORS =
+    setOf(
+        "UnknownHostException",
+        "ConnectException",
+        "NoRouteToHostException",
+        "SocketTimeoutException",
+        "UnresolvedAddressException",
+        "ConnectTimeoutException",
+        "HttpRequestTimeoutException",
+    )
 
 object SentryManager {
     private lateinit var application: Application
 
     fun reportPluginFailure(failure: PluginFailure) {
         if (!Settings.shared.sentryEnabled || BuildConfig.SENTRY_DSN.isBlank() || !Sentry.isEnabled()) return
+        if (isTransientPluginNetworkFailure(failure.error)) return
         Sentry.captureException(PluginOperationException(failure)) { scope ->
             scope.setTag("error.domain", "plugin")
             scope.setTag("plugin.id", failure.owner)
@@ -65,6 +90,7 @@ object SentryManager {
         SentryAndroid.init(application) { options ->
             options.dsn = BuildConfig.SENTRY_DSN
             options.release = androidSentryRelease(BuildConfig.APP_VERSION)
+            options.dist = com.metrolist.android.BuildConfig.VERSION_CODE.toString()
             BuildConfig.SOURCE_REVISION.takeIf(String::isNotBlank)?.let { options.setTag("source_revision", it) }
             options.sampleRate = 1.0
             options.tracesSampleRate = 0.0
@@ -74,7 +100,7 @@ object SentryManager {
             options.isEnableUncaughtExceptionHandler = true
             options.isEnableAutoSessionTracking = true
             options.isAnrEnabled = true
-            options.isAttachAnrThreadDump = false
+            options.isAttachAnrThreadDump = true
             options.isTombstoneEnabled = true
             options.isAttachRawTombstone = true
             options.addInAppInclude("com.metrolist")

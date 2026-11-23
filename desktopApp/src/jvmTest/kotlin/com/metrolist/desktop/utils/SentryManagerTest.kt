@@ -155,6 +155,7 @@ class SentryManagerTest {
             )
             assertTrue(pluginSent.await(5, TimeUnit.SECONDS), "Sentry transport did not receive the plugin failure")
             val pluginEvent = captured.get()
+            assertEquals("com.metrofuse.desktop@test", event.release)
             assertEquals("fixture.plugin", pluginEvent.getTag("plugin.id"))
             assertEquals("1.2.3", pluginEvent.getTag("plugin.version"))
             assertEquals("home.load", pluginEvent.getTag("plugin.operation"))
@@ -164,6 +165,22 @@ class SentryManagerTest {
                     .orEmpty()
                     .single()
                     .stacktrace,
+            )
+            assertFalse(
+                capturePluginFailure(
+                    PluginFailure("fixture.plugin", "1.2.3", "javascript", "home.load", java.net.UnknownHostException("offline")),
+                ),
+            )
+            assertFalse(
+                capturePluginFailure(
+                    PluginFailure(
+                        "fixture.plugin",
+                        "1.2.3",
+                        "javascript",
+                        "home.load",
+                        IllegalStateException("wrapped", java.net.SocketTimeoutException("timed out")),
+                    ),
+                ),
             )
         } finally {
             Sentry.close()

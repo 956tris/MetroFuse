@@ -188,6 +188,8 @@ sentry {
             rootProject.file("shared/src/androidMain/kotlin").absolutePath,
             rootProject.file("shared/src/jvmSharedMain/kotlin").absolutePath,
             rootProject.file("engine/src/jvmSharedMain/kotlin").absolutePath,
+            rootProject.file("engine/src/androidMain/kotlin").absolutePath,
+            rootProject.file("plugin-api/src/commonMain/kotlin").absolutePath,
             rootProject.file("plugin-sdk/src/commonMain/kotlin").absolutePath,
             rootProject.file("plugin-sdk/src/androidMain/kotlin").absolutePath,
         ),
@@ -223,7 +225,7 @@ android {
         applicationId = "com.metrofuse.music"
         minSdk = 24
         targetSdk = 37
-        versionCode = 809
+        versionCode = 810
         versionName = appVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -434,6 +436,7 @@ dependencies {
     implementation(libs.splashscreen)
 
     releaseImplementation(libs.sentry.android.ndk)
+    debugImplementation(libs.ui.tooling)
 
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.junit4)

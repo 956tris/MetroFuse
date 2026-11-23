@@ -400,7 +400,7 @@ class ExoPlaybackPlayer(
             .setRenderersFactory(silence.renderersFactory)
             .setLoadControl(createPlaybackLoadControl(bufferForPlaybackMs))
             .setAudioAttributes(playbackAudioAttributes, role.handlesAudioFocus)
-            .setWakeMode(C.WAKE_MODE_NETWORK)
+            .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
             .apply {
                 createdPlayer = this
@@ -1756,6 +1756,7 @@ class ExoPlaybackPlayer(
                                                     ),
                                                     resource.videoId,
                                                 )
+                                                candidate.setWakeMode(wakeModeForResource(resource))
                                                 candidate.setMediaSource(mediaSource, initialPositionMs)
                                                 candidate.prepare()
                                             }
@@ -2515,6 +2516,7 @@ class ExoPlaybackPlayer(
                         if (stalledSourceReplacement) {
                             prepareStreamReplacement(candidate) {
                                 recordSeek(candidate, initialTargetPosition, preparationSeekSource, preparedResource.videoId)
+                                candidate.setWakeMode(wakeModeForResource(preparedResource))
                                 candidate.setMediaSource(mediaSource, initialTargetPosition)
                                 candidate.prepare()
                             }
@@ -2524,6 +2526,7 @@ class ExoPlaybackPlayer(
                                     val ready =
                                         awaitPlayerReady(candidate) {
                                             recordSeek(candidate, initialTargetPosition, preparationSeekSource, preparedResource.videoId)
+                                            candidate.setWakeMode(wakeModeForResource(preparedResource))
                                             candidate.setMediaSource(mediaSource, initialTargetPosition)
                                             candidate.prepare()
                                         }
@@ -2757,6 +2760,7 @@ class ExoPlaybackPlayer(
                                 withTimeoutOrNull(PREPARATION_TIMEOUT_MS.milliseconds) {
                                     awaitPlayerReady(candidate) {
                                         recordSeek(candidate, targetPosition, preparationSeekSource, preparedResource.videoId)
+                                        candidate.setWakeMode(wakeModeForResource(preparedResource))
                                         candidate.setMediaSource(mediaSource, targetPosition)
                                         candidate.prepare()
                                     }
@@ -2804,6 +2808,7 @@ class ExoPlaybackPlayer(
                         }
                     } else {
                         recordSeek(candidate, targetPosition, preparationSeekSource, preparedResource.videoId)
+                        candidate.setWakeMode(wakeModeForResource(preparedResource))
                         candidate.setMediaSource(mediaSource, targetPosition)
                         candidate.prepare()
                     }
@@ -3428,6 +3433,7 @@ internal class ExoPlaybackBenchmarkPlayer(
             val result =
                 withTimeoutOrNull(PREPARATION_TIMEOUT_MS.milliseconds) {
                     awaitPlayerReady(exo) {
+                        exo.setWakeMode(wakeModeForResource(resource))
                         exo.setMediaSource(
                             buildMediaSource(
                                 context = context,
@@ -3757,6 +3763,13 @@ private fun buildDirectDataSourceFactory(
         ),
     )
 }
+
+internal fun wakeModeForResource(resource: PlaybackResource): Int =
+    if (resource.networkUrl != null || resource.url.startsWith("http://") || resource.url.startsWith("https://")) {
+        C.WAKE_MODE_NETWORK
+    } else {
+        C.WAKE_MODE_LOCAL
+    }
 
 internal fun buildMediaSource(
     context: Context,

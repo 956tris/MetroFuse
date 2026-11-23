@@ -3,6 +3,9 @@ package com.metrolist.shared.crash
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.RandomAccessFile
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 class FileCrashStore(
     private val directory: File,
@@ -14,21 +17,33 @@ class FileCrashStore(
             require(report.id.matches(Regex("[0-9]+-[0-9]+")))
             val destination = File(directory, "${report.id}.json")
             val temporary = File(directory, "${report.id}.tmp")
+            val marker = File(directory, "pending.tmp")
             try {
                 temporary.outputStream().use { stream ->
                     stream.write(json.encodeToString(report.redacted()).toByteArray())
                     stream.fd.sync()
                 }
-                check(temporary.renameTo(destination)) { "Could not publish crash report" }
+                replaceFile(temporary, destination)
                 reports().drop(50).forEach { File(directory, "${it.id}.json").delete() }
-                val marker = File(directory, "pending.tmp")
                 marker.writeText(report.id)
-                check(marker.renameTo(File(directory, "pending")))
+                replaceFile(marker, File(directory, "pending"))
             } finally {
                 temporary.delete()
+                marker.delete()
             }
             Unit
         }
+
+    private fun replaceFile(
+        source: File,
+        destination: File,
+    ) {
+        try {
+            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(source.toPath(), destination.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
 
     override fun list(): List<CrashReport> = locked { reports() }
 

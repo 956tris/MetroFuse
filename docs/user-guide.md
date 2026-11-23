@@ -38,7 +38,7 @@ Provider plugins supply content or playback capabilities. UI plugins change part
 
 The Android **application APK** installs or updates MetroFuse itself. A **plugin APK** is selected inside MetroFuse using the import button. Do not rename one package format into another or extract an MFP before importing it.
 
-Choose the package offered for your platform and host version. Plugin API versions are checked exactly, and native packages must also match the host ABI. Read the author's compatibility notes. Native plugins execute code inside the app process, so install packages from authors you trust. The [plugin authoring guide](https://github.com/956tris/MetroFuse-Plugin-Docs) explains package compatibility and development.
+Choose the package offered for your platform and host version. Both Plugin API **1.1.0** and **1.2.0** are supported (`1.2.0` adds simplified JS `definePlugin(...)` and Kotlin `MetroFusePlugin` DSL helpers while staying 100% compatible with existing `1.1.0` plugins), and native packages must also match the host ABI. Read the author's compatibility notes. Native plugins execute code inside the app process, so install packages from authors you trust. The [plugin authoring guide](https://github.com/956tris/MetroFuse-Plugin-Docs) explains package compatibility and development.
 
 ## Import, enable and update plugins
 

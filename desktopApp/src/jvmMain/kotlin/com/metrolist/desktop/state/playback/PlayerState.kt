@@ -105,6 +105,7 @@ import com.metrolist.shared.playback.shouldPlayAfterSongChange
 import com.metrolist.shared.playback.shouldSkipAfterPlaybackFailure
 import com.metrolist.shared.playback.songsShareAlbum
 import com.metrolist.shared.playback.sponsorblock.observeSponsorBlockSkipping
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
 import com.metrolist.shared.plugins.hasManualAudioMatch
 import com.metrolist.shared.plugins.musicFrontendOwnerChanges
@@ -436,7 +437,7 @@ object PlayerState {
     val listenTogetherPlaybackRequests: SharedFlow<ListenTogetherPlaybackRequest> = _listenTogetherPlaybackRequests.asSharedFlow()
     private val database by lazy { GlobalContext.get().get<MusicDatabase>() }
     private val musicVideoResolver by lazy { GlobalContext.get().get<MusicVideoResolver>() }
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val scope = CoroutineScope(Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
     private val castNetworkAddresses = ::systemCastNetworkAddresses
     val castManager =
         JvmCastManager(
@@ -2739,7 +2740,7 @@ object PlayerState {
                 playbackClientOverrideId =
                     when {
                         forceDirect -> null
-                        else -> forcedPlaybackClientId() ?: if (isLiveStream) "ANDROID" else null
+                        else -> forcedPlaybackClientId() ?: if (isLiveStream && PluginServicesStore.current == null) "ANDROID" else null
                     },
                 sabrFirst = desktopPlaybackSabrFirst(hints, forceDirect, Settings.shared.devtoolsPlaybackClient),
             )

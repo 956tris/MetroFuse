@@ -609,7 +609,7 @@ val sentrySourceRevision =
         .filter { it.matches(Regex("[0-9a-fA-F]{40}")) }
         .orElse("local")
         .get()
-val sentryBundleId = UUID.nameUUIDFromBytes("com.metrolist.desktop:$platform:$appVersion:$sentrySourceRevision".encodeToByteArray())
+val sentryBundleId = UUID.nameUUIDFromBytes("com.metrofuse.desktop:$platform:$appVersion:$sentrySourceRevision".encodeToByteArray())
 val generateSentryDebugMetaProperties =
     tasks.register<WriteProperties>("generateSentryDebugMetaProperties") {
         destinationFile.set(sentryDebugMetaProperties)
@@ -770,8 +770,8 @@ compose.desktop {
                     versionComponents.joinToString(".")
                 }
             description = "$appName music player"
-            copyright = "© 2026 Metrolist"
-            vendor = "MetrolistGroup"
+            copyright = "© 2026 MetroFuse (based on Metrolist, GPL-3.0)"
+            vendor = "MetroFuse"
 
             appResourcesRootDir.set(nativeResourcesDir)
 
@@ -794,7 +794,7 @@ compose.desktop {
                     "--add-opens=java.desktop/java.awt=ALL-UNNAMED",
                     "--add-opens=java.desktop/sun.swing=ALL-UNNAMED",
                     "--add-opens=jdk.security.auth/com.sun.security.auth.module=ALL-UNNAMED",
-                ) + desktopMemoryJvmArgs
+                )
             when (platform) {
                 "linux" -> {
                     jvmArgs += "--add-opens=java.desktop/sun.awt.X11=ALL-UNNAMED"

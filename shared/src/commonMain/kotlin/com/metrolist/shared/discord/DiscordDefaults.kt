@@ -17,7 +17,7 @@ object DiscordDefaults {
     const val BUTTON1_LABEL = "Listen on YouTube Music"
     const val BUTTON1_URL_TEMPLATE = "{song.url}"
 
-    const val BUTTON2_LABEL = "Visit Metrofuse Alpha"
+    const val BUTTON2_LABEL = "Visit MetroFuse"
     const val BUTTON2_URL = "https://github.com/956tris/MetroFuse"
 
     const val STATE_TEMPLATE = "{artist.name}"

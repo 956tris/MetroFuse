@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "dev.metrofuse"
-version = "1.1.0"
+version = "1.2.0"
 
 compose.resources {
     packageOfResClass = "dev.metrofuse.sdk.resources"
@@ -39,7 +39,6 @@ kotlin {
             dependsOn(jvmSharedMain)
             dependencies {
                 implementation(libs.activity)
-                implementation("androidx.webkit:webkit:1.14.0")
             }
         }
         getByName("desktopMain") {
@@ -92,3 +91,15 @@ tasks.named<Test>("desktopTest") {
         systemProperty("metrofuse.sdk.browserExecutable", helperResources.get().file("metrofuse-sdk/windows/metrofuse-browser.exe").asFile)
     }
 }
+
+val exportPluginHostLibs =
+    tasks.register<Sync>("exportPluginHostLibs") {
+        duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+        val outputDir = layout.buildDirectory.dir("plugin-host-libs")
+        into(outputDir)
+        from(project(":plugin-api").tasks.named("desktopJar"))
+        from(tasks.named("desktopJar"))
+        from(configurations.named("desktopCompileClasspath")) {
+            include("*.jar")
+        }
+    }

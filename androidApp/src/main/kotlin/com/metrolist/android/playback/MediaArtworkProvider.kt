@@ -105,7 +105,7 @@ class MediaArtworkProvider : ContentProvider() {
         val appContext = context ?: throw FileNotFoundException()
         return try {
             runBlocking(Dispatchers.IO) {
-                withTimeout(30_000) {
+                withTimeout(5_000) {
                     libraryCover(url)?.let { cover ->
                         val file = File.createTempFile("collection-artwork-", ".webp", appContext.cacheDir)
                         try {

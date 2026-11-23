@@ -159,8 +159,8 @@ internal class RemotePoTokenMinter(
     }
 
     companion object {
-        // Includes process startup, the 17s attestation timeout and two 5s token requests.
-        const val REQUEST_TIMEOUT_MS = 35_000L
+        // Bounded below the 30s queue resolve deadline so stalled WebView attestation falls back cleanly.
+        const val REQUEST_TIMEOUT_MS = 20_000L
 
         const val IDLE_TIMEOUT_MS = 6L * 60_000L
     }

@@ -557,4 +557,69 @@ class DirectCanvasProviderTest {
                 assertTrue(job.isCancelled)
             }
         }
+
+    @Test
+    fun publicSpotifyCanvasCooldownSkipsRepeatedHttp402Failures() =
+        runBlocking {
+            var currentNow = now
+            var publicCalls = 0
+            val trackId = "1234567890123456789012"
+            val client =
+                HttpClient(
+                    MockEngine { request ->
+                        val url = request.url.toString()
+                        when {
+                            url.contains("open.spotify.com") -> {
+                                respond(
+                                    """{"accessToken":"anon","accessTokenExpirationTimestampMs":4000000000000,"isAnonymous":true}""",
+                                    HttpStatusCode.OK,
+                                    headersOf(HttpHeaders.ContentType, "application/json"),
+                                )
+                            }
+
+                            url.contains("clienttoken.spotify.com") -> {
+                                respond(
+                                    """{"granted_token":{"token":"client","expires_after_seconds":3600,"refresh_after_seconds":1800}}""",
+                                    HttpStatusCode.OK,
+                                    headersOf(HttpHeaders.ContentType, "application/json"),
+                                )
+                            }
+
+                            url.contains("api-partner.spotify.com") -> {
+                                respond(
+                                    """{"data":{"searchV2":{"topResultsV2":{"itemsV2":[{"item":{"data":{"__typename":"Track","id":"$trackId","name":"Song","artists":{"items":[{"profile":{"name":"Artist"}}]},"albumOfTrack":{"name":"Album"},"duration":{"totalMilliseconds":200000}}}}]}}}}""",
+                                    HttpStatusCode.OK,
+                                    headersOf(HttpHeaders.ContentType, "application/json"),
+                                )
+                            }
+
+                            url.startsWith("https://spotify-canva.vercel.app/api/canvas") -> {
+                                publicCalls++
+                                respond("", HttpStatusCode.PaymentRequired)
+                            }
+
+                            else -> {
+                                respond("", HttpStatusCode.NotFound)
+                            }
+                        }
+                    },
+                )
+            client.use {
+                val provider = DirectCanvasProvider(client, { "" }, { "US" }, { "en-US" }, now = { currentNow })
+                try {
+                    assertNull(provider.getSpotifyCanvas("Song", "Artist", 200_000, "Album"))
+                    assertEquals(1, publicCalls)
+                    // Different track within the 10-minute cooldown must not hit the quota-exhausted endpoint again.
+                    currentNow += 60_000L
+                    assertNull(provider.getSpotifyCanvas("Song", "Artist", 200_000, "Other Album"))
+                    assertEquals(1, publicCalls)
+                    // After cooldown expires, another attempt is permitted.
+                    currentNow += 10 * 60_000L
+                    assertNull(provider.getSpotifyCanvas("Song", "Artist", 200_000, "Third Album"))
+                    assertEquals(2, publicCalls)
+                } finally {
+                    provider.close()
+                }
+            }
+        }
 }

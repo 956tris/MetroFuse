@@ -76,17 +76,25 @@ class AndroidLocalMusicScanner(
         withContext(Dispatchers.IO) {
             val collection = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
             val projection =
-                arrayOf(
-                    MediaStore.Audio.Media._ID,
-                    MediaStore.Audio.Media.TITLE,
-                    MediaStore.Audio.Media.DISPLAY_NAME,
-                    MediaStore.Audio.Media.DURATION,
-                    MediaStore.Audio.Media.ARTIST,
-                    MediaStore.Audio.Media.ALBUM,
-                    MediaStore.Audio.Media.YEAR,
-                    MediaStore.Audio.Media.TRACK,
-                    MediaStore.Audio.Media.DATE_MODIFIED,
-                )
+                buildList {
+                    add(MediaStore.Audio.Media._ID)
+                    add(MediaStore.Audio.Media.TITLE)
+                    add(MediaStore.Audio.Media.DISPLAY_NAME)
+                    add(MediaStore.Audio.Media.DURATION)
+                    add(MediaStore.Audio.Media.ARTIST)
+                    add(MediaStore.Audio.Media.ALBUM)
+                    add(MediaStore.Audio.Media.YEAR)
+                    add(MediaStore.Audio.Media.TRACK)
+                    add(MediaStore.Audio.Media.DATE_MODIFIED)
+                    add(MediaStore.Audio.Media.SIZE)
+                    add(MediaStore.Audio.Media.MIME_TYPE)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        add(MediaStore.Audio.Media.IS_PENDING)
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        add(MediaStore.Audio.Media.IS_TRASHED)
+                    }
+                }.toTypedArray()
             val tracks = mutableListOf<LocalTrack>()
             val cursor =
                 requireNotNull(
@@ -99,22 +107,52 @@ class AndroidLocalMusicScanner(
                     ),
                 )
             cursor.use {
-                val indices = projection.associateWith(cursor::getColumnIndexOrThrow)
+                val indices = projection.associateWith(cursor::getColumnIndex)
+                val sizeIndex = indices[MediaStore.Audio.Media.SIZE] ?: -1
+                val mimeIndex = indices[MediaStore.Audio.Media.MIME_TYPE] ?: -1
+                val pendingIndex =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        indices[MediaStore.Audio.Media.IS_PENDING] ?: -1
+                    } else {
+                        -1
+                    }
+                val trashedIndex =
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        indices[MediaStore.Audio.Media.IS_TRASHED] ?: -1
+                    } else {
+                        -1
+                    }
 
-                fun text(column: String): String? =
-                    cursor
-                        .getString(indices.getValue(column))
+                fun text(column: String): String? {
+                    val index = indices[column] ?: -1
+                    if (index < 0 || cursor.isNull(index)) return null
+                    return cursor
+                        .getString(index)
                         ?.trim()
                         ?.takeIf { it.isNotBlank() && it != MediaStore.UNKNOWN_STRING }
+                }
                 while (cursor.moveToNext()) {
                     currentCoroutineContext().ensureActive()
+                    if (pendingIndex >= 0 && !cursor.isNull(pendingIndex) && cursor.getInt(pendingIndex) != 0) continue
+                    if (trashedIndex >= 0 && !cursor.isNull(trashedIndex) && cursor.getInt(trashedIndex) != 0) continue
+                    if (sizeIndex >= 0 && !cursor.isNull(sizeIndex) && cursor.getLong(sizeIndex) <= 0L) continue
+                    val durationMillis = cursor.getLong(indices.getValue(MediaStore.Audio.Media.DURATION))
+                    if (durationMillis <= 0L) continue
+                    val mimeType =
+                        if (mimeIndex >= 0 && !cursor.isNull(mimeIndex)) {
+                            cursor.getString(mimeIndex)?.trim()?.takeIf { it.isNotBlank() }
+                        } else {
+                            null
+                        }
+                    if (mimeType != null && !mimeType.startsWith("audio/", ignoreCase = true) && mimeType !in EXTRA_SUPPORTED_AUDIO_MIMES) {
+                        continue
+                    }
                     val id = cursor.getLong(indices.getValue(MediaStore.Audio.Media._ID))
                     val audioUri = ContentUris.withAppendedId(collection, id)
                     val title =
                         text(MediaStore.Audio.Media.TITLE)
                             ?: text(MediaStore.Audio.Media.DISPLAY_NAME)?.substringBeforeLast('.')
                             ?: continue
-                    val durationMillis = cursor.getLong(indices.getValue(MediaStore.Audio.Media.DURATION))
                     val encodedTrack = cursor.getInt(indices.getValue(MediaStore.Audio.Media.TRACK))
                     val year = cursor.getInt(indices.getValue(MediaStore.Audio.Media.YEAR)).takeIf { it > 0 }
                     val modified = cursor.getLong(indices.getValue(MediaStore.Audio.Media.DATE_MODIFIED))
@@ -134,4 +172,8 @@ class AndroidLocalMusicScanner(
             }
             tracks
         }
+
+    private companion object {
+        val EXTRA_SUPPORTED_AUDIO_MIMES = setOf("application/ogg", "application/x-flac")
+    }
 }

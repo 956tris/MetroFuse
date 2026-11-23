@@ -38,6 +38,8 @@ interface UiLyricsHost {
 
 internal const val UI_FRONTENDS_SERVICE = "ui.frontends/v1"
 internal const val UI_LIBRARY_SERVICE = "ui.library/v1"
+internal const val UI_SETTINGS_SERVICE = "ui.settings/v1"
+internal const val UI_PLUGINS_SERVICE = "ui.plugins/v1"
 
 internal fun Runtime.registerUiCatalogServices() {
     fun register(

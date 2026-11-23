@@ -2,6 +2,7 @@ package com.metrolist.desktop.auth
 
 import com.metrolist.shared.discord.DiscordAuthSession
 import com.metrolist.shared.discord.DiscordAuthSessionStore
+import com.metrolist.shared.discord.DiscordDefaults
 import com.metrolist.shared.settings.Settings
 import com.russhwolf.settings.PropertiesSettings
 import kotlinx.coroutines.CompletableDeferred
@@ -17,7 +18,7 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class DesktopDiscordLoginFlowTest {
-    private val session = DiscordAuthSession("authorize", "metrolist-auth://discord/callback", "verifier", "expected")
+    private val session = DiscordAuthSession("authorize", DiscordDefaults.DISCORD_REDIRECT_URI, "verifier", "expected")
 
     private fun sessions() = DiscordAuthSessionStore(Settings(PropertiesSettings(Properties()))) { 0L }
 
@@ -57,11 +58,11 @@ class DesktopDiscordLoginFlowTest {
             assertTrue(flow.handleCallback("${session.redirectUri}?code=code"))
             assertTrue(flow.handleCallback("${session.redirectUri}?code=code&state="))
             listOf(
-                "metrolist-auth://discord.evil/callback?code=code&state=expected",
-                "metrolist-auth://discord/callback-extra?code=code&state=expected",
-                "metrolist-auth://user@discord/callback?code=code&state=expected",
-                "metrolist-auth://discord:123/callback?code=code&state=expected",
-                "https://discord/callback?code=code&state=expected",
+                "${DiscordDefaults.DISCORD_CALLBACK_SCHEME}://discord.evil/authorize/callback?code=code&state=expected",
+                "${DiscordDefaults.DISCORD_CALLBACK_SCHEME}:///authorize/callback-extra?code=code&state=expected",
+                "${DiscordDefaults.DISCORD_CALLBACK_SCHEME}://user@/authorize/callback?code=code&state=expected",
+                "${DiscordDefaults.DISCORD_CALLBACK_SCHEME}://host:123/authorize/callback?code=code&state=expected",
+                "https:///authorize/callback?code=code&state=expected",
                 "${session.redirectUri}?code=%ZZ&state=expected",
                 "${session.redirectUri}?code=code&state=wrong&state=expected",
                 "${session.redirectUri}?code=code&state=expected#fragment",

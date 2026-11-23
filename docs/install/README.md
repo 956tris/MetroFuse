@@ -1,29 +1,25 @@
-# Install Metrolist KMP
+# Install MetroFuse
 
 After installation, follow the [MetroFuse user guide](../user-guide.md) to scan local music, import provider or UI plugins and configure playback. Plugin MFP/JAR/APK packages are imported through **Settings → Plugins**, separately from the application installer.
 
-Choose your platform: [Android](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/android.md), [iOS and iPadOS](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/ios.md), [Windows](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/windows.md), [macOS](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/macos.md), or [Linux](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/install/linux.md).
+Choose your platform: [Android](https://github.com/956tris/MetroFuse/blob/main/docs/install/android.md) or [Windows](https://github.com/956tris/MetroFuse/blob/main/docs/install/windows.md).
 
 ## Get the package
 
-Use [Metrolist releases](https://github.com/MetrolistGroup/Metrolist/releases) for downloads. The table describes workflow outputs, not a guarantee that every package is published.
+Use [MetroFuse releases](https://github.com/956tris/MetroFuse/releases) for downloads. The table describes stable release workflow outputs.
 
-The [release workflow](../../.github/workflows/release.yml) defines these packages. `VERSION` below means the version in the download's filename.
+The [release workflow](../../.github/workflows/release.yml) defines these packages:
 
 | Platform | Release asset |
 | --- | --- |
-| Android | `Metrolist.apk` |
-| iOS | `Metrolist.ipa` |
-| Windows x64 | `Metrolist-Desktop-windows.zip`, `metrolist-installer-windows-x64-VERSION.exe` |
-| Windows ARM64 | `metrolist-desktop-windows-arm64-VERSION.zip` |
-| macOS | `metrolist-desktop-macos-arm64-VERSION.dmg`, `metrolist-desktop-macos-x64-VERSION.dmg` |
-| Linux | `metrolist-desktop-linux-x64-VERSION.AppImage`, `metrolist-desktop-linux-arm64-VERSION.AppImage` |
+| Android | `MetroFuse-Android-Release.apk` |
+| Windows x64 | `MetroFuse-Desktop-Windows.zip` |
 
-The workflows do not publish MSI, DEB, RPM or Flatpak files. DEB/RPM Gradle targets and a local Flatpak build exist, but they are not release downloads. See the [desktop reference](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/desktop.md#native-packages) for local packaging.
+Checksum verification is published in `SHA256SUMS.txt` on every release.
 
 ## Verify a download
 
-Download `SHA256SUMS` from the same release. Calculate the package's SHA-256 digest before opening it. Enter the full path when prompted.
+Download `SHA256SUMS.txt` from the same release. Calculate the package's SHA-256 digest before opening it. Enter the full path when prompted.
 
 On Linux:
 
@@ -52,12 +48,12 @@ Compare all 64 hexadecimal characters with the matching entry in the checksum fi
 
 A mismatch means you should download the file again. Do not install a mismatched file. If the publisher supplies no checksum, you cannot perform this comparison. A checksum confirms that the file matches the publisher's copy; it is not a code-signing certificate.
 
-For Android or iOS, you can verify the APK or IPA on a computer before transferring it unchanged to the device. After installation, check the version in Metrolist's settings, open a song and confirm audible playback. Platform guides add checks for login and signing.
+For Android, you can verify the APK on a computer before transferring it unchanged to the device. After installation, check the version in MetroFuse's settings, open a song and confirm audible playback. Platform guides add checks for login and signing.
 
 ## Before updating or uninstalling
 
-Export a backup from Metrolist's settings and keep it outside the installation directory or mobile app storage. Keep downloaded music separately if you need it. Do not assume a backup includes every downloaded audio file.
+Export a backup from MetroFuse's settings and keep it outside the installation directory or mobile app storage. Keep downloaded music separately if you need it. Do not assume a backup includes every downloaded audio file.
 
-Use the same platform, architecture and installation method for updates. Avoid downgrading a database created by a newer version; see [downgrade safety](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/crash-recovery.md). Uninstalling a mobile app deletes its local data. Removing a desktop application can leave settings, credentials, caches and downloaded music behind.
+Use the same platform, architecture and installation method for updates. Avoid downgrading a database created by a newer version; see [downgrade safety](https://github.com/956tris/MetroFuse/blob/main/docs/crash-recovery.md). Uninstalling a mobile app deletes its local data. Removing a desktop application can leave settings, credentials, caches and downloaded music behind.
 
-If installation or startup still fails, include the package filename, app version, OS version, CPU architecture and exact error in a report to the [issue tracker](https://github.com/MetrolistGroup/Metrolist/issues). For desktop failures, collect the [application log](https://github.com/956tris/MetroFuse/blob/8860bae74198ae810ddd8282d602a2698d7f33fe/docs/desktop.md#logs-and-profiling). Remove account details and tokens before sharing logs.
+If installation or startup still fails, include the package filename, app version, OS version, CPU architecture and exact error in a report to the [issue tracker](https://github.com/956tris/MetroFuse/issues). Remove account details and tokens before sharing logs.

@@ -153,15 +153,20 @@ object MetroFuseHost : PluginServices {
     private val ready = CompletableDeferred<Unit>()
     private val playbackAdapter = ControllerPlayer(::songFor)
     private var matchingController: PlaybackController? = null
+    private var controllerObserverJob: Job? = null
     override val audioMatchingController: PlaybackController? get() = matchingController
     private val navigation = ApplicationNavigation()
     private val songs = ConcurrentHashMap<String, SongItem>()
+    private val songOrder = LinkedHashMap<String, Unit>(512, 0.75f, true)
     private val identities = ConcurrentHashMap<String, TrackIdentity>()
 
     internal fun savedIdentifiers(id: String): Map<String, String> = identities[id]?.identifiers.orEmpty()
     private val albums = ConcurrentHashMap<String, CatalogAlbum>()
+    private val albumOrder = LinkedHashMap<String, Unit>(256, 0.75f, true)
     private val artists = ConcurrentHashMap<String, CatalogArtist>()
+    private val artistOrder = LinkedHashMap<String, Unit>(256, 0.75f, true)
     private val playlists = ConcurrentHashMap<String, CatalogPlaylist>()
+    private val playlistOrder = LinkedHashMap<String, Unit>(256, 0.75f, true)
     private val supportedAudioTransports =
         setOf(StreamTransport.DIRECT, StreamTransport.RANGE_HTTP, StreamTransport.HLS, StreamTransport.SABR_UMP)
     private var platform = "desktop"
@@ -438,15 +443,17 @@ object MetroFuseHost : PluginServices {
     }
 
     fun attachController(controller: PlaybackController) {
+        controllerObserverJob?.cancel()
         matchingController = controller
         playbackAdapter.attach(controller, checkNotNull(hostScope), ::remember)
-        checkNotNull(hostScope).launch {
-            combine(musicFrontendOwnerChanges(), controller.state) { owner, state -> owner to state }.collect { (owner, state) ->
-                if (owner.isEmpty() && state.currentPlaybackResource?.networkUrl != null) {
-                    withContext(Dispatchers.Main.immediate) { controller.stop() }
+        controllerObserverJob =
+            checkNotNull(hostScope).launch {
+                combine(musicFrontendOwnerChanges(), controller.state) { owner, state -> owner to state }.collect { (owner, state) ->
+                    if (owner.isEmpty() && state.currentPlaybackResource?.networkUrl != null) {
+                        withContext(Dispatchers.Main.immediate) { controller.stop() }
+                    }
                 }
             }
-        }
     }
 
     override fun refreshHome(
@@ -482,21 +489,50 @@ object MetroFuseHost : PluginServices {
     suspend fun close() =
         withContext(NonCancellable) {
             PluginServicesStore.current = null
+            controllerObserverJob?.cancel()
+            controllerObserverJob = null
             engine?.close()
+            engine = null
             hostScope?.cancel()
+            hostScope = null
             playbackAdapter.detach()
             matchingController = null
             sharedLibraryViewModel = null
         }
 
     private fun remember(song: SongItem) {
-        if (songs.size >= 512 && !songs.containsKey(song.id)) {
-            songs.keys.firstOrNull()?.let {
-                songs.remove(it)
-                identities.remove(it)
+        retainLru(
+            values = songs,
+            order = songOrder,
+            limit = 512,
+            id = song.id,
+            value = song,
+            protectedId = { matchingController?.state?.value?.currentSong?.id },
+            onEvict = identities::remove,
+        )
+    }
+
+    private fun <T> retainLru(
+        values: ConcurrentHashMap<String, T>,
+        order: LinkedHashMap<String, Unit>,
+        limit: Int,
+        id: String,
+        value: T,
+        protectedId: () -> String? = { null },
+        onEvict: (String) -> Unit = {},
+    ) {
+        synchronized(order) {
+            values[id] = value
+            order.remove(id)
+            order[id] = Unit
+            while (order.size > limit) {
+                val active = protectedId()
+                val candidate = order.keys.firstOrNull { it != id && it != active } ?: break
+                order.remove(candidate)
+                values.remove(candidate)
+                onEvict(candidate)
             }
         }
-        songs[song.id] = song
     }
 
     private fun matchingTrack(identity: TrackIdentity): Track? {
@@ -774,15 +810,15 @@ object MetroFuseHost : PluginServices {
             result.items.mapNotNull { item ->
                 item.track?.let(::songFor)
                     ?: item.album?.let {
-                        retain(albums, it.id, it)
+                        retainLru(albums, albumOrder, 256, it.id, it)
                         albumItem(it)
                     }
                     ?: item.artist?.let {
-                        retain(artists, it.id, it)
+                        retainLru(artists, artistOrder, 256, it.id, it)
                         ArtistItem(it.id, it.name, it.artwork.takeIf(String::isNotBlank))
                     }
                     ?: item.playlist?.let {
-                        retain(playlists, it.id, it)
+                        retainLru(playlists, playlistOrder, 256, it.id, it)
                         PlaylistItem(it.id, it.title, it.artwork.takeIf(String::isNotBlank), author = it.author)
                     }
             }
@@ -802,8 +838,19 @@ object MetroFuseHost : PluginServices {
         id: String,
         value: T,
     ) {
-        if (values.size >= 256 && !values.containsKey(id)) values.keys.firstOrNull()?.let(values::remove)
-        values[id] = value
+        val order =
+            when {
+                values === albums -> albumOrder
+                values === artists -> artistOrder
+                values === playlists -> playlistOrder
+                else -> null
+            }
+        if (order != null) {
+            retainLru(values, order, 256, id, value)
+        } else {
+            if (values.size >= 256 && !values.containsKey(id)) values.keys.firstOrNull()?.let(values::remove)
+            values[id] = value
+        }
     }
 
     private fun albumItem(value: CatalogAlbum) =

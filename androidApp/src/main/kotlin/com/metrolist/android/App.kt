@@ -231,7 +231,7 @@ class App :
         AppLocale.sync(this)
         onboardingManager = OnboardingManager(this)
         legacyInstallMigration = LegacyInstallMigration(this)
-        hadLegacyInstallationAtStartup = legacyInstallMigration.hasLegacyInstallation()
+        hadLegacyInstallationAtStartup = !onboardingManager.isComplete && legacyInstallMigration.hasLegacyInstallation()
         applyTvContinuePlaybackDefault()
         if (hadLegacyInstallationAtStartup) Settings.shared.migrateLegacyV13AccountSettings()
         setPlaybackServicesEnabled(onboardingManager.isComplete)
@@ -356,11 +356,14 @@ class App :
         val state =
             if (enabled) PackageManager.COMPONENT_ENABLED_STATE_ENABLED else PackageManager.COMPONENT_ENABLED_STATE_DISABLED
         listOf(MusicService::class.java, DownloadService::class.java).forEach { service ->
-            packageManager.setComponentEnabledSetting(
-                ComponentName(this, service),
-                state,
-                PackageManager.DONT_KILL_APP,
-            )
+            val component = ComponentName(this, service)
+            if (packageManager.getComponentEnabledSetting(component) != state) {
+                packageManager.setComponentEnabledSetting(
+                    component,
+                    state,
+                    PackageManager.DONT_KILL_APP,
+                )
+            }
         }
     }
 

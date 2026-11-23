@@ -68,7 +68,12 @@ class PoTokenService : Service() {
             val data = message.data
             val requestedVisitor = data.getString(PoTokenIpc.VISITOR_DATA) ?: return true
             val videoId = data.getString(PoTokenIpc.VIDEO_ID) ?: return true
-            if (busy) return true
+            if (busy) {
+                runCatching {
+                    replyTo.send(Message.obtain(null, PoTokenIpc.MINT, requestId, 0).apply { this.data = Bundle() })
+                }
+                return true
+            }
             busy = true
             scope.launch {
                 val response = Bundle()

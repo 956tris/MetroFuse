@@ -254,7 +254,12 @@ exec "$DIR/$$appName.bin" "$@"
     }
 }
 
-tasks.matching { it.name == "packageReleaseAppImage" || it.name == "createReleaseDistributable" }.configureEach {
+tasks.matching {
+    it.name == "packageReleaseAppImage" ||
+        it.name == "packageReleaseDeb" ||
+        it.name == "packageReleaseRpm" ||
+        it.name == "createReleaseDistributable"
+}.configureEach {
     finalizedBy("patchLinuxLauncher")
 }
 

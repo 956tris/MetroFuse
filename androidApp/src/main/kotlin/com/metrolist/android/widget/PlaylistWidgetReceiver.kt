@@ -15,6 +15,7 @@ import com.metrolist.android.playback.MusicService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import timber.log.Timber
@@ -65,14 +66,16 @@ class PlaylistWidgetReceiver :
         val pendingResult = goAsync()
         CoroutineScope(Dispatchers.Main).launch {
             try {
-                (context.applicationContext as App).startup.await()
-                playlistWidgetManager.updateObservation()
-                widgetManager.refreshProgressDemand()
-                if (MusicService.isRunning) {
-                    requestServiceSnapshot(context)
-                } else {
-                    playlistWidgetManager.updateIdleWidgets()
-                    if (MusicService.isRunning) requestServiceSnapshot(context)
+                withTimeoutOrNull(8_000L) {
+                    (context.applicationContext as App).startup.await()
+                    playlistWidgetManager.updateObservation()
+                    widgetManager.refreshProgressDemand()
+                    if (MusicService.isRunning) {
+                        requestServiceSnapshot(context)
+                    } else {
+                        playlistWidgetManager.updateIdleWidgets()
+                        if (MusicService.isRunning) requestServiceSnapshot(context)
+                    }
                 }
             } catch (e: Exception) {
                 Timber.tag(TAG).e(e, "Failed to refresh playlist widgets")

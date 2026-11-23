@@ -8,8 +8,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
-const val API_VERSION = "1.1.0"
-const val COMPOSE_ABI = "kotlin-2.4.21_compose-1.13.0-beta02_api-1.1.0"
+const val LEGACY_API_VERSION_1_1 = "1.1.0"
+const val LEGACY_COMPOSE_ABI_1_1 = "kotlin-2.4.21_compose-1.13.0-beta02_api-1.1.0"
+const val API_VERSION = "1.2.0"
+const val COMPOSE_ABI = "kotlin-2.4.21_compose-1.13.0-beta02_api-1.2.0"
+val SUPPORTED_API_VERSIONS: Set<String> = setOf(LEGACY_API_VERSION_1_1, API_VERSION)
+val SUPPORTED_COMPOSE_ABIS: Set<String> = setOf(LEGACY_COMPOSE_ABI_1_1, COMPOSE_ABI)
+
+fun isSupportedApiVersion(version: String?): Boolean = version != null && version in SUPPORTED_API_VERSIONS
+
+fun isSupportedComposeAbi(abi: String?): Boolean = abi != null && abi in SUPPORTED_COMPOSE_ABIS
 
 @Serializable data class Track(
     val id: String,

@@ -4,6 +4,7 @@ package com.metrolist.android.spotifyimport
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
@@ -83,7 +84,7 @@ fun SpotifyLoginScreen(
     var submittedCookie by remember { mutableStateOf<String?>(null) }
 
     fun submitCookieIfAvailable() {
-        val cookie = spotifySessionCookie(CookieManager.getInstance().getCookie(SPOTIFY_OPEN_URL)) ?: return
+        val cookie = spotifySessionCookie(runCatching { CookieManager.getInstance().getCookie(SPOTIFY_OPEN_URL) }.getOrNull()) ?: return
         if (cookie == submittedCookie) return
         submittedCookie = cookie
         Timber.tag(TAG).i("Spotify WebView session cookie detected")
@@ -94,7 +95,7 @@ fun SpotifyLoginScreen(
     LaunchedEffect(webView, authenticationError) {
         if (webView == null || authenticationError != null) return@LaunchedEffect
         awaitProviderCredentials {
-            spotifySessionCookie(CookieManager.getInstance().getCookie(SPOTIFY_OPEN_URL))
+            spotifySessionCookie(runCatching { CookieManager.getInstance().getCookie(SPOTIFY_OPEN_URL) }.getOrNull())
         }
         submitCookieIfAvailable()
     }
@@ -128,12 +129,20 @@ fun SpotifyLoginScreen(
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { webViewContext ->
-                        WebView(webViewContext).apply webView@{
+                        val created = runCatching { WebView(webViewContext) }.getOrNull()
+                        if (created == null) {
+                            isPageLoading = false
+                            pageError = "WebView unavailable"
+                            return@AndroidView View(webViewContext)
+                        }
+                        created.apply webView@{
                             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                             webView = this
-                            CookieManager.getInstance().apply {
-                                setAcceptCookie(true)
-                                setAcceptThirdPartyCookies(this@webView, true)
+                            runCatching {
+                                CookieManager.getInstance().apply {
+                                    setAcceptCookie(true)
+                                    setAcceptThirdPartyCookies(this@webView, true)
+                                }
                             }
                             webViewClient =
                                 object : WebViewClient() {
@@ -191,7 +200,7 @@ fun SpotifyLoginScreen(
                                 allowFileAccess = false
                                 allowContentAccess = false
                                 cacheMode = WebSettings.LOAD_DEFAULT
-                                userAgentString = WebSettings.getDefaultUserAgent(webViewContext)
+                                userAgentString = runCatching { WebSettings.getDefaultUserAgent(webViewContext) }.getOrDefault("")
                             }
                             webChromeClient = WebChromeClient()
                             loadUrl(SPOTIFY_LOGIN_URL)
@@ -259,9 +268,11 @@ fun SpotifyLoginScreen(
 }
 
 private fun clearSpotifySessionCookie() {
-    CookieManager.getInstance().apply {
-        setCookie(SPOTIFY_OPEN_URL, "sp_dc=; Max-Age=0; Path=/; Domain=.spotify.com; Secure")
-        flush()
+    runCatching {
+        CookieManager.getInstance().apply {
+            setCookie(SPOTIFY_OPEN_URL, "sp_dc=; Max-Age=0; Path=/; Domain=.spotify.com; Secure")
+            flush()
+        }
     }
     Timber.tag(TAG).i("Cleared stale Spotify WebView session cookie")
 }

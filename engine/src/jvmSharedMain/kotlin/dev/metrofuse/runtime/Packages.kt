@@ -1,8 +1,10 @@
 package dev.metrofuse.runtime
 
-import dev.metrofuse.api.API_VERSION
 import dev.metrofuse.api.COMPOSE_ABI
 import dev.metrofuse.api.Manifest
+import dev.metrofuse.api.SUPPORTED_API_VERSIONS
+import dev.metrofuse.api.isSupportedApiVersion
+import dev.metrofuse.api.isSupportedComposeAbi
 import kotlinx.serialization.json.jsonObject
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
@@ -171,7 +173,9 @@ class PackageStore(private val root: File, private val platform: String) {
             require(manifest.name.isNotBlank() && manifest.name.length <= 120)
             require(manifest.author.isNotBlank()) { "Author is required" }
             SemVer.parse(manifest.version)
-            require(manifest.api == API_VERSION) { "Unsupported plugin API ${manifest.api}" }
+            require(isSupportedApiVersion(manifest.api)) {
+                "Unsupported plugin API ${manifest.api}; supported: ${SUPPORTED_API_VERSIONS.sorted().joinToString()}"
+            }
             require(platform in manifest.platforms) { "Unsupported platform $platform" }
             require(manifest.runtime in setOf("javascript", "kotlin")) { "Expected javascript or kotlin runtime" }
             if (manifest.runtime == "javascript") {
@@ -180,7 +184,7 @@ class PackageStore(private val root: File, private val platform: String) {
             } else {
                 require(manifest.entryClass?.matches(Regex("[A-Za-z_$][A-Za-z0-9_$]*(\\.[A-Za-z_$][A-Za-z0-9_$]*)+")) == true) { "Invalid entry class" }
                 require(manifest.script == null) { "Native artifacts cannot declare a JavaScript entrypoint" }
-                require(manifest.composeAbi == COMPOSE_ABI) { "Compose ABI mismatch; rebuild against $COMPOSE_ABI" }
+                require(isSupportedComposeAbi(manifest.composeAbi)) { "Compose ABI mismatch; rebuild against $COMPOSE_ABI" }
             }
             require(manifest.dependencies.keys.none { it == manifest.id }) { "Self dependency" }
             manifest.dependencies.forEach { (id, version) ->

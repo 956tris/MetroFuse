@@ -417,18 +417,25 @@ fun MetrolistApp(
     val materialYouEnabled = Settings.shared.materialYouEnabled
     val songArtworkColorsEnabled = materialYouEnabled && Settings.shared.dynamicTheme
 
-    Settings.shared.systemInDarkTheme = isSystemInDarkTheme()
+    val systemDark = isSystemInDarkTheme()
+    SideEffect {
+        Settings.shared.systemInDarkTheme = systemDark
+    }
     val darkTheme = Settings.shared.getCurrentThemeIsDark()
     val pureBlack = Settings.shared.isPureBlackTheme(darkTheme)
 
     val coroutineScope = rememberCoroutineScope()
     val systemJvmLocale = AppLocale.systemLocale(context)
+    val contentCountry = Settings.shared.contentCountry
+    val contentLanguage = Settings.shared.contentLanguage
 
-    GlobalYouTube.applyContentRegion(
-        contentCountry = Settings.shared.contentCountry,
-        contentLanguage = Settings.shared.contentLanguage,
-        systemLocale = systemJvmLocale,
-    )
+    LaunchedEffect(contentCountry, contentLanguage, systemJvmLocale) {
+        GlobalYouTube.applyContentRegion(
+            contentCountry = contentCountry,
+            contentLanguage = contentLanguage,
+            systemLocale = systemJvmLocale,
+        )
+    }
 
     val playbackViewModel: PlaybackViewModel = koinViewModel()
     val libraryViewModel: LibraryViewModel = koinViewModel()
@@ -886,13 +893,16 @@ fun MetrolistApp(
         val overscrollFactory = LocalOverscrollFactory.current
 
         var tvAppHasFocus by remember { mutableStateOf(false) }
+        val tvHasFocusProvider = remember { { tvAppHasFocus } }
+        val currentTvFallback by rememberUpdatedState {
+            shouldShowNavigationBar && useNavigationRail &&
+                runCatching { selectedRailFocusRequester.requestFocus() }.getOrDefault(false)
+        }
+        val tvFallbackProvider = remember { { currentTvFallback() } }
         NavigationContentProvider(
             miniPlayerContentInset,
-            LocalTvAppHasFocus provides { tvAppHasFocus },
-            LocalTvNavigationFocusFallback provides {
-                shouldShowNavigationBar && useNavigationRail &&
-                    runCatching { selectedRailFocusRequester.requestFocus() }.getOrDefault(false)
-            },
+            LocalTvAppHasFocus provides tvHasFocusProvider,
+            LocalTvNavigationFocusFallback provides tvFallbackProvider,
             LocalOverscrollFactory provides overscrollFactory,
             LocalNavigator provides navigator,
             LocalNavigationContainerState provides navigator.state.containers,

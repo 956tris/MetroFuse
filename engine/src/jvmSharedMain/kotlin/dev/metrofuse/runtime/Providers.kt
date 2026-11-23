@@ -88,16 +88,44 @@ private data class Cached<T>(
     val weight: Int,
 )
 
-private class BoundedCache<T> {
-    private val entries = linkedMapOf<String, Cached<T>>()
+private data class MetadataCacheKey(
+    val revision: Long,
+    val epoch: Long,
+    val entryId: String,
+    val request: MetadataRequest,
+    val policy: MetadataPolicy,
+)
+
+private data class AudioCacheKey(
+    val revision: Long,
+    val epoch: Long,
+    val entryId: String,
+    val request: AudioQuery,
+    val policy: AudioPolicy,
+)
+
+private val EXPECTED_AUDIO_SKIP_CODES =
+    setOf(
+        "WRONG_PROVIDER",
+        "IDENTITY_REQUIRED",
+        "AUDIO_DISABLED",
+        "TRACK_METADATA_REQUIRED",
+        "NO_MATCH",
+        "NO_FLAC_MATCH",
+        "LOSSLESS_UNAVAILABLE",
+        "QUALITY_UNAVAILABLE",
+    )
+
+private class BoundedCache<K, T> {
+    private val entries = linkedMapOf<K, Cached<T>>()
 
     @Synchronized fun get(
-        key: String,
+        key: K,
         now: Long,
     ): T? = entries[key]?.takeIf { it.until > now }?.value
 
     @Synchronized fun put(
-        key: String,
+        key: K,
         value: T,
         until: Long,
         weight: Int = 8192,
@@ -118,8 +146,8 @@ class ProviderPipelines(
     val metadataPolicy = MutableStateFlow(MetadataPolicy())
     val audioPolicy = MutableStateFlow(AudioPolicy())
     val diagnostics = MutableStateFlow<List<ProviderDiagnostic>>(emptyList())
-    private val metadataCache = BoundedCache<MetadataContribution>()
-    private val audioCache = BoundedCache<AudioResult>()
+    private val metadataCache = BoundedCache<MetadataCacheKey, MetadataContribution>()
+    private val audioCache = BoundedCache<AudioCacheKey, AudioResult>()
     private val matchSearch = ProviderMatchSearch(registry, now)
     private val catalogRecommendations = CatalogRecommendations(registry, now)
     private val catalogLibrary = CatalogLibrary(registry, now)
@@ -179,7 +207,7 @@ class ProviderPipelines(
                         },
                         policy.configurations[entry.id] ?: JsonObject(emptyMap()),
                     )
-                val cacheKey = "${cacheRevision.get()}:${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
+                val cacheKey = MetadataCacheKey(cacheRevision.get(), registry.providerEpoch, entry.id, request, policy)
                 val start = System.nanoTime()
                 val contribution =
                     try {
@@ -326,7 +354,7 @@ class ProviderPipelines(
                 val request = query.copy(identity = identity, configuration = policy.configurations[entry.id] ?: query.configuration)
                 val requestedMediaId = identity.identifiers["youtube"] ?: identity.canonicalId
                 if (audioMatchProfile(entry.id, requestedMediaId) in excludedProviders) return null
-                val cacheKey = "${cacheRevision.get()}:${registry.providerEpoch}:${entry.id}:${request.hashCode()}:${policy.hashCode()}"
+                val cacheKey = AudioCacheKey(cacheRevision.get(), registry.providerEpoch, entry.id, request, policy)
                 audioCache.get(cacheKey, now())?.let { cached ->
                     if (cached.stream?.attributes?.get("matchProfile") !in excludedProviders) return cached
                     return null
@@ -403,7 +431,12 @@ class ProviderPipelines(
                     }
                     val error = result.error
                     val outcome = error?.code ?: if (stream == null) "NO_MATCH" else "INVALID_DESCRIPTOR"
-                    if (error != null || stream != null) {
+                    val diagnosticCode = audioDiagnosticCode(outcome)
+                    val shouldReportToRegistry =
+                        thrownFailure != null ||
+                            (error != null && outcome !in EXPECTED_AUDIO_SKIP_CODES && diagnosticCode !in EXPECTED_AUDIO_SKIP_CODES) ||
+                            (error == null && stream != null)
+                    if (shouldReportToRegistry) {
                         registry.reportFailure(
                             entry.owner,
                             "audio.resolve",
@@ -418,7 +451,7 @@ class ProviderPipelines(
                     record(
                         "audio.resolve",
                         entry.id,
-                        audioDiagnosticCode(outcome),
+                        diagnosticCode,
                         start,
                         attempt,
                     )

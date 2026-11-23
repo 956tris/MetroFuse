@@ -828,107 +828,110 @@ class FFmpegFrameGrabber : FrameGrabber {
                 }
 
                 val vOptions = AVDictionary(null)
-                for ((key, value) in videoOptions) av_dict_set(vOptions, key, value, 0)
+                try {
+                    for ((key, value) in videoOptions) av_dict_set(vOptions, key, value, 0)
 
-                val hwaccelOpt = this.options["hwaccel"]
-                var hwAccelConfigured = false
-                if (!hwaccelOpt.isNullOrEmpty() && hwaccelOpt != "none" && hwaccelOpt != "0") {
-                    val targetHwNames =
-                        when (hwaccelOpt) {
-                            "auto" -> {
-                                val osName = System.getProperty("os.name")?.lowercase() ?: ""
-                                when {
-                                    osName.contains("mac") -> listOf("videotoolbox")
-                                    osName.contains("win") -> listOf("d3d11va", "dxva2")
-                                    else -> listOf("vaapi", "cuda", "vdpau")
+                    val hwaccelOpt = this.options["hwaccel"]
+                    var hwAccelConfigured = false
+                    if (!hwaccelOpt.isNullOrEmpty() && hwaccelOpt != "none" && hwaccelOpt != "0") {
+                        val targetHwNames =
+                            when (hwaccelOpt) {
+                                "auto" -> {
+                                    val osName = System.getProperty("os.name")?.lowercase() ?: ""
+                                    when {
+                                        osName.contains("mac") -> listOf("videotoolbox")
+                                        osName.contains("win") -> listOf("d3d11va", "dxva2")
+                                        else -> listOf("vaapi", "cuda", "vdpau")
+                                    }
+                                }
+
+                                else -> {
+                                    listOf(hwaccelOpt)
                                 }
                             }
 
-                            else -> {
-                                listOf(hwaccelOpt)
-                            }
-                        }
+                        for (hwName in targetHwNames) {
+                            val hwType = av_hwdevice_find_type_by_name(hwName)
+                            if (hwType == AV_HWDEVICE_TYPE_NONE) continue
+                            val hwCtx = AVBufferRef()
+                            if (av_hwdevice_ctx_create(hwCtx, hwType, null as String?, null as AVDictionary?, 0) >= 0) {
+                                val refForCodec = av_buffer_ref(hwCtx)
+                                video_c!!.hw_device_ctx(refForCodec)
+                                hw_device_ctx = hwCtx.retainReference()
+                                hardwareDeviceName = hwName
 
-                    for (hwName in targetHwNames) {
-                        val hwType = av_hwdevice_find_type_by_name(hwName)
-                        if (hwType == AV_HWDEVICE_TYPE_NONE) continue
-                        val hwCtx = AVBufferRef()
-                        if (av_hwdevice_ctx_create(hwCtx, hwType, null as String?, null as AVDictionary?, 0) >= 0) {
-                            val refForCodec = av_buffer_ref(hwCtx)
-                            video_c!!.hw_device_ctx(refForCodec)
-                            hw_device_ctx = hwCtx.retainReference()
-                            hardwareDeviceName = hwName
-
-                            val targetHwPixFmt = getHwPixelFormat(hwType)
-                            if (targetHwPixFmt != AV_PIX_FMT_NONE) {
-                                val cb =
-                                    object : AVCodecContext.Get_format_AVCodecContext_IntPointer() {
-                                        override fun call(
-                                            ctx: AVCodecContext?,
-                                            fmt: IntPointer?,
-                                        ): Int {
-                                            return try {
-                                                if (fmt != null) {
-                                                    val safeFmt = fmt.capacity(64)
-                                                    var i = 0
-                                                    while (i < 64) {
-                                                        val p = safeFmt.get(i.toLong())
-                                                        if (p == AV_PIX_FMT_NONE) break
-                                                        if (p == targetHwPixFmt) {
-                                                            isHardwareAccelerated = true
-                                                            return p
+                                val targetHwPixFmt = getHwPixelFormat(hwType)
+                                if (targetHwPixFmt != AV_PIX_FMT_NONE) {
+                                    val cb =
+                                        object : AVCodecContext.Get_format_AVCodecContext_IntPointer() {
+                                            override fun call(
+                                                ctx: AVCodecContext?,
+                                                fmt: IntPointer?,
+                                            ): Int {
+                                                return try {
+                                                    if (fmt != null) {
+                                                        val safeFmt = fmt.capacity(64)
+                                                        var i = 0
+                                                        while (i < 64) {
+                                                            val p = safeFmt.get(i.toLong())
+                                                            if (p == AV_PIX_FMT_NONE) break
+                                                            if (p == targetHwPixFmt) {
+                                                                isHardwareAccelerated = true
+                                                                return p
+                                                            }
+                                                            i++
                                                         }
-                                                        i++
+                                                        isHardwareAccelerated = false
+                                                        safeFmt.get(0L)
+                                                    } else {
+                                                        AV_PIX_FMT_NONE
                                                     }
+                                                } catch (_: Throwable) {
                                                     isHardwareAccelerated = false
-                                                    safeFmt.get(0L)
-                                                } else {
-                                                    AV_PIX_FMT_NONE
+                                                    fmt?.get(0L) ?: AV_PIX_FMT_NONE
                                                 }
-                                            } catch (_: Throwable) {
-                                                isHardwareAccelerated = false
-                                                fmt?.get(0L) ?: AV_PIX_FMT_NONE
                                             }
-                                        }
-                                    }.retainReference<AVCodecContext.Get_format_AVCodecContext_IntPointer>()
-                                get_format_callback = cb
-                                video_c!!.get_format(cb)
+                                        }.retainReference<AVCodecContext.Get_format_AVCodecContext_IntPointer>()
+                                    get_format_callback = cb
+                                    video_c!!.get_format(cb)
+                                }
+                                hwAccelConfigured = true
+                                break
                             }
-                            hwAccelConfigured = true
-                            break
                         }
                     }
-                }
 
-                if (hwAccelConfigured) {
-                    // Hardware accelerated decoders (e.g. VideoToolbox) require single-threaded decoding
-                    video_c!!.thread_count(1)
-                    video_c!!.thread_type(0)
-                } else {
-                    video_c!!.thread_count(softwareVideoDecoderThreadCount(Runtime.getRuntime().availableProcessors()))
-                    video_c!!.thread_type(AVCodecContext.FF_THREAD_FRAME or AVCodecContext.FF_THREAD_SLICE)
-                }
-
-                var openResult = avcodec_open2(video_c, codec, vOptions)
-                if (openResult < 0 && hwAccelConfigured) {
-                    hw_device_ctx?.let {
-                        av_buffer_unref(it)
-                        it.releaseReference()
+                    if (hwAccelConfigured) {
+                        // Hardware accelerated decoders (e.g. VideoToolbox) require single-threaded decoding
+                        video_c!!.thread_count(1)
+                        video_c!!.thread_type(0)
+                    } else {
+                        video_c!!.thread_count(softwareVideoDecoderThreadCount(Runtime.getRuntime().availableProcessors()))
+                        video_c!!.thread_type(AVCodecContext.FF_THREAD_FRAME or AVCodecContext.FF_THREAD_SLICE)
                     }
-                    hw_device_ctx = null
-                    get_format_callback?.releaseReference()
-                    get_format_callback = null
-                    isHardwareAccelerated = false
-                    hardwareDeviceName = null
-                    video_c!!.hw_device_ctx(null)
-                    video_c!!.get_format(null)
-                    video_c!!.thread_count(softwareVideoDecoderThreadCount(Runtime.getRuntime().availableProcessors()))
-                    video_c!!.thread_type(AVCodecContext.FF_THREAD_FRAME or AVCodecContext.FF_THREAD_SLICE)
-                    openResult = avcodec_open2(video_c, codec, vOptions)
+
+                    var openResult = avcodec_open2(video_c, codec, vOptions)
+                    if (openResult < 0 && hwAccelConfigured) {
+                        hw_device_ctx?.let {
+                            av_buffer_unref(it)
+                            it.releaseReference()
+                        }
+                        hw_device_ctx = null
+                        get_format_callback?.releaseReference()
+                        get_format_callback = null
+                        isHardwareAccelerated = false
+                        hardwareDeviceName = null
+                        video_c!!.hw_device_ctx(null)
+                        video_c!!.get_format(null)
+                        video_c!!.thread_count(softwareVideoDecoderThreadCount(Runtime.getRuntime().availableProcessors()))
+                        video_c!!.thread_type(AVCodecContext.FF_THREAD_FRAME or AVCodecContext.FF_THREAD_SLICE)
+                        openResult = avcodec_open2(video_c, codec, vOptions)
+                    }
+                    if (openResult < 0) throw Exception("avcodec_open2() error $openResult: Could not open video codec.")
+                    FFmpegLogCallback.logRejectedOptions(vOptions, "avcodec_open2")
+                } finally {
+                    av_dict_free(vOptions)
                 }
-                if (openResult < 0) throw Exception("avcodec_open2() error $openResult: Could not open video codec.")
-                FFmpegLogCallback.logRejectedOptions(vOptions, "avcodec_open2")
-                av_dict_free(vOptions)
 
                 if (video_c!!.time_base().num() > 1000 && video_c!!.time_base().den() == 1) video_c!!.time_base().den(1000)
 
@@ -957,11 +960,14 @@ class FFmpegFrameGrabber : FrameGrabber {
                 }
 
                 val aOptions = AVDictionary(null)
-                for ((key, value) in audioOptions) av_dict_set(aOptions, key, value, 0)
-                audio_c!!.thread_count(1)
-                if (avcodec_open2(audio_c, codec, aOptions) < 0) throw Exception("avcodec_open2() error: Could not open audio codec.")
-                FFmpegLogCallback.logRejectedOptions(aOptions, "avcodec_open2")
-                av_dict_free(aOptions)
+                try {
+                    for ((key, value) in audioOptions) av_dict_set(aOptions, key, value, 0)
+                    audio_c!!.thread_count(1)
+                    if (avcodec_open2(audio_c, codec, aOptions) < 0) throw Exception("avcodec_open2() error: Could not open audio codec.")
+                    FFmpegLogCallback.logRejectedOptions(aOptions, "avcodec_open2")
+                } finally {
+                    av_dict_free(aOptions)
+                }
 
                 samples_frame = av_frame_alloc()
                 if (samples_frame == null) throw Exception("av_frame_alloc() error: Could not allocate audio frame.")

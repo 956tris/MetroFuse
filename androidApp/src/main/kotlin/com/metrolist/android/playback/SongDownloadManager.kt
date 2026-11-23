@@ -284,8 +284,8 @@ class SongDownloadManager(
                             )
                         }
                     }
-                    showAggregateNotification(force = true)
                 }
+                showAggregateNotification(force = true)
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 synchronized(queueLock) {
@@ -299,9 +299,9 @@ class SongDownloadManager(
                             )
                         }
                     }
-                    showAggregateNotification(force = true)
                     Timber.tag(TAG).w(e, "download failed songId=%s", song.id)
                 }
+                showAggregateNotification(force = true)
             } finally {
                 val removeCancelledDownload =
                     synchronized(queueLock) {

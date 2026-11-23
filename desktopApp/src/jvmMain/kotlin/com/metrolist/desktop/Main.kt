@@ -595,7 +595,7 @@ private fun Color.toAwtColor(): AwtColor = AwtColor(red, green, blue, alpha)
 private fun WindowScope.WindowsWindowBackground(color: Color) {
     if (!OsUtil.isWindows) return
     val window = window as? ComposeWindow ?: return
-    SideEffect {
+    LaunchedEffect(window, color) {
         val background = color.toAwtColor()
         window.background = background
         window.contentPane.background = background
@@ -1124,9 +1124,9 @@ private fun runDesktopApp(args: Array<String>) {
                                                 color =
                                                     if (ColorUtils.calculateLuminance(iconColor.toArgb()) > 0.4) {
                                                         Color(
-                                                            red = (iconColor.red / 255) * (32 / 255),
-                                                            green = (iconColor.green / 255) * (32 / 255),
-                                                            blue = (iconColor.blue / 255) * (32 / 255),
+                                                            red = iconColor.red * (32f / 255f),
+                                                            green = iconColor.green * (32f / 255f),
+                                                            blue = iconColor.blue * (32f / 255f),
                                                         )
                                                     } else {
                                                         Color.White

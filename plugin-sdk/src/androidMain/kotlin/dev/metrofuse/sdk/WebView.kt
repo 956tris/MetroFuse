@@ -97,9 +97,9 @@ actual fun WebViewLoginDialog(
     LaunchedEffect(context.failed) {
         if (context.failed) Log.w("MetroPluginLogin", "Account verification failed; watching for an updated browser session")
     }
-    DisposableEffect(request) {
+    DisposableEffect(request, browserAttempt) {
         onDispose {
-            popups.forEach { it.destroy() }
+            popups.forEach { runCatching { it.destroy() } }
             popups.clear()
         }
     }
@@ -148,13 +148,19 @@ actual fun WebViewLoginDialog(
                                 settings.allowFileAccess = false
                                 settings.allowContentAccess = false
                                 settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                                val defaultUserAgent = WebSettings.getDefaultUserAgent(context)
+                                val defaultUserAgent = runCatching { WebSettings.getDefaultUserAgent(context) }.getOrDefault("")
                                 settings.userAgentString =
                                     if (spotify) defaultUserAgent else defaultUserAgent.replace("; wv", "").replace(" Version/4.0", "")
                                 settings.setSupportMultipleWindows(!spotify)
-                                CookieManager.getInstance().apply {
-                                    setAcceptCookie(true)
-                                    setAcceptThirdPartyCookies(this@browser, true)
+                                runCatching {
+                                    CookieManager.getInstance().apply {
+                                        setAcceptCookie(true)
+                                        setAcceptThirdPartyCookies(this@browser, true)
+                                    }
+                                }.onFailure { error ->
+                                    Log.w("MetroPluginLogin", "Unable to configure WebView cookies", error)
+                                    pageLoading = false
+                                    pageFailed = true
                                 }
                                 webViewClient =
                                     object : WebViewClient() {
@@ -229,7 +235,7 @@ actual fun WebViewLoginDialog(
                                                     return false
                                                 }
                                                 popups += popup
-                                                popup.webViewClient =
+                                                    popup.webViewClient =
                                                     object : WebViewClient() {
                                                         override fun onPageStarted(
                                                             popupView: WebView,
@@ -239,12 +245,17 @@ actual fun WebViewLoginDialog(
                                                             if (url == null || url == "about:blank") return
                                                             if (request.acceptsBrowserNavigation(url)) view.loadUrl(url)
                                                             popups -= popupView
-                                                            popupView.destroy()
+                                                            popupView.post { runCatching { popupView.destroy() } }
                                                         }
                                                     }
                                                 transport.webView = popup
                                                 resultMsg.sendToTarget()
                                                 return true
+                                            }
+
+                                            override fun onCloseWindow(window: WebView) {
+                                                popups -= window
+                                                window.post { runCatching { window.destroy() } }
                                             }
                                         }
                                     }

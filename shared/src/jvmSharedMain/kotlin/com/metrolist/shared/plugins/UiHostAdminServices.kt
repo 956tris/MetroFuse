@@ -3,11 +3,9 @@ package com.metrolist.shared.plugins
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.settings.ThemeMode
-import dev.metrofuse.api.API_VERSION
 import dev.metrofuse.api.JsonService
 import dev.metrofuse.api.Layer
-import dev.metrofuse.api.SettingType
-import dev.metrofuse.runtime.MarketplaceClient
+import dev.metrofuse.api.isSupportedApiVersion
 import dev.metrofuse.runtime.MarketplaceEntry
 import dev.metrofuse.runtime.Runtime
 import kotlinx.coroutines.Dispatchers
@@ -23,8 +21,6 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-
-private val adminMarketplaceClient by lazy { MarketplaceClient() }
 
 internal fun Runtime.registerHostAdminServices(platformName: String) {
     fun register(
@@ -117,7 +113,7 @@ internal fun Runtime.registerHostAdminServices(platformName: String) {
                     ((request["url"] as? JsonPrimitive)?.contentOrNull ?: Settings.shared.pluginMarketplaceUrl)
                         .trim()
                 if (url.isNotBlank()) {
-                    adminMarketplaceClient.fetch(url)
+                    sharedMarketplaceClient.fetch(url)
                     withContext(Dispatchers.Main.immediate) {
                         Settings.shared.pluginMarketplaceUrl = url
                     }
@@ -130,11 +126,11 @@ internal fun Runtime.registerHostAdminServices(platformName: String) {
                     ((request["url"] as? JsonPrimitive)?.contentOrNull ?: Settings.shared.pluginMarketplaceUrl)
                         .trim()
                 val entries =
-                    adminMarketplaceClient.cached(url)
-                        ?: if (url.isNotBlank()) adminMarketplaceClient.fetch(url) else emptyList()
+                    sharedMarketplaceClient.cached(url)
+                        ?: if (url.isNotBlank()) sharedMarketplaceClient.fetch(url) else emptyList()
                 val entry = entries.firstOrNull { it.id == id }
                 requireNotNull(entry) { "Marketplace plugin not found: $id" }
-                adminMarketplaceClient.install(this, entry)
+                sharedMarketplaceClient.install(this, entry)
             }
         }
         hostPluginsSnapshot(platformName, this)
@@ -265,7 +261,7 @@ private suspend fun hostPluginsSnapshot(
     val activeUiApp = registryState.selections["ui.app"] ?: registryState.ui.firstOrNull { it.point == "ui.app" && it.layer == Layer.REPLACE }?.owner.orEmpty()
     val uiApps = registryState.ui.filter { it.point == "ui.app" && it.layer == Layer.REPLACE }
     val marketplaceUrl = Settings.shared.pluginMarketplaceUrl.trim()
-    val cachedMarketplace = marketplaceUrl.takeIf { it.isNotBlank() }?.let { adminMarketplaceClient.cached(it) }.orEmpty()
+    val cachedMarketplace = marketplaceUrl.takeIf { it.isNotBlank() }?.let { sharedMarketplaceClient.cached(it) }.orEmpty()
     val installedVersions = plugins.associate { it.manifest.id to it.manifest.version }
 
     val pluginArray = buildJsonArray {
@@ -354,7 +350,7 @@ private fun MarketplaceEntry.toJson(
         put("version", version)
         put("pluginApiVersion", pluginApiVersion)
         put("releaseChannel", releaseChannel)
-        put("compatible", pluginApiVersion == API_VERSION && supports(platformName))
+        put("compatible", isSupportedApiVersion(pluginApiVersion) && supports(platformName))
         installedVersion?.let { put("installedVersion", it) }
         sourceUrl?.let { put("sourceUrl", it) }
         put("categories", buildJsonArray { displayCategories.forEach { add(JsonPrimitive(it)) } })

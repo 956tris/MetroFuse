@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicLong
 internal class CatalogLibrary(
     private val registry: Registry,
     private val now: () -> Long,
-    private val requestTimeoutMillis: Long = 15_000,
+    private val requestTimeoutMillis: Long = 30_000,
 ) {
     private data class Cursor(
         val owner: String,

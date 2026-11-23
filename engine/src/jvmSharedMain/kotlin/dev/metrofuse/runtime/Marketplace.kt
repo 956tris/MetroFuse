@@ -1,7 +1,7 @@
 package dev.metrofuse.runtime
 
-import dev.metrofuse.api.API_VERSION
 import dev.metrofuse.api.Manifest
+import dev.metrofuse.api.isSupportedApiVersion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -50,7 +50,7 @@ data class MarketplaceEntry(
     fun supports(platform: String): Boolean = platformArtifact(platform) != null
 
     fun artifact(platform: String): MarketplaceArtifact? {
-        if (pluginApiVersion != API_VERSION) return null
+        if (!isSupportedApiVersion(pluginApiVersion)) return null
         SemVer.parse(version)
         return platformArtifact(platform)?.also(::validateArtifact)
     }
@@ -82,7 +82,7 @@ data class MarketplaceEntry(
 @Serializable
 data class MarketplaceCatalog(val schemaVersion: Int = 1, val plugins: List<MarketplaceEntry>)
 
-class MarketplaceClient {
+class MarketplaceClient : AutoCloseable {
     @Volatile
     private var lastCatalog: Pair<String, List<MarketplaceEntry>>? = null
 
@@ -92,6 +92,12 @@ class MarketplaceClient {
         .callTimeout(60, TimeUnit.SECONDS)
         .followSslRedirects(false)
         .build()
+
+    override fun close() {
+        client.dispatcher.executorService.shutdown()
+        client.connectionPool.evictAll()
+        client.cache?.close()
+    }
 
     fun cached(url: String): List<MarketplaceEntry>? =
         lastCatalog?.takeIf { it.first == url }?.second

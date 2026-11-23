@@ -9,6 +9,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.metrolist.shared.youtube.playback.AndroidContextProvider
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -18,6 +19,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.time.Duration.Companion.seconds
 
@@ -30,7 +32,10 @@ object LastFmGalleryBrowser {
         return withTimeoutOrNull(20.seconds) {
             mutex.withLock {
                 withContext(Dispatchers.Main.immediate) {
-                    val view = WebView(AndroidContextProvider.applicationContext)
+                    val view =
+                        runCatching { WebView(AndroidContextProvider.applicationContext) }.getOrNull()
+                            ?: return@withContext null
+                    val activeContinuation = AtomicReference<CancellableContinuation<String>?>(null)
                     var failed = false
                     try {
                         view.settings.apply {
@@ -61,6 +66,9 @@ object LastFmGalleryBrowser {
                                     detail: RenderProcessGoneDetail,
                                 ): Boolean {
                                     failed = true
+                                    activeContinuation.getAndSet(null)?.let { cont ->
+                                        if (cont.isActive) cont.resume("null")
+                                    }
                                     return true
                                 }
                             }
@@ -69,6 +77,10 @@ object LastFmGalleryBrowser {
                         while (!failed && html == null) {
                             val result =
                                 suspendCancellableCoroutine { continuation ->
+                                    activeContinuation.set(continuation)
+                                    continuation.invokeOnCancellation {
+                                        activeContinuation.compareAndSet(continuation, null)
+                                    }
                                     view.evaluateJavascript(
                                         """
                                         (() => {
@@ -83,14 +95,16 @@ object LastFmGalleryBrowser {
                                         })()
                                         """.trimIndent(),
                                     ) { value ->
+                                        activeContinuation.compareAndSet(continuation, null)
                                         if (continuation.isActive) continuation.resume(value)
                                     }
                                 }
                             html = runCatching { Json.decodeFromString<String>(result) }.getOrNull()
-                            if (html == null) delay(100)
+                            if (html == null && !failed) delay(100)
                         }
                         html
                     } finally {
+                        activeContinuation.getAndSet(null)
                         withContext(NonCancellable + Dispatchers.Main.immediate) {
                             view.stopLoading()
                             view.destroy()

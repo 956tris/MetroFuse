@@ -1,21 +1,12 @@
-Material 3 YouTube Music client for Android
+Offline-first Material 3 Expressive music player for Android and Desktop with an extensible plugin architecture.
 
 Features:
 
-- Blazingly fast interruption-free YouTube Music playback
-- YouTube Music login support, logged-out users can also fully enjoy the app
-- **Material 3 Expressive** design
-- **Discord Rich Presence**, Scrobbling thru **Last.fm and Listenbrainz**
-- **No ads**, ever
-- Listen Together with other people online in real-time
-- Casting to **Google Cast**, F-Cast, SONOS devices, and over DLNA
-- Importing backups/playlists from 29+ other clients and 6 different services
-- Music recognition thru **Shazam**
-- Fast custom lyrics provider, lyrics translations and romanization support
-- Translations in over 15 languages
-- **Video playback** support
-- Extensive content filtering
-- **Canvas from Apple Music**, Spotify, and YouTube Music
-- Multiple player, thumbnail, miniplayer, and background types to choose from
-- Custom font and app icon support
-- ... and much more!
+- Offline-first playback for local music libraries without requiring an account
+- Optional JavaScript (.mfp) and native Kotlin (.apk/.jar) plugins supporting Plugin API 1.1.0 & 1.2.0
+- Optional custom full-shell UI plugins with host crash recovery
+- Provider-independent playback, lyrics, search, queue, and scrobbling pipeline
+- Discord Rich Presence, Last.fm and ListenBrainz scrobbling
+- Casting to Google Cast, FCast, Sonos, and DLNA
+- Listen Together, Android Auto, Android TV, desktop mini player, and immersive canvas player
+- Encrypted credential storage via Android Keystore and Windows DPAPI

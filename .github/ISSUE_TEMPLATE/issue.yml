@@ -12,7 +12,7 @@ body:
       label: Checklist
       description: Issues that skip these checks or duplicate an existing issue are closed without a response.
       options:
-        - label: I can reproduce this on the [current MetroFuse beta](https://github.com/956tris/MetroFuse/releases).
+        - label: I can reproduce this on the [current MetroFuse release](https://github.com/956tris/MetroFuse/releases).
           required: true
         - label: I searched open and closed issues and found no duplicate.
           required: true

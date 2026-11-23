@@ -4,6 +4,7 @@ package com.metrolist.android.playlistimport
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.view.View
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -85,7 +86,7 @@ internal fun <Credentials> ProviderLoginShell(
     var submittedCredentialKey by remember { mutableStateOf<String?>(null) }
 
     fun submitCredentialsIfAvailable() {
-        val cookieHeader = CookieManager.getInstance().getCookie(cookieUrl) ?: return
+        val cookieHeader = runCatching { CookieManager.getInstance().getCookie(cookieUrl) }.getOrNull() ?: return
         val credentials = extractCredentials(cookieHeader) ?: return
         val key = credentialKey(credentials)
         if (key == submittedCredentialKey) return
@@ -97,7 +98,7 @@ internal fun <Credentials> ProviderLoginShell(
     LaunchedEffect(webView, authenticationError) {
         if (webView == null || authenticationError != null) return@LaunchedEffect
         awaitProviderCredentials {
-            extractCredentials(CookieManager.getInstance().getCookie(cookieUrl).orEmpty())
+            extractCredentials(runCatching { CookieManager.getInstance().getCookie(cookieUrl) }.getOrNull().orEmpty())
         }
         submitCredentialsIfAvailable()
     }
@@ -131,11 +132,19 @@ internal fun <Credentials> ProviderLoginShell(
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { webViewContext ->
-                        WebView(webViewContext).apply webView@{
+                        val created = runCatching { WebView(webViewContext) }.getOrNull()
+                        if (created == null) {
+                            isPageLoading = false
+                            pageError = loginError
+                            return@AndroidView View(webViewContext)
+                        }
+                        created.apply webView@{
                             webView = this
-                            CookieManager.getInstance().apply {
-                                setAcceptCookie(true)
-                                setAcceptThirdPartyCookies(this@webView, true)
+                            runCatching {
+                                CookieManager.getInstance().apply {
+                                    setAcceptCookie(true)
+                                    setAcceptThirdPartyCookies(this@webView, true)
+                                }
                             }
                             webViewClient =
                                 object : WebViewClient() {
@@ -192,7 +201,7 @@ internal fun <Credentials> ProviderLoginShell(
                                 allowFileAccess = false
                                 allowContentAccess = false
                                 cacheMode = WebSettings.LOAD_DEFAULT
-                                userAgentString = WebSettings.getDefaultUserAgent(webViewContext)
+                                userAgentString = runCatching { WebSettings.getDefaultUserAgent(webViewContext) }.getOrDefault("")
                             }
                             webChromeClient = WebChromeClient()
                             loadUrl(loginUrl)

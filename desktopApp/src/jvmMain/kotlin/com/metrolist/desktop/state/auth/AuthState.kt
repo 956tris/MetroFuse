@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 object AuthState {
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val scope = CoroutineScope(Dispatchers.Main + kotlinx.coroutines.SupervisorJob())
     private var accountInfoJob: Job? = null
     private var accountInfoGeneration = 0L
 

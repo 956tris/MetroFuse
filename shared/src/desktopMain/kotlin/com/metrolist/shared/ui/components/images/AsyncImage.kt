@@ -60,7 +60,7 @@ actual fun AsyncImage(
 
     val saturationFilter =
         remember(saturation) {
-            ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(saturation) })
+            if (saturation == 1f) null else ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(saturation) })
         }
 
     Box(

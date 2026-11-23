@@ -37,6 +37,7 @@ internal class AudioTempoProcessor(
     private val pitchRate = (sampleRate * pitch).roundToInt()
     private val sink = AVFilterContext(null)
     private var timestamp = 0L
+    private var closed = false
 
     init {
         try {
@@ -112,11 +113,14 @@ internal class AudioTempoProcessor(
                 .nb_samples(samples)
                 .pts(timestamp)
             av_channel_layout_default(input.ch_layout(), channelCount)
-            check(av_frame_get_buffer(input, 0) >= 0)
-            input.data(0).put(data, 0, data.size)
-            timestamp += samples
-            check(av_buffersrc_add_frame(source, input) >= 0)
-            av_frame_unref(input)
+            try {
+                check(av_frame_get_buffer(input, 0) >= 0)
+                input.data(0).put(data, 0, data.size)
+                timestamp += samples
+                check(av_buffersrc_add_frame(source, input) >= 0)
+            } finally {
+                av_frame_unref(input)
+            }
         }
         while (true) {
             val result = av_buffersink_get_frame(sink, output)
@@ -133,6 +137,8 @@ internal class AudioTempoProcessor(
     }
 
     override fun close() {
+        if (closed) return
+        closed = true
         av_frame_free(input)
         av_frame_free(output)
         avfilter_graph_free(graph)

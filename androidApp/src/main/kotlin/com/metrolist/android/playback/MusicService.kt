@@ -146,6 +146,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -166,6 +167,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.compose.resources.getString
 import org.koin.android.ext.android.inject
 import org.koin.core.component.KoinComponent
@@ -1828,6 +1830,7 @@ class MusicService :
                         playbackSong = fallback.song
                         playbackPosition = fallback.positionMs
                         hints = playbackSong.toAndroidContentHints(wantVideo = false)
+                        resolveBudget = queuePlaybackResolveBudget(SystemClock.elapsedRealtime(), hints.playbackClientOverrideId)
                         result = fallback.cachedAudio?.let { PlaybackFetchResult(resource = it) } ?: resolveWithinBudget(video = false)
                     }
                 }
@@ -2520,12 +2523,16 @@ class MusicService :
         playbackPersistenceRequests.trySend(playbackPersistenceWriter.request(state))
     }
 
+    private val finalPersistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     private fun saveFinalPlaybackState(): Job? {
         if (!playbackPersistenceLifecycle.restoring) queueCoordinator.saveShuffleMode()
         if (!playbackPersistenceLifecycle.canSave(Settings.shared.persistentQueue)) return finalPlaybackPersistence
         val request = playbackPersistenceWriter.request(buildPersistPlayerState())
+        val previous = finalPlaybackPersistence
         finalPlaybackPersistence =
-            CoroutineScope(Dispatchers.IO).launch {
+            finalPersistenceScope.launch {
+                previous?.join()
                 runCatching { playbackPersistenceWriter.write(request) }
                     .onFailure { Timber.e(it, "Failed to persist playback") }
             }
@@ -2936,9 +2943,13 @@ class MusicService :
         if (podcastWrite == null) podcastWriterScope.cancel() else podcastWrite.invokeOnCompletion { podcastWriterScope.cancel() }
         val historyWrite = listeningHistory.flush()
         runBlocking {
-            awaitFinalPlaybackCheckpoint(checkpoint)
-            awaitFinalPlaybackCheckpoint(historyWrite)
-            awaitFinalPlaybackCheckpoint(podcastWrite)
+            withTimeoutOrNull(1_500L) {
+                coroutineScope {
+                    launch { awaitFinalPlaybackCheckpoint(checkpoint) }
+                    launch { awaitFinalPlaybackCheckpoint(historyWrite) }
+                    launch { awaitFinalPlaybackCheckpoint(podcastWrite) }
+                }
+            }
         }
         isRunning = false
         running.value = false

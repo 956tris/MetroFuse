@@ -6,6 +6,10 @@ on:
       app-version:
         required: true
         type: string
+      version-code:
+        required: false
+        type: string
+        default: ""
     secrets:
       SENTRY_AUTH_TOKEN:
         required: true
@@ -19,7 +23,7 @@ env:
 jobs:
   finalize-sentry:
     name: Finalize Sentry releases
-    runs-on: blacksmith-2vcpu-ubuntu-2604
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -28,13 +32,39 @@ jobs:
         shell: bash
         env:
           APP_VERSION: ${{ inputs.app-version }}
+          VERSION_CODE: ${{ inputs.version-code }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
           set -euo pipefail
           test -n "$SENTRY_AUTH_TOKEN" || { echo "SENTRY_AUTH_TOKEN is required" >&2; exit 1; }
           test -n "$SENTRY_ORG"
           test -n "$SENTRY_PROJECT"
-          for release in "com.metrolist.music.kmp@$APP_VERSION" "com.metrolist.desktop@$APP_VERSION" "com.metrolist.ios@$APP_VERSION"; do
+          sentry_base="$(python3 - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          dsn = os.environ.get("SENTRY_DSN", "").strip()
+          if not dsn:
+              print("https://sentry.io")
+          else:
+              parsed = urlparse(dsn)
+              host = parsed.hostname or "sentry.io"
+              if host.endswith(".ingest.de.sentry.io") or host == "de.sentry.io":
+                  print("https://de.sentry.io")
+              elif host.endswith(".ingest.us.sentry.io"):
+                  print("https://us.sentry.io")
+              elif host.endswith(".ingest.sentry.io"):
+                  print("https://sentry.io")
+              else:
+                  print(f"{parsed.scheme or 'https'}://{host}")
+          PY
+          )"
+          releases=("com.metrofuse.desktop@$APP_VERSION")
+          if [[ -n "$VERSION_CODE" ]]; then
+            releases+=("com.metrofuse.music@$APP_VERSION+$VERSION_CODE")
+          else
+            releases+=("com.metrofuse.music@$APP_VERSION")
+          fi
+          for release in "${releases[@]}"; do
             readarray -t release_data < <(python3 - "$release" "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$GITHUB_SHA" <<'PY'
           import json
           import os
@@ -56,7 +86,7 @@ jobs:
               --header "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
               --header 'Content-Type: application/json' \
               --data-binary "${release_data[1]}" \
-              "https://sentry.io/api/0/organizations/$SENTRY_ORG/releases/")"
+              "$sentry_base/api/0/organizations/$SENTRY_ORG/releases/")"
             [[ "$create_status" == 2* ]] || {
               cat "$response" >&2
               echo "Could not create or find Sentry release $release (HTTP $create_status)" >&2
@@ -68,7 +98,7 @@ jobs:
               --header "Authorization: Bearer $SENTRY_AUTH_TOKEN" \
               --header 'Content-Type: application/json' \
               --data-binary "${release_data[2]}" \
-              "https://sentry.io/api/0/organizations/$SENTRY_ORG/releases/$encoded_release/")"
+              "$sentry_base/api/0/organizations/$SENTRY_ORG/releases/$encoded_release/")"
             [[ "$finalize_status" == 2* ]] || {
               cat "$response" >&2
               echo "Could not finalize Sentry release $release (HTTP $finalize_status)" >&2

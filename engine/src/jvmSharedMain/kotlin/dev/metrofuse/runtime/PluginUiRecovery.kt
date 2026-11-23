@@ -21,7 +21,9 @@ class PluginUiRecovery(
     @Synchronized
     fun beginRender(): () -> Unit {
         // Arm before entering plugin code: the first composition can freeze before effects or the watchdog start.
-        persist(rendering)
+        if (pendingRenders.isEmpty() && !rendering.isFile) {
+            persist(rendering)
+        }
         val token = Any()
         pendingRenders += token
         return {

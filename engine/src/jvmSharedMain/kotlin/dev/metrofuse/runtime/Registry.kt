@@ -231,10 +231,10 @@ class Registry(
             } && staged.searchProviders.keys.none { it in searchProviders },
         ) { "Provider ID conflict" }
         require(staged.catalogProviders.keys.none { it in catalogProviders }) { "Catalog provider ID conflict" }
+        require(staged.audio.keys.none { it in audio }) { "Audio provider conflict" }
         contracts.putAll(staged.contracts)
         staged.hooks.forEach { (name, values) -> hooks[name] = hooks[name].orEmpty() + values }
         staged.services.forEach { (name, values) -> services[name] = services[name].orEmpty() + values }
-        require(staged.audio.keys.none { it in audio }) { "Audio provider conflict" }
         metadata.addAll(staged.metadata)
         audio.putAll(staged.audio)
         staged.components.forEach { (name, values) -> components[name] = components[name].orEmpty() + values }

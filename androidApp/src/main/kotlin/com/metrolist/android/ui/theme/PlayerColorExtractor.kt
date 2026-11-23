@@ -38,22 +38,26 @@ object PlayerColorExtractor {
         fallbackColor: Color,
     ): PlayerArtworkColors? {
         val key = artworkColorSourceUrl(artworkUrl)
-        val palette =
+        val cached =
             paletteMutex.withLock {
-                palettes.remove(key)?.also { palettes[key] = it } ?: run {
-                    val request =
-                        ImageRequest
-                            .Builder(context)
-                            .artworkColors(artworkUrl)
-                            .allowHardware(false)
-                            .build()
-                    val result = imageLoader.execute(request) as? SuccessResult ?: return@withLock null
-                    quantize(result.image.toBitmap()).also { palette ->
-                        palettes[key] = palette
+                palettes.remove(key)?.also { palettes[key] = it }
+            }
+        val palette =
+            cached ?: run {
+                val request =
+                    ImageRequest
+                        .Builder(context)
+                        .artworkColors(artworkUrl)
+                        .allowHardware(false)
+                        .build()
+                val result = imageLoader.execute(request) as? SuccessResult ?: return null
+                quantize(result.image.toBitmap()).also { extracted ->
+                    paletteMutex.withLock {
+                        palettes[key] = extracted
                         while (palettes.size > 32) palettes.remove(palettes.keys.first())
                     }
                 }
-            } ?: return null
+            }
         return colorsFromPalette(palette, fallbackColor)
     }
 

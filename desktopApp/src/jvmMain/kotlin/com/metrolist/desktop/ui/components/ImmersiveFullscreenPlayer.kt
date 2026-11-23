@@ -44,7 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -131,17 +131,17 @@ private fun Modifier.canvasStageMask(
     onRight: Boolean,
     brightness: () -> Float,
 ): Modifier =
-    drawWithContent {
-        drawContent()
-        drawRect(Color.Black.copy(alpha = (1f - 0.8f * (0.45f + 0.55f * brightness())).coerceIn(0f, 1f)))
-        drawRect(
+    drawWithCache {
+        val verticalScrim =
             Brush.verticalGradient(
                 0f to Color.Transparent,
                 0.42f to Color.Transparent,
                 0.7f to Color.Black.copy(alpha = 0.6f),
                 1f to Color.Black.copy(alpha = 0.6f),
-            ),
-        )
+            )
+        val wideHorizontalMask: Brush?
+        val wideTopMask: Brush?
+        val narrowLyricsMask: Brush?
         if (wide) {
             val f = (feather.toPx() / size.width).coerceIn(0f, 0.5f)
             val clear = Color.Transparent
@@ -161,13 +161,28 @@ private fun Modifier.canvasStageMask(
                     onRight -> left + (1f to solid)
                     else -> listOf(0f to solid) + right
                 }
-            drawRect(Brush.horizontalGradient(*stops.toTypedArray()), blendMode = BlendMode.DstIn)
-            drawRect(
-                Brush.verticalGradient(0f to Color.Transparent, 0.09f to Color.Black.copy(alpha = 0.28f), 0.18f to Color.Black),
-                blendMode = BlendMode.DstIn,
-            )
+            wideHorizontalMask = Brush.horizontalGradient(*stops.toTypedArray())
+            wideTopMask = Brush.verticalGradient(0f to Color.Transparent, 0.09f to Color.Black.copy(alpha = 0.28f), 0.18f to Color.Black)
+            narrowLyricsMask = null
         } else if (showLyrics) {
-            drawRect(Brush.verticalGradient(0f to Color.Black, 0.45f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+            wideHorizontalMask = null
+            wideTopMask = null
+            narrowLyricsMask = Brush.verticalGradient(0f to Color.Black, 0.45f to Color.Black, 1f to Color.Transparent)
+        } else {
+            wideHorizontalMask = null
+            wideTopMask = null
+            narrowLyricsMask = null
+        }
+        onDrawWithContent {
+            drawContent()
+            drawRect(Color.Black.copy(alpha = (1f - 0.8f * (0.45f + 0.55f * brightness())).coerceIn(0f, 1f)))
+            drawRect(verticalScrim)
+            if (wideHorizontalMask != null && wideTopMask != null) {
+                drawRect(wideHorizontalMask, blendMode = BlendMode.DstIn)
+                drawRect(wideTopMask, blendMode = BlendMode.DstIn)
+            } else if (narrowLyricsMask != null) {
+                drawRect(narrowLyricsMask, blendMode = BlendMode.DstIn)
+            }
         }
     }
 

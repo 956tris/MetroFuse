@@ -183,9 +183,65 @@ class AndroidLocalMusicTest {
             assertEquals(0, provider.deletions)
         }
 
+    @Test
+    @Config(sdk = [33])
+    fun scanSkipsZeroByteZeroDurationPendingTrashedAndNonAudioRows() =
+        runBlocking {
+            val context = RuntimeEnvironment.getApplication()
+            val file = File(context.cacheDir, "filter-fixture.mp3").apply { writeBytes(ByteArray(2048)) }
+            val validRow =
+                mapOf<String, Any?>(
+                    MediaStore.Audio.Media._ID to 17L,
+                    MediaStore.Audio.Media.TITLE to "Valid Song",
+                    MediaStore.Audio.Media.DISPLAY_NAME to "Valid.mp3",
+                    MediaStore.Audio.Media.DURATION to 123000L,
+                    MediaStore.Audio.Media.ARTIST to "Artist",
+                    MediaStore.Audio.Media.ALBUM to "Album",
+                    MediaStore.Audio.Media.YEAR to 2026,
+                    MediaStore.Audio.Media.TRACK to 1,
+                    MediaStore.Audio.Media.DATE_MODIFIED to 1700000000L,
+                    MediaStore.Audio.Media.SIZE to 2048L,
+                    MediaStore.Audio.Media.MIME_TYPE to "audio/mpeg",
+                    MediaStore.Audio.Media.IS_PENDING to 0,
+                    MediaStore.Audio.Media.IS_TRASHED to 0,
+                )
+            val provider =
+                LocalAudioFixtureProvider(
+                    file = file,
+                    customRows =
+                        listOf(
+                            validRow,
+                            validRow + mapOf(MediaStore.Audio.Media._ID to 18L, MediaStore.Audio.Media.SIZE to 0L),
+                            validRow + mapOf(MediaStore.Audio.Media._ID to 19L, MediaStore.Audio.Media.DURATION to 0L),
+                            validRow + mapOf(MediaStore.Audio.Media._ID to 20L, MediaStore.Audio.Media.IS_PENDING to 1),
+                            validRow + mapOf(MediaStore.Audio.Media._ID to 21L, MediaStore.Audio.Media.IS_TRASHED to 1),
+                            validRow + mapOf(MediaStore.Audio.Media._ID to 22L, MediaStore.Audio.Media.MIME_TYPE to "video/mp4"),
+                        ),
+                )
+            provider.attachInfo(context, ProviderInfo().apply { authority = "media" })
+            ShadowContentResolver.registerProviderInternal("media", provider)
+            val database = Room.inMemoryDatabaseBuilder(context, MusicDatabase::class.java).setDriver(AndroidSQLiteDriver()).build()
+            try {
+                val scanner = AndroidLocalMusicScanner(context, LocalLibraryImporter(database))
+                shadowOf(context).grantPermissions(scanner.permission)
+                val result = scanner.scan()
+                assertEquals(LocalMusicScanStatus.COMPLETE, result.status)
+                assertEquals(1, result.found)
+                assertEquals(1, result.imported)
+                assertNotNull(database.dao().getSongById("content://media/external/audio/media/17"))
+                listOf(18L, 19L, 20L, 21L, 22L).forEach { skippedId ->
+                    assertNull(database.dao().getSongById("content://media/external/audio/media/$skippedId"))
+                }
+            } finally {
+                database.close()
+                file.delete()
+            }
+        }
+
     private class LocalAudioFixtureProvider(
         private val file: File,
         private val trackIds: List<Long> = listOf(17L),
+        private val customRows: List<Map<String, Any?>>? = null,
     ) : ContentProvider() {
         var denied = false
         var queries = 0
@@ -221,10 +277,16 @@ class AndroidLocalMusicTest {
             val columns = requireNotNull(projection)
             validateMediaStoreQuery(columns, selection, selectionArgs, sortOrder)
             return MatrixCursor(columns).apply {
-                trackIds.forEach { id ->
-                    val displayName = if (id == 17L) "Fixture.mp3" else "Other-$id.mp3"
-                    val trackValues = values + mapOf(MediaStore.Audio.Media._ID to id, MediaStore.Audio.Media.DISPLAY_NAME to displayName)
-                    addRow(columns.map { trackValues[it] }.toTypedArray())
+                if (customRows != null) {
+                    customRows.forEach { rowValues ->
+                        addRow(columns.map { rowValues[it] }.toTypedArray())
+                    }
+                } else {
+                    trackIds.forEach { id ->
+                        val displayName = if (id == 17L) "Fixture.mp3" else "Other-$id.mp3"
+                        val trackValues = values + mapOf(MediaStore.Audio.Media._ID to id, MediaStore.Audio.Media.DISPLAY_NAME to displayName)
+                        addRow(columns.map { trackValues[it] }.toTypedArray())
+                    }
                 }
             }
         }

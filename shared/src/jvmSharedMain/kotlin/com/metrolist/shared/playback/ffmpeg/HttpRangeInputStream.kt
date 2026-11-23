@@ -82,6 +82,7 @@ class HttpRangeInputStream(
     private var demandChunkLimit = if (targetRequestDurationMs != null) nextDemandChunkSize else chunkSize
     private var hasFetchedChunk = false
     private var prefetchJob: Job? = null
+    private var activePrefetchStarts: Set<Long> = emptySet()
     private val activeCalls = mutableSetOf<Call>()
     private val createdAtMs = System.currentTimeMillis()
     private var chunkRequestCount = 0
@@ -346,6 +347,7 @@ class HttpRangeInputStream(
                     activeChunkStart >= 0L && requestedPosition == activeChunkStart + activeChunkBytes.size
                 if (!sequential && hasFetchedChunk) {
                     prefetchJob?.cancel()
+                    activePrefetchStarts = emptySet()
                     nextDemandChunkSize = minOf(STARTUP_PROBE_CHUNK_SIZE, chunkSize)
                 }
                 hasFetchedChunk = true
@@ -365,7 +367,6 @@ class HttpRangeInputStream(
         currentStart: Long,
         currentChunkLen: Long,
     ) {
-        prefetchJob?.cancel()
         val prefetchStarts = mutableListOf<Long>()
         var nextStart = currentStart + currentChunkLen
         for (i in 0 until 3) {
@@ -376,20 +377,36 @@ class HttpRangeInputStream(
             }
             nextStart += chunkSize.toLong()
         }
-        if (prefetchStarts.isNotEmpty()) {
-            prefetchJob =
-                prefetchScope.launch {
-                    for (start in prefetchStarts) {
-                        if (closed) break
+        val targetStarts = prefetchStarts.toSet()
+        synchronized(this) {
+            if (prefetchJob?.isActive == true && targetStarts.isNotEmpty() && targetStarts.all { it in activePrefetchStarts }) {
+                return
+            }
+            prefetchJob?.cancel()
+            activePrefetchStarts = targetStarts
+            if (prefetchStarts.isNotEmpty()) {
+                prefetchJob =
+                    prefetchScope.launch {
                         try {
-                            getOrDownloadChunk(start, chunkSize)
-                        } catch (_: CancellationException) {
-                            break
-                        } catch (_: Exception) {
+                            for (start in prefetchStarts) {
+                                if (closed) break
+                                try {
+                                    getOrDownloadChunk(start, chunkSize)
+                                } catch (_: CancellationException) {
+                                    break
+                                } catch (_: Exception) {
+                                }
+                                if (prefetchStarts.size > 1) delay(50.milliseconds)
+                            }
+                        } finally {
+                            synchronized(this@HttpRangeInputStream) {
+                                if (activePrefetchStarts === targetStarts) {
+                                    activePrefetchStarts = emptySet()
+                                }
+                            }
                         }
-                        if (prefetchStarts.size > 1) delay(50.milliseconds)
                     }
-                }
+            }
         }
     }
 

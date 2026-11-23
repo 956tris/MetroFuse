@@ -20,7 +20,28 @@ import io.sentry.SentryOptions
 import io.sentry.protocol.Request
 import io.sentry.protocol.SentryId
 
-internal fun desktopSentryRelease(version: String): String = "com.metrolist.desktop@$version"
+internal fun desktopSentryRelease(version: String): String = "com.metrofuse.desktop@$version"
+
+internal fun isTransientPluginNetworkFailure(error: Throwable): Boolean {
+    var current: Throwable? = error
+    while (current != null) {
+        val name = current::class.simpleName.orEmpty()
+        if (name in TRANSIENT_PLUGIN_NETWORK_ERRORS) return true
+        current = current.cause?.takeUnless { it === current }
+    }
+    return false
+}
+
+private val TRANSIENT_PLUGIN_NETWORK_ERRORS =
+    setOf(
+        "UnknownHostException",
+        "ConnectException",
+        "NoRouteToHostException",
+        "SocketTimeoutException",
+        "UnresolvedAddressException",
+        "ConnectTimeoutException",
+        "HttpRequestTimeoutException",
+    )
 
 object SentryManager {
     // Even Sentry.isEnabled() loads the SDK; keep opted-out sessions independent of it.
@@ -95,8 +116,9 @@ object SentryManager {
 
 private class PreviousDesktopTermination : IllegalStateException("Previous desktop process terminated before clean shutdown")
 
-internal fun capturePluginFailure(failure: PluginFailure): Boolean =
-    Sentry.captureException(PluginOperationException(failure)) { scope ->
+internal fun capturePluginFailure(failure: PluginFailure): Boolean {
+    if (isTransientPluginNetworkFailure(failure.error)) return false
+    return Sentry.captureException(PluginOperationException(failure)) { scope ->
         scope.setTag("error.domain", "plugin")
         scope.setTag("plugin.id", failure.owner)
         scope.setTag("plugin.version", failure.version)
@@ -111,6 +133,7 @@ internal fun capturePluginFailure(failure: PluginFailure): Boolean =
         }
         scope.fingerprint = listOfNotNull("plugin", failure.owner, failure.operation, failure.error.javaClass.name, diagnostic?.code)
     } != SentryId.EMPTY_ID
+}
 
 internal fun capturePreviousDesktopExit(previous: PreviousDesktopExit): Boolean =
     Sentry.captureException(PreviousDesktopTermination()) { scope ->

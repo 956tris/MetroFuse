@@ -898,71 +898,70 @@ class AnimatedArtworkService internal constructor(
     private suspend fun getDevToken(country: String): String? {
         val storefront = country.lowercase().takeIf(String::isNotBlank) ?: return null
         val now = currentTimeSeconds()
-        tokenMutex.withLock {
-            tokenCache?.let { if (it.expiresAt - now > 300) return it.token }
-        }
+        return tokenMutex.withLock {
+            tokenCache?.let { if (it.expiresAt - now > 300) return@withLock it.token }
+            try {
+                YtLogger.d(TAG, "Fetching Apple Music browse page for dev token...")
+                val browseHtml =
+                    withTimeout(15_000.milliseconds) {
+                        val response =
+                            httpClient
+                                .prepareGet("https://music.apple.com/$storefront/browse") {
+                                    header("User-Agent", UA)
+                                    header("Accept", "text/html")
+                                }.readTextLimited(MAX_HTML_RESPONSE_BYTES)
+                        response.body.takeIf { response.status.isSuccess() }
+                    } ?: return@withLock null
+                YtLogger.d(TAG, "Browse page fetched: ${browseHtml.length} bytes")
 
-        try {
-            YtLogger.d(TAG, "Fetching Apple Music browse page for dev token...")
-            val browseHtml =
-                withTimeout(15_000.milliseconds) {
-                    val response =
-                        httpClient
-                            .prepareGet("https://music.apple.com/$storefront/browse") {
-                                header("User-Agent", UA)
-                                header("Accept", "text/html")
-                            }.readTextLimited(MAX_HTML_RESPONSE_BYTES)
-                    response.body.takeIf { response.status.isSuccess() }
-                } ?: return null
-            YtLogger.d(TAG, "Browse page fetched: ${browseHtml.length} bytes")
+                val bundleRegex = Regex("""/assets/index[^"'\s]*\.js""")
+                val bundlePath = bundleRegex.find(browseHtml)?.value
+                if (bundlePath == null) {
+                    YtLogger.w(TAG, "Cannot find JS bundle path in browse HTML")
+                    return@withLock null
+                }
+                YtLogger.d(TAG, "Found bundle: $bundlePath")
 
-            val bundleRegex = Regex("""/assets/index[^"'\s]*\.js""")
-            val bundlePath = bundleRegex.find(browseHtml)?.value
-            if (bundlePath == null) {
-                YtLogger.w(TAG, "Cannot find JS bundle path in browse HTML")
-                return null
+                val jsUrl = "https://music.apple.com$bundlePath"
+                val js =
+                    withTimeout(15_000.milliseconds) {
+                        val response =
+                            httpClient
+                                .prepareGet(jsUrl) {
+                                    header("User-Agent", UA)
+                                }.readTextLimited(MAX_SCRIPT_RESPONSE_BYTES)
+                        response.body.takeIf { response.status.isSuccess() }
+                    } ?: return@withLock null
+                YtLogger.d(TAG, "Bundle JS fetched: ${js.length} bytes")
+
+                val jwtRegex = Regex("""eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+""")
+                val token =
+                    jwtRegex
+                        .findAll(js)
+                        .mapNotNull { match ->
+                            val payloadSegment = match.value.split('.')[1]
+                            val payloadText = decodeBase64Url(payloadSegment) ?: return@mapNotNull null
+                            val payload = runCatching { json.decodeFromString<TokenPayload>(payloadText) }.getOrNull() ?: return@mapNotNull null
+                            val expiry = payload.exp?.takeIf { it > now + 300 } ?: return@mapNotNull null
+                            match.value.takeIf { payload.iss == "AMPWebPlay" }?.let { TokenCache(it, expiry) }
+                        }.maxByOrNull { it.expiresAt }
+                if (token == null) {
+                    YtLogger.w(TAG, "Cannot find a valid Apple Music dev token in JS bundle")
+                    return@withLock null
+                }
+
+                tokenCache = token
+                YtLogger.d(TAG, "Dev token obtained, expires in ${(token.expiresAt - now) / 3600}h")
+                token.token
+            } catch (_: TimeoutCancellationException) {
+                YtLogger.w(TAG, "Dev token fetch timed out")
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                YtLogger.w(TAG, "Failed to get dev token (${e::class.simpleName})")
+                null
             }
-            YtLogger.d(TAG, "Found bundle: $bundlePath")
-
-            val jsUrl = "https://music.apple.com$bundlePath"
-            val js =
-                withTimeout(15_000.milliseconds) {
-                    val response =
-                        httpClient
-                            .prepareGet(jsUrl) {
-                                header("User-Agent", UA)
-                            }.readTextLimited(MAX_SCRIPT_RESPONSE_BYTES)
-                    response.body.takeIf { response.status.isSuccess() }
-                } ?: return null
-            YtLogger.d(TAG, "Bundle JS fetched: ${js.length} bytes")
-
-            val jwtRegex = Regex("""eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+""")
-            val token =
-                jwtRegex
-                    .findAll(js)
-                    .mapNotNull { match ->
-                        val payloadSegment = match.value.split('.')[1]
-                        val payloadText = decodeBase64Url(payloadSegment) ?: return@mapNotNull null
-                        val payload = runCatching { json.decodeFromString<TokenPayload>(payloadText) }.getOrNull() ?: return@mapNotNull null
-                        val expiry = payload.exp?.takeIf { it > now + 300 } ?: return@mapNotNull null
-                        match.value.takeIf { payload.iss == "AMPWebPlay" }?.let { TokenCache(it, expiry) }
-                    }.maxByOrNull { it.expiresAt }
-            if (token == null) {
-                YtLogger.w(TAG, "Cannot find a valid Apple Music dev token in JS bundle")
-                return null
-            }
-
-            tokenMutex.withLock { tokenCache = token }
-            YtLogger.d(TAG, "Dev token obtained, expires in ${(token.expiresAt - now) / 3600}h")
-            return token.token
-        } catch (_: TimeoutCancellationException) {
-            YtLogger.w(TAG, "Dev token fetch timed out")
-            return null
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            YtLogger.w(TAG, "Failed to get dev token (${e::class.simpleName})")
-            return null
         }
     }
 

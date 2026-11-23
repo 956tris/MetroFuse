@@ -72,8 +72,13 @@ class DirectCanvasProvider(
     private val json = Json { ignoreUnknownKeys = true }
     private val mutex = Mutex()
     private var token: Pair<String, Long>? = null
+    private var publicCanvasCooldownUntil = 0L
     private var anonymousSpotifySession = SpotifySession()
     private val cache = LinkedHashMap<List<Any?>, Pair<DirectCanvasUrls, Long>>(32, 0.75f, true)
+
+    fun close() {
+        http.close()
+    }
 
     suspend fun getSpotifyCanvas(
         title: String,
@@ -257,9 +262,20 @@ class DirectCanvasProvider(
 
     private suspend fun publicSpotifyCanvas(trackId: String): String? {
         if (!trackId.matches(Regex("[A-Za-z0-9]{22}"))) return null
+        val currentTime = now()
+        if (currentTime < publicCanvasCooldownUntil) return null
         val response =
-            http.prepareGet("https://spotify-canva.vercel.app/api/canvas") { parameter("trackId", trackId) }.readTextLimited(256 * 1024)
-        if (!response.status.isSuccess()) return null
+            http
+                .prepareGet("https://spotify-canva.vercel.app/api/canvas") {
+                    attributes.put(ExpectedHttpFailureStatusCodes, setOf(402, 404, 429, 500, 502, 503, 504))
+                    parameter("trackId", trackId)
+                }.readTextLimited(256 * 1024)
+        if (!response.status.isSuccess()) {
+            if (response.status.value in setOf(402, 429) || response.status.value >= 500) {
+                publicCanvasCooldownUntil = currentTime + 10 * 60_000L
+            }
+            return null
+        }
         val canvases = (response.body?.let { json.parseToJsonElement(it) } as? JsonObject)?.array("canvasesList") ?: return null
         return canvases
             .mapNotNull { it as? JsonObject }

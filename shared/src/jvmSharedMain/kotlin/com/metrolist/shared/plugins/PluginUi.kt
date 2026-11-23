@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -86,6 +87,7 @@ import dev.metrofuse.api.Track
 import dev.metrofuse.api.UiArtworkEnvironment
 import dev.metrofuse.api.UiContext
 import dev.metrofuse.api.UiContribution
+import dev.metrofuse.api.UiExtensions
 import dev.metrofuse.api.UiNode
 import dev.metrofuse.api.UiPluginState
 import dev.metrofuse.api.UiTarget
@@ -98,6 +100,12 @@ import org.jetbrains.compose.resources.stringResource
 
 internal const val PLUGIN_SCREEN_PREFIX = "plugin:"
 internal const val PLUGIN_SCREEN_POINT_PREFIX = "screen."
+private val CLICKABLE_NODE_TYPES = setOf("Box", "Column", "Row", "Artwork", "Text")
+private val SCROLLABLE_TREE_ROOT_TYPES = setOf("Column", "Section", "List")
+private val LAZY_CONTAINER_TYPES = setOf("LazyColumn", "LazyRow")
+
+private fun UiNode.containsLazyContainer(): Boolean =
+    type in LAZY_CONTAINER_TYPES || children.any(UiNode::containsLazyContainer)
 
 internal data class PluginScreenRoute(
     val owner: String,
@@ -137,9 +145,10 @@ fun PluginDestinationScreen(
         if (contributions.isEmpty()) {
             Text(stringResource(Res.string.plugins_screen_unavailable))
         } else {
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f).fillMaxWidth()) {
                 contributions.sortedBy { if (it.layer == Layer.BEFORE) -1 else it.layer.ordinal }.forEach { contribution ->
-                    if (contribution.tree?.type in setOf("Column", "Section", "List")) {
+                    val tree = contribution.tree
+                    if (contribution.native == null && tree != null && tree.type in SCROLLABLE_TREE_ROOT_TYPES && !tree.containsLazyContainer()) {
                         Column(Modifier.verticalScroll(rememberScrollState())) {
                             PluginContributionContent(contribution, runtime)
                         }
@@ -321,12 +330,16 @@ internal fun PluginContributionContent(
         var failed by remember { mutableStateOf(false) }
         if (!failed) {
             val completeFirstRender = remember { runtime.beginUiRender() }
+            val uiContext =
+                remember(runtime, extensions, target) {
+                    UiContext(runtime.player, runtime.metadata, runtime.host.navigation::navigate, extensions, target)
+                }
 
             fun reject(error: Throwable) {
+                failed = true
                 runtime.forceOriginalUi()
                 // Recovery must survive disposal of the broken contribution's composition scope.
                 runtime.scope.launch {
-                    failed = true
                     runtime.failUi(contribution.owner, error)
                 }
             }
@@ -334,12 +347,10 @@ internal fun PluginContributionContent(
                 try {
                     val children =
                         subcompose(Unit) {
-                            contribution.native?.Content(
-                                UiContext(runtime.player, runtime.metadata, runtime.host.navigation::navigate, extensions, target),
-                            )
+                            contribution.native?.Content(uiContext)
                             contribution.tree?.let {
                                 val track by runtime.metadata.collectAsState()
-                                PluginNode(it, contribution.owner, runtime, target, track)
+                                PluginNode(it, contribution.owner, runtime, target, track, extensions = extensions)
                             }
                         }.map { it.measure(constraints.copy(minWidth = 0, minHeight = 0)) }
                     val width = (children.maxOfOrNull { it.width } ?: 0).coerceIn(constraints.minWidth, constraints.maxWidth)
@@ -362,9 +373,11 @@ internal fun PluginContributionContent(
                     throw error
                 } catch (error: Exception) {
                     reject(error)
+                    runCatching { subcompose(Unit) {} }
                     layout(constraints.minWidth, constraints.minHeight) {}
                 } catch (error: LinkageError) {
                     reject(error)
+                    runCatching { subcompose(Unit) {} }
                     layout(constraints.minWidth, constraints.minHeight) {}
                 }
             }
@@ -380,6 +393,7 @@ private fun PluginNode(
     target: UiTarget?,
     track: Track,
     parentModifier: Modifier = Modifier,
+    extensions: UiExtensions? = null,
 ) {
     val token = runtime.sessionToken(owner)
 
@@ -428,7 +442,7 @@ private fun PluginNode(
                     ?.let { Modifier.clip(RoundedCornerShape(it.dp)) } ?: Modifier,
             ).then(node.props["background"]?.let(::pluginColor)?.let { Modifier.background(it) } ?: Modifier)
             .then(
-                if (node.props["action"] != null && node.type in setOf("Box", "Column", "Row", "Artwork", "Text")) {
+                if (node.props["action"] != null && node.type in CLICKABLE_NODE_TYPES) {
                     Modifier.clickable(
                         enabled = node.props["enabled"] != "false",
                         role = Role.Button,
@@ -438,7 +452,7 @@ private fun PluginNode(
                 },
             ).padding((node.props["padding"]?.toIntOrNull()?.coerceIn(0, 96) ?: 0).dp)
     val children: @Composable () -> Unit = {
-        node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target, track) } }
+        node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target, track, extensions = extensions) } }
     }
     when (node.type) {
         "Text" -> {
@@ -469,7 +483,7 @@ private fun PluginNode(
             BoxWithConstraints(modifier) {
                 val breakpoint = (node.props["breakpoint"]?.toIntOrNull()?.coerceIn(480, 1600) ?: 720).dp
                 val index = if (runtime.platform == "desktop" && maxWidth >= breakpoint) 0 else 1
-                node.children.getOrNull(index)?.let { PluginNode(it, owner, runtime, target, track) }
+                node.children.getOrNull(index)?.let { PluginNode(it, owner, runtime, target, track, extensions = extensions) }
             }
         }
 
@@ -534,13 +548,13 @@ private fun PluginNode(
                         else -> Alignment.Start
                     },
             ) {
-                items(node.children, key = UiNode::id) { PluginNode(it, owner, runtime, target, track) }
+                items(node.children, key = UiNode::id) { PluginNode(it, owner, runtime, target, track, extensions = extensions) }
             }
         }
 
         "LazyRow" -> {
             LazyRow(modifier, horizontalArrangement = Arrangement.spacedBy(spacing)) {
-                items(node.children, key = UiNode::id) { PluginNode(it, owner, runtime, target, track) }
+                items(node.children, key = UiNode::id) { PluginNode(it, owner, runtime, target, track, extensions = extensions) }
             }
         }
 
@@ -616,13 +630,8 @@ private fun PluginNode(
                             runtime,
                             target,
                             track,
-                            if (weight ==
-                                null
-                            ) {
-                                Modifier
-                            } else {
-                                Modifier.weight(weight)
-                            },
+                            if (weight == null) Modifier else Modifier.weight(weight),
+                            extensions = extensions,
                         )
                     }
                 }
@@ -655,13 +664,8 @@ private fun PluginNode(
                             runtime,
                             target,
                             track,
-                            if (weight ==
-                                null
-                            ) {
-                                Modifier
-                            } else {
-                                Modifier.weight(weight)
-                            },
+                            if (weight == null) Modifier else Modifier.weight(weight),
+                            extensions = extensions,
                         )
                     }
                 }
@@ -709,12 +713,19 @@ private fun PluginNode(
             var open by remember { mutableStateOf(false) }
             Button(onClick = { open = true }) { Text(text("label")) }
             if (open) {
+                val scrollable = !node.containsLazyContainer()
                 AlertDialog(
                     onDismissRequest = { open = false },
                     title = { Text(text("title")) },
                     text = {
-                        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target, track) } }
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 480.dp)
+                                .then(if (scrollable) Modifier.verticalScroll(rememberScrollState()) else Modifier),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            node.children.forEach { key(it.id) { PluginNode(it, owner, runtime, target, track, extensions = extensions) } }
                         }
                     },
                     confirmButton = {
@@ -796,7 +807,11 @@ private fun PluginNode(
             if (component !=
                 null
             ) {
-                component.Content(node, UiContext(runtime.player, runtime.metadata, runtime.host.navigation::navigate, target = target))
+                val componentContext =
+                    remember(runtime, extensions, target) {
+                        UiContext(runtime.player, runtime.metadata, runtime.host.navigation::navigate, extensions, target)
+                    }
+                component.Content(node, componentContext)
             } else {
                 Text(stringResource(Res.string.plugins_unsupported_ui, node.type))
             }

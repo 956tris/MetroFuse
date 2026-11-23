@@ -3,6 +3,8 @@ package com.metrolist.shared.youtube.playback
 import com.metrolist.innertubex.extraction.StreamResolveException
 import com.metrolist.innertubex.sabr.SabrFailureKind
 import com.metrolist.innertubex.sabr.SabrProtocolException
+import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.playback.NoPlayableSourceException
 import com.metrolist.shared.playback.PlaybackErrorContext
 import com.metrolist.shared.playback.PlaybackNetworkChangedException
 import io.ktor.client.plugins.HttpRequestTimeoutException
@@ -77,6 +79,36 @@ class PlaybackFailureReportingTest {
         }
         assertTrue(IllegalStateException("decoder failed").shouldReportPlaybackFailure(context))
     }
+
+    @Test
+    fun expectedNoPlayableSourceAndLocalUnrecognizedFormatStayOutOfSentry() {
+        val onlineContext = PlaybackErrorContext("stream_resolve_direct", recovered = false)
+        assertFalse(
+            NoPlayableSourceException(NoPlayableSourceException.Reason.OFFLINE_MODE).shouldReportPlaybackFailure(onlineContext),
+        )
+        assertFalse(
+            NoPlayableSourceException(NoPlayableSourceException.Reason.NO_AUDIO_PROVIDER).shouldReportPlaybackFailure(onlineContext),
+        )
+        assertFalse(
+            NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED).shouldReportPlaybackFailure(onlineContext),
+        )
+        assertFalse(
+            NoPlayableSourceException(NoPlayableSourceException.Reason.LOCAL_FILE_MISSING).shouldReportPlaybackFailure(onlineContext),
+        )
+        assertTrue(
+            NoPlayableSourceException(NoPlayableSourceException.Reason.NO_PROVIDER_SUCCEEDED).shouldReportPlaybackFailure(onlineContext),
+        )
+        val localContext =
+            PlaybackErrorContext(
+                stage = "player_error",
+                recovered = false,
+                song = SongItem("local:1", "Broken", null, emptyList(), null, isLocal = true),
+            )
+        assertFalse(UnrecognizedInputFormatException().shouldReportPlaybackFailure(localContext))
+        assertTrue(UnrecognizedInputFormatException().shouldReportPlaybackFailure(onlineContext))
+    }
+
+    private class UnrecognizedInputFormatException : Exception("Unrecognized local format")
 
     private fun sabrFailures(): List<Throwable> =
         listOf(

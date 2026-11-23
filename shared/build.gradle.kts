@@ -796,7 +796,6 @@ kotlin {
 }
 
 dependencies {
-    add("androidRuntimeClasspath", libs.ui.tooling)
     add("kspAndroid", libs.room.compiler)
     add("kspDesktop", libs.room.compiler)
     add("kspIosArm64", libs.room.compiler)

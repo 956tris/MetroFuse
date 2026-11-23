@@ -95,6 +95,8 @@ runs:
           shared/src/jvmSharedMain/kotlin \
           shared/src/desktopMain/kotlin \
           engine/src/jvmSharedMain/kotlin \
+          engine/src/desktopMain/kotlin \
+          plugin-api/src/commonMain/kotlin \
           plugin-sdk/src/commonMain/kotlin \
           plugin-sdk/src/desktopMain/kotlin; do
           test -d "$source"
