@@ -66,6 +66,7 @@ import com.metrolist.desktop.ui.screens.PodcastScreen
 import com.metrolist.desktop.ui.screens.SearchResultsList
 import com.metrolist.desktop.ui.screens.StatsScreen
 import com.metrolist.desktop.ui.screens.settings.PluginsSettingsScreen
+import com.metrolist.desktop.ui.screens.settings.SettingsOverlay
 import com.metrolist.shared.db.isHistoryPlaylistId
 import com.metrolist.shared.deviceconnect.DeviceConnectPairingHost
 import com.metrolist.shared.generated.resources.Res
@@ -224,8 +225,16 @@ fun AppContentHost(
                         HistoryScreen()
                     }
 
+                    Screen.Settings -> {
+                        PluginUiSlot("ui.settings") {
+                            SettingsOverlay(colorScheme)
+                        }
+                    }
+
                     Screen.Plugins -> {
-                        PluginsSettingsScreen()
+                        PluginUiSlot("ui.plugins") {
+                            PluginsSettingsScreen()
+                        }
                     }
 
                     is Screen.PluginDestination -> {

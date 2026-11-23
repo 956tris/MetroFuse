@@ -162,22 +162,28 @@ fun PluginAppShell(
         return
     }
     val runtime = MetroFuseHost.runtime
-    // Settings, recovery and detail routes must remain reachable from a custom shell.
+    // Detail and recovery routes stay on original UI; Settings and Plugins allow custom UI replacement with restore button.
     val route = LocalNavigator.current.state.currentRoute
-    if (route != Screen.Home && route != Screen.Search && route != Screen.Library) {
-        original()
-        return
-    }
     val registry by runtime.registry.state.collectAsState()
     val safeMode by runtime.uiSafeMode.collectAsState()
     val recovery by runtime.recovery.collectAsState()
+    val isMainShellRoute = route == Screen.Home || route == Screen.Search || route == Screen.Library
+    val isCustomAdminRoute =
+        !safeMode && !recovery && (
+            (route == Screen.Settings && runtime.registry.layers("ui.settings").any { it.layer == Layer.REPLACE }) ||
+                (route == Screen.Plugins && runtime.registry.layers("ui.plugins").any { it.layer == Layer.REPLACE })
+        )
+    if (!isMainShellRoute && !isCustomAdminRoute) {
+        original()
+        return
+    }
     val customShell =
-        remember(registry, safeMode, recovery) {
-            !safeMode && !recovery && runtime.registry.layers("ui.app").any { it.layer == Layer.REPLACE }
+        remember(registry, safeMode, recovery, isMainShellRoute, isCustomAdminRoute) {
+            !safeMode && !recovery && (isCustomAdminRoute || runtime.registry.layers("ui.app").any { it.layer == Layer.REPLACE })
         }
-    val overlays = pluginLayers("ui.overlay")
+    val overlays = if (isMainShellRoute) pluginLayers("ui.overlay") else emptyList()
     if (!customShell && overlays.isEmpty()) {
-        PluginUiSlot("ui.app", original)
+        if (isMainShellRoute) PluginUiSlot("ui.app", original) else original()
         return
     }
     val scope = rememberCoroutineScope()
@@ -187,7 +193,7 @@ fun PluginAppShell(
             .then(if (customShell) Modifier.safeDrawingPadding() else Modifier)
             .onGloballyPositioned { if (customShell) onCustomUiLaidOut() },
     ) {
-        PluginUiSlot("ui.app", original)
+        if (isMainShellRoute) PluginUiSlot("ui.app", original) else original()
         overlays.forEach { PluginContributionContent(it, runtime) }
         if (customShell) {
             IconButton(

@@ -2606,7 +2606,9 @@ fun getEntryProvider(
         }
 
         entry<Screen.Plugins>(metadata = navTabMetadata) {
-            PluginsScreen(onBack = { navigator.goBack() })
+            PluginUiSlot("ui.plugins") {
+                PluginsScreen(onBack = { navigator.goBack() })
+            }
         }
 
         entry<Screen.PluginDestination>(metadata = navTabMetadata) { route ->

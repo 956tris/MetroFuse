@@ -21,6 +21,7 @@ import okio.ByteString
 import java.io.IOException
 import java.net.URI
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 @Serializable
 internal data class PluginSocketRequest(
@@ -40,6 +41,7 @@ internal class PluginSockets(
         lazy {
             OkHttpClient
                 .Builder()
+                .pingInterval(25, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .build()

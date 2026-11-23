@@ -656,6 +656,7 @@ class Registry(
                 "ui.nowPlaying",
                 "ui.miniPlayer",
                 "ui.settings",
+                "ui.plugins",
                 "ui.trackRow",
                 "ui.metadata.title",
                 "ui.metadata.subtitle",
@@ -664,7 +665,6 @@ class Registry(
                 "ui.controls",
                 "ui.player",
                 "ui.fullscreen",
-                "ui.settings",
                 "ui.overlay",
             )
     }

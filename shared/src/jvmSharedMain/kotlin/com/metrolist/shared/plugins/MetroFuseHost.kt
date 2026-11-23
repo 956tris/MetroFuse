@@ -157,6 +157,8 @@ object MetroFuseHost : PluginServices {
     private val navigation = ApplicationNavigation()
     private val songs = ConcurrentHashMap<String, SongItem>()
     private val identities = ConcurrentHashMap<String, TrackIdentity>()
+
+    internal fun savedIdentifiers(id: String): Map<String, String> = identities[id]?.identifiers.orEmpty()
     private val albums = ConcurrentHashMap<String, CatalogAlbum>()
     private val artists = ConcurrentHashMap<String, CatalogArtist>()
     private val playlists = ConcurrentHashMap<String, CatalogPlaylist>()
@@ -327,7 +329,7 @@ object MetroFuseHost : PluginServices {
                 hostVersion = BuildConfig.APP_VERSION,
                 credentialStore = credentialStore,
                 onPluginFailure = onPluginFailure,
-            )
+            ).also { it.registerHostAdminServices(platform) }
         PluginServicesStore.current = this
         SongLikeState.initialize()
         scope.launch {
@@ -1028,21 +1030,25 @@ internal fun LyricsResult.toHostLyrics(
     return LyricsWithProvider(document.toMlxJson().toString(), source)
 }
 
-private fun SongItem.toPluginTrack() =
-    Track(
+private fun SongItem.toPluginTrack(): Track {
+    val saved = MetroFuseHost.savedIdentifiers(id)
+    val mergedExtras = buildMap {
+        saved.forEach { (k, v) -> if (k != "host" && v.isNotBlank()) put(k, v) }
+        album?.id?.takeIf { it.isNotBlank() }?.let { rawAlbumId ->
+            putIfAbsent("albumId", rawAlbumId.substringAfterLast(':', rawAlbumId))
+        }
+        artists.firstOrNull()?.name?.takeIf { it.isNotBlank() }?.let { put("primaryArtist", it) }
+    }
+    return Track(
         id,
         title,
         artists.joinToString(", ") { it.name },
         album?.name.orEmpty(),
         (duration ?: 0) * 1000,
         thumbnail.orEmpty(),
-        extras =
-            artists
-                .firstOrNull()
-                ?.name
-                ?.let { mapOf("primaryArtist" to it) }
-                .orEmpty(),
+        extras = mergedExtras,
     )
+}
 
 private fun trackIdentity(
     id: String,
