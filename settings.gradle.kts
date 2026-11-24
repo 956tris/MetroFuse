@@ -9,6 +9,10 @@ if (useLocalInnerTubeX && useMavenLocalInnerTubeX) {
 pluginManagement {
     repositories {
         google()
+        maven {
+            name = "Google Maven Central Mirror"
+            url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+        }
         mavenCentral()
         gradlePluginPortal()
         maven { setUrl("https://maven.aliyun.com/repository/public") }
@@ -33,6 +37,10 @@ dependencyResolutionManagement {
     repositories {
         if (useMavenLocalInnerTubeX) mavenLocal()
         google()
+        maven {
+            name = "Google Maven Central Mirror"
+            url = uri("https://maven-central.storage-download.googleapis.com/maven2/")
+        }
         mavenCentral()
         maven {
             setUrl("https://jitpack.io")
