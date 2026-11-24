@@ -1862,9 +1862,10 @@ class MusicPlayer(
             prepareStream(input, resource.maximumSabrInputSize(), startPaused)
         } ?: resource.httpRangeInputStream()?.let { input ->
             prepareStream(input, resource.maximumDirectInputSize(), startPaused)
-        } ?: prepareFile(resource.url, resource.headers, startPaused)
+        } ?: prepareFile(resource.url, resource.headers, startPaused, hls = resource.isHls)
 
     private fun PlaybackResource.httpRangeInputStream(): HttpRangeInputStream? {
+        if (!isDirectFile) return null
         if (!url.startsWith("http://", ignoreCase = true) && !url.startsWith("https://", ignoreCase = true)) return null
         val mediaSize = contentLengthBytes?.takeIf { it > 0L } ?: return null
         // Native FFmpeg URL opening cannot reliably cancel; bound direct media through the HTTP stream.

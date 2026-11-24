@@ -705,8 +705,10 @@ object MetroFuseHost : PluginServices {
             expiresAt = descriptor.expiresAtMillis?.let(Instant::fromEpochMilliseconds),
             contentLengthBytes = descriptor.contentLength ?: sabr?.contentLengthBytes,
             mimeType =
-                sabr?.mimeType ?: descriptor.mimeType
-                    ?: if (descriptor.transport == StreamTransport.HLS) "application/vnd.apple.mpegurl" else null,
+                when (descriptor.transport) {
+                    StreamTransport.HLS -> "application/vnd.apple.mpegurl"
+                    else -> sabr?.mimeType ?: descriptor.mimeType
+                },
             codecs = descriptor.codec,
             bitrate = descriptor.bitrate,
             sampleRate = descriptor.sampleRate,

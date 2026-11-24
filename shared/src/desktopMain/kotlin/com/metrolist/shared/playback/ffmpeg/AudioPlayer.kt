@@ -157,7 +157,8 @@ class AudioPlayer(
         path: String,
         headers: Map<String, String> = emptyMap(),
         startPaused: Boolean = true,
-    ): Boolean = prepareDecoder(startPaused, null) { AudioDecoder(path, headers) }
+        hls: Boolean = false,
+    ): Boolean = prepareDecoder(startPaused, null) { AudioDecoder(path, headers, hls) }
 
     internal fun loadStream(
         inputStream: InputStream,

@@ -20,6 +20,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
@@ -90,6 +91,7 @@ import com.metrolist.shared.youtube.playback.PlaybackBandwidthMeter
 import com.metrolist.shared.youtube.playback.PlaybackEventKind
 import com.metrolist.shared.youtube.playback.PlaybackEventLog
 import com.metrolist.shared.youtube.playback.PlaybackResource
+import com.metrolist.shared.youtube.playback.isHlsPlaybackMedia
 import com.metrolist.shared.youtube.playback.sabrAudioPlaybackChunks
 import com.metrolist.shared.youtube.playback.toPlaybackLogDetails
 import com.metrolist.shared.youtube.playback.withClientPlaybackNonce
@@ -3701,13 +3703,14 @@ internal fun buildStreamingMediaSource(
     mimeType: String?,
     keepBufferDuringNetworkRecovery: Boolean = false,
 ): MediaSource {
+    val resolvedMimeType = if (isHlsPlaybackMedia(uri, mimeType)) MimeTypes.APPLICATION_M3U8 else mimeType
     val item =
         MediaItem
             .Builder()
             .setUri(uri)
-            .setMimeType(mimeType)
+            .setMimeType(resolvedMimeType)
             .build()
-    val type = Util.inferContentTypeForUriAndMimeType(checkNotNull(item.localConfiguration).uri, mimeType)
+    val type = Util.inferContentTypeForUriAndMimeType(checkNotNull(item.localConfiguration).uri, resolvedMimeType)
     val factory =
         if (type == C.CONTENT_TYPE_OTHER) {
             // The default 1 MiB check interval can parse a minute of audio before applying backpressure.
@@ -3732,8 +3735,11 @@ private fun buildDirectDataSourceFactory(
 ): DataSource.Factory {
     val size = if (video) resource.videoContentLengthBytes else resource.contentLengthBytes
     val url = if (video) checkNotNull(resource.videoUrl) else resource.url
+    val mimeType = if (video) resource.videoMimeType ?: resource.mimeType.takeIf { resource.videoUrl == url && resource.url == url } else resource.mimeType
     val boundedHttp = url.startsWith("https://")
-    if ((boundedHttp || resource.requireBoundedRange || resource.useRangeChunks) && size != null && size > 0L) {
+    if (!isHlsPlaybackMedia(url, mimeType) &&
+        (boundedHttp || resource.requireBoundedRange || resource.useRangeChunks) && size != null && size > 0L
+    ) {
         val source =
             HttpRangeInputStream(
                 url = url,

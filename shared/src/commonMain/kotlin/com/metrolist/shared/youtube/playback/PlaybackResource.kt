@@ -53,10 +53,12 @@ data class PlaybackResource(
 
     val isDirectFile: Boolean
         get() =
-            !isSabr && !mimeType.orEmpty().contains("mpegurl", ignoreCase = true) &&
+            !isSabr && !isHls &&
                 !mimeType.orEmpty().contains("dash+xml", ignoreCase = true) &&
-                !url.substringBefore('?').endsWith(".m3u8", ignoreCase = true) &&
                 !url.substringBefore('?').endsWith(".mpd", ignoreCase = true)
+
+    val isHls: Boolean
+        get() = isHlsPlaybackMedia(url, mimeType)
 
     val hasDirectVideo: Boolean
         get() = !videoUrl.isNullOrBlank() && !videoUrl.startsWith("sabr-video://")
@@ -81,6 +83,10 @@ data class PlaybackResource(
             (first.contentLengthBytes ?: contentLengthBytes) == (second.contentLengthBytes ?: other.contentLengthBytes)
     }
 }
+
+fun isHlsPlaybackMedia(url: String, mimeType: String?): Boolean =
+    mimeType.orEmpty().contains("mpegurl", ignoreCase = true) ||
+        url.substringBefore('?').substringBefore('#').endsWith(".m3u8", ignoreCase = true)
 
 fun isLiveStreamUrl(url: String): Boolean =
     url.contains("yt_live_broadcast", ignoreCase = true) ||

@@ -85,6 +85,40 @@ class AudioDecoderTest {
         }
     }
 
+    @Test(timeout = 30_000)
+    fun hlsDecodesAndSeeksOnATrackRelativeTimeline() {
+        val observedHeaders = mutableListOf<String?>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            exchange.use {
+                synchronized(observedHeaders) { observedHeaders.add(exchange.requestHeaders.getFirst("Referer")) }
+                val path = exchange.requestURI.path
+                val file = if (path == "/playlist") "/hls.m3u8" else path
+                val bytes = javaClass.getResourceAsStream("/ffmpeg$file")!!.use { it.readBytes() }
+                if (path == "/playlist") exchange.responseHeaders.set("Content-Type", "application/vnd.apple.mpegurl")
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.write(bytes)
+            }
+        }
+        server.start()
+        try {
+            val referer = "https://player.example.com/"
+            val decoder = AudioDecoder("http://127.0.0.1:${server.address.port}/playlist?signature=fixture", mapOf("Referer" to referer), hls = true)
+            try {
+                assertTrue(decoder.readPCMFrame()?.isNotEmpty() == true)
+                assertTrue(decoder.getCurrentPosition() in 0L..50L)
+                decoder.seekTo(1_200L)
+                assertTrue(decoder.readPCMFrame()?.isNotEmpty() == true)
+                assertTrue(decoder.getCurrentPosition() in 1_150L..1_270L)
+                assertTrue(synchronized(observedHeaders) { observedHeaders.size > 1 && observedHeaders.all { it == referer } })
+            } finally {
+                decoder.close()
+            }
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun assertPcm(
         name: String,
         decoder: AudioDecoder,

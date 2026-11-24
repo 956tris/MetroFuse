@@ -23,8 +23,10 @@ class AudioDecoder private constructor(
     constructor(
         path: String,
         headers: Map<String, String> = emptyMap(),
+        hls: Boolean = false,
     ) : this(
         FFmpegFrameGrabber(path).apply {
+            if (hls) format = "hls"
             if (path.startsWith("http://") || path.startsWith("https://")) {
                 options["reconnect"] = "1"
                 options["reconnect_streamed"] = "1"
@@ -72,6 +74,7 @@ class AudioDecoder private constructor(
     val audioFormat = frameGrabber.sourceAudioFormat
 
     val duration = frameGrabber.getLengthInTime() / 1000
+    private val timestampOffset = if (frameGrabber.format == "hls") frameGrabber.inputStartTimeUs else 0
 
     @Volatile
     var lastDecodedPtsMs: Long? = null
@@ -94,7 +97,7 @@ class AudioDecoder private constructor(
                 val samples = frame.samples ?: continue
                 if (samples.isEmpty()) continue
 
-                val ptsMs = (frame.timestamp / 1000L).takeIf { it > 0L }
+                val ptsMs = relativeTimestampMs(frame.timestamp).takeIf { it > 0L }
                 if (ptsMs != null) {
                     lastDecodedPtsMs = ptsMs
                 }
@@ -113,7 +116,7 @@ class AudioDecoder private constructor(
         try {
             frameGrabber.setTimestamp(position * 1000, true)
         } finally {
-            if (managePlaybackPosition) playbackInput?.endPlaybackSeek(frameGrabber.timestamp / 1000)
+            if (managePlaybackPosition) playbackInput?.endPlaybackSeek(relativeTimestampMs(frameGrabber.timestamp))
         }
     }
 
@@ -126,7 +129,7 @@ class AudioDecoder private constructor(
     }
 
     fun getCurrentPosition(): Long =
-        (frameGrabber.timestamp / 1000).also { position ->
+        relativeTimestampMs(frameGrabber.timestamp).also { position ->
             (frameGrabberInputStream() as? PlaybackPositionInput)?.updatePlaybackPosition(position)
         }
 
@@ -146,6 +149,8 @@ class AudioDecoder private constructor(
     }
 
     private fun frameGrabberInputStream(): InputStream? = frameGrabber.mediaInputStream
+
+    private fun relativeTimestampMs(timestampUs: Long): Long = ((timestampUs - timestampOffset) / 1_000L).coerceAtLeast(0L)
 }
 
 internal fun copyPcmSamples(buffer: Buffer?): ByteArray? =

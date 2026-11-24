@@ -9,14 +9,18 @@ import androidx.media3.common.C
 import androidx.media3.common.FlagSet
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.common.TrackSelectionParameters.AudioOffloadPreferences
 import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.datasource.ByteArrayDataSource
+import androidx.media3.datasource.DataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import com.metrolist.innertubex.sabr.SabrChunk
 import com.metrolist.innertubex.sabr.SabrFailureKind
 import com.metrolist.innertubex.sabr.SabrProtocolException
@@ -80,6 +84,18 @@ import java.time.Duration
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, application = Application::class, sdk = [33])
 class ExoPlaybackPlayerTest {
+    @Test
+    fun hlsMimeUsesTheHlsSourceWhenThePlaylistUrlHasNoExtension() {
+        val source =
+            buildStreamingMediaSource(
+                DataSource.Factory { ByteArrayDataSource(byteArrayOf(0)) },
+                "https://media.example.com/playlist?signature=fixture",
+                "application/vnd.apple.mpegurl",
+            )
+        check(source is HlsMediaSource)
+        check(source.mediaItem.localConfiguration?.mimeType == MimeTypes.APPLICATION_M3U8)
+    }
+
     private lateinit var player: ExoPlaybackPlayer
 
     @get:Rule val temporaryFolder = TemporaryFolder()

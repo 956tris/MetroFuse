@@ -395,6 +395,9 @@ class FFmpegFrameGrabber : FrameGrabber {
 
     override fun hasAudio(): Boolean = audio_st != null
 
+    internal val inputStartTimeUs: Long
+        get() = oc?.takeUnless { it.isNull }?.start_time()?.takeUnless { it == AV_NOPTS_VALUE } ?: 0L
+
     override var format: String?
         get() =
             oc
@@ -1743,9 +1746,10 @@ class FFmpegFrameGrabber : FrameGrabber {
             _timestamp = ts
         } else {
             ts = ts * AV_TIME_BASE / 1000000L
-            var ts0 = if (oc!!.start_time() != AV_NOPTS_VALUE) oc!!.start_time() else 0L
+            val ts0 = inputStartTimeUs
+            val hlsAudio = checkFrame && format == "hls" && hasAudio() && !hasVideo()
 
-            if (checkFrame && (hasVideo() || hasAudio())) {
+            if (checkFrame && (hasVideo() || hasAudio()) && !hlsAudio) {
                 var early_ts = ts + ts0
                 ts += ts0
 
@@ -1835,6 +1839,19 @@ class FFmpegFrameGrabber : FrameGrabber {
                     }
                 }
 
+                if (hlsAudio) {
+                    // The HLS demuxer seeks to a segment. Decode forward without rewinding the playlist again.
+                    repeat(4096) {
+                        val next = grabFrame(true, false, false, false, false) ?: return
+                        val frameDuration = samples_frame!!.nb_samples().toLong() * AV_TIME_BASE / sampleRate.coerceAtLeast(1)
+                        if (next.timestamp + frameDuration > ts) {
+                            frameGrabbed = true
+                            return
+                        }
+                    }
+                    frameGrabbed = true
+                    return
+                }
                 var count = 0
                 while (this._timestamp > timestamp + 1 && grabFrame(true, true, false, false) != null && count++ < 1000) {}
                 count = 0
