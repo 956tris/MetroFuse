@@ -457,7 +457,9 @@ val SongItem.canSwitchToAudioTrack: Boolean
 
 val SongItem.previewThumbnailUrl: String?
     get() =
-        if (isVideoSong && id.isNotBlank() && (thumbnail == null || thumbnail.contains("i.ytimg.com/vi/"))) {
+        if (isVideoSong && id.isNotBlank() && !id.startsWith("metrofuse:") &&
+            (thumbnail == null || thumbnail.contains("i.ytimg.com/vi/"))
+        ) {
             "https://i.ytimg.com/vi/$id/mqdefault.jpg"
         } else {
             thumbnail

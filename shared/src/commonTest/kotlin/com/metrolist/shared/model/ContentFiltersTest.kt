@@ -134,4 +134,19 @@ class ContentFiltersTest {
         assertEquals(listOf(moodChip), chips.filterPodcastChips(hidePodcasts = true))
         assertEquals(chips, chips.filterPodcastChips(hidePodcasts = false))
     }
+
+    @Test
+    fun pluginVideoKeepsOriginalThumbnailUrlWhenScoped() {
+        val pluginVideo =
+            SongItem(
+                id = "metrofuse:example.video:abc123",
+                title = "Plugin Video",
+                thumbnail = "https://i.ytimg.com/vi/abc123/hq720.jpg",
+                artists = emptyList(),
+                album = null,
+                musicVideoType = "MUSIC_VIDEO_TYPE_UGC",
+            )
+        assertEquals("https://i.ytimg.com/vi/abc123/hq720.jpg", pluginVideo.displayThumbnailUrl)
+        assertEquals("https://i.ytimg.com/vi/abc123/hq720.jpg", pluginVideo.previewThumbnailUrl)
+    }
 }

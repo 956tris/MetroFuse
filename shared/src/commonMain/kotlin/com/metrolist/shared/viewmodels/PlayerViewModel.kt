@@ -53,6 +53,8 @@ import com.metrolist.shared.playback.PlaybackSeekSource
 import com.metrolist.shared.playback.PlayerSession
 import com.metrolist.shared.playback.QueueRemoval
 import com.metrolist.shared.playback.isRecommendedQueueSource
+import com.metrolist.shared.plugins.PluginServicesStore
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
 import com.metrolist.shared.repository.LyricsProviderSearch
 import com.metrolist.shared.repository.LyricsRepository
 import com.metrolist.shared.repository.USER_LYRICS_PROVIDER
@@ -800,7 +802,7 @@ class PlayerViewModel(
         if (cached != null) return cached
         val resolved =
             withContext(Dispatchers.IO) {
-                if (song.isVideoSong) {
+                if (song.isVideoSong || (effectiveMusicFrontendOwner().isNotEmpty() && PluginServicesStore.current?.supportsVideo == true)) {
                     MusicVideoResult.Found(
                         song.id,
                     )

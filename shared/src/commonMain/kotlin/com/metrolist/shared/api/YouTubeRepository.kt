@@ -55,6 +55,8 @@ import com.metrolist.shared.db.syncYouTubeHistory
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.albums
 import com.metrolist.shared.generated.resources.artists
+import com.metrolist.shared.generated.resources.filter_episodes
+import com.metrolist.shared.generated.resources.filter_videos
 import com.metrolist.shared.generated.resources.playlists
 import com.metrolist.shared.generated.resources.songs
 import com.metrolist.shared.model.AlbumItem
@@ -81,6 +83,7 @@ import com.metrolist.shared.model.YTItem
 import com.metrolist.shared.model.isEditablePlaylistId
 import com.metrolist.shared.model.isLive
 import com.metrolist.shared.model.isPodcast
+import com.metrolist.shared.model.isVideoSong
 import com.metrolist.shared.model.librarySearchKey
 import com.metrolist.shared.model.parseDisplayCount
 import com.metrolist.shared.model.toSongItem
@@ -1670,10 +1673,13 @@ class YouTubeRepository(
             searchOperations.getSearchSummary(query, recordSearchHistory)?.let { return it }
         }
         val items = if (usesProviderCatalog) searchProviderCatalog(query) else searchOffline(query)
+        val songs = items.filterIsInstance<SongItem>()
         return SearchSummaryPage(
             summaries =
                 listOf(
-                    SearchSummary(getString(Res.string.songs), items.filterIsInstance<SongItem>()),
+                    SearchSummary(getString(Res.string.songs), songs.filter { !it.isVideoSong && !it.isPodcast }),
+                    SearchSummary(getString(Res.string.filter_videos), songs.filter { it.isVideoSong }),
+                    SearchSummary(getString(Res.string.filter_episodes), songs.filter { it.isPodcast }),
                     SearchSummary(getString(Res.string.albums), items.filterIsInstance<AlbumItem>()),
                     SearchSummary(getString(Res.string.artists), items.filterIsInstance<ArtistItem>()),
                     SearchSummary(getString(Res.string.playlists), items.filterIsInstance<PlaylistItem>()),

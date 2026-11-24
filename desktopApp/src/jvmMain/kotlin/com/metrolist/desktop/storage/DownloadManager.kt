@@ -156,7 +156,7 @@ data class DownloadedFile(
             id = songId,
             title = title,
             artists = artist.takeIf(String::isNotBlank)?.let { listOf(ArtistTiny(id = null, name = it)) }.orEmpty(),
-            thumbnail = localThumb ?: thumbnailUrl ?: "https://i.ytimg.com/vi/$songId/hqdefault.jpg",
+            thumbnail = localThumb ?: thumbnailUrl ?: songId.takeUnless { it.startsWith("metrofuse:") }?.let { "https://i.ytimg.com/vi/$it/hqdefault.jpg" },
             duration = duration,
             album = album?.let { AlbumTiny(id = null, name = it) },
             year = year,

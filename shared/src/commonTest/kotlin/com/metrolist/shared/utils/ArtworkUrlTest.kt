@@ -55,6 +55,7 @@ class ArtworkUrlTest {
             assertEquals(large, highResolutionArtworkUrl(small))
             assertEquals(large, sizedArtworkUrl(large, 100))
             assertEquals(small, videoArtworkFallbackUrl(large))
+            assertEquals(small, videoArtworkFallbackUrl("${base}hq720.$extension#revision"))
             assertEquals(null, videoArtworkFallbackUrl(small))
         }
         assertEquals(null, videoArtworkFallbackUrl("https://example.com/vi/video/maxresdefault.jpg"))

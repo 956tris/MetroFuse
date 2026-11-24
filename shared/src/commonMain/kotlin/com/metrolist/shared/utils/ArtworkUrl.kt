@@ -193,7 +193,7 @@ internal fun videoArtworkFallbackUrl(url: String): String? {
             .lowercase()
     if (host != "i.ytimg.com" && !host.endsWith(".ytimg.com")) return null
     val path = YouTubeVideoArtworkPath.find(url.substringBefore('#').substringBefore('?')) ?: return null
-    if (path.groupValues[2] != "maxresdefault") return null
+    if (path.groupValues[2] != "maxresdefault" && path.groupValues[2] != "hq720") return null
     // hqdefault and sddefault bake letterboxing into the image; mqdefault keeps the bar-free frame.
     return url.replaceRange(path.range, "${path.groupValues[1]}mqdefault${path.groupValues[3]}")
 }
