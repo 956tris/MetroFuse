@@ -3,8 +3,10 @@ package com.metrolist.shared.plugins
 import dev.metrofuse.api.StreamDescriptor
 import dev.metrofuse.api.StreamTransport
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.test.Test
@@ -46,6 +48,84 @@ class PluginSabrTransportTest {
                         mapOf("metrofuse.sabr.v1" to JsonObject(root + (key to JsonPrimitive(value))).toString()),
                 )
             assertFails { pluginSabrBootstrap(malformed, "abcdefghijk") }
+        }
+    }
+
+    @Test
+    fun sabrVideoMappingPreserves4kFormatAndVariantsAndRejectsInvalidVideoSessions() {
+        val base = Json.parseToJsonElement(checkNotNull(descriptor().attributes["metrofuse.sabr.v1"])) as JsonObject
+        val videoPayload =
+            JsonObject(
+                base +
+                    mapOf(
+                        "selectedVideoFormat" to
+                            buildJsonObject {
+                                put("itag", 313)
+                                put("lastModified", 789L)
+                            },
+                        "selectedVideoWidth" to JsonPrimitive(3840),
+                        "selectedVideoHeight" to JsonPrimitive(2160),
+                        "selectedVideoContentLengthBytes" to JsonPrimitive(987654321L),
+                        "selectedVideoMimeType" to JsonPrimitive("video/webm"),
+                        "selectedVideoBitrate" to JsonPrimitive(18000000),
+                        "videoVariants" to
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put(
+                                            "format",
+                                            buildJsonObject {
+                                                put("itag", 313)
+                                                put("lastModified", 789L)
+                                            },
+                                        )
+                                        put("width", 3840)
+                                        put("height", 2160)
+                                        put("bitrate", 18000000)
+                                        put("mimeType", "video/webm")
+                                        put("contentLengthBytes", 987654321L)
+                                    },
+                                )
+                                add(
+                                    buildJsonObject {
+                                        put(
+                                            "format",
+                                            buildJsonObject {
+                                                put("itag", 248)
+                                                put("lastModified", 789L)
+                                            },
+                                        )
+                                        put("width", 1920)
+                                        put("height", 1080)
+                                        put("bitrate", 4000000)
+                                        put("mimeType", "video/webm")
+                                    },
+                                )
+                            },
+                    ),
+            )
+        val parsed = pluginSabrVideoBootstrap(videoPayload.toString(), "abcdefghijk")
+        assertEquals(313, parsed.selectedVideoFormat?.itag)
+        assertEquals(3840, parsed.selectedVideoWidth)
+        assertEquals(2160, parsed.selectedVideoHeight)
+        assertEquals(987654321L, parsed.selectedVideoContentLengthBytes)
+        assertEquals("video/webm", parsed.selectedVideoMimeType)
+        assertEquals(18000000, parsed.selectedVideoBitrate)
+        assertEquals(listOf(2160, 1080), parsed.videoVariants.map { it.height })
+
+        assertFails { pluginSabrVideoBootstrap(base.toString(), "abcdefghijk") }
+        assertFails { pluginSabrVideoBootstrap(videoPayload.toString(), "other-video") }
+        assertFails {
+            pluginSabrVideoBootstrap(
+                JsonObject(videoPayload + ("selectedVideoMimeType" to JsonPrimitive("audio/mp4"))).toString(),
+                "abcdefghijk",
+            )
+        }
+        assertFails {
+            pluginSabrVideoBootstrap(
+                JsonObject(videoPayload + ("serverAbrStreamingUrl" to JsonPrimitive("http://fixture.googlevideo.com/sabr"))).toString(),
+                "abcdefghijk",
+            )
         }
     }
 

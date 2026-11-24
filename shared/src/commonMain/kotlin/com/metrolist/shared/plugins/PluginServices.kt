@@ -49,6 +49,16 @@ interface PluginServices {
         album: String?,
     ): String? = null
 
+    /** Adds the selected music source's video to [audio] for the player's video button, or null when it has none. */
+    suspend fun video(
+        id: String,
+        song: SongItem?,
+        audio: PlaybackResource,
+        maxHeight: Int? = null,
+        allowSabr: Boolean = true,
+        allowHls: Boolean = false,
+    ): PlaybackResource? = null
+
     fun refreshHome(
         owner: String,
         force: Boolean = false,
@@ -164,8 +174,20 @@ class PluginStreamResolver(
         excludedProviders: Set<String> = emptySet(),
         allowLocal: Boolean = true,
     ): PlaybackResource {
-        if (hints.wantVideo || hints.playbackClientOverrideId != null) {
+        if (hints.playbackClientOverrideId != null) {
             throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
+        }
+        if (hints.wantVideo) {
+            // The video button: resolve audio as usual, then let the selected plugin supply the picture.
+            val audio = resolveAudio(id, hints.copy(wantVideo = false), quality, song, refresh, excludedProviders, allowLocal)
+            return PluginServicesStore.current?.video(
+                id = id,
+                song = song,
+                audio = audio,
+                maxHeight = hints.maxVideoHeight,
+                allowSabr = hints.allowSabr,
+                allowHls = hints.allowHls,
+            ) ?: throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
         }
         if (allowLocal && (offlineOnly() || PluginServicesStore.current?.audioMatch(id) == null)) {
             localAudioSource?.resolve(id, song)?.let {

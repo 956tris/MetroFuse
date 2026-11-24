@@ -148,6 +148,121 @@ object MetroFuseHost : PluginServices {
         }
     }
 
+    /**
+     * Video for the player's video button. The selected music source's `playback.video/v1` service supplies the picture
+     * (direct HTTP/HTTPS stream or validated SABR video bootstrap); the audio it already resolved is kept.
+     */
+    override suspend fun video(
+        id: String,
+        song: SongItem?,
+        audio: PlaybackResource,
+        maxHeight: Int?,
+        allowSabr: Boolean,
+        allowHls: Boolean,
+    ): PlaybackResource? {
+        val current = engine ?: return null
+        val owner = effectiveMusicFrontendOwner().takeIf { it.isNotEmpty() } ?: return null
+        val selected = current.registry.service(VIDEO_SERVICE) ?: return null
+        if (selected.owner != owner || current.plugins.value.none { it.manifest.id == owner && it.state == "Enabled" }) return null
+        val track = (song ?: songs[id])?.toPluginTrack() ?: return null
+        return try {
+            val response =
+                withTimeoutOrNull(15_000) {
+                    selected.value.call(
+                        buildJsonObject {
+                            put("track", Json.encodeToJsonElement(track))
+                            maxHeight?.let { put("maxHeight", it) }
+                            put("allowSabr", allowSabr)
+                            put("allowHls", allowHls)
+                        },
+                    )
+                } ?: return null
+            if (effectiveMusicFrontendOwner() != owner || current.registry.service(VIDEO_SERVICE)?.owner != owner) return null
+
+            fun text(
+                name: String,
+                maxLen: Int,
+            ) = (response[name] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull?.takeIf { it.length <= maxLen }
+
+            fun number(name: String) = (response[name] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+
+            val musicVideoId = text("musicVideoId", 32)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
+            val expectedVideoId = musicVideoId ?: track.extras["youtube"] ?: id.substringAfterLast(':')
+            val url =
+                text("url", 8192)?.takeIf {
+                    it.startsWith("https://", true) || it.startsWith("http://", true)
+                }
+            val sabrRaw =
+                if (allowSabr) {
+                    (response["sabr"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+                        ?: (response["sabr"] as? JsonObject)?.toString()
+                } else {
+                    null
+                }
+            val sabrVideo =
+                sabrRaw?.let { raw ->
+                    try {
+                        pluginSabrVideoBootstrap(raw, expectedVideoId)
+                    } catch (error: IllegalArgumentException) {
+                        runtime.log("host", "Rejected video SABR session from $owner: ${error::class.simpleName}")
+                        null
+                    } catch (error: IllegalStateException) {
+                        runtime.log("host", "Rejected video SABR session from $owner: ${error::class.simpleName}")
+                        null
+                    }
+                }
+            if (url == null && sabrVideo == null) return null
+            val headers =
+                (response["headers"] as? JsonObject)
+                    ?.entries
+                    ?.take(32)
+                    ?.mapNotNull { (key, value) ->
+                        (value as? JsonPrimitive)?.contentOrNull?.takeIf { key.length <= 256 && it.length <= 4096 }?.let { key to it }
+                    }?.toMap()
+                    .orEmpty()
+            val parsedHeights =
+                (response["availableHeights"] as? JsonArray)
+                    ?.take(32)
+                    ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull()?.takeIf { h -> h in 1..4320 } }
+                    ?.distinct()
+                    ?.sortedDescending()
+                    .orEmpty()
+            val availableHeights =
+                parsedHeights.ifEmpty {
+                    sabrVideo
+                        ?.videoVariants
+                        ?.map { it.height }
+                        ?.filter { it in 1..4320 }
+                        ?.distinct()
+                        ?.sortedDescending()
+                        .orEmpty()
+                }
+            // Host playback attaches video headers through the audio resource, so only merge when audio has none of its own.
+            audio.copy(
+                videoUrl = url ?: sabrVideo?.let { "sabr-video://${it.videoId}" },
+                videoWidth = number("width")?.toInt() ?: sabrVideo?.selectedVideoWidth,
+                videoHeight = number("height")?.toInt() ?: sabrVideo?.selectedVideoHeight,
+                videoMimeType = text("mimeType", 128) ?: sabrVideo?.selectedVideoMimeType,
+                videoCodecs = text("codecs", 128),
+                videoBitrate = number("bitrate")?.toInt() ?: sabrVideo?.selectedVideoBitrate,
+                videoItag = number("itag")?.toInt() ?: sabrVideo?.selectedVideoFormat?.itag,
+                videoContentLengthBytes = number("contentLengthBytes") ?: sabrVideo?.selectedVideoContentLengthBytes,
+                sabrVideoBootstrap = sabrVideo,
+                availableVideoHeights = availableHeights,
+                musicVideoId = musicVideoId?.takeIf { it != id },
+                headers = if (audio.headers.isEmpty()) headers else audio.headers,
+                expiresAt = number("expiresAtMillis")?.let(Instant::fromEpochMilliseconds) ?: audio.expiresAt,
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            current.registry.reportFailure(owner, "playback.video", error)
+            null
+        }
+    }
+
+    private const val VIDEO_SERVICE = "playback.video/v1"
+
     private var engine: Runtime? = null
     private var hostScope: CoroutineScope? = null
     private val ready = CompletableDeferred<Unit>()
@@ -161,6 +276,7 @@ object MetroFuseHost : PluginServices {
     private val identities = ConcurrentHashMap<String, TrackIdentity>()
 
     internal fun savedIdentifiers(id: String): Map<String, String> = identities[id]?.identifiers.orEmpty()
+
     private val albums = ConcurrentHashMap<String, CatalogAlbum>()
     private val albumOrder = LinkedHashMap<String, Unit>(256, 0.75f, true)
     private val artists = ConcurrentHashMap<String, CatalogArtist>()
@@ -507,7 +623,13 @@ object MetroFuseHost : PluginServices {
             limit = 512,
             id = song.id,
             value = song,
-            protectedId = { matchingController?.state?.value?.currentSong?.id },
+            protectedId = {
+                matchingController
+                    ?.state
+                    ?.value
+                    ?.currentSong
+                    ?.id
+            },
             onEvict = identities::remove,
         )
     }
@@ -1081,13 +1203,18 @@ internal fun LyricsResult.toHostLyrics(
 
 private fun SongItem.toPluginTrack(): Track {
     val saved = MetroFuseHost.savedIdentifiers(id)
-    val mergedExtras = buildMap {
-        saved.forEach { (k, v) -> if (k != "host" && v.isNotBlank()) put(k, v) }
-        album?.id?.takeIf { it.isNotBlank() }?.let { rawAlbumId ->
-            putIfAbsent("albumId", rawAlbumId.substringAfterLast(':', rawAlbumId))
+    val mergedExtras =
+        buildMap {
+            saved.forEach { (k, v) -> if (k != "host" && v.isNotBlank()) put(k, v) }
+            album?.id?.takeIf { it.isNotBlank() }?.let { rawAlbumId ->
+                putIfAbsent("albumId", rawAlbumId.substringAfterLast(':', rawAlbumId))
+            }
+            artists
+                .firstOrNull()
+                ?.name
+                ?.takeIf { it.isNotBlank() }
+                ?.let { put("primaryArtist", it) }
         }
-        artists.firstOrNull()?.name?.takeIf { it.isNotBlank() }?.let { put("primaryArtist", it) }
-    }
     return Track(
         id,
         title,

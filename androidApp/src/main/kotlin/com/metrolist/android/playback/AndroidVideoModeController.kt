@@ -21,6 +21,7 @@ import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.isPodcast
 import com.metrolist.shared.model.isVideoSong
 import com.metrolist.shared.playback.PlaybackSeekSource
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
 import com.metrolist.shared.settings.MusicVideoQuality
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTubeRepository
@@ -333,15 +334,22 @@ internal class AndroidVideoModeController(
                             }
 
                             MusicVideoResult.NotFound -> {
-                                Timber.tag(MUSIC_VIDEO_TAG).w(
-                                    "counterpart video not found generation=%d sourceVideoId=%s",
-                                    generation,
-                                    sourceSong.id,
-                                )
-                                if (isCurrentVideoModeTarget(target, generation)) {
-                                    onError(getString(Res.string.music_video_not_found))
+                                if (effectiveMusicFrontendOwner().isNotEmpty()) {
+                                    Timber.tag(MUSIC_VIDEO_TAG).d(
+                                        "counterpart video not found, delegating sourceVideoId=%s to active plugin",
+                                        sourceSong.id,
+                                    )
+                                } else {
+                                    Timber.tag(MUSIC_VIDEO_TAG).w(
+                                        "counterpart video not found generation=%d sourceVideoId=%s",
+                                        generation,
+                                        sourceSong.id,
+                                    )
+                                    if (isCurrentVideoModeTarget(target, generation)) {
+                                        onError(getString(Res.string.music_video_not_found))
+                                    }
+                                    return@launch
                                 }
-                                return@launch
                             }
 
                             MusicVideoResult.Error -> {
