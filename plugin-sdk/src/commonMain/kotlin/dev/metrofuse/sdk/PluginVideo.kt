@@ -20,14 +20,13 @@ data class PluginVideoRequest(
     val track: Track,
     val maxHeight: Int? = null,
     val allowSabr: Boolean = true,
-    val allowHls: Boolean = false,
+    val allowHls: Boolean = true,
 )
 
 /**
- * Video that plays alongside the plugin's audio stream. The host keeps the audio it resolved through the plugin's
- * `AudioSource` and renders [url] or [sabrBootstrapJson] as the picture, so [url] may be a video-only or muxed stream.
- * Only HTTP(S) URLs up to 8192 characters or a serialized SABR bootstrap (`metrofuse.sabr.v1` schema with
- * `selectedVideoFormat`) are accepted.
+ * Provider-agnostic video stream returned for the player's video button. The host keeps the audio resolved by the
+ * plugin's `AudioSource` and renders [url] (direct MP4/WebM or HLS `.m3u8`, with optional [headers] such as `Referer`
+ * or auth tokens) or an optional [sabrBootstrapJson] session as the picture.
  */
 data class PluginVideoStream(
     val url: String? = null,
@@ -43,6 +42,7 @@ data class PluginVideoStream(
     val sabrBootstrapJson: String? = null,
     val availableHeights: List<Int> = emptyList(),
     val musicVideoId: String? = null,
+    val mediaId: String? = null,
 )
 
 /** Resolves video for [Track]; return null when the track has no video, which hides the video for that track. */
@@ -81,7 +81,7 @@ fun PluginContext.registerVideoProvider(provider: PluginVideoRequestProvider) {
                         track = track,
                         maxHeight = (request["maxHeight"] as? JsonPrimitive)?.intOrNull,
                         allowSabr = (request["allowSabr"] as? JsonPrimitive)?.booleanOrNull ?: true,
-                        allowHls = (request["allowHls"] as? JsonPrimitive)?.booleanOrNull ?: false,
+                        allowHls = (request["allowHls"] as? JsonPrimitive)?.booleanOrNull ?: true,
                     )
                 val video = provider.resolve(videoRequest) ?: return JsonObject(emptyMap())
                 if (video.url == null && video.sabrBootstrapJson == null) return JsonObject(emptyMap())
@@ -102,6 +102,7 @@ fun PluginContext.registerVideoProvider(provider: PluginVideoRequestProvider) {
                     if (video.availableHeights.isNotEmpty()) {
                         put("availableHeights", JsonArray(video.availableHeights.map { JsonPrimitive(it) }))
                     }
+                    video.mediaId?.let { put("mediaId", it) }
                     video.musicVideoId?.let { put("musicVideoId", it) }
                 }
             }

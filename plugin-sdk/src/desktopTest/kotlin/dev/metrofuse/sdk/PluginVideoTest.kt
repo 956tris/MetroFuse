@@ -126,6 +126,67 @@ class PluginVideoTest {
             }
         }
 
+    @Test
+    fun supportsAnyProviderFormatIncludingBilibiliHeadersAndTwitchHlsByDefault() =
+        runBlocking {
+            val context = TestContext()
+            try {
+                var bilibiliRequest: PluginVideoRequest? = null
+                context.registerVideoProvider(
+                    PluginVideoRequestProvider { req ->
+                        bilibiliRequest = req
+                        PluginVideoStream(
+                            url = "https://upos-sz-mirrorcos.bilivideo.com/upgcxcode/stream.mp4",
+                            headers = mapOf("Referer" to "https://www.bilibili.com/video/BV1xx411c7mD"),
+                            mimeType = "video/mp4",
+                            width = 1920,
+                            height = 1080,
+                            mediaId = "BV1xx411c7mD",
+                        )
+                    },
+                )
+                val bilibiliResponse =
+                    context.services.getValue(VIDEO_PLAYBACK_SERVICE).call(
+                        buildJsonObject {
+                            put("track", Json.encodeToJsonElement(Track("BV1xx411c7mD", "Bili Video", "Uploader", "")))
+                        },
+                    )
+                assertTrue(bilibiliRequest?.allowHls == true)
+                assertEquals("BV1xx411c7mD", bilibiliResponse["mediaId"]?.jsonPrimitive?.content)
+                assertEquals(
+                    "https://www.bilibili.com/video/BV1xx411c7mD",
+                    bilibiliResponse["headers"]
+                        ?.let { it as? JsonObject }
+                        ?.get("Referer")
+                        ?.jsonPrimitive
+                        ?.content,
+                )
+
+                context.registerVideoProvider(
+                    PluginVideoProvider {
+                        PluginVideoStream(
+                            url = "https://video-weaver.jfk04.hls.ttvnw.net/v1/playlist/live.m3u8",
+                            mimeType = "application/vnd.apple.mpegurl",
+                            mediaId = "twitch:stream:999",
+                        )
+                    },
+                )
+                val twitchResponse =
+                    context.services.getValue(VIDEO_PLAYBACK_SERVICE).call(
+                        buildJsonObject {
+                            put("track", Json.encodeToJsonElement(Track("twitch:stream:999", "Live Stream", "Streamer", "")))
+                        },
+                    )
+                assertEquals(
+                    "https://video-weaver.jfk04.hls.ttvnw.net/v1/playlist/live.m3u8",
+                    twitchResponse["url"]?.jsonPrimitive?.content,
+                )
+                assertEquals("twitch:stream:999", twitchResponse["mediaId"]?.jsonPrimitive?.content)
+            } finally {
+                context.close()
+            }
+        }
+
     private class TestContext : PluginContext {
         override val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val services = linkedMapOf<String, JsonService>()

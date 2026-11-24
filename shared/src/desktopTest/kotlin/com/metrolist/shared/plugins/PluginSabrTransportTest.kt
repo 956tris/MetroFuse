@@ -127,6 +127,11 @@ class PluginSabrTransportTest {
                 "abcdefghijk",
             )
         }
+        val arbitraryId = pluginSabrVideoBootstrap(
+            JsonObject(videoPayload + ("videoId" to JsonPrimitive("provider-custom-id-123"))).toString(),
+            "provider-custom-id-123",
+        )
+        assertEquals("provider-custom-id-123", arbitraryId.videoId)
     }
 
     private fun descriptor() =

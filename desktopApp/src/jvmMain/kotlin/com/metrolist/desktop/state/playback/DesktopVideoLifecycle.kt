@@ -24,6 +24,7 @@ import com.metrolist.shared.playback.PlaybackFailureCategory
 import com.metrolist.shared.playback.VideoFrame
 import com.metrolist.shared.playback.VideoPlayer
 import com.metrolist.shared.playback.VideoPlayerStats
+import com.metrolist.shared.plugins.effectiveMusicFrontendOwner
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTubeRepository
 import com.metrolist.shared.utils.Logger
@@ -240,9 +241,7 @@ internal class DesktopVideoLifecycle(
                 try {
                     if (!current()) return@launch
                     var resource: PlaybackResource? = null
-                    if (song.isVideoSong) {
-                        resource = fetchSource(song, true)
-                    } else if (song.isPodcast) {
+                    if (song.isVideoSong || song.isPodcast || effectiveMusicFrontendOwner().isNotEmpty()) {
                         resource = fetchSource(song, true)
                     } else {
                         val resolved = musicVideoResolver.resolveMusicVideo(song)

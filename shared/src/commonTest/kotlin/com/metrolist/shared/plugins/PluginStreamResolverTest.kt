@@ -140,6 +140,37 @@ class PluginStreamResolverTest {
             }
         }
 
+    @Test fun videoRequestsDelegateToVideoHookWhenSupported() =
+        runTest {
+            PluginServicesStore.current =
+                object : EmptyServices() {
+                    override val supportsVideo: Boolean = true
+
+                    override suspend fun resolve(
+                        id: String,
+                        song: SongItem?,
+                        quality: AudioQuality,
+                        refresh: Boolean,
+                        excludedProviders: Set<String>,
+                    ) = pluginResource
+
+                    override suspend fun video(
+                        id: String,
+                        song: SongItem?,
+                        audio: PlaybackResource,
+                        maxHeight: Int?,
+                        allowSabr: Boolean,
+                        allowHls: Boolean,
+                    ) = audio.copy(
+                        videoUrl = "https://example.org/video.m3u8",
+                        headers = audio.headers + ("Referer" to "https://example.org"),
+                    )
+                }
+            val resolved = PluginStreamResolver().resolve("song", ContentHints(wantVideo = true))
+            assertEquals("https://example.org/video.m3u8", resolved.videoUrl)
+            assertEquals(mapOf("X-Fixture" to "fixture", "Referer" to "https://example.org"), resolved.headers)
+        }
+
     @Test fun providerCancellationReachesCaller() =
         runTest {
             val entered = CompletableDeferred<Unit>()

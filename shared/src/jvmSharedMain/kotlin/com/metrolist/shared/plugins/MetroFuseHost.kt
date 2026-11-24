@@ -148,9 +148,17 @@ object MetroFuseHost : PluginServices {
         }
     }
 
+    override val supportsVideo: Boolean
+        get() {
+            val current = engine ?: return false
+            val owner = effectiveMusicFrontendOwner().takeIf { it.isNotEmpty() } ?: return false
+            val selected = current.registry.service(VIDEO_SERVICE) ?: return false
+            return selected.owner == owner && current.plugins.value.any { it.manifest.id == owner && it.state == "Enabled" }
+        }
+
     /**
      * Video for the player's video button. The selected music source's `playback.video/v1` service supplies the picture
-     * (direct HTTP/HTTPS stream or validated SABR video bootstrap); the audio it already resolved is kept.
+     * (direct HTTP/HTTPS stream, HLS manifest, or optional SABR bootstrap); the audio it already resolved is kept.
      */
     override suspend fun video(
         id: String,
@@ -186,8 +194,10 @@ object MetroFuseHost : PluginServices {
 
             fun number(name: String) = (response[name] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
 
-            val musicVideoId = text("musicVideoId", 32)?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{11}")) }
-            val expectedVideoId = musicVideoId ?: track.extras["youtube"] ?: id.substringAfterLast(':')
+            val mediaId =
+                (text("mediaId", 128) ?: text("musicVideoId", 128))
+                    ?.takeIf { it.isNotBlank() && '\r' !in it && '\n' !in it }
+            val expectedMediaId = mediaId ?: identities[id]?.canonicalId ?: id.substringAfterLast(':')
             val url =
                 text("url", 8192)?.takeIf {
                     it.startsWith("https://", true) || it.startsWith("http://", true)
@@ -202,7 +212,7 @@ object MetroFuseHost : PluginServices {
             val sabrVideo =
                 sabrRaw?.let { raw ->
                     try {
-                        pluginSabrVideoBootstrap(raw, expectedVideoId)
+                        pluginSabrVideoBootstrap(raw, expectedMediaId)
                     } catch (error: IllegalArgumentException) {
                         runtime.log("host", "Rejected video SABR session from $owner: ${error::class.simpleName}")
                         null
@@ -237,7 +247,6 @@ object MetroFuseHost : PluginServices {
                         ?.sortedDescending()
                         .orEmpty()
                 }
-            // Host playback attaches video headers through the audio resource, so only merge when audio has none of its own.
             audio.copy(
                 videoUrl = url ?: sabrVideo?.let { "sabr-video://${it.videoId}" },
                 videoWidth = number("width")?.toInt() ?: sabrVideo?.selectedVideoWidth,
@@ -249,8 +258,8 @@ object MetroFuseHost : PluginServices {
                 videoContentLengthBytes = number("contentLengthBytes") ?: sabrVideo?.selectedVideoContentLengthBytes,
                 sabrVideoBootstrap = sabrVideo,
                 availableVideoHeights = availableHeights,
-                musicVideoId = musicVideoId?.takeIf { it != id },
-                headers = if (audio.headers.isEmpty()) headers else audio.headers,
+                musicVideoId = mediaId?.takeIf { it != id },
+                headers = audio.headers + headers,
                 expiresAt = number("expiresAtMillis")?.let(Instant::fromEpochMilliseconds) ?: audio.expiresAt,
             )
         } catch (cancelled: CancellationException) {

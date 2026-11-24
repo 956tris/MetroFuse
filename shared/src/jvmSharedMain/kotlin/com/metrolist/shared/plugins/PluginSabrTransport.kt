@@ -32,7 +32,9 @@ internal fun pluginSabrVideoBootstrap(
     source: String,
     expectedVideoId: String,
 ): SabrBootstrap {
-    require(expectedVideoId.matches(SABR_VIDEO_ID)) { "Invalid plugin SABR media identity" }
+    require(expectedVideoId.isNotBlank() && expectedVideoId.length <= 128 && '\r' !in expectedVideoId && '\n' !in expectedVideoId) {
+        "Invalid plugin SABR media identity"
+    }
     val root = parseSabrRoot(source, expectedVideoId)
     val url = root.text("serverAbrStreamingUrl")
     val base = buildSabrBootstrap(root, expectedVideoId, url)
@@ -133,8 +135,6 @@ private fun buildSabrBootstrap(
         tokenVisitorData = root.optionalText("tokenVisitorData"),
     )
 }
-
-private val SABR_VIDEO_ID = Regex("[A-Za-z0-9_-]{11}")
 
 private fun JsonObject.optionalInt(key: String): Int? = (get(key) as? JsonPrimitive)?.intOrNull
 

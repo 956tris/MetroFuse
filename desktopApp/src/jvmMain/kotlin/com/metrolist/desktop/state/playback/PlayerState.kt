@@ -960,7 +960,7 @@ object PlayerState {
                 video.setResolving(true)
                 try {
                     val resolved =
-                        resolvedVideo ?: if (song.isVideoSong || song.isPodcast) {
+                        resolvedVideo ?: if (song.isVideoSong || song.isPodcast || effectiveMusicFrontendOwner().isNotEmpty()) {
                             MusicVideoResult.Found(song.id)
                         } else {
                             withContext(Dispatchers.IO) { musicVideoResolver.resolveMusicVideo(song) } as? MusicVideoResult.Found

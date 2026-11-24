@@ -318,7 +318,7 @@ internal class AndroidVideoModeController(
                     var playbackSong = sourceSong
                     var positionMap: CounterpartPositionMap? = null
                     val originalAudio = originalAudioForVideo(sourceSong.id, videoModeSongId, videoModeOriginalAudioSong)
-                    if (wantVideo && !sourceSong.isVideoSong && !isPodcastEpisode) {
+                    if (wantVideo && !sourceSong.isVideoSong && !isPodcastEpisode && effectiveMusicFrontendOwner().isEmpty()) {
                         when (val result = musicVideoResolver.resolveMusicVideo(sourceSong)) {
                             is MusicVideoResult.Found -> {
                                 Timber.tag(MUSIC_VIDEO_TAG).d(
@@ -334,22 +334,15 @@ internal class AndroidVideoModeController(
                             }
 
                             MusicVideoResult.NotFound -> {
-                                if (effectiveMusicFrontendOwner().isNotEmpty()) {
-                                    Timber.tag(MUSIC_VIDEO_TAG).d(
-                                        "counterpart video not found, delegating sourceVideoId=%s to active plugin",
-                                        sourceSong.id,
-                                    )
-                                } else {
-                                    Timber.tag(MUSIC_VIDEO_TAG).w(
-                                        "counterpart video not found generation=%d sourceVideoId=%s",
-                                        generation,
-                                        sourceSong.id,
-                                    )
-                                    if (isCurrentVideoModeTarget(target, generation)) {
-                                        onError(getString(Res.string.music_video_not_found))
-                                    }
-                                    return@launch
+                                Timber.tag(MUSIC_VIDEO_TAG).w(
+                                    "counterpart video not found generation=%d sourceVideoId=%s",
+                                    generation,
+                                    sourceSong.id,
+                                )
+                                if (isCurrentVideoModeTarget(target, generation)) {
+                                    onError(getString(Res.string.music_video_not_found))
                                 }
+                                return@launch
                             }
 
                             MusicVideoResult.Error -> {

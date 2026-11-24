@@ -49,6 +49,9 @@ interface PluginServices {
         album: String?,
     ): String? = null
 
+    /** True when the active music-source plugin has registered the `playback.video/v1` hook. */
+    val supportsVideo: Boolean get() = false
+
     /** Adds the selected music source's video to [audio] for the player's video button, or null when it has none. */
     suspend fun video(
         id: String,
@@ -56,7 +59,7 @@ interface PluginServices {
         audio: PlaybackResource,
         maxHeight: Int? = null,
         allowSabr: Boolean = true,
-        allowHls: Boolean = false,
+        allowHls: Boolean = true,
     ): PlaybackResource? = null
 
     fun refreshHome(
@@ -178,15 +181,24 @@ class PluginStreamResolver(
             throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
         }
         if (hints.wantVideo) {
+            if (hints.isLocal == true || song?.isLocal == true || offlineOnly()) {
+                throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
+            }
+            val currentServices = PluginServicesStore.current
+                ?: throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
+            if (Settings.shared.musicFrontendOwner.toHomeSelection() is HomeSelection.Plugin) currentServices.awaitReady()
+            if (!currentServices.supportsVideo) {
+                throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
+            }
             // The video button: resolve audio as usual, then let the selected plugin supply the picture.
             val audio = resolveAudio(id, hints.copy(wantVideo = false), quality, song, refresh, excludedProviders, allowLocal)
-            return PluginServicesStore.current?.video(
+            return currentServices.video(
                 id = id,
                 song = song,
                 audio = audio,
                 maxHeight = hints.maxVideoHeight,
                 allowSabr = hints.allowSabr,
-                allowHls = hints.allowHls,
+                allowHls = true,
             ) ?: throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
         }
         if (allowLocal && (offlineOnly() || PluginServicesStore.current?.audioMatch(id) == null)) {
