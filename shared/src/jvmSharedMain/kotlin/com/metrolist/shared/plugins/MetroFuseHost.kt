@@ -118,30 +118,27 @@ import kotlin.time.Instant
 /** One engine per process, using the application's existing controller and resolver. */
 object MetroFuseHost : PluginServices {
     override val supportsMusicVideoCanvas: Boolean
-        get() {
-            val current = engine ?: return false
-            val owner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty) ?: return false
-            return current.registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).any { it.owner == owner } &&
-                current.plugins.value.any { it.manifest.id == owner && it.state == "Enabled" }
-        }
+        get() = engine?.musicVideoCanvasService() != null
 
     override val musicVideoCanvasChanges: Flow<Unit>
         get() =
             channelFlow {
                 awaitReady()
                 val current = engine ?: return@channelFlow
-                musicFrontendOwnerChanges().collectLatest { owner ->
-                    if (owner.isEmpty()) {
-                        send(Unit)
-                    } else {
-                        current
-                            .settingsFor(owner)
-                            .values
-                            .map { it["canvasEnabled"] }
-                            .distinctUntilChanged()
-                            .collect { send(Unit) }
+                combine(current.plugins, current.registry.state) { _, _ -> current.musicVideoCanvasService()?.owner }
+                    .distinctUntilChanged()
+                    .collectLatest { owner ->
+                        if (owner == null) {
+                            send(Unit)
+                        } else {
+                            current
+                                .settingsFor(owner)
+                                .values
+                                .map { it["canvasEnabled"] }
+                                .distinctUntilChanged()
+                                .collect { send(Unit) }
+                        }
                     }
-                }
             }
 
     override suspend fun musicVideoCanvas(
@@ -149,9 +146,8 @@ object MetroFuseHost : PluginServices {
         maxHeight: Int?,
     ): PlaybackResource? {
         val current = engine ?: return null
-        val owner = effectiveMusicFrontendOwner().takeIf(String::isNotEmpty) ?: return null
-        val selected = current.registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).firstOrNull { it.owner == owner } ?: return null
-        if (current.plugins.value.none { it.manifest.id == owner && it.state == "Enabled" }) return null
+        val selected = current.musicVideoCanvasService() ?: return null
+        val owner = selected.owner
         val account =
             current.logins.states.value[owner]
                 ?.account
@@ -165,11 +161,11 @@ object MetroFuseHost : PluginServices {
                         },
                     )
                 } ?: return null
-            if (engine !== current || effectiveMusicFrontendOwner() != owner ||
+            if (engine !== current ||
                 current.logins.states.value[owner]
                     ?.account != account ||
                 current.plugins.value.none { it.manifest.id == owner && it.state == "Enabled" } ||
-                current.registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).none { it.owner == owner && it.value === selected.value }
+                current.musicVideoCanvasService()?.value !== selected.value
             ) {
                 return null
             }
@@ -189,10 +185,7 @@ object MetroFuseHost : PluginServices {
         album: String?,
     ): String? {
         val current = engine ?: return null
-        val selected = current.registry.service("artwork.canvas/v1") ?: return null
-        // Music-video Canvas carries headers and timing; it must use its own renderer path.
-        if (current.registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).any { it.owner == selected.owner }) return null
-        if (current.plugins.value.none { it.manifest.id == selected.owner && it.state == "Enabled" }) return null
+        val selected = current.spotifyCanvasService() ?: return null
         val account =
             current.logins.states.value[selected.owner]
                 ?.account ?: return null
@@ -205,7 +198,7 @@ object MetroFuseHost : PluginServices {
                 } ?: return null
             if (current.logins.states.value[selected.owner]
                     ?.account != account ||
-                current.registry.service("artwork.canvas/v1")?.owner != selected.owner
+                current.spotifyCanvasService()?.value !== selected.value
             ) {
                 return null
             }
@@ -342,6 +335,18 @@ object MetroFuseHost : PluginServices {
 
     private const val VIDEO_SERVICE = "playback.video/v1"
     private const val MUSIC_VIDEO_CANVAS_SERVICE = "youtube-music.canvas/v1"
+
+    private fun Runtime.musicVideoCanvasService() =
+        registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).firstOrNull { candidate ->
+            plugins.value.any { it.manifest.id == candidate.owner && it.state == "Enabled" }
+        }
+
+    private fun Runtime.spotifyCanvasService() =
+        registry.serviceCandidates("artwork.canvas/v1").firstOrNull { candidate ->
+            // Music-video Canvas carries headers and timing and uses its own renderer path.
+            registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).none { it.owner == candidate.owner } &&
+                plugins.value.any { it.manifest.id == candidate.owner && it.state == "Enabled" }
+        }
 
     private var engine: Runtime? = null
     private var hostScope: CoroutineScope? = null
