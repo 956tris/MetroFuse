@@ -11,10 +11,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import com.metrolist.desktop.state.app.AppState
 import com.metrolist.desktop.state.app.UiState
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.api.artwork.youtubeCanvasPlaybackClips
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.artworkExplicitness
+import com.metrolist.shared.model.isVideoSong
 import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.settings.targetHeight
@@ -43,6 +45,10 @@ internal class DesktopAnimatedArtwork(
     private var currentTrack: SongItem? = null
     private var _animatedCoverUrl: String? by mutableStateOf(null)
     private var _musicVideoCanvas: MusicVideoCanvas? by mutableStateOf(null)
+    private var _staticArtworkUrl: String? by mutableStateOf(null)
+    private var staticArtworkSongId: String? by mutableStateOf(null)
+    val staticArtworkUrl: String?
+        get() = _staticArtworkUrl?.takeIf { Settings.shared.preferAppleMusicAlbumArtwork && currentTrack?.id != null && currentTrack?.id == staticArtworkSongId }
     private val artworkEnabled: Boolean
         get() =
             desktopAnimatedArtworkEnabled(
@@ -57,8 +63,22 @@ internal class DesktopAnimatedArtwork(
     val musicVideoCanvas: MusicVideoCanvas?
         get() = _musicVideoCanvas?.takeIf { it.url == animatedCoverUrl }
     private var animatedCoverFetchJob: Job? = null
+    private var staticArtworkFetchJob: Job? = null
 
     init {
+        scope.launch {
+            snapshotFlow { Settings.shared.preferAppleMusicAlbumArtwork }
+                .distinctUntilChanged()
+                .collectLatest { enabled ->
+                    if (enabled) {
+                        currentTrack?.let(::fetchStaticArtwork)
+                    } else {
+                        staticArtworkFetchJob?.cancel()
+                        _staticArtworkUrl = null
+                        staticArtworkSongId = null
+                    }
+                }
+        }
         scope.launch {
             snapshotFlow {
                 Triple(
@@ -120,7 +140,60 @@ internal class DesktopAnimatedArtwork(
         if (retainedCoverUrl == null) _musicVideoCanvas = null
         animatedCoverSongId = if (retainedCoverUrl != null) effectiveTrack?.id else null
 
+        val cachedStatic =
+            effectiveTrack?.takeIf { !it.isLocal && !it.isUploaded && !it.isVideoSong && Settings.shared.preferAppleMusicAlbumArtwork }?.let { song ->
+                val artist = song.artists.joinToString(", ") { it.name }
+                if (artist.isBlank()) {
+                    null
+                } else {
+                    AppState.animatedArtworkService.cachedStaticAlbumArtwork(
+                        title = song.title,
+                        artist = artist,
+                        album = song.album?.name,
+                        explicit = song.artworkExplicitness,
+                    )
+                }
+            }
+        val sameStaticAlbum =
+            previousTrack?.album?.id != null && previousTrack.album?.id == effectiveTrack?.album?.id &&
+                staticArtworkSongId == previousTrack.id && _staticArtworkUrl != null
+        staticArtworkFetchJob?.cancel()
+        _staticArtworkUrl = if (sameStaticAlbum) _staticArtworkUrl else cachedStatic
+        staticArtworkSongId = if (_staticArtworkUrl != null) effectiveTrack?.id else null
+        if (effectiveTrack != null && _staticArtworkUrl == null) fetchStaticArtwork(effectiveTrack)
+
         if (effectiveTrack != null && startArtworkFetch && retainedCoverUrl == null) fetchAnimatedCover(effectiveTrack)
+    }
+
+    private fun fetchStaticArtwork(song: SongItem) {
+        if (!Settings.shared.preferAppleMusicAlbumArtwork || song.isLocal || song.isUploaded || song.isVideoSong) return
+        val artist = song.artists.joinToString(", ") { it.name }
+        if (artist.isBlank()) return
+        val songId = song.id
+        staticArtworkFetchJob?.cancel()
+        staticArtworkFetchJob =
+            scope.launch {
+                val resolved =
+                    try {
+                        withContext(Dispatchers.IO) {
+                            AppState.animatedArtworkService.fetchStaticAlbumArtwork(
+                                title = song.title,
+                                artist = artist,
+                                album = song.album?.name,
+                                explicit = song.artworkExplicitness,
+                            )
+                        }
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        null
+                    } ?: return@launch
+                AppleMusicAlbumArtworkStore.recordOverride(song.thumbnail, resolved)
+                if (currentTrack?.id == songId) {
+                    _staticArtworkUrl = resolved
+                    staticArtworkSongId = songId
+                }
+            }
     }
 
     private fun fetchAnimatedCover(song: SongItem) {
@@ -168,7 +241,7 @@ internal class DesktopAnimatedArtwork(
                                 val musicVideo =
                                     async {
                                         if (CanvasContentSource.YOUTUBE_MUSIC_VIDEO !in enabledSources ||
-                                            !UiState.playerPresentation.isExpanded || !UiState.playerPresentation.canvasEnabled ||
+                                            !artworkEnabled ||
                                             !Settings.shared.isAnimatedArtworkAllowedOnNetwork()
                                         ) {
                                             return@async null

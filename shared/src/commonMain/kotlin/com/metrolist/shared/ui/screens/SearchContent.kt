@@ -93,6 +93,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.currentStateAsState
+import com.metrolist.shared.api.artwork.PrefetchAppleMusicAlbumArtwork
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.explicit
 import com.metrolist.shared.generated.resources.loading
@@ -876,6 +877,7 @@ private fun SearchRecommendationRow(
                 if (item is PlaylistItem) {
                     PlaylistCoverImage(item, Modifier.fillMaxSize())
                 } else if (item.thumbnail != null) {
+                    PrefetchAppleMusicAlbumArtwork(item)
                     AsyncImage(
                         url = item.displayThumbnailUrl,
                         modifier = Modifier.fillMaxSize(),
@@ -1754,6 +1756,7 @@ private fun TopResultItem(
             if (item is PlaylistItem) {
                 PlaylistCoverImage(item, Modifier.fillMaxSize())
             } else if (item.thumbnail != null) {
+                PrefetchAppleMusicAlbumArtwork(item)
                 AsyncImage(
                     url = item.displayThumbnailUrl,
                     contentDescription = null,

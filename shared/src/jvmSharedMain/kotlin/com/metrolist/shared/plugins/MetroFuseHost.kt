@@ -28,6 +28,7 @@ import com.metrolist.shared.model.RadioQueuePage
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.WordTimestamp
 import com.metrolist.shared.model.YTItem
+import com.metrolist.shared.model.isVideoSong
 import com.metrolist.shared.repository.LyricsRepository
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.SongLikeState
@@ -153,11 +154,12 @@ object MetroFuseHost : PluginServices {
                 ?.account
         return try {
             val response =
-                withTimeoutOrNull(15_000) {
+                withTimeoutOrNull(25_000) {
                     selected.value.call(
                         buildJsonObject {
                             put("track", Json.encodeToJsonElement(song.toPluginTrack()))
                             maxHeight?.let { put("maxHeight", it) }
+                            put("allowSabr", true)
                         },
                     )
                 } ?: return null
@@ -334,17 +336,20 @@ object MetroFuseHost : PluginServices {
     }
 
     private const val VIDEO_SERVICE = "playback.video/v1"
-    private const val MUSIC_VIDEO_CANVAS_SERVICE = "youtube-music.canvas/v1"
+    private const val GENERIC_VIDEO_CANVAS_SERVICE = "artwork.video-canvas/v1"
+    private const val LEGACY_MUSIC_VIDEO_CANVAS_SERVICE = "youtube-music.canvas/v1"
 
     private fun Runtime.musicVideoCanvasService() =
-        registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).firstOrNull { candidate ->
-            plugins.value.any { it.manifest.id == candidate.owner && it.state == "Enabled" }
-        }
+        (registry.serviceCandidates(GENERIC_VIDEO_CANVAS_SERVICE) + registry.serviceCandidates(LEGACY_MUSIC_VIDEO_CANVAS_SERVICE))
+            .firstOrNull { candidate ->
+                plugins.value.any { it.manifest.id == candidate.owner && it.state == "Enabled" }
+            }
 
     private fun Runtime.spotifyCanvasService() =
         registry.serviceCandidates("artwork.canvas/v1").firstOrNull { candidate ->
-            // Music-video Canvas carries headers and timing and uses its own renderer path.
-            registry.serviceCandidates(MUSIC_VIDEO_CANVAS_SERVICE).none { it.owner == candidate.owner } &&
+            // Video Canvas carries headers and timing and uses its own renderer path.
+            registry.serviceCandidates(GENERIC_VIDEO_CANVAS_SERVICE).none { it.owner == candidate.owner } &&
+                registry.serviceCandidates(LEGACY_MUSIC_VIDEO_CANVAS_SERVICE).none { it.owner == candidate.owner } &&
                 plugins.value.any { it.manifest.id == candidate.owner && it.state == "Enabled" }
         }
 
@@ -1288,12 +1293,15 @@ internal fun LyricsResult.toHostLyrics(
 
 private fun SongItem.toPluginTrack(): Track {
     val saved = MetroFuseHost.savedIdentifiers(id)
+    val identity = trackIdentity(id, saved)
     val mergedExtras =
         buildMap {
-            saved.forEach { (k, v) -> if (k != "host" && v.isNotBlank()) put(k, v) }
+            identity.identifiers.forEach { (k, v) -> if (k != "host" && v.isNotBlank()) put(k, v) }
             album?.id?.takeIf { it.isNotBlank() }?.let { rawAlbumId ->
                 putIfAbsent("albumId", rawAlbumId.substringAfterLast(':', rawAlbumId))
             }
+            musicVideoType?.takeIf { it.isNotBlank() }?.let { putIfAbsent("musicVideoType", it) }
+            if (isVideoSong) putIfAbsent("isVideoSong", "true")
             artists
                 .firstOrNull()
                 ?.name

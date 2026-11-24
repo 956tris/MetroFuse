@@ -14,6 +14,7 @@ import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.innertubex.InnerTube
 import com.metrolist.innertubex.InnerTubeHttpException
 import com.metrolist.shared.api.PlaylistNotFoundException
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.api.playlistSongs
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.emptyHistoryPlaylist
@@ -391,7 +392,18 @@ object PlaylistAlbumState {
                     if (selectedAlbumId == id && GlobalYouTube.innerTube.sessionSnapshot() == session) {
                         unfilteredAlbumPageData = page
                         albumSession = session
-                        albumPageData = page?.let(BlockedContent::filterAlbumPage)
+                        val filtered = page?.let(BlockedContent::filterAlbumPage)
+                        albumPageData = filtered
+                        filtered?.album?.let { album ->
+                            val artistName = album.artists.joinToString(", ") { it.name }
+                            AppleMusicAlbumArtworkStore.request(
+                                sourceUrl = album.thumbnail,
+                                title = album.title,
+                                artist = artistName,
+                                album = album.title,
+                                explicit = album.isExplicit,
+                            )
+                        }
                     }
                 } catch (e: CancellationException) {
                     throw e

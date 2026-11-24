@@ -722,7 +722,7 @@ object PlayerState {
     val animatedCoverSongId: String? get() = artwork.animatedCoverSongId
     val animatedCoverUrl: String? get() = artwork.animatedCoverUrl
     val musicVideoCanvas get() = artwork.musicVideoCanvas
-    val currentArtworkUrl: String? get() = currentTrack?.previewThumbnailUrl
+    val currentArtworkUrl: String? get() = artwork.staticArtworkUrl ?: currentTrack?.previewThumbnailUrl
     internal var artworkPreview by mutableStateOf(PlayerArtworkPreview())
         private set
     var isPlaying by mutableStateOf(false)

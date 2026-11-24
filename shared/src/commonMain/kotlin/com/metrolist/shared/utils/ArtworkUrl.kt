@@ -14,6 +14,7 @@ private const val CANONICAL_ARTWORK_SIZE_PX = 1200
 private const val MAX_ARTWORK_SIZE_PX = 2400
 
 private val GoogleArtworkSizeSuffix = Regex("=(?:s(\\d+)|w(\\d+)(?:-[^-?#=]+)*-h\\d+)([^?#]*)")
+private val AppleArtworkSquarePath = Regex("(/[^/?#]+/)(\\d+)x(\\d+)([a-zA-Z0-9-]*)(\\.(?:jpg|jpeg|png|webp))(?=[?#]|$)", RegexOption.IGNORE_CASE)
 private val YouTubeVideoArtworkPath =
     Regex("(/vi(?:_webp)?/[^/?#]+/)(mqdefault|hqdefault|sddefault|hq720|maxresdefault)(\\.(?:jpg|webp))(?=[?#]|$)")
 
@@ -72,6 +73,12 @@ private fun canonicalArtworkUrlUncached(
         GoogleArtworkSizeSuffix
             .find(url)
             ?.let { it.groupValues[1].ifEmpty { it.groupValues[2] }.toIntOrNull() }
+            ?: AppleArtworkSquarePath
+                .find(url.substringBefore('#').substringBefore('?'))
+                ?.takeIf { it.groupValues[2] == it.groupValues[3] }
+                ?.groupValues
+                ?.get(2)
+                ?.toIntOrNull()
     val canonicalSize = if ((requestedSize ?: 0) > CANONICAL_ARTWORK_SIZE_PX) MAX_ARTWORK_SIZE_PX else CANONICAL_ARTWORK_SIZE_PX
     return sizedArtworkUrlUncached(url, canonicalSize, promoteVideoArtwork)
 }
@@ -155,9 +162,20 @@ private fun sizedArtworkUrlUncached(
             .lowercase()
     val isGoogleArtworkHost = host.endsWith(".googleusercontent.com") || host.endsWith(".ggpht.com")
     val isYouTubeArtworkHost = host == "i.ytimg.com" || host.endsWith(".ytimg.com")
-    if (!isGoogleArtworkHost && !isYouTubeArtworkHost) return url
+    val isAppleArtworkHost = host == "mzstatic.com" || host.endsWith(".mzstatic.com")
+    if (!isGoogleArtworkHost && !isYouTubeArtworkHost && !isAppleArtworkHost) return url
 
     val sourcePath = url.substringBefore('#').substringBefore('?')
+    if (isAppleArtworkHost) {
+        val appleMatch = AppleArtworkSquarePath.find(sourcePath)
+        if (appleMatch != null && appleMatch.groupValues[2] == appleMatch.groupValues[3]) {
+            val sizePx = (requestedSizePx ?: DEFAULT_ARTWORK_SIZE_PX).coerceIn(1, MAX_ARTWORK_SIZE_PX)
+            val suffix = appleMatch.groupValues[4].ifEmpty { "bb" }
+            val ext = appleMatch.groupValues[5]
+            return url.replaceRange(appleMatch.range, "${appleMatch.groupValues[1]}${sizePx}x${sizePx}$suffix$ext")
+        }
+        return url
+    }
     val videoPath = YouTubeVideoArtworkPath.find(sourcePath).takeIf { isYouTubeArtworkHost }
     if (videoPath != null) {
         val fragment = url.substringAfter('#', missingDelimiterValue = "")

@@ -387,6 +387,50 @@ https://untrusted.example/video.m3u8
             }
         }
 
+    @Test
+    fun staticAlbumArtworkResolvesAndUpscalesTrustedAppleMusicUrlsByDefault(): Unit =
+        runBlocking {
+            withFreshSettings {
+                assertTrue(Settings.shared.preferAppleMusicAlbumArtwork)
+                val albumJson =
+                    """{"resultCount":1,"results":[{"collectionId":111,"collectionName":"After Hours","artistName":"The Weeknd","collectionExplicitness":"explicit","artworkUrl100":"https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/12/34/56/abc/source/100x100bb.jpg"}]}"""
+                var requests = 0
+                val client =
+                    HttpClient(
+                        MockEngine { request ->
+                            if (request.url.host == "itunes.apple.com" && request.url.parameters["entity"] == "album") {
+                                requests++
+                                respond(albumJson, HttpStatusCode.OK)
+                            } else {
+                                respond(EMPTY_ITUNES_RESULTS, HttpStatusCode.OK)
+                            }
+                        },
+                    )
+                val service = AnimatedArtworkService(client)
+                try {
+                    val expected =
+                        "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/12/34/56/abc/source/1200x1200bb.jpg"
+                    assertEquals(
+                        expected,
+                        service.fetchStaticAlbumArtwork("Blinding Lights", "The Weeknd", "After Hours", explicit = true),
+                    )
+                    assertEquals(
+                        expected,
+                        service.cachedStaticAlbumArtwork("Blinding Lights", "The Weeknd", "After Hours", explicit = true),
+                    )
+                    assertEquals(1, requests)
+
+                    Settings.shared.preferAppleMusicAlbumArtwork = false
+                    assertNull(service.fetchStaticAlbumArtwork("Blinding Lights", "The Weeknd", "After Hours", explicit = true))
+                    assertNull(service.cachedStaticAlbumArtwork("Blinding Lights", "The Weeknd", "After Hours", explicit = true))
+                } finally {
+                    service.dispose()
+                    service.clearCache()
+                    client.close()
+                }
+            }
+        }
+
     private fun seedArtworkCaches() {
         val now = Long.MAX_VALUE
         Settings.shared.enableAppleMusicArtistImages = true

@@ -23,6 +23,7 @@ import coil3.compose.rememberConstraintsSizeResolver
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import coil3.size.Scale
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.utils.rememberCachedArtworkPreview
 
 @Composable
@@ -38,14 +39,16 @@ actual fun AsyncImage(
     saturation: Float,
 ) {
     val context = LocalPlatformContext.current
+    val effectiveUrl = AppleMusicAlbumArtworkStore.overrideFor(url) ?: url
+    val effectivePreviewUrl = AppleMusicAlbumArtworkStore.overrideFor(previewUrl) ?: previewUrl
     val sizeResolver = rememberConstraintsSizeResolver()
-    val preview = rememberCachedArtworkPreview(url, previewUrl)
+    val preview = rememberCachedArtworkPreview(effectiveUrl, effectivePreviewUrl)
     val decodeScale = if (contentScale == ContentScale.Fit || contentScale == ContentScale.Inside) Scale.FIT else Scale.FILL
     val request =
-        remember(url, context, sizeResolver, decodeScale, preview) {
+        remember(effectiveUrl, context, sizeResolver, decodeScale, preview) {
             ImageRequest
                 .Builder(context)
-                .data(url)
+                .data(effectiveUrl)
                 .placeholderMemoryCacheKey(preview?.first)
                 .error(preview?.second?.image)
                 .size(sizeResolver)
@@ -69,9 +72,15 @@ actual fun AsyncImage(
                 .then(sizeResolver)
                 .background(MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
-        if (!url.isNullOrBlank() && !showImage && preview == null) {
-            if (previewUrl != null && previewUrl != url) {
-                AsyncImage(previewUrl, Modifier.fillMaxSize(), contentScale = contentScale, alignment = alignment, saturation = saturation)
+        if (!effectiveUrl.isNullOrBlank() && !showImage && preview == null) {
+            if (effectivePreviewUrl != null && effectivePreviewUrl != effectiveUrl) {
+                AsyncImage(
+                    effectivePreviewUrl,
+                    Modifier.fillMaxSize(),
+                    contentScale = contentScale,
+                    alignment = alignment,
+                    saturation = saturation,
+                )
             } else {
                 ImageLoadingPlaceholder(
                     modifier = Modifier.fillMaxSize(),

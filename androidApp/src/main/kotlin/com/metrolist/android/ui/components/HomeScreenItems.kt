@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.metrolist.android.playback.PlayerConnection
 import com.metrolist.android.ui.utils.playSong
+import com.metrolist.shared.api.artwork.PrefetchAppleMusicAlbumArtwork
 import com.metrolist.shared.constants.GridCaptionSafeSpace
 import com.metrolist.shared.constants.ThumbnailCornerRadius
 import com.metrolist.shared.constants.currentGridThumbnailHeight
@@ -337,6 +338,7 @@ fun YtGridItem(
                         }
                     val imageModifier = if (useInternalClip) base.clipToBounds().clip(shape) else base.clipToBounds()
 
+                    PrefetchAppleMusicAlbumArtwork(item)
                     AsyncImage(
                         url = item.displayThumbnailUrl,
                         contentDescription = null,

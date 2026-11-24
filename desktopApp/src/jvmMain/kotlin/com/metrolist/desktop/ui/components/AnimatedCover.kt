@@ -16,11 +16,17 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import com.metrolist.innertubex.sabr.ExperimentalSabrApi
+import com.metrolist.innertubex.sabr.SabrVideoStream
 import com.metrolist.shared.api.artwork.runYouTubeCanvasPlaybackClock
+import com.metrolist.shared.api.artwork.youtubeCanvasSeekPrerollMs
 import com.metrolist.shared.playback.VideoFrame
 import com.metrolist.shared.playback.VideoPlayer
+import com.metrolist.shared.playback.ffmpeg.SabrInputStream
+import com.metrolist.shared.state.GlobalYouTube
 import com.metrolist.shared.ui.components.LocalVisualWorkActive
 import com.metrolist.shared.viewmodels.PlayerViewModel.MusicVideoCanvas
+import com.metrolist.shared.youtube.logging.MetrolistInnerTubeLogger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -95,6 +101,7 @@ internal fun rememberAnimatedCoverPlayback(
     canvas: MusicVideoCanvas? = null,
 ): AnimatedCoverPlayback? = remember(url, canvas) { url?.let { AnimatedCoverPlayback(it, canvas) } }
 
+@OptIn(ExperimentalSabrApi::class)
 @Composable
 internal fun AnimatedCoverPlaybackEffect(
     playback: AnimatedCoverPlayback,
@@ -105,24 +112,43 @@ internal fun AnimatedCoverPlaybackEffect(
     val latestActive by rememberUpdatedState(active)
     val latestFrameRequested by rememberUpdatedState(frameRequested)
     LaunchedEffect(playback, visible) {
+        val resource = playback.canvas?.resource
+        val clips = playback.canvas?.clips.orEmpty()
+        var sabrSource: SabrInputStream? = null
         val loaded =
             withContext(Dispatchers.IO) {
-                playback.player.load(
-                    url = playback.url,
-                    headers =
-                        playback.canvas
-                            ?.resource
-                            ?.headers
-                            .orEmpty(),
-                    positionProvider = { 0L },
-                )
+                val sabrBootstrap = resource?.takeIf { it.hasSabrVideo }?.sabrVideoBootstrap
+                if (sabrBootstrap != null && sabrBootstrap.selectedVideoFormat != null) {
+                    val created =
+                        SabrInputStream(
+                            mediaSize = sabrBootstrap.selectedVideoContentLengthBytes ?: resource.videoContentLengthBytes,
+                            streamFactory = { initialPlayerTimeMs, playbackPositionMs ->
+                                SabrVideoStream(
+                                    httpClient = GlobalYouTube.client,
+                                    bootstrap = sabrBootstrap,
+                                    playbackPositionMs = playbackPositionMs,
+                                    initialPlayerTimeMs = initialPlayerTimeMs,
+                                    logger = MetrolistInnerTubeLogger,
+                                ).chunks()
+                            },
+                            seekPrerollMs = youtubeCanvasSeekPrerollMs(clips, false) ?: SabrInputStream.DEFAULT_SEEK_PREROLL_MS,
+                        )
+                    sabrSource = created
+                    playback.player.load(created, positionProvider = { 0L })
+                } else {
+                    playback.player.load(
+                        url = playback.url,
+                        headers = resource?.headers.orEmpty(),
+                        positionProvider = { 0L },
+                    )
+                }
             }
         if (loaded && latestFrameRequested) {
             playback.player.setVolume(0f)
             // A paused track still needs one decoded frame to determine Canvas availability.
             playback.player.play(startPaused = true)
             coroutineScope {
-                playback.canvas?.clips?.takeIf { it.isNotEmpty() }?.let { clips ->
+                if (clips.isNotEmpty() || sabrSource != null) {
                     launch {
                         runYouTubeCanvasPlaybackClock(
                             clips = clips,
@@ -130,8 +156,9 @@ internal fun AnimatedCoverPlaybackEffect(
                             isPlaying = { playback.playWhenReady.value && playback.hasFrame },
                             playWhenReady = playback.playWhenReady,
                             isEnded = { playback.ended },
-                            updatePlaybackPosition = {},
+                            updatePlaybackPosition = { position -> sabrSource?.updatePlaybackPosition(position) },
                             seekTo = {
+                                sabrSource?.updatePlaybackPosition(it)
                                 playback.ended = false
                                 playback.player.seekTo(it)
                             },

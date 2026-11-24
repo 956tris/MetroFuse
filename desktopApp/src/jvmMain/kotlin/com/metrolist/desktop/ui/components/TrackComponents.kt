@@ -72,6 +72,7 @@ import com.metrolist.desktop.storage.DownloadState
 import com.metrolist.shared.constants.ListItemHeight
 import com.metrolist.shared.constants.ListThumbnailSize
 import com.metrolist.shared.constants.ThumbnailCornerRadius
+import com.metrolist.shared.api.artwork.PrefetchAppleMusicAlbumArtwork
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.artist
 import com.metrolist.shared.generated.resources.browse
@@ -335,6 +336,7 @@ fun YTListItem(
                             .graphicsLayer { rotationZ = artworkRotation }
                             .clip(shape),
                 ) {
+                    PrefetchAppleMusicAlbumArtwork(item)
                     AsyncImage(
                         url = previewThumbnail ?: "",
                         modifier =

@@ -28,16 +28,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.add
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
-import meow.nyx.spotlib.LogLevel
-import meow.nyx.spotlib.SpotifyClient
-import meow.nyx.spotlib.SpotifyConfig
-import meow.nyx.spotlib.SpotifySession
 import java.net.URI
 import java.text.Normalizer
 import java.util.Base64
@@ -72,8 +64,6 @@ class DirectCanvasProvider(
     private val json = Json { ignoreUnknownKeys = true }
     private val mutex = Mutex()
     private var token: Pair<String, Long>? = null
-    private var publicCanvasCooldownUntil = 0L
-    private var anonymousSpotifySession = SpotifySession()
     private val cache = LinkedHashMap<List<Any?>, Pair<DirectCanvasUrls, Long>>(32, 0.75f, true)
 
     fun close() {
@@ -87,16 +77,16 @@ class DirectCanvasProvider(
         album: String? = null,
         primaryArtist: String? = null,
     ): String? {
+        if (title.isBlank() || artist.isBlank()) return null
         val pluginResult =
             try {
                 withTimeoutOrNull(15_000) { pluginCanvas(title, artist, duration, album) }
             } catch (error: CancellationException) {
                 throw error
-            } catch (error: Exception) {
+            } catch (_: Exception) {
                 null
             }
-        if (trustedMedia(pluginResult, false)) return pluginResult
-        return getCanvasesInternal(title, artist, duration, album, primaryArtist, includeAppleMusic = false).spotify
+        return pluginResult?.takeIf(::isTrustedPluginCanvasUrl)
     }
 
     suspend fun getCanvases(
@@ -105,41 +95,26 @@ class DirectCanvasProvider(
         duration: Long?,
         album: String? = null,
         primaryArtist: String? = null,
-    ): DirectCanvasUrls = getCanvasesInternal(title, artist, duration, album, primaryArtist, includeAppleMusic = true)
-
-    private suspend fun getCanvasesInternal(
-        title: String,
-        artist: String,
-        duration: Long?,
-        album: String?,
-        primaryArtist: String?,
-        includeAppleMusic: Boolean,
     ): DirectCanvasUrls {
         if (title.isBlank() || artist.isBlank()) return DirectCanvasUrls()
-        val login = session()
         val storefront = country().lowercase(Locale.ROOT)
         val lang = language()
-        val key = listOf(title, artist, primaryArtist, duration, album, storefront, lang, login.isNotBlank(), includeAppleMusic)
+        val pluginUrl = getSpotifyCanvas(title, artist, duration, album, primaryArtist)
+        val key = listOf(title, artist, primaryArtist, duration, album, storefront, lang)
         // shortcut: One lock serializes cold lookups; use per-key jobs if artwork throughput becomes a problem.
-        return mutex.withLock {
-            cache[key]?.takeIf { it.second > now() }?.let { return@withLock it.first }
-            val result =
-                coroutineScope {
-                    val spotify = async { attempt { spotify(title, artist, primaryArtist, album, duration, login) } }
-                    val apple =
-                        async {
-                            if (includeAppleMusic) {
-                                attempt { apple(title, artist, primaryArtist, album, duration, storefront, lang) }
-                            } else {
-                                null
-                            }
-                        }
-                    DirectCanvasUrls(spotify = spotify.await(), appleMusic = apple.await())
-                }
-            cache[key] = result to (now() + if (result.spotify == null && result.appleMusic == null) 60_000 else 300_000)
-            while (cache.size > 32) cache.remove(cache.keys.first())
-            result
-        }
+        val appleMusicUrl =
+            mutex.withLock {
+                cache[key]?.takeIf { it.second > now() }?.let { return@withLock it.first.appleMusic }
+                val apple =
+                    coroutineScope {
+                        async { attempt { apple(title, artist, primaryArtist, album, duration, storefront, lang) } }
+                    }.await()
+                val entry = DirectCanvasUrls(appleMusic = apple)
+                cache[key] = entry to (now() + if (apple == null) 60_000 else 300_000)
+                while (cache.size > 32) cache.remove(cache.keys.first())
+                apple
+            }
+        return DirectCanvasUrls(spotify = pluginUrl, appleMusic = appleMusicUrl)
     }
 
     private suspend fun attempt(block: suspend () -> String?): String? =
@@ -151,137 +126,6 @@ class DirectCanvasProvider(
             YtLogger.w("Canvas", "Artwork lookup failed (${error::class.simpleName})")
             null
         }
-
-    private suspend fun spotify(
-        title: String,
-        artist: String,
-        primaryArtist: String?,
-        album: String?,
-        duration: Long?,
-        login: String,
-    ): String? {
-        val stored = if (login.isBlank()) anonymousSpotifySession else json.decodeFromString<SpotifySession>(login)
-        SpotifyClient
-            .create(SpotifyConfig(engine = http.engine, logLevel = LogLevel.NONE, allowAnonymous = !stored.hasLoginCookie))
-            .use { client ->
-                client.attachSession(stored)
-                try {
-                    return spotifyCanvas(client, title, artist, primaryArtist, album, duration)
-                } finally {
-                    if (!stored.hasLoginCookie) {
-                        anonymousSpotifySession = client.session
-                    } else if (client.session != stored && session() == login) {
-                        saveSession(json.encodeToString(client.session))
-                    }
-                }
-            }
-    }
-
-    private suspend fun spotifyCanvas(
-        client: SpotifyClient,
-        title: String,
-        artist: String,
-        primaryArtist: String?,
-        album: String?,
-        duration: Long?,
-    ): String? {
-        val variables =
-            buildJsonObject {
-                put("query", "$title $artist")
-                put("limit", 10)
-                put("offset", 0)
-                put("numberOfTopResults", 10)
-                put("includeArtistHasConcertsField", false)
-                put("includeAudiobooks", true)
-                put("includeAuthors", false)
-                put("includePreReleases", true)
-                put("includeAlbumPreReleases", false)
-                put("includeEpisodeContentRatingsV2", true)
-                put(
-                    "sectionFilters",
-                    buildJsonArray {
-                        add("GENERIC")
-                        add("VIDEO_CONTENT")
-                    },
-                )
-            }
-        val search = client.canvasQuery("searchTopResultsList", SPOTIFY_SEARCH_HASH, variables)
-        val items =
-            search
-                .obj("data")
-                ?.obj("searchV2")
-                ?.obj("topResultsV2")
-                ?.array("itemsV2")
-                .orEmpty()
-        for (item in items.take(10)) {
-            val track = (item as? JsonObject)?.obj("item")?.obj("data") ?: continue
-            if (track.text("__typename") != "Track") continue
-            val id = track.text("id") ?: continue
-            val artistNames =
-                track
-                    .obj("artists")
-                    ?.array("items")
-                    .orEmpty()
-                    .mapNotNull {
-                        (it as? JsonObject)?.obj("profile")?.text("name")
-                    }
-            val artists = artistNames.joinToString(", ")
-            if (!matches(
-                    title,
-                    artist,
-                    album,
-                    duration,
-                    track.text("name"),
-                    artists,
-                    track.obj("albumOfTrack")?.text("name"),
-                    track.obj("duration")?.text("totalMilliseconds")?.toLongOrNull(),
-                    primaryArtist,
-                    artistNames.firstOrNull(),
-                )
-            ) {
-                continue
-            }
-            val canvas =
-                if (client.session.hasLoginCookie) {
-                    client
-                        .canvasQuery("canvas", SPOTIFY_CANVAS_HASH, buildJsonObject { put("trackUri", "spotify:track:$id") })
-                        .obj("data")
-                        ?.obj("trackUnion")
-                        ?.obj("canvas")
-                        ?.text("url")
-                } else {
-                    publicSpotifyCanvas(id)
-                }
-            if (trustedMedia(canvas, false)) {
-                YtLogger.d("Canvas", "Resolved Spotify Canvas")
-                return canvas
-            }
-        }
-        return null
-    }
-
-    private suspend fun publicSpotifyCanvas(trackId: String): String? {
-        if (!trackId.matches(Regex("[A-Za-z0-9]{22}"))) return null
-        val currentTime = now()
-        if (currentTime < publicCanvasCooldownUntil) return null
-        val response =
-            http
-                .prepareGet("https://spotify-canva.vercel.app/api/canvas") {
-                    attributes.put(ExpectedHttpFailureStatusCodes, setOf(402, 404, 429, 500, 502, 503, 504))
-                    parameter("trackId", trackId)
-                }.readTextLimited(256 * 1024)
-        if (!response.status.isSuccess()) {
-            if (response.status.value in setOf(402, 429) || response.status.value >= 500) {
-                publicCanvasCooldownUntil = currentTime + 10 * 60_000L
-            }
-            return null
-        }
-        val canvases = (response.body?.let { json.parseToJsonElement(it) } as? JsonObject)?.array("canvasesList") ?: return null
-        return canvases
-            .mapNotNull { it as? JsonObject }
-            .firstOrNull { it.text("trackUri") == "spotify:track:$trackId" && trustedMedia(it.text("canvasUrl"), false) }
-            ?.text("canvasUrl")
-    }
 
     private suspend fun apple(
         title: String,
@@ -423,18 +267,28 @@ class DirectCanvasProvider(
         private const val USER_AGENT =
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        private const val SPOTIFY_SEARCH_HASH = "12d940b3f7381506a82ff5382eb59b0ed65118656e6bcdfbe4cebc528f75d29d"
-        private const val SPOTIFY_CANVAS_HASH = "575138ab27cd5c1b3e54da54d0a7cc8d85485402de26340c2145f0f6bb5e7a9f"
 
         internal fun trustedMedia(
             url: String?,
             apple: Boolean,
         ): Boolean =
             url != null &&
-                trustedHost(
-                    url,
-                    if (apple) setOf("itunes.apple.com", "apple.com", "mzstatic.com", "akamaized.net") else setOf("scdn.co"),
-                )
+                if (apple) {
+                    trustedHost(url, setOf("itunes.apple.com", "apple.com", "mzstatic.com", "akamaized.net"))
+                } else {
+                    isTrustedPluginCanvasUrl(url)
+                }
+
+        internal fun isTrustedPluginCanvasUrl(url: String): Boolean {
+            val parsed = runCatching { Url(url) }.getOrNull() ?: return false
+            if (parsed.protocol != URLProtocol.HTTPS || parsed.user != null || parsed.password != null || parsed.port != 443) {
+                return false
+            }
+            val host = parsed.host.lowercase(Locale.ROOT)
+            if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false
+            if (host.contains(':') || host.all { it.isDigit() || it == '.' }) return false
+            return host.matches(Regex("(?=.*[a-z])[a-z0-9-]+(?:\\.[a-z0-9-]+)+"))
+        }
 
         private fun trustedHost(
             url: String,

@@ -27,6 +27,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.atomicfu.locks.SynchronizedObject
+import kotlinx.atomicfu.locks.synchronized
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -89,8 +91,11 @@ class AnimatedArtworkService internal constructor(
     private val cache = mutableMapOf<String, CacheEntry>()
     private val cacheMutex = Mutex()
     private val artistCache = mutableMapOf<String, ArtistCacheEntry>()
+    private val staticAlbumCache = mutableMapOf<String, CacheEntry>()
+    private val staticCacheLock = SynchronizedObject()
     private var saveJob: Job? = null
     private var artistSaveJob: Job? = null
+    private var staticSaveJob: Job? = null
     private var cacheGeneration = 0L
     private val scope = CoroutineScope(SupervisorJob())
     private val json =
@@ -106,6 +111,7 @@ class AnimatedArtworkService internal constructor(
         scope.launch(cacheLoadDispatcher) {
             loadCacheFromDisk()
             loadArtistCacheFromDisk()
+            loadStaticAlbumCacheFromDisk()
         }
 
     internal fun dispose() {
@@ -117,9 +123,14 @@ class AnimatedArtworkService internal constructor(
         private const val UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
 
         private const val CACHE_KEY_VERSION = "v9"
+        private const val STATIC_ALBUM_CACHE_VERSION = "s1"
+        private const val STATIC_ALBUM_ARTWORK_SIZE = 1200
+        private const val STATIC_ALBUM_MISS_MAX_AGE_SECONDS = 300L
         private const val CACHE_MAX_AGE_SECONDS = 30L * 24 * 60 * 60
         private const val CACHE_MISS_MAX_AGE_SECONDS = 60L
         private const val MAX_COVER_CACHE_ENTRIES = 1_000
+        private val appleSquareArtworkRegex =
+            Regex("(/[^/?#]+/)(\\d+)x(\\d+)([a-zA-Z0-9-]*)(\\.(?:jpg|jpeg|png|webp))(?=[?#]|$)", RegexOption.IGNORE_CASE)
         private const val MAX_COLLECTION_CANDIDATES = 8
         private const val ARTIST_NEGATIVE_CACHE_MAX_AGE_SECONDS = 7L * 24 * 60 * 60
         private const val MAX_ARTIST_CACHE_ENTRIES = 500
@@ -226,6 +237,31 @@ class AnimatedArtworkService internal constructor(
                 }
         }.onFailure {
             YtLogger.w(TAG, "Failed to load artist artwork cache (${it::class.simpleName})")
+        }
+    }
+
+    private fun loadStaticAlbumCacheFromDisk() {
+        runCatching {
+            val raw = Settings.shared.appleMusicAlbumArtworkCacheJson
+            if (raw.isBlank() || raw == "{}") return
+            val obj = json.parseToJsonElement(raw).jsonObject
+            val now = currentTimeSeconds()
+            synchronized(staticCacheLock) {
+                for ((key, value) in obj) {
+                    if (!key.startsWith("$STATIC_ALBUM_CACHE_VERSION|")) continue
+                    val entry = parseCacheEntry(value) ?: continue
+                    val maxAge = if (entry.url == null) STATIC_ALBUM_MISS_MAX_AGE_SECONDS else CACHE_MAX_AGE_SECONDS
+                    if (now - entry.cachedAt > maxAge) continue
+                    val url = entry.url
+                    if (url != null && !isTrustedArtworkUrl(url)) continue
+                    staticAlbumCache[key] = entry
+                }
+                while (staticAlbumCache.size > MAX_COVER_CACHE_ENTRIES) {
+                    staticAlbumCache.minByOrNull { it.value.cachedAt }?.key?.let(staticAlbumCache::remove)
+                }
+            }
+        }.onFailure {
+            YtLogger.w(TAG, "Failed to load static album artwork cache (${it::class.simpleName})")
         }
     }
 
@@ -359,6 +395,253 @@ class AnimatedArtworkService internal constructor(
             }
     }
 
+    fun cachedStaticAlbumArtwork(
+        title: String,
+        artist: String,
+        album: String? = null,
+        explicit: Boolean? = null,
+    ): String? {
+        if (!Settings.shared.preferAppleMusicAlbumArtwork || artist.isBlank()) return null
+        if (title.isBlank() && album.isNullOrBlank()) return null
+        val key = buildStaticAlbumCacheKey(title, artist, album, resolveArtworkExplicitness(album, explicit))
+        val now = currentTimeSeconds()
+        return synchronized(staticCacheLock) {
+            val entry = staticAlbumCache[key] ?: return@synchronized null
+            val maxAge = if (entry.url == null) STATIC_ALBUM_MISS_MAX_AGE_SECONDS else CACHE_MAX_AGE_SECONDS
+            if (now - entry.cachedAt > maxAge) {
+                staticAlbumCache.remove(key)
+                return@synchronized null
+            }
+            entry.url?.takeIf(::isTrustedArtworkUrl)
+        }
+    }
+
+    suspend fun fetchStaticAlbumArtwork(
+        title: String,
+        artist: String,
+        album: String? = null,
+        explicit: Boolean? = null,
+    ): String? {
+        if (!Settings.shared.preferAppleMusicAlbumArtwork || artist.isBlank()) return null
+        if (title.isBlank() && album.isNullOrBlank()) return null
+        cacheLoadJob.join()
+
+        val resolvedExplicit = resolveArtworkExplicitness(album, explicit)
+        val cacheKey = buildStaticAlbumCacheKey(title, artist, album, resolvedExplicit)
+        val now = currentTimeSeconds()
+        val generation =
+            synchronized(staticCacheLock) {
+                val entry = staticAlbumCache[cacheKey]
+                if (entry != null) {
+                    val maxAge = if (entry.url == null) STATIC_ALBUM_MISS_MAX_AGE_SECONDS else CACHE_MAX_AGE_SECONDS
+                    if (now - entry.cachedAt <= maxAge) {
+                        return entry.url?.takeIf(::isTrustedArtworkUrl)
+                    }
+                    staticAlbumCache.remove(cacheKey)
+                }
+                cacheGeneration
+            }
+
+        val cleanTitle = cleanTitleText(title)
+        val cleanArtist = normalizeArtist(artist)
+        val cleanAlbum = album?.let { stripArtworkEditionSuffix(normalizeAlbum(it)) }?.takeIf { it.isNotBlank() }
+        val albumIsVariant = album != null && cleanTitleText(album) != cleanAlbum
+        val isVariantTitle = title.isNotBlank() && isVariantTitle(title, cleanTitle)
+
+        var resolvedUrl: String? = null
+        try {
+            if (cleanAlbum != null && !isVariantTitle) {
+                val albumResults = fetchAlbumSearchResults("$artist $cleanAlbum")
+                val albumMatches =
+                    albumResults.filter { result ->
+                        normalizeArtist(result.artistName) == cleanArtist &&
+                            (resolvedExplicit == null || matchesAppleMusicExplicitness(null, result.collectionExplicitness, resolvedExplicit, true)) &&
+                            result.collectionName != null &&
+                            albumNamesMatch(result.collectionName, cleanAlbum, strict = albumIsVariant)
+                    }
+                val exact =
+                    albumMatches.firstOrNull {
+                        it.collectionName
+                            ?.let(::normalizeAlbum)
+                            ?.let(::stripArtworkEditionSuffix) == cleanAlbum
+                    } ?: albumMatches.firstOrNull()
+                resolvedUrl = scaleStaticAppleArtworkUrl(exact?.artworkUrl100)
+            }
+
+            if (resolvedUrl == null) {
+                val queryTerm =
+                    listOf(artist, cleanTitle.ifBlank { cleanAlbum.orEmpty() })
+                        .filter(String::isNotBlank)
+                        .joinToString(" ")
+                val seen = mutableSetOf<Long>()
+                val songResults = fetchSearchResults(queryTerm, seen)
+                val artistMatches =
+                    songResults.filter { r ->
+                        matchesArtist(r, cleanArtist) &&
+                            (resolvedExplicit == null || matchesExplicit(r, resolvedExplicit, cleanAlbum != null))
+                    }
+                val albumMatch =
+                    if (cleanAlbum != null && !isVariantTitle) {
+                        artistMatches.firstOrNull { r ->
+                            val collectionName = r.collectionName ?: return@firstOrNull false
+                            albumNamesMatch(collectionName, cleanAlbum, strict = albumIsVariant)
+                        }
+                    } else {
+                        null
+                    }
+                val songMatch =
+                    albumMatch ?: if (title.isNotBlank()) {
+                        artistMatches.firstOrNull { r ->
+                            if (isVariantTitle) {
+                                r.trackName.trim().replace(smartQuotePattern, "'").equals(
+                                    title.trim().replace(smartQuotePattern, "'"),
+                                    ignoreCase = true,
+                                )
+                            } else {
+                                matchesTitle(r, cleanTitle, title)
+                            }
+                        }
+                    } else {
+                        null
+                    }
+                resolvedUrl = scaleStaticAppleArtworkUrl(songMatch?.artworkUrl100)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
+            YtLogger.w(TAG, "Static album artwork fetch failed (${e::class.simpleName})")
+            return null
+        }
+
+        val trusted = resolvedUrl?.takeIf(::isTrustedArtworkUrl)
+        cacheStaticAlbumAndSave(cacheKey, trusted, generation)
+        return trusted
+    }
+
+    private fun buildStaticAlbumCacheKey(
+        title: String,
+        artist: String,
+        album: String?,
+        explicit: Boolean?,
+    ): String {
+        val cleanArtist = escapeCacheComponent(artist.lowercase().trim())
+        val cleanAlbum = album?.lowercase()?.trim()?.takeIf { it.isNotEmpty() }
+        val rawTitleNormalized = title.trim().replace(smartQuotePattern, "'").lowercase()
+        val key =
+            when {
+                !cleanAlbum.isNullOrBlank() && rawTitleNormalized == cleanTitleText(title) -> {
+                    "$cleanArtist|A|${escapeCacheComponent(cleanAlbum)}"
+                }
+
+                !cleanAlbum.isNullOrBlank() -> {
+                    "$cleanArtist|A|${escapeCacheComponent(cleanAlbum)}|${escapeCacheComponent(rawTitleNormalized)}"
+                }
+
+                rawTitleNormalized != cleanTitleText(title) -> {
+                    "$cleanArtist|T|${escapeCacheComponent(rawTitleNormalized)}"
+                }
+
+                else -> {
+                    "$cleanArtist|T|${escapeCacheComponent(cleanTitleText(title))}"
+                }
+            }
+        val explicitKey = explicit?.let { if (it) "|E" else "|C" }.orEmpty()
+        return "$STATIC_ALBUM_CACHE_VERSION|$key$explicitKey|C${Settings.shared.lastResolvedContentCountry}"
+    }
+
+    private suspend fun fetchAlbumSearchResults(query: String): List<AniTunesAlbumSearchResult> {
+        try {
+            val response =
+                withTimeout(8_000.milliseconds) {
+                    httpClient
+                        .prepareGet("https://itunes.apple.com/search") {
+                            parameter("term", query)
+                            parameter("entity", "album")
+                            parameter("limit", 25)
+                            parameter("country", Settings.shared.lastResolvedContentCountry)
+                        }.readTextLimited(MAX_JSON_RESPONSE_BYTES)
+                }
+            val body = response.body
+            if (!response.status.isSuccess() || body.isNullOrBlank()) return emptyList()
+            return json.decodeFromString<AniTunesAlbumSearchResponse>(body).results
+        } catch (_: TimeoutCancellationException) {
+            YtLogger.w(TAG, "iTunes album search timed out")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            currentCoroutineContext().ensureActive()
+            YtLogger.w(TAG, "iTunes album search failed (${e::class.simpleName})")
+        }
+        return emptyList()
+    }
+
+    private fun scaleStaticAppleArtworkUrl(url: String?): String? {
+        val candidate = url?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val path = candidate.substringBefore('#').substringBefore('?')
+        val match = appleSquareArtworkRegex.find(path)
+        val scaled =
+            if (match != null && match.groupValues[2] == match.groupValues[3]) {
+                val ext = match.groupValues[5]
+                candidate.replaceRange(match.range, "${match.groupValues[1]}${STATIC_ALBUM_ARTWORK_SIZE}x${STATIC_ALBUM_ARTWORK_SIZE}bb$ext")
+            } else {
+                candidate
+            }
+        return scaled.takeIf(::isTrustedArtworkUrl)
+    }
+
+    private fun cacheStaticAlbumAndSave(
+        key: String,
+        value: String?,
+        generation: Long,
+    ) {
+        if (value != null && !isTrustedArtworkUrl(value)) return
+        val saved =
+            synchronized(staticCacheLock) {
+                if (cacheGeneration != generation) return@synchronized false
+                staticAlbumCache[key] = CacheEntry(value, currentTimeSeconds())
+                while (staticAlbumCache.size > MAX_COVER_CACHE_ENTRIES) {
+                    staticAlbumCache.minByOrNull { it.value.cachedAt }?.key?.let(staticAlbumCache::remove)
+                }
+                true
+            }
+        if (!saved) return
+        staticSaveJob?.cancel()
+        staticSaveJob =
+            scope.launch {
+                delay(1500.milliseconds)
+                saveStaticAlbumCacheToDisk()
+            }
+    }
+
+    private suspend fun saveStaticAlbumCacheToDisk() {
+        try {
+            val (snapshot, generation) =
+                synchronized(staticCacheLock) {
+                    staticAlbumCache.toMap() to cacheGeneration
+                }
+            val map =
+                snapshot.mapValues { (_, entry) ->
+                    JsonObject(
+                        mapOf(
+                            "url" to (entry.url?.let { JsonPrimitive(it) } ?: JsonNull),
+                            "cachedAt" to JsonPrimitive(entry.cachedAt),
+                        ),
+                    )
+                }
+            val encoded = json.encodeToString(JsonObject(map))
+            val shouldWrite =
+                synchronized(staticCacheLock) {
+                    cacheGeneration == generation
+                }
+            if (shouldWrite) Settings.shared.appleMusicAlbumArtworkCacheJson = encoded
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            YtLogger.w(TAG, "Failed to save static album artwork cache (${e::class.simpleName})")
+        }
+    }
+
     suspend fun fetchAnimatedCover(
         title: String,
         artist: String,
@@ -484,12 +767,16 @@ class AnimatedArtworkService internal constructor(
         cacheMutex.withLock {
             cache.clear()
             artistCache.clear()
+            synchronized(staticCacheLock) { staticAlbumCache.clear() }
             cacheGeneration++
         }
         saveJob?.cancel()
         artistSaveJob?.cancel()
+        staticSaveJob?.cancel()
         Settings.shared.animatedCoverCacheJson = "{}"
         Settings.shared.appleMusicArtistCacheJson = "{}"
+        Settings.shared.appleMusicAlbumArtworkCacheJson = "{}"
+        AppleMusicAlbumArtworkStore.clear()
         YtLogger.d(TAG, "Animated artwork URL caches cleared")
     }
 
@@ -1355,8 +1642,24 @@ private data class AniTunesSearchResult(
     val collectionName: String? = null,
     val collectionExplicitness: String? = null,
     val trackExplicitness: String? = null,
+    val artworkUrl100: String? = null,
     val kind: String = "",
     val trackId: Long = 0,
+)
+
+@Serializable
+private data class AniTunesAlbumSearchResponse(
+    val resultCount: Int = 0,
+    val results: List<AniTunesAlbumSearchResult> = emptyList(),
+)
+
+@Serializable
+private data class AniTunesAlbumSearchResult(
+    val collectionId: Long = 0,
+    val collectionName: String? = null,
+    val artistName: String = "",
+    val collectionExplicitness: String? = null,
+    val artworkUrl100: String? = null,
 )
 
 @Serializable

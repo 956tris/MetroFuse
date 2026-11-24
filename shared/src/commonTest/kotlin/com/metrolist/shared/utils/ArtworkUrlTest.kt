@@ -95,4 +95,21 @@ class ArtworkUrlTest {
             assertEquals(url, canonicalArtworkUrl(url))
         }
     }
+
+    @Test
+    fun appleMusicArtworkScalesSquareMzstaticPathsAcrossSizeBuckets() {
+        val sample = "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/12/34/56/abc/source/100x100bb.jpg"
+        assertEquals(
+            "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/12/34/56/abc/source/256x256bb.jpg",
+            bucketedArtworkUrl(sample, 128),
+        )
+        assertEquals(
+            "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/12/34/56/abc/source/1200x1200bb.jpg",
+            canonicalArtworkUrl(sample),
+        )
+        assertEquals(
+            "https://is1-ssl.mzstatic.com/image/thumb/Music115/v4/12/34/56/abc/source/2400x2400bb.jpg",
+            highResolutionArtworkUrl(sample),
+        )
+    }
 }

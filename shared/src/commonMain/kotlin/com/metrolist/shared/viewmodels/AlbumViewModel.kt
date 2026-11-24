@@ -3,6 +3,7 @@ package com.metrolist.shared.viewmodels
 import androidx.compose.runtime.State
 import androidx.compose.runtime.mutableStateOf
 import com.metrolist.shared.api.YouTubeRepository
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.api.shouldLoadPlaylistPage
 import com.metrolist.shared.model.AlbumItem
 import com.metrolist.shared.model.AlbumPage
@@ -134,6 +135,27 @@ class AlbumViewModel(
         _albumPage.value = filteredPage
         _albumInfo.value = filteredPage?.album
         _songs.value = filteredPage?.songs ?: emptyList()
+        filteredPage?.album?.let { album ->
+            val artistName = album.artists.joinToString(", ") { it.name }
+            AppleMusicAlbumArtworkStore.request(
+                sourceUrl = album.thumbnail,
+                title = album.title,
+                artist = artistName,
+                album = album.title,
+                explicit = album.isExplicit,
+            )
+            filteredPage.songs.firstOrNull { !it.thumbnail.isNullOrBlank() }?.let { sampleSong ->
+                if (sampleSong.thumbnail != album.thumbnail) {
+                    AppleMusicAlbumArtworkStore.request(
+                        sourceUrl = sampleSong.thumbnail,
+                        title = sampleSong.title,
+                        artist = sampleSong.artists.joinToString(", ") { it.name }.ifBlank { artistName },
+                        album = album.title,
+                        explicit = album.isExplicit || sampleSong.isExplicit,
+                    )
+                }
+            }
+        }
     }
 
     private fun applyBlockedContentFilter() {

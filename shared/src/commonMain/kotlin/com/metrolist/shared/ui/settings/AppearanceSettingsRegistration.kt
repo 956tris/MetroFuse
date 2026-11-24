@@ -18,6 +18,7 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import com.metrolist.shared.generated.resources.*
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.AnimatedCoverResolution
 import com.metrolist.shared.settings.AppLayout
 import com.metrolist.shared.settings.DensityScale
@@ -771,6 +772,12 @@ internal fun SettingsUiRegistryBuilder.registerAppearanceSettings(host: SharedSe
             if (host.platform != SettingsPlatform.IOS) {
                 group("artistArtwork", stringResource(Res.string.settings_artist_sources)) {
                     switch(
+                        id = "preferAppleMusicAlbumArtwork",
+                        title = stringResource(Res.string.prefer_apple_music_album_artwork_title),
+                        description = stringResource(Res.string.prefer_apple_music_album_artwork_desc),
+                        checked = settings.preferAppleMusicAlbumArtwork,
+                    ) { settings.preferAppleMusicAlbumArtwork = it }
+                    switch(
                         id = "appleMusicArtistImages",
                         title = stringResource(Res.string.apple_music_artist_images_title),
                         description = stringResource(Res.string.apple_music_artist_images_description),
@@ -793,10 +800,11 @@ internal fun SettingsUiRegistryBuilder.registerAppearanceSettings(host: SharedSe
                 }
             }
             if (host.platform == SettingsPlatform.ANDROID) {
+                val supportsPluginCanvas = PluginServicesStore.current?.supportsMusicVideoCanvas == true
                 group(
                     "youtubeCanvas",
                     stringResource(Res.string.youtube_video_canvas),
-                    enabled = settings.isCanvasEnabled && settings.musicVideoPlaybackEnabled,
+                    enabled = settings.isCanvasEnabled && (settings.musicVideoPlaybackEnabled || supportsPluginCanvas),
                 ) {
                     val canvasQualityChoices =
                         MusicVideoQuality.entries.map { quality ->

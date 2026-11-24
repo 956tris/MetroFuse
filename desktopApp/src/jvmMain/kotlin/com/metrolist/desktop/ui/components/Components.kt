@@ -38,6 +38,7 @@ import com.metrolist.desktop.state.app.UiState
 import com.metrolist.desktop.state.playback.PlayerArtworkPreview
 import com.metrolist.shared.constants.ThumbnailCornerRadius
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.theme.ThemeColorExtractor
 import com.metrolist.shared.ui.utils.ArtworkBlurStyle
@@ -105,7 +106,8 @@ internal fun AsyncImage(
     blur: ArtworkBlurStyle? = null,
 ) {
     val context = LocalPlatformContext.current
-    val canonicalUrl = remember(url) { canonicalArtworkUrl(url) }
+    val effectiveUrl = AppleMusicAlbumArtworkStore.overrideFor(url) ?: url
+    val canonicalUrl = remember(effectiveUrl) { canonicalArtworkUrl(effectiveUrl) }
     val artworkColorsEnabled = Settings.shared.materialYouEnabled && Settings.shared.dynamicTheme
 
     val saturationMatrix =
@@ -126,7 +128,7 @@ internal fun AsyncImage(
                     requestMutex.withLock {
                         val themeData =
                             artworkThemeCacheMutex.withLock { artworkThemeCache[artworkUrl] }
-                                ?: loadArtworkTheme(context, url).also { theme ->
+                                ?: loadArtworkTheme(context, effectiveUrl).also { theme ->
                                     artworkThemeCacheMutex.withLock { artworkThemeCache[artworkUrl] = theme }
                                 }
                         themeData.seedColor
@@ -140,11 +142,11 @@ internal fun AsyncImage(
 
     val imageModifier =
         if (blur != null) {
-            modifier.cachedArtworkBlur(blur, if (url.isBlank()) RectangleShape else shape)
+            modifier.cachedArtworkBlur(blur, if (effectiveUrl.isBlank()) RectangleShape else shape)
         } else {
             modifier.clip(shape)
         }
-    if (url.isBlank()) {
+    if (effectiveUrl.isBlank()) {
         val backgroundModifier = if (blur == null) modifier else imageModifier
         Box(
             backgroundModifier.background(MaterialTheme.colorScheme.surfaceVariant, shape),
@@ -157,13 +159,13 @@ internal fun AsyncImage(
     val previewImage = artworkPreview?.image
     val previewPainter = remember(previewImage, context) { previewImage?.asPainter(context) }
     val model =
-        remember(url, maxDecodeWidth, context) {
+        remember(effectiveUrl, maxDecodeWidth, context) {
             if (maxDecodeWidth == null) {
-                url
+                effectiveUrl
             } else {
                 ImageRequest
                     .Builder(context)
-                    .data(url)
+                    .data(effectiveUrl)
                     .size(maxDecodeWidth, maxDecodeWidth)
                     .build()
             }

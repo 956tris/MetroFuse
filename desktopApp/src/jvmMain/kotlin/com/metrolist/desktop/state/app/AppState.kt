@@ -15,6 +15,7 @@ import com.metrolist.desktop.update.isNewerDesktopVersion
 import com.metrolist.desktop.utils.AppLogger
 import com.metrolist.shared.BuildConfig
 import com.metrolist.shared.api.artwork.AnimatedArtworkService
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.api.artwork.DirectCanvasProvider
 import com.metrolist.shared.discord.DiscordRpcManager
 import com.metrolist.shared.generated.resources.Res
@@ -43,7 +44,7 @@ import java.awt.datatransfer.StringSelection
 
 object AppState {
     val directCanvasProvider by lazy { DirectCanvasProvider(GlobalYouTube.client) }
-    val animatedArtworkService by lazy { AnimatedArtworkService(GlobalYouTube.client) }
+    val animatedArtworkService by lazy { AnimatedArtworkService(GlobalYouTube.client).also(AppleMusicAlbumArtworkStore::attach) }
     internal val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     val snackbarHostState = SnackbarHostState()
 

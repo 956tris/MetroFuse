@@ -590,6 +590,10 @@
     <string name="animated_cover_resolution_high">High (1080p)</string>
     <!-- Translators: Animated-cover resolution option that keeps the source resolution. -->
     <string name="animated_cover_resolution_original">Original</string>
+    <!-- Translators: Option label for preferring Apple Music static album artwork globally. -->
+    <string name="prefer_apple_music_album_artwork_title">Prefer Apple Music album artwork</string>
+    <!-- Translators: Supporting text for preferring Apple Music static album artwork globally. -->
+    <string name="prefer_apple_music_album_artwork_desc">Use high-resolution Apple Music static album covers across the app when available</string>
     <!-- Translators: Option or section label for Apple Music artist images. -->
     <string name="apple_music_artist_images_title">Apple Music artist images</string>
     <!-- Translators: Supporting text for Apple Music artist images. -->

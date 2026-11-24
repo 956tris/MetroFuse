@@ -18,6 +18,7 @@ import com.metrolist.android.viewmodels.PlaylistViewModel
 import com.metrolist.android.viewmodels.SearchViewModel
 import com.metrolist.android.viewmodels.StatsViewModel
 import com.metrolist.shared.api.artwork.AnimatedArtworkService
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.api.artwork.DirectCanvasProvider
 import com.metrolist.shared.viewmodels.PlayerViewModel
 import kotlinx.coroutines.CoroutineScope
@@ -44,7 +45,7 @@ val viewModelsModule =
             )
         }
 
-        singleOf(::AnimatedArtworkService)
+        single { AnimatedArtworkService(get()).also(AppleMusicAlbumArtworkStore::attach) }
 
         viewModel { params ->
             BrowseViewModel(params[0], params[1], params[2])

@@ -11,6 +11,7 @@ import coil3.request.ImageRequest
 import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.innertubex.extraction.ContentHints
 import com.metrolist.shared.api.artwork.AnimatedArtworkService
+import com.metrolist.shared.api.artwork.AppleMusicAlbumArtworkStore
 import com.metrolist.shared.api.artwork.CanvasArtworkState
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.api.artwork.YouTubeCanvasClip
@@ -211,6 +212,7 @@ class PlayerViewModel(
     private val canvasVisible = MutableStateFlow(false)
     private var counterpartFetchJob: Job? = null
     private var albumFetchJob: Job? = null
+    private var staticArtworkFetchJob: Job? = null
     private var retimeLyricsJob: Job? = null
     private var lyricsOffsetSaveJob: Job? = null
     private var lyricsRequestId = 0L
@@ -238,6 +240,7 @@ class PlayerViewModel(
                 musicVideoCanvasFetch.invalidate()
                 counterpartFetchJob?.cancel()
                 albumFetchJob?.cancel()
+                staticArtworkFetchJob?.cancel()
                 retimeLyricsJob?.cancel()
                 lyricsRequestId++
                 lyricsRequestKey = null
@@ -265,6 +268,23 @@ class PlayerViewModel(
                 _uiState.value.currentSong
                     ?.musicVideoCanvas
                     .takeUnless { isNewSong }
+            val previousAppleStaticArtworkUrl =
+                _uiState.value.currentSong
+                    ?.appleMusicStaticArtworkUrl
+                    .takeIf { !isNewSong || sameAlbum }
+                    ?: song?.takeIf { !it.isLocal && !it.isUploaded && !it.isVideoSong }?.let { item ->
+                        val artist = item.artists.joinToString(", ") { it.name }
+                        if (Settings.shared.preferAppleMusicAlbumArtwork && artist.isNotBlank()) {
+                            animatedArtworkService.cachedStaticAlbumArtwork(
+                                title = item.title,
+                                artist = artist,
+                                album = item.album?.name,
+                                explicit = item.artworkExplicitness,
+                            )
+                        } else {
+                            null
+                        }
+                    }
             val previousCanvasState =
                 _uiState.value.currentSong
                     ?.canvasState
@@ -294,6 +314,7 @@ class PlayerViewModel(
                                 appleMusicTallAnimatedCoverUrl =
                                     previousAppleMusicTallAnimatedCoverUrl ?: preloaded?.appleMusicTallAnimatedCoverUrl,
                                 musicVideoCanvas = previousMusicVideoCanvas ?: preloaded?.musicVideoCanvas,
+                                appleMusicStaticArtworkUrl = previousAppleStaticArtworkUrl,
                                 canvasState = preloaded?.canvasState ?: previousCanvasState,
                                 pendingCanvasSources =
                                     if (isNewSong) {
@@ -343,15 +364,21 @@ class PlayerViewModel(
                     song?.let { fetchAnimatedCover(it, keepAppleCover = sameAlbum && previousAppleMusicAnimatedCoverUrl != null) }
                 }
                 if (preloaded?.musicVideoCanvas == null) song?.let { fetchMusicVideoCanvas(it) }
+                if (previousAppleStaticArtworkUrl == null) song?.let(::fetchStaticAlbumArtwork)
                 song?.takeIf { it.isVideoSong }?.let { fetchCounterpart(it) }
                 song?.takeIf { it.album?.id == null }?.let(::fetchAlbum)
-            } else if (
-                Settings.shared.isAnimatedArtworkOrCanvasEnabled &&
-                previousSpotifyAnimatedCoverUrl == null &&
-                previousAppleMusicAnimatedCoverUrl == null &&
-                song != null
-            ) {
-                fetchAnimatedCover(song)
+            } else {
+                if (
+                    Settings.shared.isAnimatedArtworkOrCanvasEnabled &&
+                    previousSpotifyAnimatedCoverUrl == null &&
+                    previousAppleMusicAnimatedCoverUrl == null &&
+                    song != null
+                ) {
+                    fetchAnimatedCover(song)
+                }
+                if (previousAppleStaticArtworkUrl == null && song != null) {
+                    fetchStaticAlbumArtwork(song)
+                }
             }
         }.launchIn(viewModelScope)
 
@@ -645,6 +672,45 @@ class PlayerViewModel(
                 _uiState.value = _uiState.value.copy(currentSong = current.copy(musicVideoCanvas = null))
                 playerConnection.currentSong.value?.let(::fetchMusicVideoCanvas)
             }?.launchIn(viewModelScope)
+
+        snapshotFlow { Settings.shared.preferAppleMusicAlbumArtwork }
+            .distinctUntilChanged()
+            .drop(1)
+            .onEach { enabled ->
+                staticArtworkFetchJob?.cancel()
+                val current = _uiState.value.currentSong ?: return@onEach
+                if (!enabled) {
+                    _uiState.value = _uiState.value.copy(currentSong = current.copy(appleMusicStaticArtworkUrl = null))
+                } else {
+                    playerConnection.currentSong.value?.let(::fetchStaticAlbumArtwork)
+                }
+            }.launchIn(viewModelScope)
+    }
+
+    private fun fetchStaticAlbumArtwork(song: SongItem) {
+        if (!Settings.shared.preferAppleMusicAlbumArtwork || song.isLocal || song.isUploaded || song.isVideoSong) return
+        val artist = song.artists.joinToString(", ") { it.name }
+        if (artist.isBlank()) return
+        staticArtworkFetchJob?.cancel()
+        staticArtworkFetchJob =
+            viewModelScope.launch {
+                val resolved =
+                    withContext(Dispatchers.IO) {
+                        animatedArtworkService.fetchStaticAlbumArtwork(
+                            title = song.title,
+                            artist = artist,
+                            album = song.album?.name,
+                            explicit = song.artworkExplicitness,
+                        )
+                    } ?: return@launch
+                AppleMusicAlbumArtworkStore.recordOverride(song.thumbnail, resolved)
+                if (_uiState.value.currentSong?.id == song.id) {
+                    _uiState.value =
+                        _uiState.value.copy(
+                            currentSong = _uiState.value.currentSong?.copy(appleMusicStaticArtworkUrl = resolved),
+                        )
+                }
+            }
     }
 
     private fun fetchAlbum(song: SongItem) {
@@ -665,6 +731,7 @@ class PlayerViewModel(
                     val enrichedSong = song.copy(album = album)
                     invalidateAnimatedCoverRequest(song.id)
                     fetchAnimatedCover(enrichedSong)
+                    fetchStaticAlbumArtwork(enrichedSong)
                 }
             }
     }
@@ -2176,11 +2243,13 @@ class PlayerViewModel(
         val spotifyAnimatedCoverUrl: String? = null,
         val appleMusicAnimatedCoverUrl: String? = null,
         val appleMusicTallAnimatedCoverUrl: String? = null,
+        val appleMusicStaticArtworkUrl: String? = null,
         val musicVideoCanvas: MusicVideoCanvas? = null,
         val canvasState: CanvasArtworkState = CanvasArtworkState.NOT_REQUESTED,
         val pendingCanvasSources: Set<CanvasContentSource> = emptySet(),
     ) {
-        val displayThumbnail: String? get() = toSongItem().previewThumbnailUrl
+        val displayThumbnail: String?
+            get() = appleMusicStaticArtworkUrl?.takeIf { Settings.shared.preferAppleMusicAlbumArtwork } ?: toSongItem().previewThumbnailUrl
         val isOfficialMusicVideo: Boolean
             get() = isOfficialVideoType(musicVideoType)
         val isLive: Boolean

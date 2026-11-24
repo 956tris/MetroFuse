@@ -28,6 +28,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.metrolist.shared.api.artwork.PrefetchAppleMusicAlbumArtwork
 import com.metrolist.shared.constants.currentGridThumbnailHeight
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.minutes_short
@@ -115,6 +116,7 @@ private fun AlbumHeaderArtwork(
     modifier: Modifier,
     cornerRadius: Dp,
 ) {
+    PrefetchAppleMusicAlbumArtwork(album)
     AsyncImage(
         url = album.thumbnail ?: "",
         previewUrl = CollectionPreviews.album(album.id)?.thumbnail ?: album.thumbnail,

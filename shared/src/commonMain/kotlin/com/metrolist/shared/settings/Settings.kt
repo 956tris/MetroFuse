@@ -29,10 +29,12 @@ import com.metrolist.shared.constants.AnimatedCoverCacheSizeKey
 import com.metrolist.shared.constants.AnimatedCoverResolutionKey
 import com.metrolist.shared.constants.AppIconKey
 import com.metrolist.shared.constants.AppLanguageKey
+import com.metrolist.shared.constants.AppleMusicAlbumArtworkCacheJsonKey
 import com.metrolist.shared.constants.AppleMusicArtistCacheJsonKey
 import com.metrolist.shared.constants.AppleMusicArtistImagesKey
 import com.metrolist.shared.constants.AppleMusicArtistVideoResolutionKey
 import com.metrolist.shared.constants.AppleMusicArtistVideosKey
+import com.metrolist.shared.constants.PreferAppleMusicAlbumArtworkKey
 import com.metrolist.shared.constants.ArtistNameAliasesJsonKey
 import com.metrolist.shared.constants.AudioBoostDbKey
 import com.metrolist.shared.constants.AudioMatchOverridesJsonKey
@@ -688,6 +690,8 @@ class Settings(
     fun isAnimatedArtworkAllowedOnNetwork(network: PlaybackNetworkState = PlaybackNetworkStateStore.current): Boolean =
         !disableAnimatedArtworkOnMobileData || !network.isCellular
 
+    var preferAppleMusicAlbumArtwork by preference(PreferAppleMusicAlbumArtworkKey, true)
+    var appleMusicAlbumArtworkCacheJson by preference(AppleMusicAlbumArtworkCacheJsonKey, "{}")
     var enableAppleMusicArtistImages by preference(AppleMusicArtistImagesKey, false)
     var enableAppleMusicArtistVideos by preference(AppleMusicArtistVideosKey, enableAppleMusicArtistImages)
     var animatedCoverResolution by preference(AnimatedCoverResolutionKey, AnimatedCoverResolution.MEDIUM_720)

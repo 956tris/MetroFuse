@@ -114,6 +114,7 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
+import com.metrolist.shared.api.artwork.PrefetchAppleMusicAlbumArtwork
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.action_download
 import com.metrolist.shared.generated.resources.action_like
@@ -1454,6 +1455,14 @@ private fun TrackItem(
                     contentAlignment = Alignment.Center,
                 ) {
                     if (track.thumbnailUrl != null) {
+                        PrefetchAppleMusicAlbumArtwork(
+                            key = track.id,
+                            thumbnailUrl = track.thumbnailUrl,
+                            title = track.title,
+                            artist = track.artist,
+                            album = null,
+                            enabled = track.thumbnailAspectRatio <= 1.1f,
+                        )
                         AsyncImage(
                             url = track.thumbnailUrl,
                             contentDescription = null,

@@ -161,6 +161,8 @@ val AppleMusicArtistImagesKey = "enableAppleMusicArtistArtwork"
 val AppleMusicArtistVideosKey = "enableAppleMusicArtistVideos"
 val AppleMusicArtistVideoResolutionKey = "appleMusicArtistVideoResolution"
 val AppleMusicArtistCacheJsonKey = "appleMusicArtistCacheJson"
+val PreferAppleMusicAlbumArtworkKey = "preferAppleMusicAlbumArtwork"
+val AppleMusicAlbumArtworkCacheJsonKey = "appleMusicAlbumArtworkCacheJson"
 
 val LastFmArtistCacheJsonKey = "lastFmArtistCacheV2Json"
 val LastFmPhotoCacheJsonKey = "lastFmPhotoCacheJson"
