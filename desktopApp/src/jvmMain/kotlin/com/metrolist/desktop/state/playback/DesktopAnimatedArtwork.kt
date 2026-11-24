@@ -17,6 +17,7 @@ import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.artworkExplicitness
 import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.settings.targetHeight
 import com.metrolist.shared.viewmodels.PlayerViewModel.MusicVideoCanvas
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
