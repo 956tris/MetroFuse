@@ -8,6 +8,8 @@ Windows browser diagnostics reach the application's log through the helper's err
 
 Requests declaring required session cookies check the configured service cookie URL while any allowed sign-in page is open. A phone approval can finish as soon as those cookies arrive, even when an identity-provider redirect is still pending. An explicit `completionPath` continues to require the configured cookie origin and exact path. The calling plugin verifies the captured account before accepting or saving it.
 
+JavaScript plugins can check `host.webLoginCapabilities?.dottedCookieNames` before declaring required cookie names containing a period. The supported names still apply only to the configured service cookie URL.
+
 Native plugins compile against both `plugin-api` and `plugin-sdk` JARs with the host's Kotlin and Compose versions. Keep both dependencies compile-only in production: their classes are supplied by the host and must never be bundled into a plugin JAR or APK. JavaScript plugins return `{request, labels}` from `host.login`'s `ui` callback to contribute the SDK's browser screen.
 
 Export the JARs with `:plugin-api:desktopJar :plugin-sdk:desktopJar`. Windows packaging needs .NET SDK 10 and restores Microsoft.Web.WebView2 1.0.4314.35. Use `-PdotnetExecutable=<path>` when .NET is outside PATH. The SDK JAR embeds the helper as a resource, so installed native plugins use the same SDK browser as MFP plugins.

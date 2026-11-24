@@ -50,6 +50,17 @@ class WebViewRequestTest {
     }
 
     @Test
+    fun dottedSessionNameUsesTheSameNavigationAndCookieChecks() {
+        val dotted = request.copy(requiredCookies = listOf("web.sid.example.com"))
+        dotted.validateBrowserRequest()
+        assertTrue(dotted.canCaptureBrowserCookies("https://music.example.com/library"))
+        assertFalse(dotted.canCaptureBrowserCookies("https://evil.test/"))
+        assertNull(dotted.captureBrowserCookies("tracking=fixture"))
+        assertEquals(mapOf("session" to "web.sid.example.com=fixture"), dotted.captureBrowserCookies("web.sid.example.com=fixture"))
+        assertFailsWith<IllegalArgumentException> { dotted.copy(requiredCookies = listOf("web.sid\n")).validateBrowserRequest() }
+    }
+
+    @Test
     fun phoneApprovalCompletesWhenServiceCookiesArriveBeforeTheFinalRedirect(): Unit =
         runBlocking {
             val identityPage = "https://accounts.example.com/challenge/phone"

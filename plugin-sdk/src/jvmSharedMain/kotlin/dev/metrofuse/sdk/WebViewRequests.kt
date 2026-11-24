@@ -11,7 +11,7 @@ actual fun WebLoginRequest.validateBrowserRequest() {
     require(url.length <= 4096 && cookieUrl.length <= 4096 && acceptsBrowserNavigation(url) && acceptsBrowserNavigation(cookieUrl))
     require(cookieField.matches(Regex("[A-Za-z0-9._-]{1,64}")))
     require((requiredCookies.isNotEmpty() || completionPath != null) && requiredCookies.size <= 12)
-    require(requiredCookies.all { it.matches(Regex("[A-Za-z0-9_-]{1,128}")) })
+    require(requiredCookies.all { it.matches(Regex("[A-Za-z0-9._-]{1,128}")) })
     completionPath?.let {
         require(it.matches(Regex("/[A-Za-z0-9/_-]{0,255}")) && !it.startsWith("//") && URI(url).path != it)
     }

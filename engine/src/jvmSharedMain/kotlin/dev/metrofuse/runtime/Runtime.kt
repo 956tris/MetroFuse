@@ -2215,6 +2215,7 @@ class Runtime(
               settings: Object.freeze({get: async key => JSON.parse(await __settings('get'))[key], all: async () => JSON.parse(await __settings('get')), set: async (key,value) => JSON.parse(await __settings('set',key,JSON.stringify(value)))}),
               storage: Object.freeze({get: async key => JSON.parse(await __storage('get',key)), set: async (key,value) => JSON.parse(await __storage('set',key,JSON.stringify(value))), remove: async key => __storage('set',key,'null')}),
               login: callbacks => { if(!callbacks || typeof callbacks.request!=='function' || typeof callbacks.login!=='function')throw Error('Login requires request and login callbacks'); if(callbacks.logout!=null)requireFunction(callbacks.logout);globalThis.__login=callbacks; },
+              webLoginCapabilities: Object.freeze({dottedCookieNames: true}),
               loginState: state => __loginState(JSON.stringify(state)),
               home: callback => { globalThis.__home=requireFunction(callback); },
               http: async request => JSON.parse(await __http(JSON.stringify(request))),

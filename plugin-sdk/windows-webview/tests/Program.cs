@@ -23,6 +23,11 @@ if (callback.CanCapture("https://accounts.example.com/") || callback.CanCapture(
     throw new Exception("Lost the explicit completion origin and path restriction");
 if ((request with { completionPath = "/" }).CanCapture("https://accounts.example.com/"))
     throw new Exception("Ignored an explicit completion path when session cookies were declared");
+var dotted = request with { requiredCookies = new() { "web.sid.example.com" } };
+dotted.Validate();
+if (dotted.Capture(new Dictionary<string, string> { ["tracking"] = "fixture" }) != null
+    || dotted.Capture(new Dictionary<string, string> { ["web.sid.example.com"] = "fixture" })?["session"] != "web.sid.example.com=fixture")
+    throw new Exception("Lost the dotted session cookie requirement");
 Console.WriteLine("SDK browser validation checks passed.");
 
 foreach (var url in new[] { "https://user:secret@accounts.example.com/challenge?token=secret#secret",

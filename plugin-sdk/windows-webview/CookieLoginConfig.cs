@@ -28,7 +28,7 @@ public sealed record CookieLoginConfig(string url, string cookieUrl, string cook
             || requiredCookies.Count > 12 || (requiredCookies.Count == 0 && completionPath == null)
             || (completionPath != null && (!Regex.IsMatch(completionPath, "\\A/[A-Za-z0-9/_-]{0,255}\\z")
                 || completionPath.StartsWith("//", StringComparison.Ordinal) || new Uri(url).AbsolutePath == completionPath))
-            || requiredCookies.Any(name => !Regex.IsMatch(name, "^[A-Za-z0-9_-]{1,128}$")))
+            || requiredCookies.Any(name => !Regex.IsMatch(name, "\\A[A-Za-z0-9._-]{1,128}\\z")))
             throw new ArgumentException("Invalid browser login request");
     }
 
