@@ -225,7 +225,7 @@ android {
         applicationId = "com.metrofuse.music"
         minSdk = 24
         targetSdk = 37
-        versionCode = 812
+        versionCode = 813
         versionName = appVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

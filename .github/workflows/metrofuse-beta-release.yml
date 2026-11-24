@@ -8,7 +8,7 @@ on:
       tag:
         description: Existing KMP beta tag to build, verify and publish
         required: true
-        default: v10.0.0-kmp-beta.11
+        default: v10.0.0-kmp-beta.12
         type: string
       publish:
         description: Publish the checked artifacts as a prerelease
