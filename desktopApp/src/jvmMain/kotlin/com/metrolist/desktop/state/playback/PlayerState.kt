@@ -721,6 +721,7 @@ object PlayerState {
     private val artwork = DesktopAnimatedArtwork(scope)
     val animatedCoverSongId: String? get() = artwork.animatedCoverSongId
     val animatedCoverUrl: String? get() = artwork.animatedCoverUrl
+    val musicVideoCanvas get() = artwork.musicVideoCanvas
     val currentArtworkUrl: String? get() = currentTrack?.previewThumbnailUrl
     internal var artworkPreview by mutableStateOf(PlayerArtworkPreview())
         private set

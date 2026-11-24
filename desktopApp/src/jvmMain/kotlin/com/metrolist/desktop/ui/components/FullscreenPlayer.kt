@@ -100,13 +100,13 @@ import com.metrolist.shared.generated.resources.up_next
 import com.metrolist.shared.model.RepeatMode
 import com.metrolist.shared.model.previewThumbnailUrl
 import com.metrolist.shared.settings.PlayerBackgroundStyle
-import com.metrolist.shared.ui.player.GalaxyPlayerBackground
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.ui.components.ContainedLoadingIndicator
 import com.metrolist.shared.ui.components.LiquidBackground
 import com.metrolist.shared.ui.components.lyrics.LyricsContrastScrim
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.navigation.blockInput
+import com.metrolist.shared.ui.player.GalaxyPlayerBackground
 import com.metrolist.shared.ui.player.PlayerGradientBackground
 import com.metrolist.shared.ui.theme.getGradientColors
 import com.metrolist.shared.ui.utils.ArtworkBlurStyle
@@ -126,7 +126,7 @@ fun FullscreenPlayerView(
     val currentTrack = PlayerState.currentTrack
     val isPlaying = PlayerState.isPlaying
     val canvasEnabled = UiState.playerPresentation.canvasEnabled
-    val canvasPlayback = rememberAnimatedCoverPlayback(PlayerState.animatedCoverUrl)
+    val canvasPlayback = rememberAnimatedCoverPlayback(PlayerState.animatedCoverUrl, PlayerState.musicVideoCanvas)
     val immersive = canvasEnabled && canvasPlayback?.hasFrame == true
     val motion = rememberCanvasPlayerMotion(immersive)
     val normalBackgroundAlpha by animateFloatAsState(
@@ -224,7 +224,8 @@ fun FullscreenPlayerView(
                             artworkUrl = PlayerState.currentArtworkUrl,
                             artworkColor = seedColor,
                             blurredArtwork = playerBackgroundStyle == PlayerBackgroundStyle.GALAXY_BLUR,
-                            active = PlayerState.isExpanded && PlayerState.isPlaying && !immersive && !UiState.videoFullscreenObscuresPlayer,
+                            active =
+                                PlayerState.isExpanded && PlayerState.isPlaying && !immersive && !UiState.videoFullscreenObscuresPlayer,
                         )
                     }
 

@@ -2,6 +2,7 @@ package com.metrolist.shared.viewmodels
 
 import coil3.ImageLoader
 import coil3.PlatformContext
+import com.metrolist.innertubex.extraction.AudioQuality
 import com.metrolist.innertubex.extraction.ContentHints
 import com.metrolist.shared.api.artwork.AnimatedArtworkService
 import com.metrolist.shared.api.artwork.CanvasArtworkState
@@ -16,6 +17,9 @@ import com.metrolist.shared.model.ArtistTiny
 import com.metrolist.shared.model.LyricsProvider
 import com.metrolist.shared.model.LyricsWithProvider
 import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.model.YTItem
+import com.metrolist.shared.plugins.PluginServices
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.repository.LyricsRepository
 import com.metrolist.shared.settings.AnimatedCoverResolution
 import com.metrolist.shared.settings.MusicVideoQuality
@@ -36,6 +40,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
@@ -55,6 +60,73 @@ import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlayerCanvasRestoreTest {
+    @Test
+    fun pluginCanvasUsesItsOwnServiceWithVideoPlaybackOffAndPreservesClipMetadata() {
+        val url = "https://rr1.googlevideo.com/videoplayback"
+        val resource =
+            PlaybackResource(
+                "musicVideo01",
+                url,
+                mapOf("Referer" to "https://music.youtube.com/"),
+                null,
+                null,
+                videoUrl = url,
+                durationSeconds = 180,
+                videoMimeType = "video/webm",
+            )
+        val services = TestCanvasServices { song, _ -> resource.takeIf { song.id == "first" } }
+        withPlayer(TestPlatform(preloading = false), services = services) { vm, _ ->
+            assertTrue(!Settings.shared.musicVideoPlaybackEnabled)
+            vm.setCanvasVisible(true)
+            val song = vm.uiState.first { it.currentSong?.musicVideoCanvas != null }.currentSong!!
+            val canvas = assertNotNull(song.musicVideoCanvas)
+            assertEquals(url, selectedUrl(song))
+            assertEquals(resource.headers, canvas.resource.headers)
+            assertEquals(4, canvas.clips.size)
+            assertTrue(canvas.clips.all { it.endMs - it.startMs == 3000L && it.endMs <= 180000L })
+        }
+    }
+
+    @Test
+    fun disabledPluginCanvasFallsBackToSpotifyWithoutCallingTheVideoButtonHook() {
+        val services = TestCanvasServices { _, _ -> null }
+        withPlayer(TestPlatform(spotify = { "spotify-first" }, preloading = false), services = services) { vm, _ ->
+            vm.setCanvasVisible(true)
+            val song =
+                vm.uiState
+                    .first {
+                        it.currentSong?.let { song -> song.spotifyAnimatedCoverUrl != null && song.pendingCanvasSources.isEmpty() } == true
+                    }.currentSong!!
+            assertNull(song.musicVideoCanvas)
+            assertEquals("spotify-first", selectedUrl(song))
+        }
+    }
+
+    @Test
+    fun changingThePluginCanvasToggleRefreshesTheCurrentTrack() {
+        var enabled = true
+        val url = "https://rr1.googlevideo.com/videoplayback"
+        val resource = PlaybackResource("musicVideo01", url, emptyMap(), null, null, videoUrl = url, durationSeconds = 180)
+        val services = TestCanvasServices { _, _ -> resource.takeIf { enabled } }
+        withPlayer(TestPlatform(spotify = { "spotify-first" }, preloading = false), services = services) { vm, _ ->
+            vm.setCanvasVisible(true)
+            vm.uiState.first { it.currentSong?.musicVideoCanvas != null }
+            runCurrent()
+            enabled = false
+            services.changes.emit(Unit)
+            runCurrent()
+            val fallback =
+                vm.uiState
+                    .first {
+                        it.currentSong?.let { song -> song.musicVideoCanvas == null && song.pendingCanvasSources.isEmpty() } == true
+                    }.currentSong!!
+            assertEquals("spotify-first", selectedUrl(fallback))
+            enabled = true
+            services.changes.emit(Unit)
+            assertEquals(url, selectedUrl(vm.uiState.first { it.currentSong?.musicVideoCanvas != null }.currentSong!!))
+        }
+    }
+
     @Test
     fun returnRestartsSpotifyLookupCancelledAfterAppleArtworkArrives() {
         val spotify = CompletableDeferred<String?>()
@@ -194,8 +266,11 @@ class PlayerCanvasRestoreTest {
     private fun withPlayer(
         platform: TestPlatform,
         mode: YouTubeCanvasMode = YouTubeCanvasMode.SHORT_CLIPS,
+        services: PluginServices? = null,
         block: suspend TestScope.(PlayerViewModel, TestController) -> Unit,
     ) = runTest {
+        val previousServices = PluginServicesStore.current
+        PluginServicesStore.current = services
         Settings.replaceSharedForTest(Settings(MapSettings()))
         Settings.shared.hasCanvasToggle = true
         Settings.shared.playerCanvasEnabled = true
@@ -243,6 +318,7 @@ class PlayerCanvasRestoreTest {
             database.close()
             Files.deleteIfExists(path)
             Settings.replaceSharedForTest(null)
+            PluginServicesStore.current = previousServices
         }
     }
 
@@ -263,8 +339,9 @@ class PlayerCanvasRestoreTest {
         val spotify: suspend () -> String? = { null },
         val neighborSpotify: suspend () -> String? = { null },
         val apple: String? = "apple-album",
+        val preloading: Boolean = true,
     ) : PlayerPlatformServices {
-        override val supportsCanvasPreloading = true
+        override val supportsCanvasPreloading get() = preloading
         val videoLookups = ConcurrentLinkedQueue<Pair<String, YouTubeCanvasMode>>()
 
         override suspend fun cachedMusicVideoCanvas(
@@ -299,6 +376,38 @@ class PlayerCanvasRestoreTest {
         override fun shareText(text: String) = Unit
 
         override fun musicVideoCanvasHints(song: SongItem) = ContentHints()
+    }
+
+    private class TestCanvasServices(
+        private val resolveCanvas: suspend (SongItem, Int?) -> PlaybackResource?,
+    ) : PluginServices {
+        override val supportsMusicVideoCanvas = true
+        val changes = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+        override val musicVideoCanvasChanges get() = changes
+
+        override suspend fun musicVideoCanvas(
+            song: SongItem,
+            maxHeight: Int?,
+        ) = resolveCanvas(song, maxHeight)
+
+        override suspend fun resolve(
+            id: String,
+            song: SongItem?,
+            quality: AudioQuality,
+            refresh: Boolean,
+            excludedProviders: Set<String>,
+        ): PlaybackResource? = error("Canvas must not resolve an audio stream or use the video button")
+
+        override suspend fun lyrics(
+            id: String,
+            title: String,
+            artist: String,
+            durationMs: Long?,
+        ): LyricsWithProvider? = null
+
+        override suspend fun search(query: String): List<YTItem> = emptyList()
+
+        override suspend fun metadata(id: String): SongItem? = null
     }
 
     private class TestController : PlaybackController {

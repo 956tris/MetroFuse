@@ -21,7 +21,9 @@ import com.metrolist.shared.ui.playback.PlaybackController
 import com.metrolist.shared.youtube.playback.LocalAudioSource
 import com.metrolist.shared.youtube.playback.PlaybackResource
 import com.metrolist.shared.youtube.playback.StreamResolver
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emptyFlow
 
 /** Optional platform bridge. Platforms without a plugin runtime retain upstream behavior. */
 interface PluginServices {
@@ -48,6 +50,16 @@ interface PluginServices {
         durationMs: Long?,
         album: String?,
     ): String? = null
+
+    /** A music-video Canvas service is independent of the player's video-button service. */
+    val supportsMusicVideoCanvas: Boolean get() = false
+
+    val musicVideoCanvasChanges: Flow<Unit> get() = emptyFlow()
+
+    suspend fun musicVideoCanvas(
+        song: SongItem,
+        maxHeight: Int? = null,
+    ): PlaybackResource? = null
 
     /** True when the active music-source plugin has registered the `playback.video/v1` hook. */
     val supportsVideo: Boolean get() = false
@@ -184,8 +196,9 @@ class PluginStreamResolver(
             if (hints.isLocal == true || song?.isLocal == true || offlineOnly()) {
                 throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
             }
-            val currentServices = PluginServicesStore.current
-                ?: throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
+            val currentServices =
+                PluginServicesStore.current
+                    ?: throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)
             if (Settings.shared.musicFrontendOwner.toHomeSelection() is HomeSelection.Plugin) currentServices.awaitReady()
             if (!currentServices.supportsVideo) {
                 throw NoPlayableSourceException(NoPlayableSourceException.Reason.VIDEO_UNSUPPORTED)

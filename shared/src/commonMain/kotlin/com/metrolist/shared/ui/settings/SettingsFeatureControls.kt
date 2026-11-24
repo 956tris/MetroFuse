@@ -109,7 +109,7 @@ internal fun CanvasContentOrderSetting(
         contentOrder.filter {
             when (platform) {
                 SettingsPlatform.ANDROID -> true
-                SettingsPlatform.DESKTOP -> it != CanvasContentSource.YOUTUBE_MUSIC_VIDEO
+                SettingsPlatform.DESKTOP -> true
                 SettingsPlatform.IOS -> it == CanvasContentSource.APPLE_MUSIC
             }
         }
@@ -130,9 +130,7 @@ internal fun CanvasContentOrderSetting(
     Column(modifier = Modifier.fillMaxWidth()) {
         availableSources.forEachIndexed { index, source ->
             val label = canvasContentSourceLabel(source)
-            val sourceEnabled =
-                source.isEnabled(canvasEnabled, animatedCoversEnabled) &&
-                    (source != CanvasContentSource.YOUTUBE_MUSIC_VIDEO || settings.musicVideoPlaybackEnabled)
+            val sourceEnabled = source.isEnabled(canvasEnabled, animatedCoversEnabled)
             Row(
                 modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,

@@ -635,6 +635,16 @@ class PlayerViewModel(
                 _uiState.value = _uiState.value.copy(currentSong = current.copy(musicVideoCanvas = null))
                 playerConnection.currentSong.value?.let(::fetchMusicVideoCanvas)
             }.launchIn(viewModelScope)
+
+        PluginServicesStore.current
+            ?.musicVideoCanvasChanges
+            ?.onEach {
+                musicVideoCanvasFetch.invalidate()
+                canvasPreloader.clear()
+                val current = _uiState.value.currentSong ?: return@onEach
+                _uiState.value = _uiState.value.copy(currentSong = current.copy(musicVideoCanvas = null))
+                playerConnection.currentSong.value?.let(::fetchMusicVideoCanvas)
+            }?.launchIn(viewModelScope)
     }
 
     private fun fetchAlbum(song: SongItem) {
@@ -790,7 +800,6 @@ class PlayerViewModel(
     ): MusicVideoCanvas? {
         if (!Settings.shared.isCanvasEnabled ||
             !Settings.shared.isAnimatedArtworkAllowedOnNetwork() ||
-            !Settings.shared.musicVideoPlaybackEnabled ||
             CanvasContentSource.YOUTUBE_MUSIC_VIDEO !in CanvasContentSource.parseEnabled(Settings.shared.canvasEnabledSources)
         ) {
             return null
@@ -798,11 +807,31 @@ class PlayerViewModel(
         val songId = song.id
         val mode = Settings.shared.youtubeCanvasMode
         val quality = Settings.shared.youtubeCanvasQuality
+        val services = PluginServicesStore.current
+        if (effectiveMusicFrontendOwner().isNotEmpty()) services?.awaitReady()
+        if (services?.supportsMusicVideoCanvas == true) {
+            val resource =
+                withContext(Dispatchers.IO) {
+                    services.musicVideoCanvas(song, quality.targetHeight)
+                }?.takeIf { it.hasVideo } ?: return null
+            return withContext(Dispatchers.IO) {
+                platform.prepareMusicVideoCanvas(
+                    songId,
+                    MusicVideoCanvas(resource, youtubeCanvasPlaybackClips(mode, resource)),
+                    mode,
+                    quality,
+                    preload,
+                )
+            }
+        }
+        if (!Settings.shared.musicVideoPlaybackEnabled) return null
         val cached = if (refresh) null else withContext(Dispatchers.IO) { platform.cachedMusicVideoCanvas(songId, mode, quality) }
         if (cached != null) return cached
         val resolved =
             withContext(Dispatchers.IO) {
-                if (song.isVideoSong || (effectiveMusicFrontendOwner().isNotEmpty() && PluginServicesStore.current?.supportsVideo == true)) {
+                if (song.isVideoSong ||
+                    (effectiveMusicFrontendOwner().isNotEmpty() && PluginServicesStore.current?.supportsVideo == true)
+                ) {
                     MusicVideoResult.Found(
                         song.id,
                     )

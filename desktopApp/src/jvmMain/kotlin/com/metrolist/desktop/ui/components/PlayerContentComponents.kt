@@ -180,6 +180,7 @@ fun PlayerCoreContent(
             PlayerState.animatedCoverUrl?.let { coverUrl ->
                 AnimatedCover(
                     url = coverUrl,
+                    canvas = PlayerState.musicVideoCanvas,
                     active = PlayerState.isPlaying && !UiState.videoFullscreenObscuresPlayer,
                     modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(28.dp)),
                     contentScale = ContentScale.Crop,

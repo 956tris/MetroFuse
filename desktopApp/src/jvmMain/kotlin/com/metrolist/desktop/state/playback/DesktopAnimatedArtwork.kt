@@ -12,9 +12,12 @@ import androidx.compose.runtime.snapshotFlow
 import com.metrolist.desktop.state.app.AppState
 import com.metrolist.desktop.state.app.UiState
 import com.metrolist.shared.api.artwork.CanvasContentSource
+import com.metrolist.shared.api.artwork.youtubeCanvasPlaybackClips
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.artworkExplicitness
+import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
+import com.metrolist.shared.viewmodels.PlayerViewModel.MusicVideoCanvas
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +41,7 @@ internal class DesktopAnimatedArtwork(
     private val directCanvasProvider get() = AppState.directCanvasProvider
     private var currentTrack: SongItem? = null
     private var _animatedCoverUrl: String? by mutableStateOf(null)
+    private var _musicVideoCanvas: MusicVideoCanvas? by mutableStateOf(null)
     private val artworkEnabled: Boolean
         get() =
             desktopAnimatedArtworkEnabled(
@@ -49,6 +53,8 @@ internal class DesktopAnimatedArtwork(
         private set
     val animatedCoverUrl: String?
         get() = resolvedAnimatedCoverUrl(currentTrack, _animatedCoverUrl, animatedCoverSongId)
+    val musicVideoCanvas: MusicVideoCanvas?
+        get() = _musicVideoCanvas?.takeIf { it.url == animatedCoverUrl }
     private var animatedCoverFetchJob: Job? = null
 
     init {
@@ -58,7 +64,14 @@ internal class DesktopAnimatedArtwork(
                     artworkEnabled,
                     Settings.shared.animatedCoverResolution,
                     Settings.shared.canvasContentOrder,
-                ) to Settings.shared.canvasEnabledSources
+                ) to
+                    listOf(
+                        Settings.shared.canvasEnabledSources,
+                        Settings.shared.youtubeCanvasMode,
+                        Settings.shared.youtubeCanvasQuality,
+                        UiState.playerPresentation.isExpanded,
+                        UiState.playerPresentation.canvasEnabled,
+                    )
             }.distinctUntilChanged().collectLatest { (options, _) ->
                 val (enabled, _, _) = options
                 if (enabled) {
@@ -66,8 +79,14 @@ internal class DesktopAnimatedArtwork(
                 } else {
                     animatedCoverFetchJob?.cancel()
                     _animatedCoverUrl = null
+                    _musicVideoCanvas = null
                     animatedCoverSongId = null
                 }
+            }
+        }
+        scope.launch {
+            PluginServicesStore.current?.musicVideoCanvasChanges?.collectLatest {
+                currentTrack?.let(::fetchAnimatedCover)
             }
         }
     }
@@ -78,14 +97,18 @@ internal class DesktopAnimatedArtwork(
     ) {
         val previousTrack = currentTrack
         val retainedCoverUrl =
-            retainedAnimatedCoverUrl(
-                previousSongId = previousTrack?.id,
-                nextSongId = effectiveTrack?.id,
-                previousAlbumId = previousTrack?.album?.id,
-                nextAlbumId = effectiveTrack?.album?.id,
-                animatedCoverUrl = _animatedCoverUrl,
-                animatedCoversEnabled = artworkEnabled,
-            )
+            if (_musicVideoCanvas != null && previousTrack?.id != effectiveTrack?.id) {
+                null
+            } else {
+                retainedAnimatedCoverUrl(
+                    previousSongId = previousTrack?.id,
+                    nextSongId = effectiveTrack?.id,
+                    previousAlbumId = previousTrack?.album?.id,
+                    nextAlbumId = effectiveTrack?.album?.id,
+                    animatedCoverUrl = _animatedCoverUrl,
+                    animatedCoversEnabled = artworkEnabled,
+                )
+            }
 
         if (retainedCoverUrl == null) {
             animatedCoverFetchJob?.cancel()
@@ -93,6 +116,7 @@ internal class DesktopAnimatedArtwork(
 
         currentTrack = effectiveTrack
         _animatedCoverUrl = retainedCoverUrl
+        if (retainedCoverUrl == null) _musicVideoCanvas = null
         animatedCoverSongId = if (retainedCoverUrl != null) effectiveTrack?.id else null
 
         if (effectiveTrack != null && startArtworkFetch && retainedCoverUrl == null) fetchAnimatedCover(effectiveTrack)
@@ -101,14 +125,14 @@ internal class DesktopAnimatedArtwork(
     private fun fetchAnimatedCover(song: SongItem) {
         if (!artworkEnabled) return
         val enabledSources = CanvasContentSource.parseEnabled(Settings.shared.canvasEnabledSources)
-        if (CanvasContentSource.SPOTIFY_CANVAS !in enabledSources && CanvasContentSource.APPLE_MUSIC !in enabledSources) {
+        if (enabledSources.isEmpty()) {
             animatedCoverFetchJob?.cancel()
             _animatedCoverUrl = null
+            _musicVideoCanvas = null
             animatedCoverSongId = null
             return
         }
         val artist = song.artists.joinToString(", ") { it.name }
-        if (artist.isBlank()) return
         val songId = song.id
 
         animatedCoverFetchJob?.cancel()
@@ -120,7 +144,7 @@ internal class DesktopAnimatedArtwork(
                             coroutineScope {
                                 val spotify =
                                     async {
-                                        if (CanvasContentSource.SPOTIFY_CANVAS !in enabledSources) return@async null
+                                        if (CanvasContentSource.SPOTIFY_CANVAS !in enabledSources || artist.isBlank()) return@async null
                                         directCanvasProvider.getSpotifyCanvas(
                                             title = song.title,
                                             artist = artist,
@@ -131,7 +155,7 @@ internal class DesktopAnimatedArtwork(
                                     }
                                 val appleMusic =
                                     async {
-                                        if (CanvasContentSource.APPLE_MUSIC !in enabledSources) return@async null
+                                        if (CanvasContentSource.APPLE_MUSIC !in enabledSources || artist.isBlank()) return@async null
                                         AppState.animatedArtworkService
                                             .fetchAnimatedCover(
                                                 song.title,
@@ -140,7 +164,24 @@ internal class DesktopAnimatedArtwork(
                                                 song.artworkExplicitness,
                                             )?.url
                                     }
-                                spotify.await() to appleMusic.await()
+                                val musicVideo =
+                                    async {
+                                        if (CanvasContentSource.YOUTUBE_MUSIC_VIDEO !in enabledSources ||
+                                            !UiState.playerPresentation.isExpanded || !UiState.playerPresentation.canvasEnabled ||
+                                            !Settings.shared.isAnimatedArtworkAllowedOnNetwork()
+                                        ) {
+                                            return@async null
+                                        }
+                                        val services = PluginServicesStore.current ?: return@async null
+                                        services.awaitReady()
+                                        if (!services.supportsMusicVideoCanvas) return@async null
+                                        val resource =
+                                            services
+                                                .musicVideoCanvas(song, Settings.shared.youtubeCanvasQuality.targetHeight)
+                                                ?.takeIf { it.hasVideo } ?: return@async null
+                                        MusicVideoCanvas(resource, youtubeCanvasPlaybackClips(Settings.shared.youtubeCanvasMode, resource))
+                                    }
+                                Triple(spotify.await(), appleMusic.await(), musicVideo.await())
                             }
                         }
                     } catch (error: CancellationException) {
@@ -150,7 +191,7 @@ internal class DesktopAnimatedArtwork(
                     }
                 if (artworkEnabled && currentTrack?.id == songId) {
                     _animatedCoverUrl =
-                        result?.let { (spotify, appleMusic) ->
+                        result?.let { (spotify, appleMusic, musicVideo) ->
                             CanvasContentSource
                                 .parseOrder(Settings.shared.canvasContentOrder)
                                 .filter { it in CanvasContentSource.parseEnabled(Settings.shared.canvasEnabledSources) }
@@ -158,10 +199,11 @@ internal class DesktopAnimatedArtwork(
                                     when (source) {
                                         CanvasContentSource.SPOTIFY_CANVAS -> spotify
                                         CanvasContentSource.APPLE_MUSIC -> appleMusic
-                                        CanvasContentSource.YOUTUBE_MUSIC_VIDEO -> null
+                                        CanvasContentSource.YOUTUBE_MUSIC_VIDEO -> musicVideo?.url
                                     }
                                 }
                         }
+                    _musicVideoCanvas = result?.third?.takeIf { it.url == _animatedCoverUrl }
                     animatedCoverSongId = songId
                 }
             }

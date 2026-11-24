@@ -86,6 +86,9 @@ jobs:
       - name: Verify desktop login and provider runtime
         shell: pwsh
         run: .\gradlew.bat :plugin-sdk:desktopTest :engine:desktopTest --no-daemon --parallel --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8'
+      - name: Verify YouTube Music Canvas and artwork handoff
+        shell: pwsh
+        run: .\gradlew.bat :shared:desktopTest --tests 'com.metrolist.shared.plugins.PluginMusicVideoCanvasTest' --tests 'com.metrolist.shared.viewmodels.PlayerCanvasRestoreTest' :desktopApp:jvmTest --tests 'com.metrolist.desktop.state.playback.DesktopAnimatedArtworkTest' --no-daemon --parallel --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8'
 
   android:
     runs-on: ubuntu-24.04

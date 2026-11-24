@@ -86,10 +86,7 @@ internal class CanvasLayers {
                 animatedCoversEnabled = Settings.shared.enableAnimatedCovers,
                 failedUrls = allFailedUrls,
                 contentOrder = CanvasContentSource.parseOrder(Settings.shared.canvasContentOrder),
-                enabledSources =
-                    CanvasContentSource.parseEnabled(Settings.shared.canvasEnabledSources).let {
-                        if (Settings.shared.musicVideoPlaybackEnabled) it else it - CanvasContentSource.YOUTUBE_MUSIC_VIDEO
-                    },
+                enabledSources = CanvasContentSource.parseEnabled(Settings.shared.canvasEnabledSources),
             ) ?: return null
         val video = song.musicVideoCanvas?.takeIf { it.url == url }
         val cacheKey =
