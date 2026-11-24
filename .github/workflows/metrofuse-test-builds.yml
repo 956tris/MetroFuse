@@ -12,7 +12,7 @@ permissions:
 
 concurrency:
   group: metrofuse-test-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   SENTRY_DSN: ${{ vars.SENTRY_DSN }}
@@ -32,11 +32,23 @@ jobs:
         with:
           cache-scope: metrofuse-test-windows
           cache-read-only: ${{ github.event_name == 'pull_request' }}
-          persist-configuration-cache: 'false'
+          persist-configuration-cache: 'true'
       - uses: ./.github/actions/generate-icons
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
         with:
           global-json-file: metro-wv2-helper/global.json
+      - name: Cache NuGet packages
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('metro-wv2-helper/global.json', 'metro-wv2-helper/**/*.csproj') }}
+      - name: Restore NuGet packages (read-only)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('metro-wv2-helper/global.json', 'metro-wv2-helper/**/*.csproj') }}
       - name: Build legacy Windows sign-in helper
         shell: pwsh
         run: |
@@ -44,7 +56,7 @@ jobs:
       - name: Build Windows portable ZIP
         shell: pwsh
         run: |
-          .\gradlew.bat :desktopApp:assembleWindowsDebug '-Pmetrolist.desktop.arch=x86_64' --no-daemon --no-configuration-cache
+          .\gradlew.bat :desktopApp:assembleWindowsDebug '-Pmetrolist.desktop.arch=x86_64' --no-daemon --parallel --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $archives = @(Get-ChildItem -LiteralPath dist -File -Filter '*-Desktop-Windows-Debug.zip')
           if ($archives.Count -ne 1) { throw "Expected one Windows debug ZIP, found $($archives.Count)" }
@@ -57,9 +69,23 @@ jobs:
           name: metrofuse-windows-x64
           path: dist/MetroFuse-Desktop-Windows-Debug.zip
           if-no-files-found: error
+
+  windows_tests:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: metrofuse-test-windows-tests
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          persist-configuration-cache: 'true'
       - name: Verify desktop login and provider runtime
         shell: pwsh
-        run: .\gradlew.bat :plugin-sdk:desktopTest :engine:desktopTest --no-daemon --no-configuration-cache
+        run: .\gradlew.bat :plugin-sdk:desktopTest :engine:desktopTest --no-daemon --parallel --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8'
 
   android:
     runs-on: ubuntu-24.04
@@ -73,22 +99,39 @@ jobs:
         with:
           cache-scope: metrofuse-test-android
           cache-read-only: ${{ github.event_name == 'pull_request' }}
-          persist-configuration-cache: 'false'
+          persist-configuration-cache: 'true'
       - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
         with:
           packages: platform-tools
       - name: Build Android debug APK
-        run: ./gradlew :androidApp:assembleDebug --no-daemon --no-configuration-cache
+        run: ./gradlew :androidApp:assembleDebug --no-daemon --parallel --max-workers=2 -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: metrofuse-android-debug
           path: androidApp/build/outputs/apk/debug/**/*.apk
           if-no-files-found: error
+
+  android_tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: metrofuse-test-android-tests
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+          persist-configuration-cache: 'true'
+      - uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
       - uses: ./.github/actions/prepare-robolectric-sdks
         with:
           cache-read-only: ${{ github.event_name == 'pull_request' }}
       - name: Verify Android host
-        run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --no-configuration-cache
+        run: ./gradlew :androidApp:testDebugUnitTest :shared:testAndroidHostTest --no-daemon --parallel --max-workers=2 -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8"
       - name: Upload Android verification reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

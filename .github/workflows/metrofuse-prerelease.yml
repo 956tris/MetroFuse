@@ -118,7 +118,7 @@ jobs:
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: |
-          ./gradlew :androidApp:assembleRelease :androidApp:exportNativePluginAbi "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+          ./gradlew :androidApp:assembleRelease :androidApp:exportNativePluginAbi "-Pmetrolist.sourceRevision=$RELEASE_COMMIT" --no-daemon --no-configuration-cache --parallel --max-workers=2 -Dorg.gradle.jvmargs="-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8"
       - name: Validate release APK and signature
         run: |
           set -euo pipefail
@@ -175,6 +175,11 @@ jobs:
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
         with:
           global-json-file: metro-wv2-helper/global.json
+      - name: Cache NuGet packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('metro-wv2-helper/global.json', 'metro-wv2-helper/**/*.csproj') }}
       - name: Build Windows sign-in helper
         shell: pwsh
         run: |
@@ -183,7 +188,7 @@ jobs:
       - name: Build Windows release ZIP
         shell: pwsh
         run: |
-          .\gradlew.bat :desktopApp:assembleWindowsRelease :desktopApp:exportNativePluginAbi '-Pmetrolist.desktop.arch=x86_64' "-Pmetrolist.sourceRevision=$env:RELEASE_COMMIT" --no-daemon --no-configuration-cache --no-parallel --max-workers=1
+          .\gradlew.bat :desktopApp:assembleWindowsRelease :desktopApp:exportNativePluginAbi '-Pmetrolist.desktop.arch=x86_64' "-Pmetrolist.sourceRevision=$env:RELEASE_COMMIT" --no-daemon --no-configuration-cache --parallel --max-workers=2 '-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -XX:+UseParallelGC -Dfile.encoding=UTF-8'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Validate Windows release ZIP
         shell: pwsh
