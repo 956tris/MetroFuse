@@ -114,6 +114,11 @@ class Runtime(
         }
 
     private val visibleUi = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private val appForeground = MutableStateFlow(true)
+
+    fun setForeground(foreground: Boolean) {
+        appForeground.value = foreground
+    }
 
     fun watchUi(owner: String): () -> Unit {
         visibleUi.update { it + (owner to (it.getOrDefault(owner, 0) + 1)) }
@@ -127,28 +132,33 @@ class Runtime(
 
     private fun monitorUi() {
         scope.launch(Dispatchers.Default) {
-            visibleUi.map { it.isNotEmpty() }.distinctUntilChanged().collectLatest { active ->
-                if (!active) return@collectLatest
-                supervisorScope {
-                    while (isActive && !uiSafeMode.value) {
-                        delay(2000)
-                        val pulse = launch(Dispatchers.Main) {}
-                        if (withTimeoutOrNull(12_000) {
-                                pulse.join()
-                                true
-                            } != true
-                        ) {
-                            val owners = visibleUi.value.keys
-                            if (owners.isNotEmpty()) {
-                                recordUiFailure(owners)
-                                forceOriginalUi()
+            combine(visibleUi.map { it.isNotEmpty() }, appForeground) { hasUi, foreground -> hasUi && foreground }
+                .distinctUntilChanged()
+                .collectLatest { active ->
+                    if (!active) return@collectLatest
+                    supervisorScope {
+                        while (isActive && !uiSafeMode.value && appForeground.value) {
+                            val beforeDelay = System.nanoTime()
+                            delay(2000)
+                            if (!appForeground.value) break
+                            if (System.nanoTime() - beforeDelay > 10_000_000_000L) continue
+                            val pulse = launch(Dispatchers.Main) {}
+                            if (withTimeoutOrNull(12_000) {
+                                    pulse.join()
+                                    true
+                                } != true
+                            ) {
+                                val owners = visibleUi.value.keys
+                                if (appForeground.value && owners.isNotEmpty()) {
+                                    recordUiFailure(owners)
+                                    forceOriginalUi()
+                                }
+                                pulse.cancel()
+                                break
                             }
-                            pulse.cancel()
-                            break
                         }
                     }
                 }
-            }
         }
     }
 
@@ -894,6 +904,11 @@ class Runtime(
                     if ("login" in p.manifest.capabilities) session.bindLogin()
                     status(id, "Enabled")
                     desiredEnabled = desiredEnabled + id
+                    if (!restoring && (recovery.value || uiRecovery.isPluginStartupBlocked)) {
+                        withContext(Dispatchers.IO) { uiRecovery.clearStartupBlock() }
+                        recovery.value = false
+                        uiSafeMode.value = uiRecovery.isOriginalUiForced
+                    }
                     saveConfiguration()
                     log(id, "Enabled external ${p.manifest.runtime} plugin")
                     scope.launch { events.publishHost("plugin_enabled", buildJsonObject { put("id", id) }) }
@@ -1129,7 +1144,8 @@ class Runtime(
                         while (isActive) {
                             delay(5)
                             val now = System.nanoTime()
-                            if (bridgeWaiters.get() == 0) activeNanos += now - previous
+                            val delta = (now - previous).coerceIn(0L, 100_000_000L)
+                            if (bridgeWaiters.get() == 0) activeNanos += delta
                             previous = now
                             if (activeNanos > 2_000_000_000L) {
                                 js?.interruptEvaluation()
@@ -2046,6 +2062,12 @@ class Runtime(
             events.subscribe(observers) { event ->
                 try {
                     evaluate("JSON.stringify(await __emit(${quote(event.name)},${event.payload}))")
+                } catch (e: TimeoutCancellationException) {
+                    if (!appForeground.value) {
+                        log(id, "Background callback timed out; skipping")
+                    } else {
+                        scope.launch { quarantine(id, e) }
+                    }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     scope.launch { quarantine(id, e) }
@@ -2068,7 +2090,11 @@ class Runtime(
                             evaluate("JSON.stringify(await __emit(${quote(name)},${encode(state)}))")
                         } catch (e: CancellationException) {
                             if (e !is TimeoutCancellationException) throw e
-                            scope.launch { quarantine(id, e) }
+                            if (!appForeground.value) {
+                                log(id, "Background callback timed out; skipping")
+                            } else {
+                                scope.launch { quarantine(id, e) }
+                            }
                         } catch (e: Exception) {
                             scope.launch { quarantine(id, e) }
                         }

@@ -376,6 +376,13 @@ object MetroFuseHost : PluginServices {
     private val supportedAudioTransports =
         setOf(StreamTransport.DIRECT, StreamTransport.RANGE_HTTP, StreamTransport.HLS, StreamTransport.SABR_UMP)
     private var platform = "desktop"
+    @Volatile private var appForeground = true
+
+    fun setForeground(foreground: Boolean) {
+        appForeground = foreground
+        engine?.setForeground(foreground)
+    }
+
     private var libraryDatabase: MusicDatabase? = null
     private var sharedLibraryViewModel: LibraryViewModel? = null
 
@@ -540,7 +547,10 @@ object MetroFuseHost : PluginServices {
                 hostVersion = BuildConfig.APP_VERSION,
                 credentialStore = credentialStore,
                 onPluginFailure = onPluginFailure,
-            ).also { it.registerHostAdminServices(platform) }
+            ).also {
+                it.registerHostAdminServices(platform)
+                it.setForeground(appForeground)
+            }
         PluginServicesStore.current = this
         SongLikeState.initialize()
         scope.launch {

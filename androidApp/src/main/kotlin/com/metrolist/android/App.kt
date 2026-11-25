@@ -5,6 +5,7 @@
 
 package com.metrolist.android
 
+import android.app.Activity
 import android.app.Application
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
@@ -12,6 +13,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
 import android.service.quicksettings.TileService
 import android.webkit.WebView
@@ -89,6 +91,7 @@ import org.koin.android.ext.koin.androidContext
 import org.koin.core.context.startKoin
 import timber.log.Timber
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
 import com.metrolist.shared.BuildConfig as SharedBuildConfig
 
 class App :
@@ -108,6 +111,8 @@ class App :
         private set
     lateinit var legacyInstallMigration: LegacyInstallMigration
         private set
+
+    private val startedActivities = AtomicInteger(0)
 
     var hadLegacyInstallationAtStartup: Boolean = false
         private set
@@ -172,6 +177,37 @@ class App :
     @OptIn(ExperimentalResourceApi::class)
     private fun initializeMainProcess() {
         setResourceReaderAndroidContext(applicationContext)
+        registerActivityLifecycleCallbacks(
+            object : ActivityLifecycleCallbacks {
+                override fun onActivityCreated(
+                    activity: Activity,
+                    savedInstanceState: Bundle?,
+                ) {}
+
+                override fun onActivityStarted(activity: Activity) {
+                    if (startedActivities.incrementAndGet() == 1) {
+                        MetroFuseHost.setForeground(true)
+                    }
+                }
+
+                override fun onActivityResumed(activity: Activity) {}
+
+                override fun onActivityPaused(activity: Activity) {}
+
+                override fun onActivityStopped(activity: Activity) {
+                    if (startedActivities.updateAndGet { (it - 1).coerceAtLeast(0) } == 0) {
+                        MetroFuseHost.setForeground(false)
+                    }
+                }
+
+                override fun onActivitySaveInstanceState(
+                    activity: Activity,
+                    outState: Bundle,
+                ) {}
+
+                override fun onActivityDestroyed(activity: Activity) {}
+            },
+        )
         val appStart = SystemClock.elapsedRealtime()
         val hasPendingRestore = BackupRestoreManager.hasPendingRestore(this)
         restoringBackup = hasPendingRestore
@@ -260,6 +296,7 @@ class App :
             androidCredentialStore(File(noBackupFilesDir, "plugin-credentials")),
             onPluginFailure = SentryManager::reportPluginFailure,
         )
+        MetroFuseHost.setForeground(startedActivities.get() > 0)
         MetroFuseHost.attachLibrary(get())
         MetroFuseHost.attachController(AndroidPlaybackController(get<PlayerConnection>(), get<CoroutineScope>()))
 

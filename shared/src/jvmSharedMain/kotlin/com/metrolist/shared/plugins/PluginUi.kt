@@ -330,6 +330,9 @@ internal fun PluginContributionContent(
         var failed by remember { mutableStateOf(false) }
         if (!failed) {
             val completeFirstRender = remember { runtime.beginUiRender() }
+            DisposableEffect(completeFirstRender) {
+                onDispose { completeFirstRender() }
+            }
             val uiContext =
                 remember(runtime, extensions, target) {
                     UiContext(runtime.player, runtime.metadata, runtime.host.navigation::navigate, extensions, target)

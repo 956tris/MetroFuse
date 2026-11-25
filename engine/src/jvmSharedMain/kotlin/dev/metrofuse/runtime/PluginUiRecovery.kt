@@ -40,6 +40,18 @@ class PluginUiRecovery(
     }
 
     @Synchronized
+    fun clearStartupBlock() {
+        val wasBlocked = isPluginStartupBlocked
+        Files.deleteIfExists(File(storage, "ui-failure.json").toPath())
+        Files.deleteIfExists(crashRecovery.toPath())
+        Files.deleteIfExists(rendering.toPath())
+        pendingRenders.clear()
+        if (wasBlocked) {
+            Files.deleteIfExists(originalUi.toPath())
+        }
+    }
+
+    @Synchronized
     fun setOriginalUi(enabled: Boolean) {
         if (enabled) {
             persist(originalUi)

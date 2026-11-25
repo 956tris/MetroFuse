@@ -128,6 +128,88 @@ class PluginUiStartupRecoveryTest {
             Unit
         }
 
+    @Test
+    fun manualEnableAfterRecoveryClearsStartupBlockForFutureRestarts() =
+        runBlocking {
+            val root = Files.createTempDirectory("metrofuse-manual-recovery-clear-").toFile()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val plugin = Manifest("test.manual.reenable", "UI fixture", "1.0.0", "Tests", runtime = "javascript", script = "index.js")
+            try {
+                val first = Runtime(root, "android", scope, EngineTestHost())
+                try {
+                    first.initialize()
+                    first.install(
+                        ByteArrayInputStream(
+                            packageBytes(plugin, "globalThis.plugin={init(host){host.ui('ui.app',{id:'shell',type:'Text'});}};"),
+                        ),
+                    )
+                    first.enable(plugin.id)
+                } finally {
+                    first.close()
+                }
+                File(root, "running.marker").writeText("Interrupted plugin activation")
+                val recovered = Runtime(root, "android", scope, EngineTestHost())
+                try {
+                    recovered.initialize()
+                    assertTrue(recovered.recovery.value)
+                    assertTrue(recovered.uiSafeMode.value)
+                    assertEquals("Installed", recovered.plugins.value.single().state)
+                    recovered.enable(plugin.id)
+                    assertEquals("Enabled", recovered.plugins.value.single().state)
+                    assertFalse(recovered.recovery.value)
+                    assertFalse(recovered.uiSafeMode.value)
+                } finally {
+                    recovered.close()
+                }
+                val nextBoot = Runtime(root, "android", scope, EngineTestHost())
+                try {
+                    assertFalse(nextBoot.uiSafeMode.value)
+                    nextBoot.initialize()
+                    assertFalse(nextBoot.recovery.value)
+                    assertEquals("Enabled", nextBoot.plugins.value.single().state)
+                } finally {
+                    nextBoot.close()
+                }
+            } finally {
+                scope.cancel()
+                root.deleteRecursively()
+            }
+        }
+
+    @Test
+    fun manualOriginalUiChoiceIsPreservedWhenEnablingNonUiPlugin() =
+        runBlocking {
+            val root = Files.createTempDirectory("metrofuse-manual-original-ui-").toFile()
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val plugin = Manifest("test.nonui.plugin", "Audio fixture", "1.0.0", "Tests", runtime = "javascript", script = "index.js")
+            try {
+                val first = Runtime(root, "android", scope, EngineTestHost())
+                try {
+                    first.initialize()
+                    first.install(ByteArrayInputStream(packageBytes(plugin, "globalThis.plugin={init(){}};")))
+                    first.enable(plugin.id)
+                    first.setUiSafeMode(true)
+                    first.disable(plugin.id)
+                    first.enable(plugin.id)
+                    assertTrue(first.uiSafeMode.value)
+                } finally {
+                    first.close()
+                }
+                val nextBoot = Runtime(root, "android", scope, EngineTestHost())
+                try {
+                    assertTrue(nextBoot.uiSafeMode.value)
+                    nextBoot.initialize()
+                    assertEquals("Enabled", nextBoot.plugins.value.single().state)
+                    assertTrue(nextBoot.uiSafeMode.value)
+                } finally {
+                    nextBoot.close()
+                }
+            } finally {
+                scope.cancel()
+                root.deleteRecursively()
+            }
+        }
+
     private fun packageBytes(
         manifest: Manifest,
         script: String,
