@@ -19,8 +19,9 @@ import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -76,7 +77,7 @@ class LibraryFailureNoticeTest {
                 assertFalse(model.uiState.value.isRefreshing)
                 assertFalse(model.uiState.value.error)
             } finally {
-                scope.cancel()
+                scope.coroutineContext.job.cancelAndJoin()
                 client.close()
                 YouTubeSyncState.clear()
                 Settings.replaceSharedForTest(null)
