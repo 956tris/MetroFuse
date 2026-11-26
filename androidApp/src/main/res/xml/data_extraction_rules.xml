@@ -5,6 +5,7 @@
         <exclude domain="sharedpref" path="secure_settings.xml" />
         <exclude domain="file" path="downloads" />
         <exclude domain="file" path="audio_cache" />
+        <exclude domain="file" path="plugins/private" />
         <exclude domain="file" path="exoplayer" />
         <exclude domain="file" path="animated_cover_video_cache" />
         <exclude domain="root" path="app_webview" />
@@ -17,6 +18,7 @@
         <exclude domain="sharedpref" path="secure_settings.xml" />
         <exclude domain="file" path="downloads" />
         <exclude domain="file" path="audio_cache" />
+        <exclude domain="file" path="plugins/private" />
         <exclude domain="file" path="exoplayer" />
         <exclude domain="file" path="animated_cover_video_cache" />
         <exclude domain="root" path="app_webview" />

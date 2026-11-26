@@ -722,6 +722,11 @@ class Runtime(
         withContext(Dispatchers.IO) { saveConfiguration() }
     }
 
+    private fun privateFiles(id: String) = File(storage, "private/$id")
+
+    // Consecutive dots are forbidden in manifest IDs, so login credentials use a separate namespace.
+    private fun privateCredentialOwner(id: String) = "private..$id"
+
     suspend fun uninstall(id: String) =
         withContext(Dispatchers.IO) {
             packageOperations.withLock {
@@ -731,6 +736,11 @@ class Runtime(
                     require(
                         p.directory.canonicalFile.parentFile == File(storage, "installed").canonicalFile,
                     ) { "Only managed packages can be uninstalled" }
+                    val privateFiles = privateFiles(id)
+                    if (privateFiles.exists()) {
+                        credentialStore.write(privateCredentialOwner(id), null)
+                        require(privateFiles.deleteRecursively()) { "Cannot delete private plugin files. Restart and try again." }
+                    }
                     require(
                         p.directory.deleteRecursively(),
                     ) { "Cannot delete package; a native loader may retain files. Restart in recovery mode." }
@@ -1304,8 +1314,26 @@ class Runtime(
             }
         }
 
-        val context =
-            object : PluginContext {
+        val context: PluginContext =
+            object : PluginContext, PluginPrivateStorage {
+                override suspend fun directory(): String =
+                    owned {
+                        withContext(Dispatchers.IO) {
+                            val directory = privateFiles(id)
+                            check(directory.mkdirs() || directory.isDirectory) { "Cannot create private plugin directory" }
+                            directory.absolutePath
+                        }
+                    }
+
+                override suspend fun readSecret(): LoginCredentials? =
+                    owned { credentialStore.read(privateCredentialOwner(id)) }
+
+                override suspend fun writeSecret(value: LoginCredentials?) =
+                    owned {
+                        if (value != null) directory()
+                        credentialStore.write(privateCredentialOwner(id), value)
+                    }
+
                 override val scope: CoroutineScope get() = observers
                 override val matcher: TrackMatcher get() = ProviderFallbackMatcher
                 override val settings =

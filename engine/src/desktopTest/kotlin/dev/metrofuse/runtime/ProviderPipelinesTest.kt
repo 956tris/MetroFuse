@@ -1,6 +1,8 @@
 package dev.metrofuse.runtime
 
+import dev.metrofuse.api.AUDIO_TRACK_METADATA
 import dev.metrofuse.api.AudioCapabilities
+import dev.metrofuse.api.AudioPolicy
 import dev.metrofuse.api.AudioQuery
 import dev.metrofuse.api.AudioResult
 import dev.metrofuse.api.AudioSource
@@ -22,6 +24,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -47,6 +51,50 @@ class ProviderPipelinesTest {
     private fun stream(headers: Map<String, String> = emptyMap()) = AudioResult(
         stream = StreamDescriptor(StreamTransport.DIRECT, "file:///fixture.wav", headers = headers),
     )
+
+    @Test
+    fun trackMetadataIsOptInAndCannotBeOverriddenByProviderSettings() = runTest {
+        val registry = Registry()
+        val observed = mutableMapOf<String, AudioQuery>()
+        fun source(id: String, requirements: Set<String>) =
+            object : AudioSource {
+                override val id = id
+                override val capabilities = AudioCapabilities(setOf(StreamTransport.DIRECT), requirements = requirements)
+
+                override suspend fun resolve(request: AudioQuery): AudioResult {
+                    observed[id] = request
+                    return stream()
+                }
+            }
+        registry.audioSource("legacy", source("legacy.audio", emptySet()))
+        registry.audioSource("metadata", source("metadata.audio", setOf(AUDIO_TRACK_METADATA)))
+        val settings = buildJsonObject {
+            put("track", "untrusted setting")
+            put("option", "enabled")
+        }
+        var lookups = 0
+        val pipeline = ProviderPipelines(registry, trackLookup = {
+            lookups++
+            assertEquals("fixture", it.canonicalId)
+            Track("fixture", "Song", "Artist", "Album", 145_678, extras = mapOf("isrc" to "USAAA1234567"))
+        })
+        pipeline.audioPolicy.value = AudioPolicy(configurations = mapOf("legacy.audio" to settings, "metadata.audio" to settings))
+        pipeline.audioExact(query.copy(sourceId = "legacy.audio"))
+        assertEquals(0, lookups)
+        assertEquals(settings, observed.getValue("legacy.audio").configuration)
+        pipeline.audioExact(query.copy(sourceId = "metadata.audio"))
+        assertEquals(1, lookups)
+        val actual = observed.getValue("metadata.audio").configuration
+        assertEquals(settings["option"], actual["option"])
+        val expected = buildJsonObject {
+            put("title", "Song")
+            put("artist", "Artist")
+            put("album", "Album")
+            put("durationMillis", 145_678L)
+            put("isrc", "USAAA1234567")
+        }
+        assertEquals(expected, actual["track"])
+    }
 
     @Test fun priorityFailureFallbackAndHeaderPreservation() = runTest {
         val registry = Registry()

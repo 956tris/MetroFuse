@@ -3,6 +3,13 @@ package dev.metrofuse.api
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
+/** Optional host support for private files and OS-protected settings, removed on uninstall. */
+interface PluginPrivateStorage {
+    suspend fun directory(): String
+    suspend fun readSecret(): LoginCredentials?
+    suspend fun writeSecret(value: LoginCredentials?)
+}
+
 interface PluginStorage {
     suspend fun get(key: String): JsonElement?
 

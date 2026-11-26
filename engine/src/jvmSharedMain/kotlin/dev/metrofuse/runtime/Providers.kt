@@ -314,6 +314,18 @@ class ProviderPipelines(
         excludedProviders: Set<String> = emptySet(),
     ): AudioResult = audioInternal(query, includeBuiltin, excludedProviders, allowFallback = true)
 
+    private suspend fun lookupAudioTrack(
+        identity: TrackIdentity,
+        timeoutMillis: Long,
+    ): Track? =
+        try {
+            withTimeoutOrNull(timeoutMillis) { trackLookup(identity) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
+
     suspend fun audioExact(
         query: AudioQuery,
         excludedMatches: Set<String> = emptySet(),
@@ -351,7 +363,27 @@ class ProviderPipelines(
                 ) {
                     return null
                 }
-                val request = query.copy(identity = identity, configuration = policy.configurations[entry.id] ?: query.configuration)
+                val configured = policy.configurations[entry.id] ?: query.configuration
+                val configuration =
+                    if (AUDIO_TRACK_METADATA in entry.provider.capabilities.requirements) {
+                        val fields = configured - "track"
+                        val track = lookupAudioTrack(identity, 1000)
+                        if (track == null) {
+                            JsonObject(fields)
+                        } else {
+                            val media = buildJsonObject {
+                                put("title", track.title)
+                                put("artist", track.artist)
+                                put("album", track.album)
+                                put("durationMillis", track.duration)
+                                (identity.isrc ?: track.extras["isrc"])?.let { put("isrc", it) }
+                            }
+                            JsonObject(fields + ("track" to media))
+                        }
+                    } else {
+                        configured
+                    }
+                val request = query.copy(identity = identity, configuration = configuration)
                 val requestedMediaId = identity.identifiers["youtube"] ?: identity.canonicalId
                 if (audioMatchProfile(entry.id, requestedMediaId) in excludedProviders) return null
                 val cacheKey = AudioCacheKey(cacheRevision.get(), registry.providerEpoch, entry.id, request, policy)
@@ -464,14 +496,7 @@ class ProviderPipelines(
                 resolve(entry, query.identity)?.let { return@withContext it }
             }
             if (!allowFallback) return@withContext AudioResult(error = ProviderError("NO_SOURCE"))
-            val sourceTrack =
-                try {
-                    withTimeoutOrNull(8000) { trackLookup(query.identity) }
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (_: Exception) {
-                    null
-                }
+            val sourceTrack = lookupAudioTrack(query.identity, 8000)
             if (sourceTrack != null) {
                 val matchingSources =
                     candidates.filter { entry ->

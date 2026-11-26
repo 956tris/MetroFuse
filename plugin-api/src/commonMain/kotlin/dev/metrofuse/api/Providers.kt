@@ -49,6 +49,9 @@ interface MetadataSource {
 ) { override fun toString() = "StreamDescriptor(transport=$transport, locator=<redacted>, mimeType=$mimeType, expiresAtMillis=$expiresAtMillis)" }
 @Serializable data class ProviderError(val code: String, val message: String = "", val retryable: Boolean = false)
 @Serializable data class AudioResult(val stream: StreamDescriptor? = null, val error: ProviderError? = null)
+/** Includes host track metadata in the request's configuration.track object. */
+const val AUDIO_TRACK_METADATA = "audio:track-metadata"
+
 interface AudioSource {
     val id: String
     val capabilities: AudioCapabilities

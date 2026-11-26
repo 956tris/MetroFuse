@@ -10,6 +10,7 @@ import dev.metrofuse.api.HostLogger
 import dev.metrofuse.api.HostNavigation
 import dev.metrofuse.api.HostServices
 import dev.metrofuse.api.HostSettings
+import dev.metrofuse.api.LoginCredentials
 import dev.metrofuse.api.Manifest
 import dev.metrofuse.api.NativePlugin
 import dev.metrofuse.api.PlaybackState
@@ -30,6 +31,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotSame
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -102,6 +104,39 @@ class NativePluginTest {
             assertTrue(runtime.plugins.value.isEmpty())
         } finally {
             if (runtimeCreated) runtime.close()
+            scope.cancel()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun uninstallRemovesPrivateFilesAndCredentialsAfterDisablePreservesThem() = runBlocking {
+        val root = Files.createTempDirectory("metrofuse-private-storage-test").toFile()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val credentials = testCredentialStore(File(root, "credentials"))
+        val storage = File(root, "host")
+        val runtime = Runtime(storage, "desktop", scope, testHost(), credentialStore = credentials)
+        try {
+            val artifact = fixture(root)
+            runtime.initialize()
+            runtime.install(artifact.inputStream(), "fixture.jar")
+            runtime.enable("fixture.native")
+            val privateFile = File(storage, "private/fixture.native/session").apply {
+                parentFile.mkdirs()
+                writeText("mock encrypted database")
+            }
+            val secret = LoginCredentials(mapOf("value" to "test secret"))
+            credentials.write("private..fixture.native", secret)
+            credentials.write("fixture.native", secret)
+            runtime.disable("fixture.native")
+            assertTrue(privateFile.isFile)
+            assertEquals(secret.values, credentials.read("private..fixture.native")?.values)
+            runtime.uninstall("fixture.native")
+            assertFalse(privateFile.exists())
+            assertNull(credentials.read("private..fixture.native"))
+            assertEquals(secret.values, credentials.read("fixture.native")?.values)
+        } finally {
+            runtime.close()
             scope.cancel()
             root.deleteRecursively()
         }
