@@ -230,7 +230,7 @@ class PackageStore(private val root: File, private val platform: String) {
         fun sha256(file: File): String {
             val digest = MessageDigest.getInstance("SHA-256")
             file.inputStream().use { input ->
-                val buffer = ByteArray(8192)
+                val buffer = ByteArray(65536)
                 while (true) {
                     val count = input.read(buffer)
                     if (count < 0) break

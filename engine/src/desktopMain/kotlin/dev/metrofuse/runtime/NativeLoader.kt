@@ -3,6 +3,9 @@ package dev.metrofuse.runtime
 import dev.metrofuse.api.NativePlugin
 import java.io.File
 import java.net.URLClassLoader
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.zip.ZipFile
 
@@ -55,22 +58,41 @@ actual fun loadNative(
     require(source.isFile && source.extension == "jar") { "Expected native plugin JAR" }
     val directory = File(System.getProperty("java.io.tmpdir"), "metrofuse-native-${UUID.randomUUID()}")
     require(directory.mkdir())
-    val artifact = File(directory, "${PackageStore.sha256(source)}.jar")
+    val staging = File(directory, "loading-${UUID.randomUUID()}.jar")
+    var artifact: File? = null
     var loader: NativePluginClassLoader? = null
 
     fun cleanup() {
         try {
             loader?.close()
         } finally {
-            artifact.setWritable(true)
-            if (artifact.exists() && !artifact.delete()) artifact.deleteOnExit()
+            if (staging.exists() && !staging.delete()) staging.deleteOnExit()
+            artifact?.let { file ->
+                file.setWritable(true)
+                if (file.exists() && !file.delete()) file.deleteOnExit()
+            }
             if (!directory.delete()) directory.deleteOnExit()
         }
     }
     try {
-        source.copyTo(artifact)
-        require(artifact.setReadOnly()) { "Cannot protect the plugin activation copy" }
-        val activeLoader = NativePluginClassLoader(artifact)
+        val digest = MessageDigest.getInstance("SHA-256")
+        source.inputStream().use { input ->
+            staging.outputStream().use { output ->
+                val buffer = ByteArray(65536)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+        val sha256 = digest.digest().joinToString("") { "%02x".format(it) }
+        val resolvedArtifact = File(directory, "$sha256.jar")
+        Files.move(staging.toPath(), resolvedArtifact.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        artifact = resolvedArtifact
+        require(resolvedArtifact.setReadOnly()) { "Cannot protect the plugin activation copy" }
+        val activeLoader = NativePluginClassLoader(resolvedArtifact)
         loader = activeLoader
         val type = activeLoader.loadClass(entryClass)
         require(type.classLoader === activeLoader) { "Entry class was supplied by host; external loading required" }
@@ -80,7 +102,7 @@ actual fun loadNative(
             readAsset = { name ->
                 PackageStore.validatePath(name)
                 require(name.startsWith("assets/")) { "Native resource access is limited to packaged assets" }
-                ZipFile(artifact).use { zip ->
+                ZipFile(resolvedArtifact).use { zip ->
                     val entry = zip.getEntry(name) ?: throw IllegalArgumentException("Missing native asset: $name")
                     require(!entry.isDirectory && entry.size in 0..MAX_NATIVE_ASSET_BYTES) {
                         "Invalid or oversized native asset: $name"

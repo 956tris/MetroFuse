@@ -14,15 +14,20 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toInstant
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.net.URI
 import java.nio.file.Files
+import kotlin.math.abs
 
 internal data class DesktopLocalMusicState(
     val folders: List<File> = emptyList(),
@@ -34,15 +39,19 @@ internal data class DesktopLocalMusicState(
 internal object DesktopLocalMusicLibrary {
     private val mutableState = MutableStateFlow(DesktopLocalMusicState())
     val state = mutableState.asStateFlow()
+    private var database: MusicDatabase? = null
     private var importer: LocalLibraryImporter? = null
     private var scope: CoroutineScope? = null
     private var scanJob: Job? = null
+    private var scheduledScanJob: Job? = null
 
     fun initialize(
         database: MusicDatabase,
         scope: CoroutineScope,
+        autoScan: Boolean = false,
     ) {
         if (importer != null) return
+        this.database = database
         importer = LocalLibraryImporter(database)
         this.scope = scope
         try {
@@ -55,41 +64,88 @@ internal object DesktopLocalMusicLibrary {
                 } else {
                     Json.decodeFromString<List<String>>(saved).map(::File)
                 }
-            saveFolders(folders)
-            scan()
+            saveFolders(folders, previousEncoded = saved)
+            if (autoScan) scan(incremental = true)
         } catch (error: Exception) {
             mutableState.update { it.copy(failed = true) }
             AppLogger.warning("LocalMusic", "Could not initialize music folders", error)
         }
     }
 
+    fun scheduleStartupScan(delayMs: Long = 5_000L) {
+        val scope = scope ?: return
+        if (state.value.folders.isEmpty() || scanJob?.isActive == true || scheduledScanJob?.isActive == true) return
+        scheduledScanJob =
+            scope.launch(Dispatchers.IO) {
+                delay(delayMs)
+                scan(incremental = true)
+            }
+    }
+
     fun addFolder(folder: File) {
         require(folder.isDirectory && folder.canRead()) { "Music directory is unavailable" }
         saveFolders(state.value.folders + folder)
-        scan()
+        scan(incremental = true)
     }
 
     fun removeFolder(folder: File) {
         saveFolders(state.value.folders.filterNot { it == folder })
     }
 
-    private fun saveFolders(folders: List<File>) {
+    private fun saveFolders(
+        folders: List<File>,
+        previousEncoded: String? = null,
+    ) {
         val normalized = folders.map { it.canonicalFile }.distinct()
-        Settings.shared.desktopMusicFolders = Json.encodeToString(normalized.map { it.path })
+        val encoded = Json.encodeToString(normalized.map { it.path })
+        if (encoded != previousEncoded) {
+            Settings.shared.desktopMusicFolders = encoded
+        }
         mutableState.update { it.copy(folders = normalized) }
     }
 
-    fun scan() {
+    fun scan() = scan(incremental = true)
+
+    fun scan(incremental: Boolean) {
         if (scanJob?.isActive == true) return
         val importer = importer ?: return
         val scope = scope ?: return
+        scheduledScanJob?.cancel()
         mutableState.update { it.copy(scanning = true, failed = false, foundTracks = null) }
         scanJob =
             scope.launch(Dispatchers.IO) {
                 try {
-                    val result = DesktopLocalMusicScanner().scan(state.value.folders)
-                    result.tracks.chunked(200).forEach { importer.importTracks(it) }
-                    mutableState.update { it.copy(foundTracks = result.tracks.size, failed = result.unreadablePaths.isNotEmpty()) }
+                    val existingModified =
+                        if (incremental) {
+                            database
+                                ?.dao()
+                                ?.allSongs()
+                                ?.first()
+                                .orEmpty()
+                                .asSequence()
+                                .filter { it.song.isLocal }
+                                .mapNotNull { entry ->
+                                    val modified = entry.song.dateModified?.toInstant(TimeZone.UTC)?.toEpochMilliseconds()
+                                        ?: return@mapNotNull null
+                                    entry.id to modified
+                                }.toMap()
+                        } else {
+                            emptyMap()
+                        }
+                    val result =
+                        DesktopLocalMusicScanner().scan(state.value.folders) { uri, lastModified ->
+                            val saved = existingModified[uri] ?: return@scan false
+                            lastModified > 0L && abs(saved - lastModified) < 2_000L
+                        }
+                    if (result.tracks.isNotEmpty()) {
+                        result.tracks.chunked(200).forEach { importer.importTracks(it) }
+                    }
+                    mutableState.update {
+                        it.copy(
+                            foundTracks = result.tracks.size + result.skippedUnchangedCount,
+                            failed = result.unreadablePaths.isNotEmpty(),
+                        )
+                    }
                     if (result.unreadablePaths.isNotEmpty()) {
                         AppLogger.warning(
                             "LocalMusic",

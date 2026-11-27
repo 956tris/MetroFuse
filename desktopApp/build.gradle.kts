@@ -102,22 +102,19 @@ version = appVersion
 
 val desktopMemoryJvmArgs =
     listOf(
-        "-XX:MaxDirectMemorySize=128m",
-        "-Xms32m",
-        "-Xmx384m",
+        "-XX:MaxDirectMemorySize=256m",
+        "-Xms96m",
+        "-Xmx768m",
         "-XX:+UseG1GC",
-        "-XX:MinHeapFreeRatio=10",
-        "-XX:MaxHeapFreeRatio=20",
+        "-XX:MaxGCPauseMillis=50",
+        "-XX:MinHeapFreeRatio=20",
+        "-XX:MaxHeapFreeRatio=40",
         "-XX:+ExplicitGCInvokesConcurrent",
-        "-XX:ParallelGCThreads=2",
-        "-XX:ConcGCThreads=1",
-        "-XX:TieredStopAtLevel=1",
-        "-XX:CICompilerCount=1",
-        "-XX:ReservedCodeCacheSize=32m",
-        "-XX:TrimNativeHeapInterval=5000",
+        "-XX:ReservedCodeCacheSize=128m",
+        "-XX:TrimNativeHeapInterval=15000",
         "-XX:+UseCompactObjectHeaders",
         "-Djdk.nio.maxCachedBufferSize=262144",
-        "-Dskiko.gpu.resourceCacheLimit=64m",
+        "-Dskiko.gpu.resourceCacheLimit=128m",
         "-Dorg.bytedeco.javacpp.maxPhysicalBytes=0",
         "-Dorg.bytedeco.javacpp.maxBytes=0",
     )
@@ -623,7 +620,7 @@ tasks.named<ProcessResources>("jvmProcessResources") {
     dependsOn(generateSentryDebugMetaProperties)
     from(sentryDebugMetaProperties)
     from(layout.projectDirectory.dir("src/desktopMain/resources")) {
-        include("logo.svg", "logo.png", "logo_dark.png", "logo.icns", "nucleus/nucleus-app.properties")
+        include("logo.svg", "logo.png", "logo_dark.png", "logo.ico", "logo.icns", "nucleus/nucleus-app.properties")
     }
 }
 

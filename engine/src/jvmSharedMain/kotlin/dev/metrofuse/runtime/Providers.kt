@@ -356,6 +356,7 @@ class ProviderPipelines(
             suspend fun resolve(
                 entry: ProviderEntry<AudioSource>,
                 identity: TrackIdentity,
+                includeTrackMetadata: Boolean = true,
             ): AudioResult? {
                 if (registry.audioSources().none { it.id == entry.id && it.provider === entry.provider }) return null
                 if (entry.provider.capabilities.requirements
@@ -365,7 +366,7 @@ class ProviderPipelines(
                 }
                 val configured = policy.configurations[entry.id] ?: query.configuration
                 val configuration =
-                    if (AUDIO_TRACK_METADATA in entry.provider.capabilities.requirements) {
+                    if (includeTrackMetadata && AUDIO_TRACK_METADATA in entry.provider.capabilities.requirements) {
                         val fields = configured - "track"
                         val track = lookupAudioTrack(identity, 1000)
                         if (track == null) {
@@ -492,8 +493,19 @@ class ProviderPipelines(
                 }
                 return null
             }
+            val searchOwners = registry.searchProviders().map { it.owner }.toSet()
+            var skippedMatchableHigherPriority = false
             for (entry in candidates) {
-                resolve(entry, query.identity)?.let { return@withContext it }
+                val includeTrackMetadata =
+                    query.sourceId != null ||
+                        policy.preferredSource == entry.id ||
+                        !skippedMatchableHigherPriority
+                resolve(entry, query.identity, includeTrackMetadata)?.let { return@withContext it }
+                if (entry.owner in searchOwners &&
+                    entry.provider.capabilities.requirements.none { it.startsWith("platform:") && it != "platform:${query.platform}" }
+                ) {
+                    skippedMatchableHigherPriority = true
+                }
             }
             if (!allowFallback) return@withContext AudioResult(error = ProviderError("NO_SOURCE"))
             val sourceTrack = lookupAudioTrack(query.identity, 8000)

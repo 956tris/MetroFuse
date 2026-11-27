@@ -15,7 +15,7 @@ object SkiaCacheCleaner {
     }
 
     fun initialize() {
-        Graphics.resourceCacheTotalLimit = minOf(Graphics.resourceCacheTotalLimit, 16 * 1024 * 1024)
+        Graphics.resourceCacheTotalLimit = minOf(Graphics.resourceCacheTotalLimit, 96 * 1024 * 1024)
         AppState.scope.launch {
             PlayerState.player.currentSong.drop(1).collect {
                 if (pendingPurgeCount > 0) {

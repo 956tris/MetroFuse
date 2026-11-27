@@ -8,8 +8,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.window.WindowState
+import com.metrolist.desktop.window.IconResources
 import com.metrolist.desktop.state.app.DesktopNavigation
 import com.metrolist.desktop.state.app.UiState
 import com.metrolist.desktop.state.playback.ListenTogetherState
@@ -119,6 +119,12 @@ object ComposeTrayManager {
         isWindowVisible.value = visible
     }
 
+    internal fun resolveTrayIconPaths(isMacDarkMenu: Boolean): Pair<String, String> {
+        val iconResource = if (isMacDarkMenu) "logo.png" else "logo_dark.png"
+        return IconResources.toTempFile(iconResource, suffix = ".png") to
+            IconResources.toTempFile("logo.ico", suffix = ".ico")
+    }
+
     @Composable
     private fun rememberMacOsMenuBarIsDark(): Boolean {
         var isDark by remember {
@@ -147,8 +153,7 @@ object ComposeTrayManager {
 
         val isMacDarkMenu = if (OsUtil.isMac) rememberMacOsMenuBarIsDark() else true
 
-        @Suppress("DEPRECATION")
-        val icon = painterResource(if (isMacDarkMenu) "logo.png" else "logo_dark.png")
+        val (iconPath, windowsIconPath) = remember(isMacDarkMenu) { resolveTrayIconPaths(isMacDarkMenu) }
 
         val strUnknownTitle = stringResource(Res.string.tray_unknown_title)
         val strUnknown = stringResource(Res.string.tray_unknown)
@@ -175,7 +180,8 @@ object ComposeTrayManager {
             } ?: stringResource(Res.string.app_name)
 
         Tray(
-            icon = icon,
+            iconPath = iconPath,
+            windowsIconPath = windowsIconPath,
             tooltip = tooltip,
             menuContent = {
                 currentTrack?.let { track ->

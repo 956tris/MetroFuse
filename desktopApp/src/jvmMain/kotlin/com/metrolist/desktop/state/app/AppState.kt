@@ -31,6 +31,7 @@ import com.metrolist.shared.utils.OsUtil
 import com.metrolist.shared.utils.tryOpenUrl
 import dev.nucleusframework.share.ShareException
 import dev.nucleusframework.share.ShareSheet
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +39,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.jetbrains.compose.resources.getString
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
@@ -49,14 +51,18 @@ object AppState {
     val snackbarHostState = SnackbarHostState()
 
     private var updateDownloadJob: Job? = null
+    private val immediateUpdateTrigger = CompletableDeferred<Unit>()
 
     private val updateInitialization: Job =
-        scope.launch {
-            applyReleases(DesktopUpdateManager.cachedReleases())
+        scope.launch(Dispatchers.IO) {
+            withTimeoutOrNull(3_000L) { immediateUpdateTrigger.await() }
+            val cached = DesktopUpdateManager.cachedReleases()
+            withContext(Dispatchers.Main) { applyReleases(cached) }
             if (Settings.shared.checkForUpdates &&
+                !immediateUpdateTrigger.isCompleted &&
                 desktopUpdateCheckIsDue(Settings.shared.lastUpdateCheckAttemptTimestamp, System.currentTimeMillis())
             ) {
-                checkForUpdates(notify = true)
+                withContext(Dispatchers.Main) { checkForUpdates(notify = true) }
             }
         }
 
@@ -70,6 +76,7 @@ object AppState {
 
     fun checkForUpdates(notify: Boolean = false) {
         if (UiState.isCheckingForUpdates || UiState.isDownloadingUpdate || UiState.updateManagerStarted) return
+        immediateUpdateTrigger.complete(Unit)
         UiState.isCheckingForUpdates = true
         UiState.updateCheckFailed = false
         scope.launch {

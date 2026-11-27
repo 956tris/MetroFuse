@@ -40,31 +40,40 @@ import java.util.Locale
 internal data class DesktopLocalMusicScan(
     val tracks: List<LocalTrack>,
     val unreadablePaths: List<String>,
+    val skippedUnchangedCount: Int = 0,
 )
 
 internal class DesktopLocalMusicScanner(
     private val metadata: (File, Job?) -> LocalTrack? = DesktopLocalMusicMetadata()::read,
 ) {
-    suspend fun scan(folders: List<File>): DesktopLocalMusicScan =
+    suspend fun scan(
+        folders: List<File>,
+        shouldSkip: (uri: String, lastModifiedMillis: Long) -> Boolean = { _, _ -> false },
+    ): DesktopLocalMusicScan =
         withContext(Dispatchers.IO) {
             val context = currentCoroutineContext()
             val tracks = linkedMapOf<String, LocalTrack>()
             val visited = mutableSetOf<Path>()
             val failures = mutableListOf<String>()
+            var skippedUnchanged = 0
             for (folder in folders.distinctBy { it.canonicalPath }) {
                 context.ensureActive()
                 if (!folder.isDirectory || !folder.canRead()) {
                     failures += folder.absolutePath
                     continue
                 }
+                val rootPath = folder.toPath()
                 Files.walkFileTree(
-                    folder.toPath(),
+                    rootPath,
                     object : SimpleFileVisitor<Path>() {
                         override fun preVisitDirectory(
                             directory: Path,
                             attributes: BasicFileAttributes,
                         ): FileVisitResult {
                             context.ensureActive()
+                            if (directory != rootPath && directory.fileName?.toString() in SKIPPED_DIRECTORIES) {
+                                return FileVisitResult.SKIP_SUBTREE
+                            }
                             return try {
                                 if (visited.add(directory.toRealPath())) FileVisitResult.CONTINUE else FileVisitResult.SKIP_SUBTREE
                             } catch (_: IOException) {
@@ -82,7 +91,14 @@ internal class DesktopLocalMusicScanner(
                             val file = path.toFile()
                             if (file.extension.lowercase(Locale.ROOT) !in AUDIO_EXTENSIONS) return FileVisitResult.CONTINUE
                             try {
-                                metadata(file.canonicalFile, context[Job])?.let { tracks[it.uri] = it }
+                                val canonical = file.canonicalFile
+                                val uri = canonical.toURI().toASCIIString()
+                                val lastModified = attributes.lastModifiedTime().toMillis()
+                                if (shouldSkip(uri, lastModified)) {
+                                    skippedUnchanged++
+                                    return FileVisitResult.CONTINUE
+                                }
+                                metadata(canonical, context[Job])?.let { tracks[it.uri] = it }
                             } catch (cancelled: CancellationException) {
                                 throw cancelled
                             } catch (_: Exception) {
@@ -111,10 +127,11 @@ internal class DesktopLocalMusicScanner(
                     },
                 )
             }
-            DesktopLocalMusicScan(tracks.values.toList(), failures.distinct())
+            DesktopLocalMusicScan(tracks.values.toList(), failures.distinct(), skippedUnchanged)
         }
 
     companion object {
+        private val SKIPPED_DIRECTORIES = setOf(".git", "node_modules")
         private val AUDIO_EXTENSIONS =
             setOf("mp3", "m4a", "mp4", "aac", "flac", "wav", "ogg", "opus", "wma", "aif", "aiff", "mka", "ape", "wv", "alac", "ac3", "dts")
     }

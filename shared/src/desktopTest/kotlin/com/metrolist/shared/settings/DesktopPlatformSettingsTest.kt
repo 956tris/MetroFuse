@@ -330,6 +330,47 @@ class DesktopPlatformSettingsTest {
         }
     }
 
+    @Test
+    fun completedMigrationsSkipRewritingSettingsAndLargeCachesMigrateToBlobs() {
+        val root = createTempDirectory("desktop-settings-startup-skip").toFile()
+        try {
+            val file = File(root, "settings.properties")
+            val public =
+                Properties().apply {
+                    setProperty("desktopLegacySecretCleanupV2", "true")
+                    setProperty("desktopLegacyPreferencesMigrated", "true")
+                    setProperty("desktopAutoCacheDefaultDisabledV1", "true")
+                    setProperty("cachedUpdateReleasesJson", "[{\"tag_name\":\"v1.0.0\"}]")
+                    setProperty("appleMusicAlbumArtworkCacheJson", "{\"k\":\"v\"}")
+                }
+            file.outputStream().use { public.store(it, null) }
+            file.setLastModified(1_600_000_000_000L)
+            val originalModified = file.lastModified()
+            val secrets = UnavailableSecretStore(File(root, "secrets.properties"), RuntimeException("Test fallback"))
+            val blobMigrated = Properties().apply { putAll(public) }
+            val settings = DesktopFileSettings(file, blobMigrated, secrets)
+            settings.flush()
+            assertEquals("[{\"tag_name\":\"v1.0.0\"}]", settings.getStringOrNull("cachedUpdateReleasesJson"))
+            assertEquals("{\"k\":\"v\"}", settings.getStringOrNull("appleMusicAlbumArtworkCacheJson"))
+            assertTrue(File(root, "settings-blobs/cachedUpdateReleasesJson").isFile)
+            assertTrue(File(root, "settings-blobs/appleMusicAlbumArtworkCacheJson").isFile)
+
+            val stableFile = File(root, "stable.properties")
+            val stableProps =
+                Properties().apply {
+                    setProperty("desktopLegacySecretCleanupV2", "true")
+                    setProperty("desktopLegacyPreferencesMigrated", "true")
+                    setProperty("desktopAutoCacheDefaultDisabledV1", "true")
+                }
+            stableFile.outputStream().use { stableProps.store(it, null) }
+            stableFile.setLastModified(1_600_000_000_000L)
+            migrateLegacyPreferences(stableProps, secrets, stableFile)
+            assertEquals(originalModified, stableFile.lastModified())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     companion object {
         @JvmStatic
         fun main(args: Array<String>) {

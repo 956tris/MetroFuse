@@ -223,8 +223,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -887,7 +889,6 @@ private fun runDesktopApp(args: Array<String>) {
                         "angle=${System.getProperty("skiko.rendering.angle.enabled")}",
                 )
             }
-            DesktopNativeCrashRecovery.start()
             startKoin {
                 modules(
                     coreModule,
@@ -906,7 +907,6 @@ private fun runDesktopApp(args: Array<String>) {
                 }
             startup.trace("database")
             SongMetadataState.bind(database, applicationScope)
-            if (settings.desktopOnboardingComplete) SentryManager.initialize()
             MetroFuseHost.configure(
                 File(XdgUtils.getXdgDataHome(), "metrofuse/plugins"),
                 "desktop",
@@ -916,16 +916,6 @@ private fun runDesktopApp(args: Array<String>) {
             )
             if ("--original-ui" in args) MetroFuseHost.runtime.forceOriginalUi()
             MetroFuseHost.attachLibrary(database)
-            DesktopLocalMusicLibrary.initialize(database, applicationScope)
-
-            LastFM.initialize(
-                apiKey = BuildConfig.LASTFM_API_KEY,
-                secret = BuildConfig.LASTFM_SECRET,
-            )
-
-            LastFM.sessionKey = settings.lastFmSession.ifBlank { null }
-            ScrobbleSessions
-                .restorePersistedAccounts()
 
             GlobalYouTube.applyContentRegion(
                 contentCountry = settings.contentCountry,
@@ -933,19 +923,37 @@ private fun runDesktopApp(args: Array<String>) {
                 systemLocale = systemJvmLocale,
             )
 
-            // Singleton construction scans storage and creates clients; keep it off the EDT.
-            SongCacheManager.cacheDir
-            PlayerState.player
-            LibraryState.downloadStates
+            // Warm essential singletons and local metadata concurrently off the EDT before composing the full UI.
+            coroutineScope {
+                val likedSongsNameDeferred = async(Dispatchers.IO) { getString(Res.string.liked_songs) }
+                val iconsJob =
+                    launch(Dispatchers.IO) {
+                        IconResources.toTempFile("logo.png", suffix = ".png")
+                        if (OsUtil.isWindows) {
+                            listOf("previous.ico", "play.ico", "pause.ico", "next.ico", "logo.ico").forEach {
+                                IconResources.toTempFile(it)
+                            }
+                        }
+                    }
+                launch(Dispatchers.IO) { DesktopLocalMusicLibrary.initialize(database, applicationScope, autoScan = false) }
+                launch(Dispatchers.IO) {
+                    LastFM.initialize(
+                        apiKey = BuildConfig.LASTFM_API_KEY,
+                        secret = BuildConfig.LASTFM_SECRET,
+                    )
+                    LastFM.sessionKey = settings.lastFmSession.ifBlank { null }
+                    ScrobbleSessions.restorePersistedAccounts()
+                }
+                launch(Dispatchers.IO) { SongCacheManager.cacheDir }
+                launch(Dispatchers.IO) { LibraryState.downloadStates }
+                launch(Dispatchers.IO) { PlayerState.player }
+                HomeState.setLikedSongsName(likedSongsNameDeferred.await())
+                iconsJob?.join()
+            }
             // Create these snapshot states before the full UI composes: if a background coroutine creates them while a
             // composition reads them for the first time, Compose rejects states newer than its snapshot and crashes.
             SongLikeState.likedSongIds
             LyricsState.currentLyricsEntries
-            HomeState.setLikedSongsName(runBlocking { getString(Res.string.liked_songs) })
-            ListenTogetherState.initialize()
-            if (OsUtil.isWindows) {
-                listOf("previous.ico", "play.ico", "pause.ico", "next.ico").forEach { IconResources.toTempFile(it) }
-            }
         }
 
         AuthState.loadSession()
@@ -986,12 +994,18 @@ private fun runDesktopApp(args: Array<String>) {
                 }
             }
         }
-        applicationScope.launch(Dispatchers.Default) {
-            if (!settings.credentialsPending) DesktopDeviceConnect.manager.restoreIfEnabled(Unit)
-        }
 
         backendReady = true
         startup.appFrame.await()
+        applicationScope.launch(Dispatchers.IO) {
+            DesktopNativeCrashRecovery.start()
+            if (settings.desktopOnboardingComplete) SentryManager.initialize()
+        }
+        applicationScope.launch(Dispatchers.Default) {
+            ListenTogetherState.initialize()
+            if (!settings.credentialsPending) DesktopDeviceConnect.manager.restoreIfEnabled(Unit)
+        }
+        DesktopLocalMusicLibrary.scheduleStartupScan()
         applicationScope.launch {
             observeDiscordInitialization { DiscordRpcManager.init(GlobalYouTube.client) }
         }

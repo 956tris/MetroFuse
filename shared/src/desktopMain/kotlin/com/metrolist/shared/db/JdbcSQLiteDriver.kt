@@ -29,7 +29,14 @@ class JdbcSQLiteDriver : SQLiteDriver {
             Class.forName("org.sqlite.JDBC")
             val connection = java.sql.DriverManager.getConnection("jdbc:sqlite:$fileName")
             // A competing writer (another instance, history import) can hold the lock for several seconds.
-            connection.createStatement().use { it.execute("PRAGMA busy_timeout = 15000") }
+            connection.createStatement().use { statement ->
+                statement.execute("PRAGMA busy_timeout = 15000")
+                if (!fileName.equals(":memory:", ignoreCase = true) && !fileName.startsWith("file::memory:", ignoreCase = true)) {
+                    runCatching { statement.execute("PRAGMA synchronous = NORMAL") }
+                    runCatching { statement.execute("PRAGMA temp_store = MEMORY") }
+                    runCatching { statement.execute("PRAGMA cache_size = -16384") }
+                }
+            }
             JdbcSQLiteConnection(connection)
         }
 }

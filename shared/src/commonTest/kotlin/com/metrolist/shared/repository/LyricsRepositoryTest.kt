@@ -149,6 +149,7 @@ class LyricsRepositoryTest {
             val previous = PluginServicesStore.current
             PluginServicesStore.current = object : PluginServices {
                 override val hasLyricsProviders = true
+                override fun isLyricsProviderEnabled(id: String) = id == "spotify.lyrics"
                 override suspend fun lyrics(id: String, title: String, artist: String, durationMs: Long?) = spotify
                 override suspend fun resolve(
                     id: String,
@@ -167,7 +168,7 @@ class LyricsRepositoryTest {
                         LyricsTranslationClient(client),
                     )
                     val providers = listOf(LyricsProvider.BETTERLYRICS)
-                    assertEquals(spotify, repository.getLyrics("track", "Title", "Artist", null, preferredProviders = providers))
+                    assertEquals(words, repository.getLyrics("track", "Title", "Artist", null, preferredProviders = providers))
                     assertEquals(
                         words,
                         repository.getLyrics(
@@ -177,6 +178,124 @@ class LyricsRepositoryTest {
                             includePluginLyrics = false,
                         ),
                     )
+                }
+            } finally {
+                PluginServicesStore.current = previous
+            }
+        }
+
+    @Test
+    fun pluginLyricsJoinAtMidwayBetweenTopAndBottomNormalProviders() =
+        runTest {
+            val spotify = LyricsWithProvider("[00:01]Spotify line", "spotify.lyrics")
+            val better = LyricsWithProvider("[00:01]Better line", "BetterLyrics")
+            val metrofuse = LyricsWithProvider("[00:01]MetroFuse line", "MetroFuse")
+            val lrclib = LyricsWithProvider("[00:01]LrcLib line", "LrcLib")
+            val kugou = LyricsWithProvider("[00:01]KuGou line", "KuGou")
+            val order = listOf(LyricsProvider.BETTERLYRICS, LyricsProvider.METROFUSE, LyricsProvider.LRCLIB, LyricsProvider.KUGOU)
+            Settings.shared.preferWordSyncedLyrics = false
+            val previous = PluginServicesStore.current
+            var pluginCalls = 0
+            PluginServicesStore.current = object : PluginServices {
+                override val hasLyricsProviders = true
+                override fun isLyricsProviderEnabled(id: String) = id == "spotify.lyrics"
+                override suspend fun lyrics(id: String, title: String, artist: String, durationMs: Long?): LyricsWithProvider {
+                    pluginCalls++
+                    return spotify
+                }
+                override suspend fun resolve(
+                    id: String,
+                    song: SongItem?,
+                    quality: AudioQuality,
+                    refresh: Boolean,
+                    excludedProviders: Set<String>,
+                ): PlaybackResource? = null
+                override suspend fun search(query: String): List<YTItem> = emptyList()
+                override suspend fun metadata(id: String): SongItem? = null
+            }
+            try {
+                HttpClient(MockEngine { error("Unexpected HTTP request") }).use { client ->
+                    // 1. Top-half normal provider wins without calling plugin or lower providers.
+                    run {
+                        val calls = mutableListOf<LyricsProvider>()
+                        val repository =
+                            LyricsRepository(
+                                RecordingLyricsFetcher(
+                                    mapOf(
+                                        LyricsProvider.BETTERLYRICS to better,
+                                        LyricsProvider.METROFUSE to metrofuse,
+                                        LyricsProvider.LRCLIB to lrclib,
+                                        LyricsProvider.KUGOU to kugou,
+                                    ),
+                                    calls,
+                                ),
+                                LyricsTranslationClient(client),
+                            )
+                        assertEquals(better, repository.getLyrics("t1", "Title", "Artist", null, preferredProviders = order))
+                        assertEquals(listOf(LyricsProvider.BETTERLYRICS), calls)
+                        assertEquals(0, pluginCalls)
+                    }
+
+                    // 2. Second top-half normal provider also beats plugin.
+                    run {
+                        val calls = mutableListOf<LyricsProvider>()
+                        val repository =
+                            LyricsRepository(
+                                RecordingLyricsFetcher(
+                                    mapOf(
+                                        LyricsProvider.METROFUSE to metrofuse,
+                                        LyricsProvider.LRCLIB to lrclib,
+                                    ),
+                                    calls,
+                                ),
+                                LyricsTranslationClient(client),
+                            )
+                        assertEquals(metrofuse, repository.getLyrics("t2", "Title", "Artist", null, preferredProviders = order))
+                        assertEquals(listOf(LyricsProvider.BETTERLYRICS, LyricsProvider.METROFUSE), calls)
+                        assertEquals(0, pluginCalls)
+                    }
+
+                    // 3. When top-half providers miss, plugin joins midway and wins before bottom-half normal providers.
+                    run {
+                        val calls = mutableListOf<LyricsProvider>()
+                        val repository =
+                            LyricsRepository(
+                                RecordingLyricsFetcher(
+                                    mapOf(
+                                        LyricsProvider.LRCLIB to lrclib,
+                                        LyricsProvider.KUGOU to kugou,
+                                    ),
+                                    calls,
+                                ),
+                                LyricsTranslationClient(client),
+                            )
+                        assertEquals(spotify, repository.getLyrics("t3", "Title", "Artist", null, preferredProviders = order))
+                        assertEquals(listOf(LyricsProvider.BETTERLYRICS, LyricsProvider.METROFUSE), calls)
+                        assertEquals(1, pluginCalls)
+                    }
+
+                    // 4. With includePluginLyrics = false, plugin is skipped and bottom-half provider wins.
+                    run {
+                        pluginCalls = 0
+                        val calls = mutableListOf<LyricsProvider>()
+                        val repository =
+                            LyricsRepository(
+                                RecordingLyricsFetcher(mapOf(LyricsProvider.LRCLIB to lrclib), calls),
+                                LyricsTranslationClient(client),
+                            )
+                        assertEquals(
+                            lrclib,
+                            repository.getLyrics("t4", "Title", "Artist", null, preferredProviders = order, includePluginLyrics = false),
+                        )
+                        assertEquals(listOf(LyricsProvider.BETTERLYRICS, LyricsProvider.METROFUSE, LyricsProvider.LRCLIB), calls)
+                        assertEquals(0, pluginCalls)
+                    }
+
+                    // 5. prefersLyrics ranks plugin below top-half and above bottom-half normal providers.
+                    assertTrue(prefersLyrics(better, spotify, order, false))
+                    assertFalse(prefersLyrics(spotify, metrofuse, order, false))
+                    assertTrue(prefersLyrics(spotify, lrclib, order, false))
+                    assertFalse(prefersLyrics(lrclib, spotify, order, false))
                 }
             } finally {
                 PluginServicesStore.current = previous
@@ -2806,5 +2925,23 @@ private class FakeLyricsFetcher(
     ): List<LyricsWithProvider> {
         if (provider in throwing) error("Provider failed")
         return candidateResults[provider] ?: listOfNotNull(results[provider])
+    }
+}
+
+private class RecordingLyricsFetcher(
+    private val results: Map<LyricsProvider, LyricsWithProvider?>,
+    private val calls: MutableList<LyricsProvider>,
+) : LyricsFetcher {
+    override suspend fun getLyrics(
+        title: String,
+        artist: String,
+        duration: Long?,
+        album: String?,
+        videoId: String?,
+        provider: LyricsProvider,
+        isVideoContext: Boolean,
+    ): LyricsWithProvider? {
+        calls += provider
+        return results[provider]
     }
 }

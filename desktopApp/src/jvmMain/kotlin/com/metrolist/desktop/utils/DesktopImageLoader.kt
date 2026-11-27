@@ -36,7 +36,7 @@ import java.net.URI
 import okhttp3.Interceptor as OkHttpInterceptor
 
 private const val MAX_REMOTE_ARTWORK_BYTES = 12L * 1024 * 1024
-private const val MEMORY_CACHE_BYTES = 16L * 1024 * 1024
+private const val MEMORY_CACHE_BYTES = 96L * 1024 * 1024
 
 object DesktopImageLoader {
     private var imageLoader: ImageLoader? = null
@@ -126,26 +126,46 @@ internal class ArtworkSizingInterceptor(
         val sizedUrl = if (resolvedSize > 0) bucketedArtworkUrl(url, resolvedSize) else canonicalArtworkUrl(url)
         if (resolvedSize > 0 && request.memoryCacheKey == null && request.diskCacheKey == null) {
             val loader = imageLoader()
-            for (candidate in artworkCacheCandidates(url, resolvedSize)) {
-                val inMemory =
-                    request.memoryCachePolicy.readEnabled &&
-                        loader.memoryCache?.get(MemoryCache.Key(candidate, request.memoryCacheKeyExtras)) != null
-                val onDisk =
-                    !inMemory && request.diskCachePolicy.readEnabled &&
-                        withContext(Dispatchers.IO) {
-                            loader.diskCache?.openSnapshot(candidate)?.use { true } == true
-                        }
-                if (!inMemory && !onDisk) continue
-                val cached =
-                    chain
-                        .withRequest(
-                            request
-                                .newBuilder()
-                                .data(candidate)
-                                .networkCachePolicy(CachePolicy.DISABLED)
-                                .build(),
-                        ).proceed()
-                if (cached is SuccessResult) return cached
+            val candidates = artworkCacheCandidates(url, resolvedSize)
+            if (request.memoryCachePolicy.readEnabled) {
+                val memoryCache = loader.memoryCache
+                if (memoryCache != null) {
+                    for (candidate in candidates) {
+                        if (memoryCache[MemoryCache.Key(candidate, request.memoryCacheKeyExtras)] == null) continue
+                        val cached =
+                            chain
+                                .withRequest(
+                                    request
+                                        .newBuilder()
+                                        .data(candidate)
+                                        .networkCachePolicy(CachePolicy.DISABLED)
+                                        .build(),
+                                ).proceed()
+                        if (cached is SuccessResult) return cached
+                    }
+                }
+            }
+            if (request.diskCachePolicy.readEnabled) {
+                val diskCache = loader.diskCache
+                if (diskCache != null) {
+                    for (candidate in candidates) {
+                        val onDisk =
+                            withContext(Dispatchers.IO) {
+                                diskCache.openSnapshot(candidate)?.use { true } == true
+                            }
+                        if (!onDisk) continue
+                        val cached =
+                            chain
+                                .withRequest(
+                                    request
+                                        .newBuilder()
+                                        .data(candidate)
+                                        .networkCachePolicy(CachePolicy.DISABLED)
+                                        .build(),
+                                ).proceed()
+                        if (cached is SuccessResult) return cached
+                    }
+                }
             }
         }
         val sizedChain = if (sizedUrl == url) chain else chain.withRequest(request.newBuilder().data(sizedUrl).build())

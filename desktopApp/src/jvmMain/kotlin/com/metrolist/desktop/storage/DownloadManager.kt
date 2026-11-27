@@ -190,7 +190,7 @@ object DownloadManager {
     private val RETRYABLE_STREAM_FAILURE_STATUS_CODES =
         setOf(HttpStatusCode.Forbidden.value, HttpStatusCode.Gone.value)
 
-    private val client =
+    private val client by lazy {
         HttpClient(sharedHttpEngine) {
             install(HttpFailureLog) { transportHandledByEngine = sharedHttpTransportHandlesFailures }
             install(HttpTimeout) {
@@ -200,6 +200,7 @@ object DownloadManager {
             }
             expectSuccess = false
         }
+    }
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val downloadSemaphore = Semaphore(6)
     private val transcodeSemaphore = Semaphore(2)
@@ -249,7 +250,11 @@ object DownloadManager {
     private val _downloadTitles = MutableStateFlow<Map<String, String>>(emptyMap())
     val downloadTitles: StateFlow<Map<String, String>> = _downloadTitles.asStateFlow()
 
-    fun getDefaultDownloadDir(): File = File(XdgUtils.getXdgDataHome(), "metrolist/downloads").also { it.mkdirs() }
+    private val cachedDefaultDownloadDir: File by lazy {
+        File(XdgUtils.getXdgDataHome(), "metrolist/downloads").also { it.mkdirs() }
+    }
+
+    fun getDefaultDownloadDir(): File = cachedDefaultDownloadDir
 
     fun getDownloadDir(): File =
         Settings.shared.customDownloadPath

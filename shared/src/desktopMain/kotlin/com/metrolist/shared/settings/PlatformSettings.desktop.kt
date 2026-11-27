@@ -222,9 +222,14 @@ internal class DesktopFileSettings(
             largeSettingKeys +
                 setOf(
                     "likedSongsJson",
+                    "likedSongsRecencyJson",
+                    "likedSongIds",
+                    "cachedUpdateReleasesJson",
                     "animatedCoverCacheJson",
                     "musicVideoCacheJson",
                     "appleMusicArtistCacheJson",
+                    "appleMusicAlbumArtworkCacheJson",
+                    "lastFmArtistCacheV2Json",
                 )
         ).associateWith { File(settingsFile.parentFile, "settings-blobs/$it") }
 
@@ -520,11 +525,16 @@ internal class DesktopFileSettings(
         }
 }
 
-private fun migrateLegacyPreferences(
+internal fun migrateLegacyPreferences(
     publicProperties: Properties,
     secretStore: SecretStore,
     settingsFile: File,
 ) {
+    val needsSecretCleanup = !publicProperties.getProperty(LEGACY_SECRET_CLEANUP_V2).toBoolean()
+    val needsLegacyPrefs = !publicProperties.getProperty(LEGACY_PREFERENCES_MIGRATED).toBoolean()
+    val needsAutoCacheMigration = !publicProperties.getProperty(AUTO_CACHE_DEFAULT_MIGRATION).toBoolean()
+    if (!needsSecretCleanup && !needsLegacyPrefs && !needsAutoCacheMigration) return
+
     val root = Preferences.userRoot()
     val legacyNodes =
         listOf(
@@ -545,7 +555,7 @@ private fun migrateLegacyPreferences(
             "accountThumbnail" to listOf("accountThumbnail", "PFP_URL"),
         )
 
-    if (!publicProperties.getProperty(LEGACY_SECRET_CLEANUP_V2).toBoolean()) {
+    if (needsSecretCleanup) {
         var migratedSecret = false
         for ((targetKey, aliases) in legacySecretAliases) {
             if (!secretStore.hasKey(targetKey)) {
@@ -570,7 +580,7 @@ private fun migrateLegacyPreferences(
         publicProperties.setProperty(LEGACY_SECRET_CLEANUP_V2, true.toString())
     }
 
-    if (!publicProperties.getProperty(LEGACY_PREFERENCES_MIGRATED).toBoolean()) {
+    if (needsLegacyPrefs) {
         val publicKeys = listOf("themeMode", "appLayout", "enableSystemWindowFrame", "enableHapticFeedback")
         for (key in publicKeys) {
             if (publicProperties.containsKey(key)) continue
@@ -580,7 +590,7 @@ private fun migrateLegacyPreferences(
         publicProperties.setProperty(LEGACY_PREFERENCES_MIGRATED, true.toString())
     }
 
-    if (!publicProperties.getProperty(AUTO_CACHE_DEFAULT_MIGRATION).toBoolean()) {
+    if (needsAutoCacheMigration) {
         publicProperties.setProperty("songCacheEnabled", false.toString())
         publicProperties.setProperty(AUTO_CACHE_DEFAULT_MIGRATION, true.toString())
     }

@@ -172,6 +172,7 @@ object SongCacheManager {
             "metrolist/cache",
         ).also { check(it.mkdirs() || it.isDirectory) }
     }
+    private val canonicalCachePath: java.nio.file.Path by lazy { cacheDir.canonicalFile.toPath() }
     private val indexFile by lazy { File(cacheDir, CACHE_INDEX_FILE_NAME) }
 
     init {
@@ -183,7 +184,7 @@ object SongCacheManager {
 
     private fun safeFile(path: String): File? =
         runCatching {
-            val base = cacheDir.canonicalFile.toPath()
+            val base = canonicalCachePath
             File(path).canonicalFile.takeIf { it.toPath().startsWith(base) && it.parentFile?.toPath() == base }
         }.getOrNull()
 
@@ -209,23 +210,25 @@ object SongCacheManager {
 
     private fun publishIndex(entries: List<CachedSongEntry>) {
         entriesById = entries.associateBy { it.songId }
-        _cacheSizeBytes.value =
-            entries.sumOf { entry ->
-                (safeFile(entry.filePath)?.takeIf { it.exists() }?.length() ?: 0L) +
-                    (
-                        entry.thumbnailPath
-                            ?.let(::safeFile)
-                            ?.takeIf { it.exists() }
-                            ?.length() ?: 0L
-                    )
+        var totalSizeBytes = 0L
+        val validSongIds = mutableSetOf<String>()
+        for (entry in entries) {
+            val audioFile = safeFile(entry.filePath)?.takeIf { it.isFile }
+            if (audioFile != null) {
+                val length = audioFile.length()
+                totalSizeBytes += length
+                if (length >= 1024L) {
+                    validSongIds += entry.songId
+                }
             }
-        _cachedSongIds.value =
-            entries
-                .filter {
-                    safeFile(it.filePath)?.let { file ->
-                        file.isFile && file.length() >= 1024
-                    } == true
-                }.mapTo(mutableSetOf()) { it.songId }
+            totalSizeBytes +=
+                entry.thumbnailPath
+                    ?.let(::safeFile)
+                    ?.takeIf { it.exists() }
+                    ?.length() ?: 0L
+        }
+        _cacheSizeBytes.value = totalSizeBytes
+        _cachedSongIds.value = validSongIds
         _cachedSongs.value = entries.sortedByDescending { it.cachedAt }
     }
 

@@ -78,11 +78,13 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -247,7 +249,8 @@ class HomeViewModel(
                             it.copy(sections = homeFilter.filterSections(it.sections.withLibraryMusicAlbumsOnly(savedAlbumIds)))
                         },
                 ).withoutHiddenHomeItems(homeFilter)
-        }.stateIn(scope, SharingStarted.Eagerly, _uiState.value)
+        }.flowOn(Dispatchers.Default)
+            .stateIn(scope, SharingStarted.Eagerly, _uiState.value)
 
     @Volatile private var cachedAllContent: HomeUiState? = null
 
@@ -878,7 +881,8 @@ class HomeViewModel(
                 updates,
             ) { snapshot, owner, pins, update ->
                 LibraryHomeRequest(snapshot, owner, pins, update.first, update.second[owner])
-            }.collectLatest { request ->
+            }.conflate()
+                .collectLatest { request ->
                 try {
                     val state = buildLibraryHome(request).withoutBlockedContent()
                     cachedAllContent = state

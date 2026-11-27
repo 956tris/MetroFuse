@@ -183,4 +183,78 @@ class ProviderPipelinesTest {
         registry.remove("fixture")
         assertNull(pipelines.album("metrofuse:fixture:album"))
     }
+
+    @Test fun topPriorityMetadataAudioResolvesWithoutHostSearchWhileLowerPriorityDefersToHigherSearchableProvider() = runTest {
+        val foreignTrack = Track("ytm:abc", "Fixture Song", "Fixture Artist", "Album", 180_000)
+        val foreignQuery = AudioQuery(TrackIdentity("abc", mapOf("youtube" to "abc")), "desktop")
+
+        // Case 1: AUDIO_TRACK_METADATA source is top priority -> resolves directly without invoking searchProviders().
+        run {
+            val registry = Registry()
+            var searchCalled = false
+            registry.searchProvider("fast", object : SearchProvider {
+                override val id = "fast.search"
+                override suspend fun search(request: SearchRequest): SearchResult {
+                    searchCalled = true
+                    return SearchResult(emptyList())
+                }
+            })
+            registry.audioSource("fast", object : AudioSource {
+                override val id = "fast.audio"
+                override val capabilities = AudioCapabilities(setOf(StreamTransport.DIRECT), requirements = setOf(AUDIO_TRACK_METADATA))
+                override suspend fun resolve(request: AudioQuery): AudioResult {
+                    val hasTrack = request.configuration["track"] != null
+                    return if (hasTrack) stream() else AudioResult(error = dev.metrofuse.api.ProviderError("IDENTITY_REQUIRED"))
+                }
+            })
+            registry.priority("fast", 10)
+            val pipelines = ProviderPipelines(registry, trackLookup = { foreignTrack })
+            val result = pipelines.audio(foreignQuery)
+            assertEquals("fast.audio", result.stream?.attributes?.get("providerId"))
+            assertFalse(searchCalled)
+        }
+
+        // Case 2: Searchable higher-priority provider ahead of AUDIO_TRACK_METADATA source tries matchSearch before fallback.
+        run {
+            val registry = Registry()
+            val calls = mutableListOf<String>()
+            registry.searchProvider("primary", object : SearchProvider {
+                override val id = "primary.search"
+                override suspend fun search(request: SearchRequest): SearchResult {
+                    calls += "primary.search"
+                    return SearchResult(listOf(foreignTrack.copy(id = "matched-primary")))
+                }
+            })
+            registry.audioSource("primary", object : AudioSource {
+                override val id = "primary.audio"
+                override val capabilities = AudioCapabilities(setOf(StreamTransport.DIRECT))
+                override suspend fun resolve(request: AudioQuery): AudioResult {
+                    calls += "primary.audio:${request.identity.canonicalId}"
+                    return if (request.identity.canonicalId == "matched-primary") {
+                        stream()
+                    } else {
+                        AudioResult(error = dev.metrofuse.api.ProviderError("IDENTITY_REQUIRED"))
+                    }
+                }
+            })
+            registry.audioSource("secondary", object : AudioSource {
+                override val id = "secondary.audio"
+                override val capabilities = AudioCapabilities(setOf(StreamTransport.DIRECT), requirements = setOf(AUDIO_TRACK_METADATA))
+                override suspend fun resolve(request: AudioQuery): AudioResult {
+                    calls += "secondary.audio:${request.configuration["track"] != null}"
+                    return if (request.configuration["track"] != null) {
+                        stream()
+                    } else {
+                        AudioResult(error = dev.metrofuse.api.ProviderError("IDENTITY_REQUIRED"))
+                    }
+                }
+            })
+            registry.priority("primary", 10)
+            registry.priority("secondary", 1)
+            val pipelines = ProviderPipelines(registry, trackLookup = { foreignTrack })
+            val result = pipelines.audio(foreignQuery)
+            assertEquals("primary.audio", result.stream?.attributes?.get("providerId"))
+            assertEquals(listOf("primary.audio:abc", "secondary.audio:false", "primary.search", "primary.audio:matched-primary"), calls)
+        }
+    }
 }

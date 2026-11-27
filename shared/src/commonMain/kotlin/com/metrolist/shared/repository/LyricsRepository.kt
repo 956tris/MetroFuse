@@ -31,6 +31,7 @@ import com.metrolist.shared.model.MlxDocument
 import com.metrolist.shared.model.MlxSong
 import com.metrolist.shared.model.WordTimestamp
 import com.metrolist.shared.model.lyricsProviderLabel
+import com.metrolist.shared.plugins.PluginServices
 import com.metrolist.shared.plugins.PluginServicesStore
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.state.GlobalYouTube
@@ -93,24 +94,38 @@ private fun configuredLyricsProviders(): List<LyricsProvider> =
         LyricsProvider.parseEnabledFromStoredCsv(Settings.shared.lyricsEnabledProviders),
     )
 
+internal fun pluginLyricsPrioritySlot(providers: List<LyricsProvider>): Int {
+    val primaryCount = providers.count { it !in LyricsProvider.alwaysLastFallbacks }
+    return if (primaryCount == 0) 0 else (primaryCount + 1) / 2
+}
+
 private fun providerPriority(
     provider: String,
     providers: List<LyricsProvider>,
-): Int =
-    providers
-        .indexOf(
-            if (provider == "YouTube Subtitle") {
-                LyricsProvider.YOUTUBESUBTITLE
-            } else {
-                LyricsProvider.parseTokenFromSettings(provider.substringBefore('/'))
-            },
-        ).takeIf { it >= 0 } ?: Int.MAX_VALUE
+    pluginServices: PluginServices? = PluginServicesStore.current,
+): Int {
+    val hasPluginSlot = pluginServices?.hasLyricsProviders == true
+    val pluginSlot = pluginLyricsPrioritySlot(providers)
+    val builtIn =
+        if (provider == "YouTube Subtitle") {
+            LyricsProvider.YOUTUBESUBTITLE
+        } else {
+            LyricsProvider.parseTokenFromSettings(provider.substringBefore('/'))
+        }
+    if (builtIn != null) {
+        val rawIndex = providers.indexOf(builtIn)
+        if (rawIndex < 0) return Int.MAX_VALUE
+        return if (hasPluginSlot && rawIndex >= pluginSlot) rawIndex + 1 else rawIndex
+    }
+    return if (hasPluginSlot && pluginServices.isLyricsProviderEnabled(provider)) pluginSlot else Int.MAX_VALUE
+}
 
 internal fun prefersLyrics(
     candidate: LyricsWithProviderModel,
     current: LyricsWithProviderModel,
     providers: List<LyricsProvider> = configuredLyricsProviders(),
     preferWordSynced: Boolean = false,
+    pluginServices: PluginServices? = PluginServicesStore.current,
 ): Boolean {
     if (candidate.provider == USER_LYRICS_PROVIDER && current.provider != USER_LYRICS_PROVIDER) return true
     if (current.provider == USER_LYRICS_PROVIDER && candidate.provider != USER_LYRICS_PROVIDER) return false
@@ -120,8 +135,8 @@ internal fun prefersLyrics(
     if ((candidateTiming == LyricsTimingKind.UNSYNCED) != (currentTiming == LyricsTimingKind.UNSYNCED)) {
         return candidateTiming != LyricsTimingKind.UNSYNCED
     }
-    val candidatePriority = providerPriority(candidate.provider, providers)
-    val currentPriority = providerPriority(current.provider, providers)
+    val candidatePriority = providerPriority(candidate.provider, providers, pluginServices)
+    val currentPriority = providerPriority(current.provider, providers, pluginServices)
     if (candidatePriority != currentPriority) return candidatePriority < currentPriority
     return candidateTiming > currentTiming
 }
@@ -435,7 +450,9 @@ class LyricsRepository(
                 initialCachedLyrics
             }
         val pluginServices = PluginServicesStore.current.takeIf { includePluginLyrics }
-        if (!skipCache && cachedMissExpiry(cachedLyrics, lookupKey) != null && pluginServices?.hasLyricsProviders != true) return null
+        val hasPluginSlot = pluginServices?.hasLyricsProviders == true
+        val pluginSlot = pluginLyricsPrioritySlot(providers)
+        if (!skipCache && cachedMissExpiry(cachedLyrics, lookupKey) != null && !hasPluginSlot) return null
         val cachedResult = cachedLyricsResult(cachedLyrics, providers)
         if (!skipCache && cachedResult != null &&
             (
@@ -446,8 +463,7 @@ class LyricsRepository(
                         ) == true && !PlaybackNetworkStateStore.current.connected
                     ) ||
                     (
-                        pluginServices?.hasLyricsProviders != true &&
-                            providerPriority(cachedResult.provider, providers) == 0 &&
+                        providerPriority(cachedResult.provider, providers, pluginServices) == 0 &&
                             lyricsTimingKind(LyricsUtils.parseLyrics(cachedResult.lyrics)) >= preferredTiming
                     )
             )
@@ -455,22 +471,9 @@ class LyricsRepository(
             return cachedResult
         }
 
-        pluginServices?.lyrics(videoId, title, artist, duration)?.let { pluginLyrics ->
-            if (usableProviderLyrics(LyricsUtils.parseLyrics(pluginLyrics.lyrics))) {
-                val stored =
-                    databaseDao?.cacheLyricsIfUnchanged(
-                        LyricsEntity(videoId, pluginLyrics.lyrics, provider = pluginLyrics.provider, offsetMs = savedLyricsOffset(videoId)),
-                        expected = cachedLyrics,
-                    )
-                val accepted = cachedLyricsResult(stored, providers) ?: pluginLyrics
-                onLyricsAvailable(accepted)
-                return accepted
-            }
-        }
-
         var finalResult = cachedResult.takeUnless { skipCache }
         var bestTimingKind = finalResult?.let { lyricsTimingKind(LyricsUtils.parseLyrics(it.lyrics)) } ?: LyricsTimingKind.UNSYNCED
-        var bestProviderIndex = finalResult?.let { providerPriority(it.provider, providers) } ?: Int.MAX_VALUE
+        var bestProviderIndex = finalResult?.let { providerPriority(it.provider, providers, pluginServices) } ?: Int.MAX_VALUE
         var hadProviderFailure = false
         finalResult?.let { onLyricsAvailable(it) }
 
@@ -511,14 +514,44 @@ class LyricsRepository(
             }
         }
 
-        for ((fetchIndex, provider) in fetchOrder.withIndex()) {
-            val index = providers.indexOf(provider).takeIf { it >= 0 } ?: Int.MAX_VALUE
+        val stepEntries =
+            buildList<Pair<LyricsProvider?, Int>> {
+                var pluginInserted = !hasPluginSlot
+                for (provider in fetchOrder) {
+                    val priority = providerPriority(provider.name, providers, pluginServices)
+                    if (!pluginInserted && provider !in LyricsProvider.alwaysLastFallbacks && priority > pluginSlot) {
+                        add(null to pluginSlot)
+                        pluginInserted = true
+                    }
+                    add(provider to priority)
+                }
+                if (!pluginInserted) {
+                    val fallbackStart = indexOfFirst { (provider, _) -> provider in LyricsProvider.alwaysLastFallbacks }
+                    if (fallbackStart >= 0) add(fallbackStart, null to pluginSlot) else add(null to pluginSlot)
+                }
+            }
+
+        for ((fetchIndex, step) in stepEntries.withIndex()) {
+            val (provider, stepPriority) = step
             currentCoroutineContext().ensureActive()
-            if (bestTimingKind >= preferredTiming && index >= bestProviderIndex) continue
-            val fetch = fetchProviderLyrics(lookupVideoId, title, artist, duration, album, provider, isVideoContext = isVideoContext)
-            acceptFetch(fetch, index)
+            if (bestTimingKind >= preferredTiming && stepPriority >= bestProviderIndex) continue
+            val fetch =
+                if (provider != null) {
+                    fetchProviderLyrics(lookupVideoId, title, artist, duration, album, provider, isVideoContext = isVideoContext)
+                } else {
+                    try {
+                        ProviderLyricsFetch(
+                            lyrics = listOfNotNull(pluginServices?.lyrics(videoId, title, artist, duration)),
+                        )
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Exception) {
+                        ProviderLyricsFetch(failed = true)
+                    }
+                }
+            acceptFetch(fetch, stepPriority)
             if (bestTimingKind >= preferredTiming &&
-                fetchOrder.drop(fetchIndex + 1).none { providerPriority(it.name, providers) < bestProviderIndex }
+                stepEntries.drop(fetchIndex + 1).none { (_, nextPriority) -> nextPriority < bestProviderIndex }
             ) {
                 break
             }
@@ -548,7 +581,7 @@ class LyricsRepository(
                         expected = expected,
                     )
                 if (stored == null || stored.isUserSelected || isLocalLyricsProvider(stored.provider) || selectedResult == null ||
-                    !prefersLyrics(selectedResult, LyricsWithProviderModel(stored.lyrics, stored.provider), providers, preferWordSynced)
+                    !prefersLyrics(selectedResult, LyricsWithProviderModel(stored.lyrics, stored.provider), providers, preferWordSynced, pluginServices)
                 ) {
                     break
                 }

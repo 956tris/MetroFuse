@@ -141,6 +141,37 @@ class DesktopLocalMusicScannerTest {
             }
         }
 
+    @Test
+    fun incrementalScanSkipsUnchangedFilesAndIgnoredDirectories() =
+        runBlocking {
+            val directory = Files.createTempDirectory("metrofuse-local-incremental-").toFile()
+            try {
+                val unchanged = directory.resolve("unchanged.wav").apply { writeBytes(byteArrayOf(1)) }
+                val modified = directory.resolve("modified.wav").apply { writeBytes(byteArrayOf(2)) }
+                val gitDir = directory.resolve(".git").apply { mkdirs() }
+                gitDir.resolve("ignored.wav").writeBytes(byteArrayOf(3))
+                val nodeModules = directory.resolve("node_modules").apply { mkdirs() }
+                nodeModules.resolve("ignored2.wav").writeBytes(byteArrayOf(4))
+
+                val unchangedUri = unchanged.canonicalFile.toURI().toASCIIString()
+                val readFiles = mutableListOf<String>()
+                val scanner =
+                    DesktopLocalMusicScanner { file, _ ->
+                        readFiles += file.name
+                        LocalTrack(file.toURI().toASCIIString(), file.nameWithoutExtension)
+                    }
+                val scan =
+                    scanner.scan(listOf(directory)) { uri, _ ->
+                        uri == unchangedUri
+                    }
+                assertEquals(1, scan.skippedUnchangedCount)
+                assertEquals(listOf("modified.wav"), readFiles)
+                assertEquals(listOf(modified.canonicalFile.toURI().toASCIIString()), scan.tracks.map { it.uri })
+            } finally {
+                directory.deleteRecursively()
+            }
+        }
+
     private fun taggedWave(): ByteArray {
         val sampleBytes = 8_000 * 2 * 2
 

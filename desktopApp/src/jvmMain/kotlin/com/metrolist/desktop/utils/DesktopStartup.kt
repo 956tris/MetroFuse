@@ -16,7 +16,7 @@ internal class DesktopStartup {
 
     private val traceEnabled = System.getenv("METROLIST_STARTUP_TRACE") == "1"
 
-    suspend fun initialize(initialize: () -> Unit) {
+    suspend fun initialize(initialize: suspend () -> Unit) {
         firstFrame.await()
         windowShown.await()
         withContext(Dispatchers.IO) {

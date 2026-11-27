@@ -113,12 +113,7 @@ fun AppContentHost(
     HiddenHomeItemsSnackbar(AppState.snackbarHostState)
     LyricsTranslationSnackbar(AppState.snackbarHostState, LyricsState.lyricsTranslationFailures)
     ListenTogetherGlobalEvents(ListenTogetherState.listenTogetherManager) { AppState.snackbarHostState.showSnackbar(it) }
-    val deviceConnectState by DesktopDeviceConnect.manager.state.collectAsState()
-    DeviceConnectPairingHost(
-        state = deviceConnectState,
-        onApprovePairing = DesktopDeviceConnect.manager::approvePairing,
-        onRejectPairing = DesktopDeviceConnect.manager::rejectPairing,
-    )
+    DesktopDeviceConnectPairingOverlay()
     var pendingPlaybackRequest by remember { mutableStateOf<ListenTogetherPlaybackRequest?>(null) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
@@ -299,4 +294,14 @@ fun AppContentHost(
             )
         }
     }
+}
+
+@Composable
+private fun DesktopDeviceConnectPairingOverlay() {
+    val deviceConnectState by DesktopDeviceConnect.manager.state.collectAsState()
+    DeviceConnectPairingHost(
+        state = deviceConnectState,
+        onApprovePairing = DesktopDeviceConnect.manager::approvePairing,
+        onRejectPairing = DesktopDeviceConnect.manager::rejectPairing,
+    )
 }

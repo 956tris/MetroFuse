@@ -91,13 +91,14 @@ object DesktopFontManager {
             ),
         )
     private val specsByOption = specs.associateBy(FontSpec::option)
-    private val client =
+    private val client by lazy {
         sharedOkHttpClient
             .newBuilder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .followRedirects(false)
             .build()
+    }
 
     val downloadableOptions: List<FontOption> = specs.map(FontSpec::option)
 

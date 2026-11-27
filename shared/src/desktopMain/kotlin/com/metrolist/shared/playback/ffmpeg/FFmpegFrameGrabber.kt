@@ -51,26 +51,35 @@ class FFmpegFrameGrabber : FrameGrabber {
         }
 
         @Volatile
+        private var loaded = false
+
+        @Volatile
         private var loadingException: Exception? = null
 
         @JvmStatic
         @Throws(Exception::class)
         fun tryLoad() {
+            if (loaded) return
             loadingException?.let { throw it }
-            try {
-                Loader.load(org.bytedeco.ffmpeg.global.avutil::class.java)
-                Loader.load(org.bytedeco.ffmpeg.global.swresample::class.java)
-                Loader.load(org.bytedeco.ffmpeg.global.avcodec::class.java)
-                Loader.load(org.bytedeco.ffmpeg.global.avformat::class.java)
-                Loader.load(org.bytedeco.ffmpeg.global.swscale::class.java)
-                FFmpegLogCallback.set()
+            synchronized(this) {
+                if (loaded) return
+                loadingException?.let { throw it }
+                try {
+                    Loader.load(org.bytedeco.ffmpeg.global.avutil::class.java)
+                    Loader.load(org.bytedeco.ffmpeg.global.swresample::class.java)
+                    Loader.load(org.bytedeco.ffmpeg.global.avcodec::class.java)
+                    Loader.load(org.bytedeco.ffmpeg.global.avformat::class.java)
+                    Loader.load(org.bytedeco.ffmpeg.global.swscale::class.java)
+                    FFmpegLogCallback.set()
 
-                av_jni_set_java_vm(Loader.getJavaVM(), null)
-                avformat_network_init()
-            } catch (t: Throwable) {
-                val ex = t as? Exception ?: Exception("Failed to load ${FFmpegFrameGrabber::class.java}", t)
-                loadingException = ex
-                throw ex
+                    av_jni_set_java_vm(Loader.getJavaVM(), null)
+                    avformat_network_init()
+                    loaded = true
+                } catch (t: Throwable) {
+                    val ex = t as? Exception ?: Exception("Failed to load ${FFmpegFrameGrabber::class.java}", t)
+                    loadingException = ex
+                    throw ex
+                }
             }
         }
 

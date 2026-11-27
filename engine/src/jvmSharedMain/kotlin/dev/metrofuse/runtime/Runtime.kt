@@ -225,14 +225,21 @@ class Runtime(
         scope.launch(Dispatchers.IO) {
             storageReady.await()
             val file = File(storage, "runtime.log")
-            for (line in logQueue) {
+            val batch = StringBuilder()
+            for (first in logQueue) {
+                batch.setLength(0)
+                batch.append(first).append('\n')
+                while (true) {
+                    val next = logQueue.tryReceive().getOrNull() ?: break
+                    batch.append(next).append('\n')
+                }
                 try {
                     if (file.length() > 512 * 1024) {
                         val old = File(storage, "runtime.previous.log")
                         old.delete()
                         file.renameTo(old)
                     }
-                    file.appendText(line + "\n")
+                    file.appendText(batch.toString())
                 } catch (e: Exception) {
                     logs.update { (it + "[host] Log persistence failed: ${e::class.simpleName}").takeLast(200) }
                 }
@@ -412,10 +419,13 @@ class Runtime(
                 store.recoverInterruptedInstallations()
                 if (recovery.value) recoverInterruptedUpdates()
                 restoring = true
+                var configDirty = !configFile.exists()
+                var enabledAny = false
                 try {
                     val config = if (configFile.exists()) codec.decodeFromString<Configuration>(configFile.readText()) else Configuration()
                     failureCounts =
                         if (failuresFile.exists()) codec.decodeFromString<Map<String, Int>>(failuresFile.readText()) else emptyMap()
+                    val initialDesiredEnabled = config.enabled
                     desiredEnabled = config.enabled
                     if (uiFailureMarker.isFile) {
                         val failedOwners =
@@ -431,11 +441,14 @@ class Runtime(
                         Files.deleteIfExists(uiFailureMarker.toPath())
                         if (quarantined.isNotEmpty()) {
                             desiredEnabled = desiredEnabled - quarantined
+                            configDirty = true
                             log("host", "UI plugins disabled after repeated unresponsiveness: ${quarantined.sorted().joinToString()}")
                         }
                     }
+                    val migratedAudioPolicy = migrateAudioPolicy(config.audioPolicy)
+                    if (migratedAudioPolicy != config.audioPolicy) configDirty = true
                     pipelines.metadataPolicy.value = config.metadataPolicy
-                    pipelines.audioPolicy.value = migrateAudioPolicy(config.audioPolicy)
+                    pipelines.audioPolicy.value = migratedAudioPolicy
                     registry.state.value =
                         RegistryState(
                             priorities = config.priorities,
@@ -446,11 +459,26 @@ class Runtime(
                             pointPriorities = config.pointPriorities,
                             serviceModes = config.serviceModes,
                         )
-                    File(storage, "installed").listFiles().orEmpty().filter { it.isDirectory && !it.name.startsWith('.') }.forEach { dir ->
-                        try {
-                            store.verify(dir)
+                    val installedDirs =
+                        File(storage, "installed")
+                            .listFiles()
+                            .orEmpty()
+                            .filter { it.isDirectory && !it.name.startsWith('.') }
+                            .sortedBy { it.name }
+                    val verified =
+                        coroutineScope {
+                            installedDirs
+                                .map { dir ->
+                                    async(Dispatchers.IO) { dir to runCatching { store.verify(dir) } }
+                                }.awaitAll()
+                        }
+                    val verifiedDirectories = mutableSetOf<File>()
+                    for ((dir, result) in verified) {
+                        val error = result.exceptionOrNull()
+                        if (error == null) {
                             addDirectory(dir)
-                        } catch (e: Exception) {
+                            verifiedDirectories += dir.canonicalFile
+                        } else {
                             // Keep broken installations manageable; recovery must not require deleting app data.
                             val manifest =
                                 runCatching {
@@ -463,9 +491,9 @@ class Runtime(
                                     ?: Manifest(dir.name, "Invalid package: ${dir.name}", "0.0.0", "Unknown", runtime = "invalid")
                             plugins.update {
                                 it.filterNot { p -> p.manifest.id == safe.id } +
-                                    PluginStatus(safe, dir, "Failed", e.toString(), LifecyclePhase.FAILED)
+                                    PluginStatus(safe, dir, "Failed", error.toString(), LifecyclePhase.FAILED)
                             }
-                            log("host", "Installed package ${dir.name} rejected: $e")
+                            log("host", "Installed package ${dir.name} rejected: $error")
                         }
                     }
                     if (!recovery.value && !uiRecovery.isPluginStartupBlocked) {
@@ -485,20 +513,26 @@ class Runtime(
                                 break
                             }
                             registry.order("lifecycle.activate", ready).forEach { id ->
-                                if (plugins.value.any { it.manifest.id == id }) enable(id)
+                                val status = plugins.value.firstOrNull { it.manifest.id == id }
+                                if (status != null) {
+                                    enableInternal(id, skipVerify = status.directory.canonicalFile in verifiedDirectories)
+                                    if (sessions.containsKey(id)) enabledAny = true
+                                }
                                 pending.remove(id)
                             }
                         }
                     }
+                    if (desiredEnabled != initialDesiredEnabled) configDirty = true
                 } catch (e: Exception) {
                     recovery.value = true
                     log("host", "Configuration recovery: $e")
                 } finally {
                     restoring = false
                     initialized = true
-                    saveConfiguration()
+                    if (configDirty) saveConfiguration()
                     if (platform == "android") marker.delete()
                 }
+                if (enabledAny) refreshMetadata()
             }
         }
 
@@ -874,7 +908,12 @@ class Runtime(
         }
     }
 
-    suspend fun enable(id: String) =
+    suspend fun enable(id: String) = enableInternal(id, skipVerify = false)
+
+    private suspend fun enableInternal(
+        id: String,
+        skipVerify: Boolean,
+    ) =
         withContext(Dispatchers.Default) {
             gate.withLock {
                 check(!closing.get()) { "Runtime is closed" }
@@ -887,7 +926,8 @@ class Runtime(
                     val settings = pluginSettings(id)
                     session = Session(p, settings)
                     sessions[id] = session
-                    if (p.directory.parentFile.canonicalFile ==
+                    if (!skipVerify &&
+                        p.directory.parentFile.canonicalFile ==
                         File(storage, "installed").canonicalFile
                     ) {
                         withContext(Dispatchers.IO) { store.verify(p.directory) }
@@ -946,7 +986,7 @@ class Runtime(
                 } finally {
                     endRisk()
                 }
-                refreshMetadata()
+                if (!restoring) refreshMetadata()
             }
         }
 

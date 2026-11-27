@@ -51,6 +51,7 @@ import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.HttpTimeoutConfig
 import io.ktor.client.plugins.websocket.WebSockets
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import org.jetbrains.compose.resources.getString
 import java.io.File
@@ -58,15 +59,22 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Properties
+import java.util.concurrent.ConcurrentHashMap
 
 object ListenTogetherState {
     private const val MAX_FRAME_SIZE_BYTES = 256L * 1024
     private val timestampFormatter = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault())
-    private val presentationTextMap = mutableMapOf<ListenTogetherText, String>()
+    private val presentationTextMap = ConcurrentHashMap<ListenTogetherText, String>()
+
+    @Volatile
+    private var httpClientInitialized = false
+
+    @Volatile
+    private var managerInitialized = false
 
     init {
         migrateLegacySettings()
-        AppState.scope.launch { preloadPresentationText() }
+        AppState.scope.launch(Dispatchers.IO) { preloadPresentationText() }
     }
 
     private suspend fun preloadPresentationText() {
@@ -91,7 +99,8 @@ object ListenTogetherState {
         presentationTextMap[ListenTogetherText.SUGGESTION_RECEIVED] = getString(Res.string.listen_together_log_suggestion_received)
     }
 
-    private val httpClient =
+    private val httpClient by lazy {
+        httpClientInitialized = true
         HttpClient(CIO) {
             install(HttpFailureLog)
             install(WebSockets) {
@@ -103,8 +112,10 @@ object ListenTogetherState {
                 socketTimeoutMillis = 60_000L
             }
         }
+    }
 
-    val listenTogetherManager =
+    val listenTogetherManager by lazy {
+        managerInitialized = true
         ListenTogetherManager(
             callerScope = AppState.scope,
             httpClient = httpClient,
@@ -138,9 +149,12 @@ object ListenTogetherState {
                     }
                 },
         )
+    }
 
     fun initialize() {
-        DesktopDeviceConnect.manager.remote.transferBlocked = { listenTogetherManager.hasActiveOrPendingRoom }
+        DesktopDeviceConnect.manager.remote.transferBlocked = {
+            managerInitialized && listenTogetherManager.hasActiveOrPendingRoom
+        }
     }
 
     fun suggestTrack(song: SongItem) {
@@ -155,8 +169,8 @@ object ListenTogetherState {
     }
 
     fun close() {
-        listenTogetherManager.close()
-        httpClient.close()
+        if (managerInitialized) listenTogetherManager.close()
+        if (httpClientInitialized) httpClient.close()
     }
 
     private fun presentationText(key: ListenTogetherText): String = presentationTextMap[key].orEmpty()
